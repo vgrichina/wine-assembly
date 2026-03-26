@@ -93,7 +93,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 128 funcref)
+  (table $handlers 148 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -245,6 +245,29 @@
     $th_alu_m16_i16        ;; 122: [addr] OP= imm16
     $th_load8s             ;; 123: load byte, sign-extend (for movsx)
     $th_test_m8_i8         ;; 124: addr in next word, imm in operand
+    $th_jmp_ind            ;; 125: jmp [mem] — load target, check thunk, set EIP
+    $th_lea_ro             ;; 126: lea dst, [base+disp] (runtime)
+    $th_alu_m32_r_ro       ;; 127: [base+disp] OP= reg (runtime EA)
+    $th_alu_r_m32_ro       ;; 128: reg OP= [base+disp] (runtime EA)
+    $th_alu_m8_r_ro        ;; 129: [base+disp] OP= reg8 (runtime EA)
+    $th_alu_r_m8_ro        ;; 130: reg8 OP= [base+disp] (runtime EA)
+    $th_alu_m32_i_ro       ;; 131: [base+disp] OP= imm32 (runtime EA)
+    $th_alu_m8_i_ro        ;; 132: [base+disp] OP= imm8 (runtime EA)
+    $th_mov_m32_i32_ro     ;; 133: [base+disp] = imm32 (op=base, disp+imm in words)
+    $th_mov_m8_i8_ro       ;; 134: [base+disp] = imm8
+    $th_unary_m32_ro       ;; 135: inc/dec/not/neg [base+disp] (op=unary_op<<4|base, disp in word)
+    $th_test_m32_r_ro      ;; 136: test [base+disp], reg (op=reg<<4|base, disp in word)
+    $th_test_m32_i32_ro    ;; 137: test [base+disp], imm32 (op=base, disp+imm in words)
+    $th_test_m8_i8_ro      ;; 138: test [base+disp], imm8 (op=base, disp+imm in words)
+    $th_shift_m32_ro       ;; 139: shift [base+disp] (op=base, shift_info+disp in words)
+    $th_call_ind_ro        ;; 140: call [base+disp] (op=ret_addr, base+disp in words)
+    $th_jmp_ind_ro         ;; 141: jmp [base+disp] (op=0, base+disp in words)
+    $th_push_m32_ro        ;; 142: push [base+disp] (op=base, disp in word)
+    $th_movzx8_ro          ;; 143: movzx reg, byte [base+disp] (op=dst<<4|base, disp in word)
+    $th_movsx8_ro          ;; 144
+    $th_movzx16_ro         ;; 145
+    $th_movsx16_ro         ;; 146
+    $th_muldiv_m32_ro      ;; 147: mul/imul/div/idiv [base+disp] (op=type<<4|base, disp in word)
   )
 
   ;; ============================================================
@@ -1338,6 +1361,245 @@
   (func $th_test_m8_i8 (param $op i32)
     (call $set_flags_logic (i32.and (call $gl8 (call $read_thread_word)) (local.get $op))) (call $next))
 
+  ;; 125: jmp [mem] — for jmp through IAT or vtable
+  ;; operand=ignored, mem_addr in next thread word
+  (func $th_jmp_ind (param $op i32)
+    (local $mem_addr i32) (local $target i32) (local $ret_addr i32)
+    (local.set $mem_addr (call $read_thread_word))
+    (local.set $target (call $gl32 (local.get $mem_addr)))
+    ;; Check thunk zone — JMP, not CALL. The caller's return address is already on stack.
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
+                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+      (then
+        ;; Save return address before dispatch pops it
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        ;; Set EIP to the saved return address
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    ;; Not a thunk — regular indirect jump
+    (global.set $eip (local.get $target)))
+
+  ;; --- Runtime EA handlers (compute address from base_reg + disp at execution time) ---
+
+  ;; 126: LEA dst, [base+disp]. operand=dst<<4|base, disp in next word.
+  (func $th_lea_ro (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+    (call $next))
+
+  ;; Helper: compute EA from operand encoding (alu_op<<8 | reg<<4 | base)
+  (func $ea_from_op (param $op i32) (result i32)
+    (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+
+  ;; 127: [base+disp] OP= reg32. operand = alu_op<<8 | reg<<4 | base. disp in next word.
+  (func $th_alu_m32_r_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (call $get_reg (local.get $reg))))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
+    (call $next))
+
+  ;; 128: reg32 OP= [base+disp]. operand = alu_op<<8 | reg<<4 | base.
+  (func $th_alu_r_m32_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $get_reg (local.get $reg)) (call $gl32 (local.get $addr))))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $set_reg (local.get $reg) (local.get $val))))
+    (call $next))
+
+  ;; 129: [base+disp] OP= reg8. operand = alu_op<<8 | reg<<4 | base.
+  (func $th_alu_m8_r_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl8 (local.get $addr)) (call $get_reg8 (local.get $reg))))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
+    (call $next))
+
+  ;; 130: reg8 OP= [base+disp]. operand = alu_op<<8 | reg<<4 | base.
+  (func $th_alu_r_m8_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $get_reg8 (local.get $reg)) (call $gl8 (local.get $addr))))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $set_reg8 (local.get $reg) (local.get $val))))
+    (call $next))
+
+  ;; 131: [base+disp] OP= imm32. operand = alu_op<<8 | base. disp+imm in next words.
+  (func $th_alu_m32_i_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $imm (call $read_thread_word))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (local.get $imm)))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
+    (call $next))
+
+  ;; 132: [base+disp] OP= imm8. operand = alu_op<<8 | base. disp+imm in next words.
+  (func $th_alu_m8_i_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $imm (call $read_thread_word))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl8 (local.get $addr)) (local.get $imm)))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
+    (call $next))
+
+  ;; 133: mov [base+disp], imm32. op=base, disp+imm in next words.
+  (func $th_mov_m32_i32_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (call $gs32 (local.get $addr) (call $read_thread_word))
+    (call $next))
+  ;; 134: mov [base+disp], imm8.
+  (func $th_mov_m8_i8_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (call $gs8 (local.get $addr) (call $read_thread_word))
+    (call $next))
+  ;; 135: inc/dec/not/neg [base+disp]. op=unary_op<<4|base, disp in word.
+  (func $th_unary_m32_ro (param $op i32)
+    (local $addr i32) (local $uop i32) (local $old i32) (local $r i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $uop (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $old (call $gl32 (local.get $addr)))
+    (if (i32.eq (local.get $uop) (i32.const 0))
+      (then (local.set $r (i32.add (local.get $old) (i32.const 1)))
+            (call $set_flags_inc (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $uop) (i32.const 1))
+      (then (local.set $r (i32.sub (local.get $old) (i32.const 1)))
+            (call $set_flags_dec (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $uop) (i32.const 2))
+      (then (local.set $r (i32.xor (local.get $old) (i32.const -1)))))
+    (if (i32.eq (local.get $uop) (i32.const 3))
+      (then (local.set $r (i32.sub (i32.const 0) (local.get $old)))
+            (call $set_flags_sub (i32.const 0) (local.get $old) (local.get $r))))
+    (call $gs32 (local.get $addr) (local.get $r)) (call $next))
+  ;; 136: test [base+disp], reg. op=reg<<4|base, disp in word.
+  (func $th_test_m32_r_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (drop (call $do_alu32 (i32.const 4) (call $gl32 (local.get $addr))
+      (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))))
+    (call $next))
+  ;; 137: test [base+disp], imm32. op=base, disp+imm in words.
+  (func $th_test_m32_i32_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (drop (call $do_alu32 (i32.const 4) (call $gl32 (local.get $addr)) (call $read_thread_word)))
+    (call $next))
+  ;; 138: test [base+disp], imm8. op=base, disp+imm in words.
+  (func $th_test_m8_i8_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (drop (call $do_alu32 (i32.const 4) (call $gl8 (local.get $addr)) (call $read_thread_word)))
+    (call $next))
+  ;; 139: shift [base+disp]. op=base, next word=shift_info (type<<8|count), next word=disp.
+  ;; Wait — ea_from_op reads disp as first word. So: op=base, word1=disp (from ea_from_op), word2=shift_info.
+  ;; Actually let me not use ea_from_op here for flexibility. op=base, w1=disp, w2=shift_type<<8|count.
+  (func $th_shift_m32_ro (param $op i32)
+    (local $addr i32) (local $info i32) (local $stype i32) (local $count i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $info (call $read_thread_word))
+    (local.set $stype (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 7)))
+    (local.set $count (i32.and (local.get $info) (i32.const 0xFF)))
+    (if (i32.eqz (local.get $count)) (then (local.set $count (i32.and (global.get $ecx) (i32.const 31)))))
+    (local.set $val (call $gl32 (local.get $addr)))
+    (call $gs32 (local.get $addr) (call $do_shift32 (local.get $stype) (local.get $val) (local.get $count)))
+    (call $next))
+  ;; 140: call [base+disp]. op=ret_addr, w1=base, w2=disp.
+  ;; Different encoding: we need ret_addr in operand AND base+disp. Pack base in w1, disp in w2.
+  (func $th_call_ind_ro (param $op i32)
+    (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
+    (local.set $base (call $read_thread_word))
+    (local.set $disp (call $read_thread_word))
+    (local.set $mem_addr (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
+    (local.set $target (call $gl32 (local.get $mem_addr)))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
+                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+      (then
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $op))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (global.set $eip (local.get $op))
+        (return)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $op))
+    (global.set $eip (local.get $target)))
+  ;; 141: jmp [base+disp]. op=0, w1=base, w2=disp.
+  (func $th_jmp_ind_ro (param $op i32)
+    (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
+    (local.set $base (call $read_thread_word))
+    (local.set $disp (call $read_thread_word))
+    (local.set $mem_addr (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
+    (local.set $target (call $gl32 (local.get $mem_addr)))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
+                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+      (then
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (return)))
+    (global.set $eip (local.get $target)))
+  ;; 142: push [base+disp]. op=base, disp in word.
+  (func $th_push_m32_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (local.get $addr)))
+    (call $next))
+  ;; 143-146: movzx/movsx [base+disp] variants. op=dst<<4|base, disp in word.
+  (func $th_movzx8_ro (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (call $gl8 (call $ea_from_op (local.get $op))))
+    (call $next))
+  (func $th_movsx8_ro (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (call $sign_ext8 (call $gl8 (call $ea_from_op (local.get $op)))))
+    (call $next))
+  (func $th_movzx16_ro (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (call $gl16 (call $ea_from_op (local.get $op))))
+    (call $next))
+  (func $th_movsx16_ro (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (call $sign_ext16 (call $gl16 (call $ea_from_op (local.get $op)))))
+    (call $next))
+  ;; 147: mul/imul/div/idiv [base+disp]. op=type<<4|base, disp in word. type: 0=mul,1=imul,2=div,3=idiv
+  (func $th_muldiv_m32_ro (param $op i32)
+    (local $addr i32) (local $mtype i32) (local $mval i32) (local $val64 i64) (local $divisor i64) (local $dividend i64)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $mtype (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $mval (call $gl32 (local.get $addr)))
+    (if (i32.eq (local.get $mtype) (i32.const 0)) ;; MUL
+      (then (local.set $val64 (i64.mul (i64.extend_i32_u (global.get $eax)) (i64.extend_i32_u (local.get $mval))))
+            (global.set $eax (i32.wrap_i64 (local.get $val64)))
+            (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val64) (i64.const 32))))))
+    (if (i32.eq (local.get $mtype) (i32.const 1)) ;; IMUL
+      (then (local.set $val64 (i64.mul (i64.extend_i32_s (global.get $eax)) (i64.extend_i32_s (local.get $mval))))
+            (global.set $eax (i32.wrap_i64 (local.get $val64)))
+            (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val64) (i64.const 32))))))
+    (if (i32.eq (local.get $mtype) (i32.const 2)) ;; DIV
+      (then (local.set $divisor (i64.extend_i32_u (local.get $mval)))
+            (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
+              (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
+            (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE02)) (return)))
+            (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
+            (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))))
+    (if (i32.eq (local.get $mtype) (i32.const 3)) ;; IDIV
+      (then (local.set $divisor (i64.extend_i32_s (local.get $mval)))
+            (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
+              (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
+            (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE03)) (return)))
+            (global.set $eax (i32.wrap_i64 (i64.div_s (local.get $dividend) (local.get $divisor))))
+            (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))))
+    (call $next))
+
   ;; ============================================================
   ;; x86 DECODER — Full i486 with ModR/M + SIB
   ;; ============================================================
@@ -1368,6 +1630,10 @@
     (if (result i32) (i32.ge_u (local.get $v) (i32.const 0x80))
       (then (i32.or (local.get $v) (i32.const 0xFFFFFF00)))
       (else (local.get $v))))
+  (func $sign_ext16 (param $v i32) (result i32)
+    (if (result i32) (i32.ge_u (local.get $v) (i32.const 0x8000))
+      (then (i32.or (local.get $v) (i32.const 0xFFFF0000)))
+      (else (local.get $v))))
 
   ;; Decode SIB byte and return base+index*scale
   (func $decode_sib (param $mod i32) (result i32)
@@ -1386,16 +1652,27 @@
         (i32.shl (call $get_reg (local.get $index)) (local.get $scale))))))
     (local.get $addr))
 
-  ;; Decode ModR/M, return (mod, reg, effective_address_or_rm_register).
-  ;; For mod=11, returns rm register index (caller uses get_reg/set_reg).
-  ;; For mod!=11, returns guest virtual address.
-  ;; Result is stored in globals to avoid multi-return.
-  (global $mr_mod (mut i32) (i32.const 0))
-  (global $mr_reg (mut i32) (i32.const 0))
-  (global $mr_val (mut i32) (i32.const 0))  ;; EA or rm register index
+  ;; Decode ModR/M — returns addressing mode info for RUNTIME resolution.
+  ;; For mod=11: mr_val = rm register index
+  ;; For mod!=11: mr_base = base reg (-1 if none), mr_disp = displacement,
+  ;;   mr_index = index reg (-1 if none), mr_scale = SIB scale
+  ;; The caller must emit thread ops that compute addr at runtime.
+  (global $mr_mod   (mut i32) (i32.const 0))
+  (global $mr_reg   (mut i32) (i32.const 0))
+  (global $mr_val   (mut i32) (i32.const 0))  ;; rm register index (mod=11 only)
+  (global $mr_base  (mut i32) (i32.const -1)) ;; base register (-1=none)
+  (global $mr_disp  (mut i32) (i32.const 0))  ;; displacement
+  (global $mr_index (mut i32) (i32.const -1)) ;; SIB index register (-1=none)
+  (global $mr_scale (mut i32) (i32.const 0))  ;; SIB scale (0-3)
 
   (func $decode_modrm
-    (local $modrm i32) (local $mod i32) (local $rm i32) (local $addr i32) (local $disp i32)
+    (local $modrm i32) (local $mod i32) (local $rm i32)
+    (local $sib i32)
+    (global.set $mr_base (i32.const -1))
+    (global.set $mr_disp (i32.const 0))
+    (global.set $mr_index (i32.const -1))
+    (global.set $mr_scale (i32.const 0))
+
     (local.set $modrm (call $d_fetch8))
     (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
     (global.set $mr_reg (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
@@ -1409,29 +1686,289 @@
     ;; mod=00
     (if (i32.eq (local.get $mod) (i32.const 0))
       (then
-        (if (i32.eq (local.get $rm) (i32.const 4))
-          (then (global.set $mr_val (call $decode_sib (i32.const 0))) (return)))
-        (if (i32.eq (local.get $rm) (i32.const 5))
-          (then (global.set $mr_val (call $d_fetch32)) (return)))  ;; disp32 only
-        (global.set $mr_val (call $get_reg (local.get $rm)))
+        (if (i32.eq (local.get $rm) (i32.const 4)) ;; SIB
+          (then (call $decode_sib_info (i32.const 0)) (return)))
+        (if (i32.eq (local.get $rm) (i32.const 5)) ;; disp32 only
+          (then (global.set $mr_disp (call $d_fetch32)) (return)))
+        ;; [reg] only
+        (global.set $mr_base (local.get $rm))
         (return)))
 
     ;; mod=01: [rm + disp8]
     (if (i32.eq (local.get $mod) (i32.const 1))
       (then
         (if (i32.eq (local.get $rm) (i32.const 4))
-          (then (local.set $addr (call $decode_sib (i32.const 1))))
-          (else (local.set $addr (call $get_reg (local.get $rm)))))
-        (local.set $disp (call $sign_ext8 (call $d_fetch8)))
-        (global.set $mr_val (i32.add (local.get $addr) (local.get $disp)))
+          (then (call $decode_sib_info (i32.const 1)))
+          (else (global.set $mr_base (local.get $rm))))
+        (global.set $mr_disp (i32.add (global.get $mr_disp) (call $sign_ext8 (call $d_fetch8))))
         (return)))
 
     ;; mod=10: [rm + disp32]
     (if (i32.eq (local.get $rm) (i32.const 4))
-      (then (local.set $addr (call $decode_sib (i32.const 2))))
-      (else (local.set $addr (call $get_reg (local.get $rm)))))
-    (global.set $mr_val (i32.add (local.get $addr) (call $d_fetch32)))
+      (then (call $decode_sib_info (i32.const 2)))
+      (else (global.set $mr_base (local.get $rm))))
+    (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch32)))
   )
+
+  ;; Decode SIB, store base/index/scale info (not resolved)
+  (func $decode_sib_info (param $mod i32)
+    (local $sib i32) (local $base i32) (local $index i32)
+    (local.set $sib (call $d_fetch8))
+    (global.set $mr_scale (i32.shr_u (local.get $sib) (i32.const 6)))
+    (local.set $index (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+    ;; Index 4 means no index
+    (if (i32.ne (local.get $index) (i32.const 4))
+      (then (global.set $mr_index (local.get $index))))
+    ;; Base 5 with mod=0 means disp32 only
+    (if (i32.and (i32.eq (local.get $base) (i32.const 5)) (i32.eq (local.get $mod) (i32.const 0)))
+      (then (global.set $mr_disp (call $d_fetch32)))
+      (else (global.set $mr_base (local.get $base)))))
+
+  ;; Emit thread ops to compute effective address at RUNTIME and leave result
+  ;; as a guest address. Uses a new handler: th_compute_ea.
+  ;; Returns: for simple [reg+disp], emits th_load32_ro-style op.
+  ;; For SIB or complex modes, emits th_compute_ea then th_load32.
+  ;;
+  ;; Actually, a simpler approach: add a handler that computes EA from
+  ;; (base_reg, index_reg, scale, disp) and stores it in a temp.
+  ;; Then the caller emits "compute_ea" + "load from temp" or "alu with temp".
+  ;;
+  ;; Simplest approach: add a $mr_ea_to_thread function that emits ops to
+  ;; compute the address into a specific register or thread-word sequence.
+  ;; For the common case [reg+disp], emit the (reg<<4|0, disp) operands directly.
+  ;; For [disp32] (no base), emit (addr) directly.
+  ;; For SIB with index, we need a more complex approach.
+  ;;
+  ;; Let's handle the common cases and fall back for complex SIB.
+
+  ;; ============================================================
+  ;; EMIT HELPERS — emit thread ops for memory access with runtime EA
+  ;; ============================================================
+  ;; After decode_modrm, mr_base/mr_disp/mr_index/mr_scale describe the EA.
+  ;; These helpers emit the correct handler ops based on the addressing mode.
+
+  ;; Helper: has base reg, no SIB index?
+  (func $mr_simple_base (result i32)
+    (i32.and (i32.ne (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
+  ;; Helper: absolute address (no base, no index)?
+  (func $mr_absolute (result i32)
+    (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
+
+  (func $emit_load32 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 26) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    ;; Absolute or SIB — for SIB, resolve at decode time (imperfect but works for most code)
+    (call $te (i32.const 20) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
+
+  (func $emit_store32 (param $src i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 27) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 21) (local.get $src)) (call $te_raw (global.get $mr_disp)))
+
+  (func $emit_load8 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 28) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 24) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
+
+  (func $emit_store8 (param $src i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 29) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 25) (local.get $src)) (call $te_raw (global.get $mr_disp)))
+
+  (func $emit_lea (param $dst i32)
+    ;; LEA computes address without memory access
+    (if (call $mr_simple_base)
+      (then
+        (if (i32.eqz (global.get $mr_disp))
+          (then (call $te (i32.const 11) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base))))
+          (else ;; dst = base + disp (runtime). Use th_lea_ro (handler 126)
+            (call $te (i32.const 126) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp))))
+        (return)))
+    ;; Absolute: LEA reg, [const] = MOV reg, const
+    (call $te (i32.const 2) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
+
+  ;; ALU [mem] OP= reg (runtime address)
+  (func $emit_alu_m32_r (param $alu_op i32) (param $reg i32)
+    (if (call $mr_simple_base)
+      (then ;; Use th_alu_m32_r_ro (handler 127): [base+disp] OP= reg
+        (call $te (i32.const 127) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+          (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
+        (call $te_raw (global.get $mr_disp)) (return)))
+    ;; Absolute
+    (call $te (i32.const 47) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; reg OP= [mem] (runtime address)
+  (func $emit_alu_r_m32 (param $alu_op i32) (param $reg i32)
+    (if (call $mr_simple_base)
+      (then ;; Use th_alu_r_m32_ro (handler 128): reg OP= [base+disp]
+        (call $te (i32.const 128) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+          (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
+        (call $te_raw (global.get $mr_disp)) (return)))
+    ;; Absolute
+    (call $te (i32.const 48) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; ALU [mem8] OP= reg8 (runtime address)
+  (func $emit_alu_m8_r (param $alu_op i32) (param $reg i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 129) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+              (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 49) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
+    (call $te_raw (global.get $mr_disp)))
+
+  (func $emit_alu_r_m8 (param $alu_op i32) (param $reg i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 130) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+              (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 50) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; ALU [mem] OP= imm
+  (func $emit_alu_m32_i (param $alu_op i32) (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 131) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 51) (local.get $alu_op))
+    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+
+  (func $emit_alu_m8_i (param $alu_op i32) (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 132) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 52) (local.get $alu_op))
+    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+
+  ;; MOV [mem], imm32
+  (func $emit_store32_imm (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 133) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 76) (i32.const 0))
+    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+
+  ;; MOV [mem], imm8
+  (func $emit_store8_imm (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 134) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 77) (local.get $imm))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; Unary (inc/dec/not/neg) [mem32]
+  (func $emit_unary_m32 (param $uop i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 135) (i32.or (i32.shl (local.get $uop) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 68) (local.get $uop))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; TEST [mem32], reg
+  (func $emit_test_m32_r (param $reg i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 136) (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 74) (local.get $reg))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; TEST [mem32], imm32
+  (func $emit_test_m32_i (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 137) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 75) (i32.const 0))
+    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+
+  ;; TEST [mem8], imm8
+  (func $emit_test_m8_i (param $imm i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 138) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (call $te (i32.const 124) (local.get $imm))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; Shift [mem32]
+  (func $emit_shift_m32 (param $shift_info i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 139) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $shift_info)) (return)))
+    (call $te (i32.const 54) (local.get $shift_info))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; CALL [mem] (indirect)
+  (func $emit_call_ind (param $ret_addr i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 140) (local.get $ret_addr))
+            (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 40) (local.get $ret_addr))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; JMP [mem] (indirect)
+  (func $emit_jmp_ind
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 141) (i32.const 0))
+            (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 125) (i32.const 0))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; PUSH [mem32]
+  (func $emit_push_m32
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 142) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 121) (i32.const 0))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; MOVZX reg, byte [mem]
+  (func $emit_movzx8 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 143) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 78) (local.get $dst))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; MOVSX reg, byte [mem]
+  (func $emit_movsx8 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 144) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 79) (local.get $dst))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; MOVZX reg, word [mem]
+  (func $emit_movzx16 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 145) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 80) (local.get $dst))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; MOVSX reg, word [mem]
+  (func $emit_movsx16 (param $dst i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 146) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 81) (local.get $dst))
+    (call $te_raw (global.get $mr_disp)))
+
+  ;; MUL/IMUL/DIV/IDIV [mem32]. type: 0=mul,1=imul,2=div,3=idiv
+  (func $emit_muldiv_m32 (param $mtype i32)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 147) (i32.or (i32.shl (local.get $mtype) (i32.const 4)) (global.get $mr_base)))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    ;; Absolute: use existing handlers 60-63
+    (if (i32.eq (local.get $mtype) (i32.const 0)) (then (call $te (i32.const 60) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
+    (if (i32.eq (local.get $mtype) (i32.const 1)) (then (call $te (i32.const 61) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
+    (if (i32.eq (local.get $mtype) (i32.const 2)) (then (call $te (i32.const 62) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
+    (call $te (i32.const 63) (i32.const 0)) (call $te_raw (global.get $mr_disp)))
 
   ;; ============================================================
   ;; DECODE BLOCK
@@ -1539,20 +2076,16 @@
                   (call $te (i32.add (i32.const 12) (local.get $imm))
                     (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
             (else
-              ;; memory involved
+              ;; memory involved — use runtime EA helpers
               (if (i32.and (local.get $op) (i32.const 2))
                 (then ;; r, [mem]
                   (if (i32.and (local.get $op) (i32.const 1))
-                    (then (call $te (i32.const 48) (i32.or (i32.shl (local.get $imm) (i32.const 4)) (global.get $mr_reg)))
-                          (call $te_raw (global.get $mr_val)))
-                    (else (call $te (i32.const 50) (i32.or (i32.shl (local.get $imm) (i32.const 4)) (global.get $mr_reg)))
-                          (call $te_raw (global.get $mr_val)))))
+                    (then (call $emit_alu_r_m32 (local.get $imm) (global.get $mr_reg)))
+                    (else (call $emit_alu_r_m8 (local.get $imm) (global.get $mr_reg)))))
                 (else ;; [mem], r
                   (if (i32.and (local.get $op) (i32.const 1))
-                    (then (call $te (i32.const 47) (i32.or (i32.shl (local.get $imm) (i32.const 4)) (global.get $mr_reg)))
-                          (call $te_raw (global.get $mr_val)))
-                    (else (call $te (i32.const 49) (i32.or (i32.shl (local.get $imm) (i32.const 4)) (global.get $mr_reg)))
-                          (call $te_raw (global.get $mr_val))))))))
+                    (then (call $emit_alu_m32_r (local.get $imm) (global.get $mr_reg)))
+                    (else (call $emit_alu_m8_r (local.get $imm) (global.get $mr_reg))))))))
           (br $decode)))
 
       ;; ---- 0x80/0x81/0x82/0x83: Group 1 — ALU r/m, imm ----
@@ -1568,12 +2101,10 @@
             (then ;; reg, imm
               (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
               (call $te_raw (local.get $imm)))
-            (else ;; [mem], imm
+            (else ;; [mem], imm — use runtime EA
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
-                (then (call $te (i32.const 52) (global.get $mr_reg)) ;; alu_m8_i8
-                      (call $te_raw (global.get $mr_val)) (call $te_raw (local.get $imm)))
-                (else (call $te (i32.const 51) (global.get $mr_reg)) ;; alu_m32_i32
-                      (call $te_raw (global.get $mr_val)) (call $te_raw (local.get $imm))))))
+                (then (call $emit_alu_m8_i (global.get $mr_reg) (local.get $imm)))
+                (else (call $emit_alu_m32_i (global.get $mr_reg) (local.get $imm))))))
           (br $decode)))
 
       ;; ---- 0x84/0x85: TEST r/m, r ----
@@ -1582,7 +2113,8 @@
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 72) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-            (else (call $te (i32.const 74) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))
+            (else (call $emit_test_m32_r (global.get $mr_reg))))
+
           (br $decode)))
 
       ;; ---- 0x88/0x89: MOV r/m, r ----
@@ -1593,8 +2125,8 @@
             (then (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x89))
-                (then (call $te (i32.const 21) (global.get $mr_reg)) (call $te_raw (global.get $mr_val)))
-                (else (call $te (i32.const 25) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))))
+                (then (call $emit_store32 (global.get $mr_reg)))
+                (else (call $emit_store8 (global.get $mr_reg))))))
           (br $decode)))
 
       ;; ---- 0x8A/0x8B: MOV r, r/m ----
@@ -1605,15 +2137,15 @@
             (then (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x8B))
-                (then (call $te (i32.const 20) (global.get $mr_reg)) (call $te_raw (global.get $mr_val)))
-                (else (call $te (i32.const 24) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))))
+                (then (call $emit_load32 (global.get $mr_reg)))
+                (else (call $emit_load8 (global.get $mr_reg))))))
           (br $decode)))
 
       ;; ---- 0x8D: LEA ----
       (if (i32.eq (local.get $op) (i32.const 0x8D))
         (then
           (call $decode_modrm)
-          (call $te (i32.const 70) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))
+          (call $emit_lea (global.get $mr_reg))
           (br $decode)))
 
       ;; ---- 0xA0-0xA3: MOV AL/EAX, [abs] / MOV [abs], AL/EAX ----
@@ -1629,7 +2161,7 @@
           (local.set $imm (call $d_fetch8))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 2) (global.get $mr_val)) (call $te_raw (local.get $imm)))
-            (else (call $te (i32.const 77) (local.get $imm)) (call $te_raw (global.get $mr_val))))
+            (else (call $emit_store8_imm (local.get $imm))))
           (br $decode)))
 
       ;; ---- 0xC7: MOV r/m32, imm32 ----
@@ -1639,7 +2171,7 @@
           (local.set $imm (call $d_fetch32))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 2) (global.get $mr_val)) (call $te_raw (local.get $imm)))
-            (else (call $te (i32.const 76) (i32.const 0)) (call $te_raw (global.get $mr_val)) (call $te_raw (local.get $imm))))
+            (else (call $emit_store32_imm (local.get $imm))))
           (br $decode)))
 
       ;; ---- 0xA8: TEST AL, imm8 ----
@@ -1663,20 +2195,21 @@
                 (then (call $te (i32.const 73) (global.get $mr_val)) (call $te_raw (local.get $imm)))
                 (else
                   (if (i32.eq (local.get $op) (i32.const 0xF7))
-                    (then (call $te (i32.const 75) (i32.const 0)) (call $te_raw (global.get $mr_val)) (call $te_raw (local.get $imm)))
-                    (else (call $te (i32.const 124) (local.get $imm)) (call $te_raw (global.get $mr_val))))))
+                    (then (call $emit_test_m32_i (local.get $imm)))
+                    (else (call $emit_test_m8_i (local.get $imm))))))
+
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 2)) ;; NOT
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 66) (global.get $mr_val)))
-                (else (call $te (i32.const 68) (i32.const 2)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_unary_m32 (i32.const 2))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 3)) ;; NEG
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 67) (global.get $mr_val)))
-                (else (call $te (i32.const 68) (i32.const 3)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_unary_m32 (i32.const 3))))
               (br $decode)))
           ;; MUL/IMUL/DIV/IDIV
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
@@ -1686,10 +2219,10 @@
               (if (i32.eq (global.get $mr_reg) (i32.const 6)) (then (call $te (i32.const 57) (global.get $mr_val))))
               (if (i32.eq (global.get $mr_reg) (i32.const 7)) (then (call $te (i32.const 58) (global.get $mr_val)))))
             (else
-              (if (i32.eq (global.get $mr_reg) (i32.const 4)) (then (call $te (i32.const 60) (i32.const 0)) (call $te_raw (global.get $mr_val))))
-              (if (i32.eq (global.get $mr_reg) (i32.const 5)) (then (call $te (i32.const 61) (i32.const 0)) (call $te_raw (global.get $mr_val))))
-              (if (i32.eq (global.get $mr_reg) (i32.const 6)) (then (call $te (i32.const 62) (i32.const 0)) (call $te_raw (global.get $mr_val))))
-              (if (i32.eq (global.get $mr_reg) (i32.const 7)) (then (call $te (i32.const 63) (i32.const 0)) (call $te_raw (global.get $mr_val))))))
+              (if (i32.eq (global.get $mr_reg) (i32.const 4)) (then (call $emit_muldiv_m32 (i32.const 0))))
+              (if (i32.eq (global.get $mr_reg) (i32.const 5)) (then (call $emit_muldiv_m32 (i32.const 1))))
+              (if (i32.eq (global.get $mr_reg) (i32.const 6)) (then (call $emit_muldiv_m32 (i32.const 2))))
+              (if (i32.eq (global.get $mr_reg) (i32.const 7)) (then (call $emit_muldiv_m32 (i32.const 3))))))
           (br $decode)))
 
       ;; ---- 0xFE/0xFF: Group 4/5 (INC/DEC/CALL/JMP/PUSH r/m) ----
@@ -1701,37 +2234,32 @@
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 64) (global.get $mr_val)))
-                (else (call $te (i32.const 68) (i32.const 0)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_unary_m32 (i32.const 0))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 1)) ;; DEC
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 65) (global.get $mr_val)))
-                (else (call $te (i32.const 68) (i32.const 1)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_unary_m32 (i32.const 1))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 2)) ;; CALL r/m32
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 119) (global.get $d_pc)) ;; ret addr
-                      (call $te_raw (global.get $mr_val)))           ;; reg index
-                (else (call $te (i32.const 40) (global.get $d_pc))  ;; ret addr
-                      (call $te_raw (global.get $mr_val))))          ;; mem addr
+                (then (call $te (i32.const 119) (global.get $d_pc))
+                      (call $te_raw (global.get $mr_val)))
+                (else (call $emit_call_ind (global.get $d_pc))))
               (local.set $done (i32.const 1)) (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 4)) ;; JMP r/m32
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 120) (global.get $mr_val)))
-                (else
-                  ;; JMP [mem] — need to load and jump. Emit block_end for now.
-                  ;; Actually, we can emit load32 into eip... but we need a handler.
-                  ;; For indirect jmp through memory, end block and let run resolve.
-                  (call $te (i32.const 45) (global.get $d_pc))))
+                (else (call $emit_jmp_ind)))
               (local.set $done (i32.const 1)) (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 6)) ;; PUSH r/m32
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 32) (global.get $mr_val)))
-                (else (call $te (i32.const 121) (i32.const 0)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_push_m32)))
               (br $decode)))
           ;; Unhandled FF variant
           (call $te (i32.const 45) (global.get $d_pc))
@@ -1746,8 +2274,7 @@
             (then (i32.const 1)) (else (i32.const 0xFF)))) ;; 0xFF = use CL
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 53) (i32.or (global.get $mr_val) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (i32.shl (local.get $imm) (i32.const 16))))))
-            (else (call $te (i32.const 54) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (i32.shl (local.get $imm) (i32.const 16))))
-                  (call $te_raw (global.get $mr_val))))
+            (else (call $emit_shift_m32 (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (local.get $imm)))))
           (br $decode)))
 
       ;; ---- 0xC0/0xC1: Shift group 2, imm8 ----
@@ -1757,8 +2284,7 @@
           (local.set $imm (call $d_fetch8))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 53) (i32.or (global.get $mr_val) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (i32.shl (local.get $imm) (i32.const 16))))))
-            (else (call $te (i32.const 54) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (i32.shl (local.get $imm) (i32.const 16))))
-                  (call $te_raw (global.get $mr_val))))
+            (else (call $emit_shift_m32 (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (local.get $imm)))))
           (br $decode)))
 
       ;; ---- PUSH imm32 (0x68) / PUSH imm8 (0x6A) ----
@@ -1777,7 +2303,7 @@
             (then (call $te (i32.const 59) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                   (call $te_raw (local.get $imm)))
             (else ;; reg, [mem], imm — load then multiply
-              (call $te (i32.const 20) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))
+              (call $emit_load32 (global.get $mr_reg))
               (call $te (i32.const 59) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_reg)))
               (call $te_raw (local.get $imm))))
           (br $decode)))
@@ -1797,7 +2323,8 @@
 
       ;; ---- JMP rel8 (0xEB) / JMP rel32 (0xE9) ----
       (if (i32.eq (local.get $op) (i32.const 0xEB))
-        (then (call $te (i32.const 43) (i32.const 0)) (call $te_raw (i32.add (global.get $d_pc) (call $sign_ext8 (call $d_fetch8))))
+        (then (local.set $disp (call $sign_ext8 (call $d_fetch8)))
+              (call $te (i32.const 43) (i32.const 0)) (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
               (local.set $done (i32.const 1)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xE9))
         (then (local.set $disp (call $d_fetch32))
@@ -1894,7 +2421,9 @@
             (then
               (call $decode_modrm)
               (call $te (i32.const 102) (i32.and (local.get $op) (i32.const 0xF)))
-              (call $te_raw (global.get $mr_val)) ;; reg index (mod=11) or addr
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te_raw (global.get $mr_val)))
+                (else (call $te_raw (global.get $mr_disp)))) ;; TODO: runtime EA for SETcc mem
               (br $decode)))
 
           ;; 0x0F 0xAF: IMUL r32, r/m32
@@ -1904,7 +2433,7 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                 (else ;; load then multiply
-                  (call $te (i32.const 20) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))
+                  (call $emit_load32 (global.get $mr_reg))
                   (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_reg)))))
               (br $decode)))
 
@@ -1921,7 +2450,7 @@
                   ;; Simplest: emit as mov_r_r then and_r_i32
                   (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                   (call $te (i32.const 7) (global.get $mr_reg)) (call $te_raw (i32.const 0xFF)))
-                (else (call $te (i32.const 78) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_movzx8 (global.get $mr_reg))))
               (br $decode)))
 
           ;; 0x0F 0xB7: MOVZX r32, r/m16
@@ -1931,7 +2460,7 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                       (call $te (i32.const 7) (global.get $mr_reg)) (call $te_raw (i32.const 0xFFFF)))
-                (else (call $te (i32.const 80) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_movzx16 (global.get $mr_reg))))
               (br $decode)))
 
           ;; 0x0F 0xBE: MOVSX r32, r/m8
@@ -1939,12 +2468,11 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; sign-extend reg8 to reg32 — approximate
+                (then
                   (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                  ;; Sign extend: shl 24, sar 24
                   (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 4) (i32.const 8)) (i32.shl (i32.const 24) (i32.const 16)))))
                   (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 7) (i32.const 8)) (i32.shl (i32.const 24) (i32.const 16))))))
-                (else (call $te (i32.const 79) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_movsx8 (global.get $mr_reg))))
               (br $decode)))
 
           ;; 0x0F 0xBF: MOVSX r32, r/m16
@@ -1956,7 +2484,7 @@
                   (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                   (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 4) (i32.const 8)) (i32.shl (i32.const 16) (i32.const 16)))))
                   (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 7) (i32.const 8)) (i32.shl (i32.const 16) (i32.const 16))))))
-                (else (call $te (i32.const 81) (global.get $mr_reg)) (call $te_raw (global.get $mr_val))))
+                (else (call $emit_movsx16 (global.get $mr_reg))))
               (br $decode)))
 
           ;; 0x0F 0xA4/0xA5: SHLD, 0x0F 0xAC/0xAD: SHRD
@@ -2143,7 +2671,7 @@
     ;; ExitProcess "Exit"=0x74697845
     (if (i32.eq (local.get $w0) (i32.const 0x74697845))
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-            (call $host_exit (local.get $arg0)) (return)))
+            (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)))
     ;; GetModuleHandleA "GetM"+"odul"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547)) (i32.eq (local.get $w1) (i32.const 0x6C75646F)))
       (then (global.set $eax (global.get $image_base))
@@ -2421,15 +2949,19 @@
   ;; ============================================================
   ;; MAIN RUN LOOP
   ;; ============================================================
-  (func $run (export "run") (param $max_steps i32)
-    (local $thread i32)
-    (global.set $steps (local.get $max_steps))
+  (func $run (export "run") (param $max_blocks i32)
+    (local $thread i32) (local $blocks i32)
+    (local.set $blocks (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (global.get $steps) (i32.const 0)))
+      (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $halt (i32.eqz (global.get $eip)))
+      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
       (global.set $ip (local.get $thread))
+      ;; Set steps high enough to always complete a block
+      (global.set $steps (i32.const 1000))
       (call $next)
       (br $main))))
 
