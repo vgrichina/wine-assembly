@@ -5,6 +5,8 @@
 #   -n NUM     max batches (default: 200)
 #   -s NUM     instructions per batch (default: 1000)
 #   -v         verbose: print regs every batch
+#   -t         trace: log every block's EIP
+#   -a         trace-api: log API calls with ESP and args
 #   -o FILE    save output to file (also prints to stdout)
 set -e
 cd "$(dirname "$0")/.."
@@ -13,14 +15,18 @@ SKIP_BUILD=0
 MAX_BATCHES=200
 BATCH_SIZE=1000
 VERBOSE=0
+TRACE=0
+TRACE_API=0
 OUTFILE=""
 
-while getopts "bn:s:vo:" opt; do
+while getopts "bn:s:vtao:" opt; do
   case $opt in
     b) SKIP_BUILD=1 ;;
     n) MAX_BATCHES=$OPTARG ;;
     s) BATCH_SIZE=$OPTARG ;;
     v) VERBOSE=1 ;;
+    t) TRACE=1 ;;
+    a) TRACE_API=1 ;;
     o) OUTFILE=$OPTARG ;;
     *) echo "Unknown option: -$opt" >&2; exit 1 ;;
   esac
@@ -33,6 +39,8 @@ fi
 
 CMD="node test/run-notepad.js --max-batches=$MAX_BATCHES --batch-size=$BATCH_SIZE"
 [ "$VERBOSE" -eq 1 ] && CMD="$CMD --verbose"
+[ "$TRACE" -eq 1 ] && CMD="$CMD --trace"
+[ "$TRACE_API" -eq 1 ] && CMD="$CMD --trace-api"
 
 if [ -n "$OUTFILE" ]; then
   $CMD 2>&1 | tee "$OUTFILE"

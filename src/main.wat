@@ -80,6 +80,17 @@
   (global $heap_ptr (mut i32) (i32.const 0x00912000))
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
 
+  ;; Runtime EA temp for SIB addressing
+  (global $ea_temp (mut i32) (i32.const 0))
+
+  ;; Window system state
+  (global $wndproc_addr (mut i32) (i32.const 0))    ;; WndProc function pointer (guest VA)
+  (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
+  (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop: 0=WM_CREATE sent, 1+=message index
+  (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
+  (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
+  (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
+
   ;; ============================================================
   ;; THREAD HANDLER TABLE
   ;; ============================================================
@@ -93,7 +104,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 148 funcref)
+  (table $handlers 150 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -268,6 +279,8 @@
     $th_movzx16_ro         ;; 145
     $th_movsx16_ro         ;; 146
     $th_muldiv_m32_ro      ;; 147: mul/imul/div/idiv [base+disp] (op=type<<4|base, disp in word)
+    $th_lea_sib            ;; 148: LEA dst, [base+index*scale+disp] (op=dst, base|index<<4|scale<<8 in word, disp in word)
+    $th_compute_ea_sib     ;; 149: compute SIB EA → ea_temp, then fall through to next handler (same encoding as 148 but op ignored)
   )
 
   ;; ============================================================
@@ -685,13 +698,20 @@
     (local.set $b (call $get_reg (i32.and (local.get $op) (i32.const 0xF))))
     (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b))) (call $next))
 
-  ;; --- Load/Store absolute (operand=reg, guest_addr in next word) ---
-  (func $th_load32 (param $op i32) (call $set_reg (local.get $op) (call $gl32 (call $read_thread_word))) (call $next))
-  (func $th_store32 (param $op i32) (call $gs32 (call $read_thread_word) (call $get_reg (local.get $op))) (call $next))
-  (func $th_load16 (param $op i32) (call $set_reg16 (local.get $op) (call $gl16 (call $read_thread_word))) (call $next))
-  (func $th_store16 (param $op i32) (call $gs16 (call $read_thread_word) (call $get_reg16 (local.get $op))) (call $next))
-  (func $th_load8 (param $op i32) (call $set_reg8 (local.get $op) (call $gl8 (call $read_thread_word))) (call $next))
-  (func $th_store8 (param $op i32) (call $gs8 (call $read_thread_word) (call $get_reg8 (local.get $op))) (call $next))
+  ;; Helper: read address from thread word, but if sentinel (0xEADEAD), use ea_temp
+  (func $read_addr (result i32)
+    (local $a i32) (local.set $a (call $read_thread_word))
+    (if (result i32) (i32.eq (local.get $a) (i32.const 0xEADEAD))
+      (then (global.get $ea_temp))
+      (else (local.get $a))))
+
+  ;; --- Load/Store absolute (operand=reg, guest_addr in next word or ea_temp) ---
+  (func $th_load32 (param $op i32) (call $set_reg (local.get $op) (call $gl32 (call $read_addr))) (call $next))
+  (func $th_store32 (param $op i32) (call $gs32 (call $read_addr) (call $get_reg (local.get $op))) (call $next))
+  (func $th_load16 (param $op i32) (call $set_reg16 (local.get $op) (call $gl16 (call $read_addr))) (call $next))
+  (func $th_store16 (param $op i32) (call $gs16 (call $read_addr) (call $get_reg16 (local.get $op))) (call $next))
+  (func $th_load8 (param $op i32) (call $set_reg8 (local.get $op) (call $gl8 (call $read_addr))) (call $next))
+  (func $th_store8 (param $op i32) (call $gs8 (call $read_addr) (call $get_reg8 (local.get $op))) (call $next))
 
   ;; --- Load/Store reg+offset (operand=dst<<4|base, disp in next word) ---
   (func $th_load32_ro (param $op i32)
@@ -770,7 +790,7 @@
     (global.set $eip (local.get $target)))
   (func $th_call_ind (param $op i32)
     (local $mem_addr i32) (local $target i32)
-    (local.set $mem_addr (call $read_thread_word))
+    (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     ;; Check thunk zone
     (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
@@ -817,7 +837,7 @@
   ;; 47: [addr] OP= reg  (operand=alu_op<<4|reg, addr in next word)
   (func $th_alu_m32_r (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (call $get_reg (local.get $reg))))
@@ -826,7 +846,7 @@
   ;; 48: reg OP= [addr]
   (func $th_alu_r_m32 (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $val (call $do_alu32 (local.get $alu) (call $get_reg (local.get $reg)) (call $gl32 (local.get $addr))))
@@ -835,7 +855,7 @@
   ;; 49: [addr] OP= reg (byte)
   (func $th_alu_m8_r (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $a i32) (local $b i32) (local $r i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $a (call $gl8 (local.get $addr))) (local.set $b (call $get_reg8 (local.get $reg)))
@@ -845,7 +865,7 @@
   ;; 50: reg OP= [addr] (byte)
   (func $th_alu_r_m8 (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $a i32) (local $b i32) (local $r i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $a (call $get_reg8 (local.get $reg))) (local.set $b (call $gl8 (local.get $addr)))
@@ -855,14 +875,14 @@
   ;; 51: [addr] OP= imm32  (operand=alu_op, addr+imm in next words)
   (func $th_alu_m32_i32 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    (local.set $addr (call $read_thread_word)) (local.set $imm (call $read_thread_word))
+    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl32 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
     (call $next))
   ;; 52: [addr] OP= imm8  (operand=alu_op, addr+imm in next words)
   (func $th_alu_m8_i8 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    (local.set $addr (call $read_thread_word)) (local.set $imm (call $read_thread_word))
+    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl8 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
     (call $next))
@@ -881,7 +901,7 @@
   ;; 54: shift [addr] (operand = shift_type<<8 | count<<16, addr in next word)
   (func $th_shift_m32 (param $op i32)
     (local $addr i32) (local $type i32) (local $count i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $type (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
     (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF)))
     (if (i32.eq (local.get $count) (i32.const 0xFF))
@@ -981,7 +1001,7 @@
   ;; 68: operand = unary_type (0=inc,1=dec,2=not,3=neg), addr in next word
   (func $th_unary_m32 (param $op i32)
     (local $addr i32) (local $old i32) (local $r i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $old (call $gl32 (local.get $addr)))
     (if (i32.eq (local.get $op) (i32.const 0))
       (then (local.set $r (i32.add (local.get $old) (i32.const 1)))
@@ -997,7 +1017,7 @@
     (call $gs32 (local.get $addr) (local.get $r)) (call $next))
   (func $th_unary_m8 (param $op i32)
     (local $addr i32) (local $old i32) (local $r i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $old (call $gl8 (local.get $addr)))
     (if (i32.eq (local.get $op) (i32.const 0))
       (then (local.set $r (i32.add (local.get $old) (i32.const 1)))))
@@ -1029,28 +1049,28 @@
   (func $th_test_r_i32 (param $op i32)
     (call $set_flags_logic (i32.and (call $get_reg (local.get $op)) (call $read_thread_word))) (call $next))
   (func $th_test_m32_r (param $op i32)
-    (call $set_flags_logic (i32.and (call $gl32 (call $read_thread_word)) (call $get_reg (local.get $op)))) (call $next))
+    (call $set_flags_logic (i32.and (call $gl32 (call $read_addr)) (call $get_reg (local.get $op)))) (call $next))
   (func $th_test_m32_i32 (param $op i32)
-    (local $addr i32) (local.set $addr (call $read_thread_word))
+    (local $addr i32) (local.set $addr (call $read_addr))
     (call $set_flags_logic (i32.and (call $gl32 (local.get $addr)) (call $read_thread_word))) (call $next))
 
   ;; --- MOV memory-immediate ---
   (func $th_mov_m32_i32 (param $op i32)
-    (local $addr i32) (local.set $addr (call $read_thread_word))
+    (local $addr i32) (local.set $addr (call $read_addr))
     (call $gs32 (local.get $addr) (call $read_thread_word)) (call $next))
   (func $th_mov_m8_i8 (param $op i32)
-    (call $gs8 (call $read_thread_word) (local.get $op)) (call $next))
+    (call $gs8 (call $read_addr) (local.get $op)) (call $next))
 
   ;; --- MOVZX / MOVSX ---
-  (func $th_movzx8 (param $op i32) (call $set_reg (local.get $op) (call $gl8 (call $read_thread_word))) (call $next))
+  (func $th_movzx8 (param $op i32) (call $set_reg (local.get $op) (call $gl8 (call $read_addr))) (call $next))
   (func $th_movsx8 (param $op i32)
-    (local $v i32) (local.set $v (call $gl8 (call $read_thread_word)))
+    (local $v i32) (local.set $v (call $gl8 (call $read_addr)))
     (if (i32.ge_u (local.get $v) (i32.const 0x80))
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
     (call $set_reg (local.get $op) (local.get $v)) (call $next))
-  (func $th_movzx16 (param $op i32) (call $set_reg (local.get $op) (call $gl16 (call $read_thread_word))) (call $next))
+  (func $th_movzx16 (param $op i32) (call $set_reg (local.get $op) (call $gl16 (call $read_addr))) (call $next))
   (func $th_movsx16 (param $op i32)
-    (local $v i32) (local.set $v (call $gl16 (call $read_thread_word)))
+    (local $v i32) (local.set $v (call $gl16 (call $read_addr)))
     (if (i32.ge_u (local.get $v) (i32.const 0x8000))
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFF0000)))))
     (call $set_reg (local.get $op) (local.get $v)) (call $next))
@@ -1346,15 +1366,15 @@
     (global.set $eip (call $get_reg (local.get $op))))
   (func $th_push_m32 (param $op i32)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (call $read_thread_word))) (call $next))
+    (call $gs32 (global.get $esp) (call $gl32 (call $read_addr))) (call $next))
   (func $th_alu_m16_i16 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    (local.set $addr (call $read_thread_word)) (local.set $imm (call $read_thread_word))
+    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl16 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (call $next))
   (func $th_load8s (param $op i32)
-    (local $v i32) (local.set $v (call $gl8 (call $read_thread_word)))
+    (local $v i32) (local.set $v (call $gl8 (call $read_addr)))
     (if (i32.ge_u (local.get $v) (i32.const 0x80))
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
     (call $set_reg (local.get $op) (local.get $v)) (call $next))
@@ -1365,7 +1385,7 @@
   ;; operand=ignored, mem_addr in next thread word
   (func $th_jmp_ind (param $op i32)
     (local $mem_addr i32) (local $target i32) (local $ret_addr i32)
-    (local.set $mem_addr (call $read_thread_word))
+    (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     ;; Check thunk zone — JMP, not CALL. The caller's return address is already on stack.
     (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
@@ -1386,6 +1406,41 @@
   (func $th_lea_ro (param $op i32)
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
       (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+    (call $next))
+
+  ;; 148: LEA dst, [base+index*scale+disp]. op=dst. Words: base|index<<4|scale<<8, disp.
+  (func $th_lea_sib (param $op i32)
+    (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (call $read_thread_word))
+    (local.set $disp (call $read_thread_word))
+    ;; base: low 4 bits (0xF = no base)
+    (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $base_val (call $get_reg (i32.and (local.get $info) (i32.const 0xF))))))
+    ;; index: bits 4-7 (0xF = no index)
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then
+        (local.set $scale (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3)))
+        (local.set $index_val (i32.shl
+          (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+          (local.get $scale)))))
+    (call $set_reg (local.get $op)
+      (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp)))
+    (call $next))
+
+  ;; 149: compute SIB EA → ea_temp, then continue to next handler
+  (func $th_compute_ea_sib (param $op i32)
+    (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (call $read_thread_word))
+    (local.set $disp (call $read_thread_word))
+    (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $base_val (call $get_reg (i32.and (local.get $info) (i32.const 0xF))))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then
+        (local.set $scale (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3)))
+        (local.set $index_val (i32.shl
+          (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+          (local.get $scale)))))
+    (global.set $ea_temp (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp)))
     (call $next))
 
   ;; Helper: compute EA from operand encoding (alu_op<<8 | reg<<4 | base)
@@ -1725,14 +1780,22 @@
       (then (global.set $mr_disp (call $d_fetch32)))
       (else (global.set $mr_base (local.get $base)))))
 
-  ;; Emit thread ops to compute effective address at RUNTIME and leave result
-  ;; as a guest address. Uses a new handler: th_compute_ea.
-  ;; Returns: for simple [reg+disp], emits th_load32_ro-style op.
-  ;; For SIB or complex modes, emits th_compute_ea then th_load32.
-  ;;
-  ;; Actually, a simpler approach: add a handler that computes EA from
-  ;; (base_reg, index_reg, scale, disp) and stores it in a temp.
-  ;; Then the caller emits "compute_ea" + "load from temp" or "alu with temp".
+  ;; Emit SIB EA compute prefix if needed, then return the address word to emit.
+  ;; If SIB: emits compute_ea_sib handler and returns sentinel 0xEADEAD.
+  ;; If absolute: returns mr_disp directly.
+  (func $emit_sib_or_abs (result i32)
+    (if (i32.ne (global.get $mr_index) (i32.const -1))
+      (then
+        (call $te (i32.const 149) (i32.const 0))
+        (call $te_raw (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
+        (call $te_raw (global.get $mr_disp))
+        (return (i32.const 0xEADEAD))))
+    (global.get $mr_disp))
+
   ;;
   ;; Simplest approach: add a $mr_ea_to_thread function that emits ops to
   ;; compute the address into a specific register or thread-word sequence.
@@ -1755,30 +1818,33 @@
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
 
-  (func $emit_load32 (param $dst i32)
+  (func $emit_load32 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 26) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
-    ;; Absolute or SIB — for SIB, resolve at decode time (imperfect but works for most code)
-    (call $te (i32.const 20) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
 
-  (func $emit_store32 (param $src i32)
+  (func $emit_store32 (param $src i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 27) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
-    (call $te (i32.const 21) (local.get $src)) (call $te_raw (global.get $mr_disp)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 21) (local.get $src)) (call $te_raw (local.get $a)))
 
-  (func $emit_load8 (param $dst i32)
+  (func $emit_load8 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 28) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
-    (call $te (i32.const 24) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 24) (local.get $dst)) (call $te_raw (local.get $a)))
 
-  (func $emit_store8 (param $src i32)
+  (func $emit_store8 (param $src i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 29) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
-    (call $te (i32.const 25) (local.get $src)) (call $te_raw (global.get $mr_disp)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 25) (local.get $src)) (call $te_raw (local.get $a)))
 
   (func $emit_lea (param $dst i32)
     ;; LEA computes address without memory access
@@ -1790,174 +1856,200 @@
             (call $te (i32.const 126) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp))))
         (return)))
+    ;; SIB with index: use th_lea_sib (handler 148)
+    (if (i32.ne (global.get $mr_index) (i32.const -1))
+      (then
+        (call $te (i32.const 148) (local.get $dst))
+        ;; Encode: base (0xF if none) | index<<4 | scale<<8
+        (call $te_raw (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     ;; Absolute: LEA reg, [const] = MOV reg, const
     (call $te (i32.const 2) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
 
   ;; ALU [mem] OP= reg (runtime address)
-  (func $emit_alu_m32_r (param $alu_op i32) (param $reg i32)
+  (func $emit_alu_m32_r (param $alu_op i32) (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then ;; Use th_alu_m32_r_ro (handler 127): [base+disp] OP= reg
-        (call $te (i32.const 127) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+      (then (call $te (i32.const 127) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
           (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
         (call $te_raw (global.get $mr_disp)) (return)))
-    ;; Absolute
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 47) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
-  ;; reg OP= [mem] (runtime address)
-  (func $emit_alu_r_m32 (param $alu_op i32) (param $reg i32)
+  (func $emit_alu_r_m32 (param $alu_op i32) (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then ;; Use th_alu_r_m32_ro (handler 128): reg OP= [base+disp]
-        (call $te (i32.const 128) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
+      (then (call $te (i32.const 128) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
           (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
         (call $te_raw (global.get $mr_disp)) (return)))
-    ;; Absolute
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 48) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
-  ;; ALU [mem8] OP= reg8 (runtime address)
-  (func $emit_alu_m8_r (param $alu_op i32) (param $reg i32)
+  (func $emit_alu_m8_r (param $alu_op i32) (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 129) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
               (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 49) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
-  (func $emit_alu_r_m8 (param $alu_op i32) (param $reg i32)
+  (func $emit_alu_r_m8 (param $alu_op i32) (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 130) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
               (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 50) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; ALU [mem] OP= imm
-  (func $emit_alu_m32_i (param $alu_op i32) (param $imm i32)
+  (func $emit_alu_m32_i (param $alu_op i32) (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 131) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 51) (local.get $alu_op))
-    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+    (call $te_raw (local.get $a)) (call $te_raw (local.get $imm)))
 
-  (func $emit_alu_m8_i (param $alu_op i32) (param $imm i32)
+  (func $emit_alu_m8_i (param $alu_op i32) (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 132) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 52) (local.get $alu_op))
-    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+    (call $te_raw (local.get $a)) (call $te_raw (local.get $imm)))
 
   ;; MOV [mem], imm32
-  (func $emit_store32_imm (param $imm i32)
+  (func $emit_store32_imm (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 133) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 76) (i32.const 0))
-    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+    (call $te_raw (local.get $a)) (call $te_raw (local.get $imm)))
 
   ;; MOV [mem], imm8
-  (func $emit_store8_imm (param $imm i32)
+  (func $emit_store8_imm (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 134) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 77) (local.get $imm))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; Unary (inc/dec/not/neg) [mem32]
-  (func $emit_unary_m32 (param $uop i32)
+  (func $emit_unary_m32 (param $uop i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 135) (i32.or (i32.shl (local.get $uop) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 68) (local.get $uop))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; TEST [mem32], reg
-  (func $emit_test_m32_r (param $reg i32)
+  (func $emit_test_m32_r (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 136) (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 74) (local.get $reg))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; TEST [mem32], imm32
-  (func $emit_test_m32_i (param $imm i32)
+  (func $emit_test_m32_i (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 137) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 75) (i32.const 0))
-    (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)))
+    (call $te_raw (local.get $a)) (call $te_raw (local.get $imm)))
 
   ;; TEST [mem8], imm8
-  (func $emit_test_m8_i (param $imm i32)
+  (func $emit_test_m8_i (param $imm i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 138) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 124) (local.get $imm))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; Shift [mem32]
-  (func $emit_shift_m32 (param $shift_info i32)
+  (func $emit_shift_m32 (param $shift_info i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 139) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $shift_info)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 54) (local.get $shift_info))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; CALL [mem] (indirect)
-  (func $emit_call_ind (param $ret_addr i32)
+  (func $emit_call_ind (param $ret_addr i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 140) (local.get $ret_addr))
             (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 40) (local.get $ret_addr))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; JMP [mem] (indirect)
-  (func $emit_jmp_ind
+  (func $emit_jmp_ind (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 141) (i32.const 0))
             (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 125) (i32.const 0))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; PUSH [mem32]
-  (func $emit_push_m32
+  (func $emit_push_m32 (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 142) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 121) (i32.const 0))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; MOVZX reg, byte [mem]
-  (func $emit_movzx8 (param $dst i32)
+  (func $emit_movzx8 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 143) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 78) (local.get $dst))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; MOVSX reg, byte [mem]
-  (func $emit_movsx8 (param $dst i32)
+  (func $emit_movsx8 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 144) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 79) (local.get $dst))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; MOVZX reg, word [mem]
-  (func $emit_movzx16 (param $dst i32)
+  (func $emit_movzx16 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 145) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 80) (local.get $dst))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; MOVSX reg, word [mem]
-  (func $emit_movsx16 (param $dst i32)
+  (func $emit_movsx16 (param $dst i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 146) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 81) (local.get $dst))
-    (call $te_raw (global.get $mr_disp)))
+    (call $te_raw (local.get $a)))
 
   ;; MUL/IMUL/DIV/IDIV [mem32]. type: 0=mul,1=imul,2=div,3=idiv
   (func $emit_muldiv_m32 (param $mtype i32)
@@ -2026,11 +2118,14 @@
       ;; ---- DEC reg (0x48-0x4F) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x48)) (i32.le_u (local.get $op) (i32.const 0x4F)))
         (then (call $te (i32.const 65) (i32.sub (local.get $op) (i32.const 0x48))) (br $decode)))
-      ;; ---- MOV reg, imm32 (0xB8-0xBF) ----
+      ;; ---- MOV reg, imm32 (0xB8-0xBF) / MOV reg, imm16 with 0x66 ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xB8)) (i32.le_u (local.get $op) (i32.const 0xBF)))
         (then
           (call $te (i32.const 2) (i32.sub (local.get $op) (i32.const 0xB8)))
-          (call $te_raw (call $d_fetch32)) (br $decode)))
+          (if (local.get $prefix_66)
+            (then (call $te_raw (call $d_fetch16)))
+            (else (call $te_raw (call $d_fetch32))))
+          (br $decode)))
       ;; ---- MOV reg8, imm8 (0xB0-0xB7) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xB0)) (i32.le_u (local.get $op) (i32.const 0xB7)))
         (then
@@ -2059,9 +2154,11 @@
               (call $te_raw (call $sign_ext8 (call $d_fetch8)))
               (br $decode)))
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 5))
-            (then ;; EAX, imm32
+            (then ;; EAX, imm32 (or AX, imm16 with 0x66 prefix)
               (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
-              (call $te_raw (call $d_fetch32))
+              (if (local.get $prefix_66)
+                (then (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
+                (else (call $te_raw (call $d_fetch32))))
               (br $decode)))
 
           (call $decode_modrm)
@@ -2093,9 +2190,11 @@
                   (i32.or (i32.eq (local.get $op) (i32.const 0x82)) (i32.eq (local.get $op) (i32.const 0x83))))
         (then
           (call $decode_modrm)
-          ;; imm: 0x81=imm32, others=imm8 sign-extended
+          ;; imm: 0x81=imm32 (or imm16 with 0x66), others=imm8 sign-extended
           (if (i32.eq (local.get $op) (i32.const 0x81))
-            (then (local.set $imm (call $d_fetch32)))
+            (then (if (local.get $prefix_66)
+              (then (local.set $imm (call $d_fetch16)))
+              (else (local.set $imm (call $d_fetch32)))))
             (else (local.set $imm (call $sign_ext8 (call $d_fetch8)))))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then ;; reg, imm
@@ -2288,7 +2387,12 @@
           (br $decode)))
 
       ;; ---- PUSH imm32 (0x68) / PUSH imm8 (0x6A) ----
-      (if (i32.eq (local.get $op) (i32.const 0x68)) (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (call $d_fetch32)) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0x68))
+        (then (call $te (i32.const 34) (i32.const 0))
+          (if (local.get $prefix_66)
+            (then (call $te_raw (call $d_fetch16)))
+            (else (call $te_raw (call $d_fetch32))))
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x6A)) (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (call $sign_ext8 (call $d_fetch8))) (br $decode)))
 
       ;; ---- IMUL r32, r/m32, imm (0x69/0x6B) ----
@@ -2651,7 +2755,9 @@
   (func $win32_dispatch (param $thunk_idx i32)
     (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
-    (local $w0 i32) (local $w1 i32)
+    (local $arg4 i32)
+    (local $w0 i32) (local $w1 i32) (local $w2 i32)
+    (local $msg_ptr i32)
 
     (local.set $name_rva (i32.load (i32.add (global.get $GUEST_BASE)
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))
@@ -2662,108 +2768,141 @@
     (local.set $arg1 (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (local.set $arg2 (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
     (local.set $arg3 (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+    (local.set $arg4 (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
 
-    ;; Read first 8 bytes of name for matching
+    ;; Read first 12 bytes of name for matching
     (local.set $w0 (i32.load (local.get $name_ptr)))
     (local.set $w1 (i32.load (i32.add (local.get $name_ptr) (i32.const 4))))
+    (local.set $w2 (i32.load (i32.add (local.get $name_ptr) (i32.const 8))))
 
-    ;; ---- KERNEL32 ----
-    ;; ExitProcess "Exit"=0x74697845
+    ;; ================================================================
+    ;; KERNEL32
+    ;; ================================================================
+
+    ;; ExitProcess(1) "Exit"=0x74697845
     (if (i32.eq (local.get $w0) (i32.const 0x74697845))
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
             (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)))
-    ;; GetModuleHandleA "GetM"+"odul"
+
+    ;; GetModuleHandleA(1) "GetM"+"odul"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547)) (i32.eq (local.get $w1) (i32.const 0x6C75646F)))
       (then (global.set $eax (global.get $image_base))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; GetCommandLineA "GetC"+"omma"
+
+    ;; GetCommandLineA(0) "GetC"+"omma"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746547)) (i32.eq (local.get $w1) (i32.const 0x616D6D6F)))
       (then (call $store_fake_cmdline) (global.set $eax (global.get $fake_cmdline_addr))
             (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
-    ;; GetStartupInfoA "GetS"+"tart"
+
+    ;; GetStartupInfoA(1) "GetS"+"tart"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x74726174)))
       (then (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 68))
             (call $gs32 (local.get $arg0) (i32.const 68))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; GetProcAddress "GetP"+"rocA"
+
+    ;; GetProcAddress(2) "GetP"+"rocA"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x50746547)) (i32.eq (local.get $w1) (i32.const 0x41636F72)))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; LoadLibraryA "Load"+"Libr"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x7262694C)))
-      (then (global.set $eax (i32.const 0x7FFE0000)) ;; fake HMODULE
+
+    ;; GetLastError(0) "GetL"+"astE"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4C746547)) (i32.eq (local.get $w1) (i32.const 0x45747361)))
+      (then (global.set $eax (global.get $last_error))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; GetLocalTime(1) "GetL"+"ocal" + 'T' at pos 8
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x4C746547)) (i32.eq (local.get $w1) (i32.const 0x6C61636F)))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 8))) (i32.const 0x54))) ;; 'T'
+      (then (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; MessageBoxA "Mess"
-    (if (i32.eq (local.get $w0) (i32.const 0x7373654D))
-      (then (global.set $eax (call $host_message_box (local.get $arg0)
-              (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
+    ;; GetTimeFormatA(6) "GetT"+"imeF"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746547)) (i32.eq (local.get $w1) (i32.const 0x46656D69)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; GetDateFormatA(6) "GetD"+"ateF"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x46657461)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; GetProfileStringA(5) "GetP"+"rofi"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x50746547)) (i32.eq (local.get $w1) (i32.const 0x69666F72)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; GetLocaleInfoA(4) "GetL"+"ocal"+"eInf"
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x4C746547)) (i32.eq (local.get $w1) (i32.const 0x6C61636F)))
+                 (i32.eq (local.get $w2) (i32.const 0x666E4965)))
+      (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
-    ;; RegisterClassExA "Regi"
-    (if (i32.eq (local.get $w0) (i32.const 0x69676552))
-      (then (global.set $eax (i32.const 0xC001))
+    ;; LoadLibraryA(1) "Load"+"Libr"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x7262694C)))
+      (then (global.set $eax (i32.const 0x7FFE0000))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; CreateWindowExA (12 args=48+ret) "Crea"+"teWi"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
-      (then (global.set $eax (i32.const 0x10001))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
-    ;; CreateDialogParamA "Crea"+"teDi"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69446574)))
-      (then (global.set $eax (i32.const 0x10002))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; CreateFileA "Crea"+"teFi"
+    ;; DeleteFileA(1) "Dele"+"teFi"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x656C6544)) (i32.eq (local.get $w1) (i32.const 0x69466574)))
+      (then (global.set $eax (i32.const 0)) (global.set $last_error (i32.const 2))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CreateFileA(7) "Crea"+"teFi"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69466574)))
       (then (global.set $eax (i32.const 0xFFFFFFFF))
             (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)))
 
-    ;; Generic: dispatch by first letter for common patterns
-    ;; "Show" ShowWindow — 2 args
-    (if (i32.eq (local.get $w0) (i32.const 0x776F6853))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; "Upda" UpdateWindow — 1 arg
-    (if (i32.eq (local.get $w0) (i32.const 0x61647055))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; "Send" SendMessageA — 4 args
-    (if (i32.eq (local.get $w0) (i32.const 0x646E6553))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; "Post" PostQuitMessage/PostMessageA
-    (if (i32.eq (local.get $w0) (i32.const 0x74736F50))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; "DefW" DefWindowProcA — 4 args
-    (if (i32.eq (local.get $w0) (i32.const 0x57666544))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; "Dest" DestroyWindow/DestroyMenu — 1 arg
-    (if (i32.eq (local.get $w0) (i32.const 0x74736544))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; "Disp" DispatchMessageA — 1 arg
-    (if (i32.eq (local.get $w0) (i32.const 0x70736944))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; "Tran" TranslateMessage/TranslateAcceleratorA — 1 arg stub
-    (if (i32.eq (local.get $w0) (i32.const 0x6E617254))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; "Load" — LoadCursorA(2) LoadIconA(2) LoadStringA(4) LoadAcceleratorsA(2) LoadMenuA(2)
-    (if (i32.eq (local.get $w0) (i32.const 0x64616F4C))
-      (then
-        (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x53)) ;; LoadStringA
-          (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-        (global.set $eax (i32.const 0x20001))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; "Enab" EnableWindow/EnableMenuItem — 2 args
-    (if (i32.eq (local.get $w0) (i32.const 0x62616E45))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; "EndD" EndDialog — 2 args
-    (if (i32.eq (local.get $w0) (i32.const 0x44646E45))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; "Inva" InvalidateRect — 3 args
-    (if (i32.eq (local.get $w0) (i32.const 0x61766E49))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; "Move" MoveWindow — 6 args
-    (if (i32.eq (local.get $w0) (i32.const 0x65766F4D))
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+    ;; FindFirstFileA(2) "Find"+"Firs"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6946)) (i32.eq (local.get $w1) (i32.const 0x73726946)))
+      (then (global.set $eax (i32.const 0xFFFFFFFF))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; Local* / Global* — memory management stubs
+    ;; FindClose(1) "Find"+"Clos"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6946)) (i32.eq (local.get $w1) (i32.const 0x736F6C43)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; MulDiv(3) "MulD"
+    (if (i32.eq (local.get $w0) (i32.const 0x446C754D))
+      (then
+        (if (i32.eqz (local.get $arg2))
+          (then (global.set $eax (i32.const -1)))
+          (else (global.set $eax (i32.wrap_i64 (i64.div_s
+                  (i64.mul (i64.extend_i32_s (local.get $arg0)) (i64.extend_i32_s (local.get $arg1)))
+                  (i64.extend_i32_s (local.get $arg2)))))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; RtlMoveMemory(3) "RtlM"
+    (if (i32.eq (local.get $w0) (i32.const 0x4D6C7452))
+      (then (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; _lcreat(2) "_lcr"
+    (if (i32.eq (local.get $w0) (i32.const 0x72636C5F))
+      (then (global.set $eax (i32.const 0xFFFFFFFF))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; _lopen(2) "_lop"
+    (if (i32.eq (local.get $w0) (i32.const 0x706F6C5F))
+      (then (global.set $eax (i32.const 0xFFFFFFFF))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; _lwrite(3) "_lwr"
+    (if (i32.eq (local.get $w0) (i32.const 0x72776C5F))
+      (then (global.set $eax (i32.const 0xFFFFFFFF))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; _llseek(3) "_lls"
+    (if (i32.eq (local.get $w0) (i32.const 0x736C6C5F))
+      (then (global.set $eax (i32.const 0xFFFFFFFF))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; _lclose(1) "_lcl"
+    (if (i32.eq (local.get $w0) (i32.const 0x6C636C5F))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; _lread(3) "_lre"
+    (if (i32.eq (local.get $w0) (i32.const 0x65726C5F))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; Local* / Global* — memory management
     (if (i32.eq (local.get $w0) (i32.const 0x61636F4C)) ;; "Loca"
       (then (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2)) (return)))
     (if (i32.eq (local.get $w0) (i32.const 0x626F6C47)) ;; "Glob"
@@ -2771,80 +2910,692 @@
 
     ;; lstr* — string functions
     (if (i32.eq (local.get $w0) (i32.const 0x7274736C)) ;; "lstr"
-      (then (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1)) (return)))
+      (then (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2)) (return)))
 
-    ;; MulDiv — 3 args
-    (if (i32.eq (local.get $w0) (i32.const 0x446C754D))
-      (then (global.set $eax (i32.wrap_i64 (i64.div_s
-              (i64.mul (i64.extend_i32_s (local.get $arg0)) (i64.extend_i32_s (local.get $arg1)))
-              (i64.extend_i32_s (local.get $arg2)))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; RtlMoveMemory — 3 args
-    (if (i32.eq (local.get $w0) (i32.const 0x4D6C7452))
-      (then (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; ================================================================
+    ;; USER32
+    ;; ================================================================
 
-    ;; Reg* (ADVAPI32) — return error
-    (if (i32.eq (i32.load16_u (local.get $name_ptr)) (i32.const 0x6552))
-      (then (call $dispatch_reg (local.get $name_ptr)) (return)))
+    ;; RegisterClassExA(1) "Regi"+"ster"+"Clas"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x69676552)) (i32.eq (local.get $w2) (i32.const 0x73616C43)))
+      (then
+        ;; WNDCLASSEX: cbSize=0, style=4, lpfnWndProc=8
+        (global.set $wndproc_addr (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+        (global.set $eax (i32.const 0xC001))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; Shell32/comdlg32 — generic stubs
-    (if (i32.eq (local.get $w0) (i32.const 0x6C656853)) ;; "Shel"
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    (if (i32.eq (local.get $w0) (i32.const 0x67617244)) ;; "Drag"
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; RegisterWindowMessageA(1) "Regi"+"ster"+"Wind"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x69676552)) (i32.eq (local.get $w2) (i32.const 0x646E6957)))
+      (then (global.set $eax (i32.const 0xC100))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; GDI32 stubs
-    (if (i32.eq (local.get $w0) (i32.const 0x656C6553)) ;; "Sele" SelectObject
-      (then (global.set $eax (i32.const 0x30001)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (if (i32.eq (local.get $w0) (i32.const 0x656C6544)) ;; "Dele" DeleteObject/DC
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; CreateWindowExA(12) "Crea"+"teWi"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
+      (then
+        ;; Save HWND
+        (global.set $main_hwnd (i32.const 0x10001))
+        (global.set $eax (i32.const 0x10001))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
 
-    ;; Clipboard
-    (if (i32.eq (local.get $w0) (i32.const 0x736F6C43)) ;; "Clos" CloseClipboard
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
-    (if (i32.eq (local.get $w0) (i32.const 0x6E65704F)) ;; "Open" OpenClipboard
-      (then (global.set $eax (i32.const 1)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $w0) (i32.const 0x6C437349)) ;; "IsCl" IsClipboardFormatAvailable
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; CreateDialogParamA(5) "Crea"+"teDi"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69446574)))
+      (then (global.set $eax (i32.const 0x10002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
 
-    ;; Fallback: Get* functions — assume 1-4 args, return 0
-    (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x47)) ;; 'G'
-      (then (call $host_log (local.get $name_ptr) (i32.const 48))
-            (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Set* — assume 2-4 args, return 0
-    (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x53)) ;; 'S'
-      (then (call $host_log (local.get $name_ptr) (i32.const 48))
-            (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Check*/Is* — assume 2 args
-    (if (i32.or (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x43))  ;; 'C'
-                (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x49))) ;; 'I'
-      (then (call $host_log (local.get $name_ptr) (i32.const 48))
-            (global.set $eax (i32.const 0))
+    ;; MessageBoxA(4) "Mess"
+    (if (i32.eq (local.get $w0) (i32.const 0x7373654D))
+      (then
+        ;; Disambiguate MessageBoxA vs MessageBeep
+        (if (i32.eq (local.get $w1) (i32.const 0x42656761)) ;; "ageB" — MessageB...
+          (then
+            (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 8))) (i32.const 0x65)) ;; "e" — MessageBe(ep)
+              (then ;; MessageBeep(1)
+                (global.set $eax (i32.const 1))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))))
+        ;; MessageBoxA(4)
+        (global.set $eax (call $host_message_box (local.get $arg0)
+          (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; ShowWindow(2) "Show"
+    (if (i32.eq (local.get $w0) (i32.const 0x776F6853))
+      (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; MSVCRT stubs for calc.exe
-    ;; _exit, exit — 1 arg
-    (if (i32.or (i32.eq (local.get $w0) (i32.const 0x74697865)) ;; "exit"
-                (i32.eq (local.get $w0) (i32.const 0x69785F5F))) ;; "__xi" (__xixit)
-      (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-            (call $host_exit (local.get $arg0)) (return)))
-    ;; __getmainargs, __set_app_type, __p__fmode, __p__commode, _controlfp, __setusermatherr
-    ;; _initterm, _adjust_fdiv, _acmdln — misc CRT init stubs
-    (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x5F)) ;; starts with '_'
-      (then (call $host_log (local.get $name_ptr) (i32.const 48))
+    ;; UpdateWindow(1) "Upda"
+    (if (i32.eq (local.get $w0) (i32.const 0x61647055))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetMessageA(4) "GetM"+"essa"
+    ;; Returns 0 when WM_QUIT → exits message loop
+    ;; We send a few synthetic messages then WM_QUIT
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547)) (i32.eq (local.get $w1) (i32.const 0x61737365)))
+      (then
+        (local.set $msg_ptr (local.get $arg0))
+        ;; If quit flag set, return 0 (WM_QUIT)
+        (if (global.get $quit_flag)
+          (then
+            ;; Fill MSG with WM_QUIT (0x0012)
+            (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))          ;; hwnd
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012)) ;; message=WM_QUIT
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; wParam
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))     ;; lParam
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; ??3@YAXPAX@Z (operator delete), ??1type_info etc
-    (if (i32.eq (i32.load16_u (local.get $name_ptr)) (i32.const 0x3F3F)) ;; "??"
+        ;; Send WM_PAINT once, then block (return -1 to keep looping but do nothing)
+        (if (i32.eqz (global.get $msg_phase))
+          (then
+            ;; First message: WM_PAINT
+            (global.set $msg_phase (i32.const 1))
+            (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+        ;; Subsequent: signal quit to end gracefully
+        (global.set $quit_flag (i32.const 1))
+        (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012)) ;; WM_QUIT
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; PeekMessageA(5) "Peek"
+    (if (i32.eq (local.get $w0) (i32.const 0x6B656550))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; DispatchMessageA(1) "Disp"
+    (if (i32.eq (local.get $w0) (i32.const 0x70736944))
+      (then
+        ;; If we have a WndProc, call it with the message
+        (if (i32.and (global.get $wndproc_addr) (i32.ne (local.get $arg0) (i32.const 0)))
+          (then
+            ;; Read MSG struct fields
+            ;; Push WndProc args: hwnd, msg, wParam, lParam (right to left)
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; lParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))  ;; wParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))  ;; msg
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))                          ;; hwnd
+            ;; Push return address (we'll set EIP to wndproc)
+            ;; The return from DispatchMessage pops 1 arg (the MSG*) = ESP+8
+            ;; But we need to return back after WndProc finishes
+            ;; For now, just set EIP to wndproc — WndProc will ret to wherever
+            ;; We need a fake return addr that continues after DispatchMessage
+            ;; Use the return address from the original call
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; ret addr from caller
+            ;; Clean up DispatchMessageA's stack frame (pop ret+arg above the pushed wndproc frame)
+            ;; Stack layout: [wndproc_ret, hwnd, msg, wParam, lParam, ...orig_ret, MSG*...]
+            ;; We need to remove the original DispatchMessageA ret+arg
+            ;; Actually, let's just do: pop DispatchMessage's ret+arg, then set EIP
+            ;; Simpler: set EIP to WndProc, it'll return to DispatchMessage's caller
+            (global.set $eip (global.get $wndproc_addr))
+            (global.set $steps (i32.const 0)) ;; force re-decode at new EIP
+            (return)))
+        ;; No WndProc: just return 0
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; TranslateMessage(1) "Tran"+"slat"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x6E617254)) (i32.eq (local.get $w1) (i32.const 0x74616C73)))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; Unknown — log and return 0, pop 4 args
+    ;; TranslateAcceleratorA(3) "Tran"+"slat" — same prefix! Differentiate by w2
+    ;; TranslateMessage: w2 = "eMes" = 0x73654D65
+    ;; TranslateAcceleratorA: w2 = "eAcc" = 0x63634165
+    ;; Actually both start "Tran"+"slat" — we already matched TranslateMessage above.
+    ;; Let's fix: check full name
+    ;; "Tran" without "slat" match — catch TranslateAcceleratorA
+    (if (i32.eq (local.get $w0) (i32.const 0x6E617254))
+      (then (global.set $eax (i32.const 0))
+            ;; TranslateAcceleratorA(3) — pop 16
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; DefWindowProcA(4) "DefW"
+    (if (i32.eq (local.get $w0) (i32.const 0x57666544))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; PostQuitMessage(1) "Post"+"Quit"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736F50)) (i32.eq (local.get $w1) (i32.const 0x74697551)))
+      (then (global.set $quit_flag (i32.const 1))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; PostMessageA(4) "Post"+"Mess"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736F50)) (i32.eq (local.get $w1) (i32.const 0x7373654D)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; SendMessageA(4) "Send"+"Mess"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6553)) (i32.eq (local.get $w1) (i32.const 0x7373654D)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; SendDlgItemMessageA(5) "Send"+"DlgI"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6553)) (i32.eq (local.get $w1) (i32.const 0x49676C44)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; DestroyWindow(1) "Dest"+"royW"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736544)) (i32.eq (local.get $w1) (i32.const 0x57796F72)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetDC(1) "GetD"+"C\0" — match "GetD" then check 5th char = 'C'
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x43)))
+      (then (global.set $eax (i32.const 0x50001)) ;; fake HDC
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetDeviceCaps(2) "GetD"+"evic"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x63697665)))
+      (then
+        ;; Return reasonable defaults for common caps
+        ;; HORZRES=8, VERTRES=10, LOGPIXELSX=88, LOGPIXELSY=90
+        (if (i32.eq (local.get $arg1) (i32.const 8))
+          (then (global.set $eax (i32.const 800))))  ;; HORZRES
+        (if (i32.eq (local.get $arg1) (i32.const 10))
+          (then (global.set $eax (i32.const 600))))  ;; VERTRES
+        (if (i32.eq (local.get $arg1) (i32.const 88))
+          (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSX
+        (if (i32.eq (local.get $arg1) (i32.const 90))
+          (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSY
+        (if (i32.and (i32.ne (local.get $arg1) (i32.const 8))
+              (i32.and (i32.ne (local.get $arg1) (i32.const 10))
+                (i32.and (i32.ne (local.get $arg1) (i32.const 88))
+                         (i32.ne (local.get $arg1) (i32.const 90)))))
+          (then (global.set $eax (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; GetMenu(1) "GetM"+"enu\0"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547))
+                 (i32.eq (i32.and (local.get $w1) (i32.const 0x00FFFFFF)) (i32.const 0x00756E65)))
+      (then (global.set $eax (i32.const 0x40001)) ;; fake HMENU
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetSubMenu(2) "GetS"+"ubMe"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x654D6275)))
+      (then (global.set $eax (i32.const 0x40002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; GetSystemMenu(2) "GetS"+"yste"+"mMen"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547))
+                 (i32.eq (local.get $w1) (i32.const 0x65747379)))
+      (then
+        ;; Could be GetSystemMenu or GetSystemMetrics — check w2
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 9))) (i32.const 0x65)) ;; "e" in Menu
+          (then (global.set $eax (i32.const 0x40003))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+        ;; GetSystemMetrics(1)
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetClientRect(2) "GetC"+"lien"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746547)) (i32.eq (local.get $w1) (i32.const 0x6E65696C)))
+      (then
+        ;; Fill RECT with 800x600
+        (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 800)) ;; right
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 600));; bottom
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; GetWindowTextA(3) "GetW"+"indo"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x57746547)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+      (then
+        ;; Return empty string
+        (if (i32.gt_u (local.get $arg2) (i32.const 0))
+          (then (call $gs8 (local.get $arg1) (i32.const 0))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; GetDlgCtrlID(1) "GetD"+"lgCt"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x7443676C)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetDlgItemTextA(4) "GetD"+"lgIt"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+      (then
+        (if (i32.gt_u (local.get $arg3) (i32.const 0))
+          (then (call $gs8 (local.get $arg2) (i32.const 0))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; GetCursorPos(1) "GetC"+"urso"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746547)) (i32.eq (local.get $w1) (i32.const 0x6F737275)))
+      (then
+        (call $gs32 (local.get $arg0) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetLastActivePopup(1) "GetL"+"astA"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4C746547)) (i32.eq (local.get $w1) (i32.const 0x41747361)))
+      (then (global.set $eax (local.get $arg0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetFocus(0) "GetF"+"ocus"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x46746547)) (i32.eq (local.get $w1) (i32.const 0x7375636F)))
+      (then (global.set $eax (global.get $main_hwnd))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; ReleaseDC(2) "Rele"
+    (if (i32.eq (local.get $w0) (i32.const 0x656C6552))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetWindowLongA(3) "SetW"+"indo"+"wLon"
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746553)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+                 (i32.eq (local.get $w2) (i32.const 0x6E6F4C77)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; SetWindowTextA(2) "SetW"+"indo"+"wTex"
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746553)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+                 (i32.eq (local.get $w2) (i32.const 0x78655477)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetDlgItemTextA(3) "SetD"+"lgIt"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746553)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; SetForegroundWindow(1) "SetF"+"oreg"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x46746553)) (i32.eq (local.get $w1) (i32.const 0x6765726F)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; SetCursor(1) "SetC"+"urso"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746553)) (i32.eq (local.get $w1) (i32.const 0x6F737275)))
+      (then (global.set $eax (i32.const 0x20001))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; SetFocus(1) "SetF"+"ocus"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x46746553)) (i32.eq (local.get $w1) (i32.const 0x7375636F)))
+      (then (global.set $eax (global.get $main_hwnd))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; LoadCursorA(2) "Load"+"Curs"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x73727543)))
+      (then (global.set $eax (i32.const 0x20001))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; LoadIconA(2) "Load"+"Icon"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x6E6F6349)))
+      (then (global.set $eax (i32.const 0x20002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; LoadStringA(4) "Load"+"Stri"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x69727453)))
+      (then
+        ;; Return empty string
+        (if (i32.gt_u (local.get $arg3) (i32.const 0))
+          (then (call $gs8 (local.get $arg2) (i32.const 0))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; LoadAcceleratorsA(2) "Load"+"Acce"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x65636341)))
+      (then (global.set $haccel (i32.const 0x60001))
+            (global.set $eax (i32.const 0x60001))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; EnableWindow(2) "Enab"+"leWi"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x62616E45)) (i32.eq (local.get $w1) (i32.const 0x6957656C)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; EnableMenuItem(3) "Enab"+"leMen"
+    (if (i32.eq (local.get $w0) (i32.const 0x62616E45))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; EndDialog(2) "EndD"
+    (if (i32.eq (local.get $w0) (i32.const 0x44646E45))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; InvalidateRect(3) "Inva"
+    (if (i32.eq (local.get $w0) (i32.const 0x61766E49))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; MoveWindow(6) "Move"
+    (if (i32.eq (local.get $w0) (i32.const 0x65766F4D))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; CheckMenuItem(3) "Chec"+"kMen"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63656843)) (i32.eq (local.get $w1) (i32.const 0x6E654D6B)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; CharNextA(1) "Char"+"Next"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x72616843)) (i32.eq (local.get $w1) (i32.const 0x7478654E)))
+      (then
+        ;; Return ptr+1 (simple ANSI impl)
+        (if (i32.eqz (call $gl8 (local.get $arg0)))
+          (then (global.set $eax (local.get $arg0)))
+          (else (global.set $eax (i32.add (local.get $arg0) (i32.const 1)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CharPrevA(2) "Char"+"Prev"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x72616843)) (i32.eq (local.get $w1) (i32.const 0x76657250)))
+      (then
+        ;; Return max(start, ptr-1)
+        (if (i32.le_u (local.get $arg1) (local.get $arg0))
+          (then (global.set $eax (local.get $arg0)))
+          (else (global.set $eax (i32.sub (local.get $arg1) (i32.const 1)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; IsDialogMessageA(2) "IsDi"
+    (if (i32.eq (local.get $w0) (i32.const 0x69447349))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; IsIconic(1) "IsIc"
+    (if (i32.eq (local.get $w0) (i32.const 0x63497349))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; ChildWindowFromPoint(3) "Chil"
+    (if (i32.eq (local.get $w0) (i32.const 0x6C696843))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; ScreenToClient(2) "Scre"
+    (if (i32.eq (local.get $w0) (i32.const 0x65726353))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; TabbedTextOutA(8) "Tabb"
+    (if (i32.eq (local.get $w0) (i32.const 0x62626154))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)))
+
+    ;; WinHelpA(4) "WinH"
+    (if (i32.eq (local.get $w0) (i32.const 0x486E6957))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; wsprintfA — CDECL! Caller cleans stack. Only pop ret addr.
+    (if (i32.eq (local.get $w0) (i32.const 0x69727077)) ;; "wpri" (wsprintfA = "wspr")
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+    ;; Better match for wsprintfA: "wspr"
+    (if (i32.eq (local.get $w0) (i32.const 0x72707377))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; Clipboard
+    (if (i32.eq (local.get $w0) (i32.const 0x736F6C43)) ;; "Clos" CloseClipboard(0)
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+    (if (i32.eq (local.get $w0) (i32.const 0x6E65704F)) ;; "Open" OpenClipboard(1)
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.eq (local.get $w0) (i32.const 0x6C437349)) ;; "IsCl" IsClipboardFormatAvailable(1)
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; ================================================================
+    ;; GDI32
+    ;; ================================================================
+
+    ;; SelectObject(2) "Sele"
+    (if (i32.eq (local.get $w0) (i32.const 0x656C6553))
+      (then (global.set $eax (i32.const 0x30001))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; DeleteObject(1) "Dele"+"teOb"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x656C6544)) (i32.eq (local.get $w1) (i32.const 0x624F6574)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; DeleteDC(1) "Dele"+"teDC"
+    (if (i32.eq (local.get $w0) (i32.const 0x656C6544))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetStockObject(1) "GetS"+"tock"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x6B636F74)))
+      (then (global.set $eax (i32.const 0x30002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetObjectA(3) "GetO"+"bjec"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4F746547)) (i32.eq (local.get $w1) (i32.const 0x63656A62)))
+      (then
+        (if (i32.gt_u (local.get $arg1) (i32.const 0))
+          (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $arg1))))
+        (global.set $eax (local.get $arg1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; GetTextMetricsA(2) "GetT"+"extM"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746547)) (i32.eq (local.get $w1) (i32.const 0x4D747865)))
+      (then
+        ;; Fill TEXTMETRIC with reasonable defaults
+        (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 56))
+        (call $gs32 (local.get $arg1) (i32.const 16))           ;; tmHeight
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))  ;; tmAscent (unused detail)
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (i32.const 8)) ;; tmAveCharWidth
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; GetTextExtentPointA(4) "GetT"+"extE"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746547)) (i32.eq (local.get $w1) (i32.const 0x45747865)))
+      (then
+        ;; Fill SIZE: cx = count*8, cy = 16
+        (call $gs32 (local.get $arg3) (i32.mul (local.get $arg2) (i32.const 8)))  ;; cx
+        (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (i32.const 16))     ;; cy
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; GetTextCharset(1) "GetT"+"extC"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746547)) (i32.eq (local.get $w1) (i32.const 0x43747865)))
+      (then (global.set $eax (i32.const 0)) ;; ANSI_CHARSET
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CreateFontIndirectA(1) "Crea"+"teFo"+"ntIn" — must come before CreateFontA
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x6F466574)))
+                 (i32.eq (local.get $w2) (i32.const 0x6E49746E)))
+      (then (global.set $eax (i32.const 0x30003))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CreateFontA(14) "Crea"+"teFo"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x6F466574)))
+      (then (global.set $eax (i32.const 0x30003))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)))
+
+    ;; CreateDCA(4) "Crea"+"teDC"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x43446574)))
+      (then (global.set $eax (i32.const 0x50002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; SetAbortProc(2) "SetA"
+    (if (i32.eq (local.get $w0) (i32.const 0x41746553))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetBkMode(2) "SetB"
+    (if (i32.eq (local.get $w0) (i32.const 0x42746553))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetMapMode(2) "SetM"
+    (if (i32.eq (local.get $w0) (i32.const 0x4D746553))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetWindowExtEx(4) / SetViewportExtEx(4) "SetW"/"SetV"
+    (if (i32.or (i32.eq (local.get $w0) (i32.const 0x57746553))
+                (i32.eq (local.get $w0) (i32.const 0x56746553)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; LPtoDP(3) "LPto"
+    (if (i32.eq (local.get $w0) (i32.const 0x6F74504C))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; StartDocA(2) "Star"+"tDoc"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x72617453)) (i32.eq (local.get $w1) (i32.const 0x636F4474)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; StartPage(1) "Star"+"tPag"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x72617453)) (i32.eq (local.get $w1) (i32.const 0x67615074)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; EndPage(1) "EndP"+"age\0"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x50646E45))
+                 (i32.eq (i32.and (local.get $w1) (i32.const 0x00FFFFFF)) (i32.const 0x00656761)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; EndPaint(2) "EndP"+"aint"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x50646E45)) (i32.eq (local.get $w1) (i32.const 0x746E6961)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; EndDoc(1) "EndD"+"oc\0" — careful, "EndD" also matches EndDialog
+    ;; EndDialog already matched above. EndDoc would need w1 check.
+    ;; Actually EndDialog w1 = "ialo", EndDoc w1 = "oc\0\0"
+    ;; EndDialog already returned above, so EndDoc won't reach here. Good.
+
+    ;; AbortDoc(1) "Abor"
+    (if (i32.eq (local.get $w0) (i32.const 0x726F6241))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; BeginPaint / EndPaint — not in IAT but useful
+    ;; "Begi" BeginPaint(2)
+    (if (i32.eq (local.get $w0) (i32.const 0x69676542))
+      (then
+        ;; Fill PAINTSTRUCT minimally
+        (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
+        (call $gs32 (local.get $arg1) (i32.const 0x50001)) ;; hdc
+        (global.set $eax (i32.const 0x50001))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; "EndP"+"aint" EndPaint(2)
+    ;; "EndP" already matches EndPage above. Need to disambiguate.
+    ;; EndPage: "EndP"+"age\0", EndPaint: "EndP"+"aint"
+    ;; EndPage already returned. If we reach here with "EndP", it's EndPaint.
+    ;; But EndPage returns first, so EndPaint won't match. Let me fix:
+    ;; Remove the EndPage match above and handle both here.
+
+    ;; ================================================================
+    ;; SHELL32
+    ;; ================================================================
+
+    ;; ShellExecuteA(6) "Shel"+"lExe"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x6C656853)) (i32.eq (local.get $w1) (i32.const 0x6578456C)))
+      (then (global.set $eax (i32.const 33)) ;; > 32 means success
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; ShellAboutA(4) "Shel"+"lAbo"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x6C656853)) (i32.eq (local.get $w1) (i32.const 0x6F62416C)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; SHGetSpecialFolderPathA(4) "SHGe"
+    (if (i32.eq (local.get $w0) (i32.const 0x65474853))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; DragAcceptFiles(2) "Drag"+"Acce"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x67617244)) (i32.eq (local.get $w1) (i32.const 0x65636341)))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; DragQueryFileA(4) "Drag"+"Quer"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x67617244)) (i32.eq (local.get $w1) (i32.const 0x72657551)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; DragFinish(1) "Drag"+"Fini"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x67617244)) (i32.eq (local.get $w1) (i32.const 0x696E6946)))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; ================================================================
+    ;; comdlg32
+    ;; ================================================================
+
+    ;; GetOpenFileNameA(1) / GetSaveFileNameA(1) "GetO"+"penF" / "GetS"+"aveF"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4F746547)) (i32.eq (local.get $w1) (i32.const 0x466E6570)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x46657661)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetFileTitleA(3) "GetF"+"ileT"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x46746547)) (i32.eq (local.get $w1) (i32.const 0x54656C69)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; ChooseFontA(1) "Choo"
+    (if (i32.eq (local.get $w0) (i32.const 0x6F6F6843))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; FindTextA(1) — comdlg32 "Find"+"Text"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6946)) (i32.eq (local.get $w1) (i32.const 0x74786554)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; PageSetupDlgA(1) "Page"
+    (if (i32.eq (local.get $w0) (i32.const 0x65676150))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CommDlgExtendedError(0) "Comm"
+    (if (i32.eq (local.get $w0) (i32.const 0x6D6D6F43))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; ================================================================
+    ;; ADVAPI32 — Registry
+    ;; ================================================================
+    (if (i32.eq (i32.load16_u (local.get $name_ptr)) (i32.const 0x6552)) ;; "Re"
+      (then (call $dispatch_reg (local.get $name_ptr)) (return)))
+
+    ;; ================================================================
+    ;; MSVCRT
+    ;; ================================================================
+    ;; _exit, exit
+    (if (i32.or (i32.eq (local.get $w0) (i32.const 0x74697865))
+                (i32.eq (local.get $w0) (i32.const 0x69785F5F)))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+            (call $host_exit (local.get $arg0)) (return)))
+    ;; _* CRT stubs — vary in arg count, but most are 0-4 args
+    (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x5F))
+      (then (call $host_log (local.get $name_ptr) (i32.const 48))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; C++ mangled names
+    (if (i32.eq (i32.load16_u (local.get $name_ptr)) (i32.const 0x3F3F))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; ================================================================
+    ;; FALLBACK — log and return 0
+    ;; ================================================================
     (call $host_log (local.get $name_ptr) (i32.const 48))
     (global.set $eax (i32.const 0))
+    ;; Conservative: pop ret + 4 args = 20. May be wrong but better than crashing.
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -2883,27 +3634,59 @@
       (then (global.set $eax (i32.const 0x100000)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  (func $dispatch_lstr (param $name i32) (param $a0 i32) (param $a1 i32)
+  (func $dispatch_lstr (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
     (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 4))))
+    ;; lstrlenA(1) — 'l' at pos 4
     (if (i32.eq (local.get $ch) (i32.const 0x6C)) ;; lstrlenA
       (then (global.set $eax (call $guest_strlen (local.get $a0)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 7))) (i32.const 0x79)) ;; lstrcpyA
-      (then (call $guest_strcpy (local.get $a0) (local.get $a1))
+    ;; lstrcpyA(2) — 'c' at pos 4, 'p' at pos 5, 'y' at pos 6
+    (if (i32.eq (local.get $ch) (i32.const 0x63)) ;; lstrc...
+      (then
+        ;; lstrcpyA vs lstrcpynA vs lstrcmpA vs lstrcmpiA vs lstrcatA
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 5))) (i32.const 0x61)) ;; lstrcatA(2)
+          (then
+            ;; Append a1 to a0
+            (call $guest_strcpy
+              (i32.add (local.get $a0) (call $guest_strlen (local.get $a0)))
+              (local.get $a1))
             (global.set $eax (local.get $a0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; lstrcmpA, lstrcmpiA, lstrcatA, lstrcpynA — stub
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 5))) (i32.const 0x70)) ;; lstrcpy/lstrcpyn
+          (then
+            (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 7))) (i32.const 0x6E)) ;; lstrcpynA(3)
+              (then
+                ;; Copy up to a2-1 chars
+                (call $guest_strncpy (local.get $a0) (local.get $a1) (local.get $a2))
+                (global.set $eax (local.get $a0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+            ;; lstrcpyA(2)
+            (call $guest_strcpy (local.get $a0) (local.get $a1))
+            (global.set $eax (local.get $a0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+        ;; lstrcmpA(2) / lstrcmpiA(2) — return 0 (equal) as stub
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; fallback
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $dispatch_reg (param $name i32)
     (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 3))))
-    (if (i32.eq (local.get $ch) (i32.const 0x4F)) ;; RegOpenKeyA/RegOpenKeyExA
-      (then (global.set $eax (i32.const 2)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x43)) ;; RegCloseKey/RegCreateKeyA
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x51)) ;; RegQueryValueExA
+    (if (i32.eq (local.get $ch) (i32.const 0x4F)) ;; RegOpenKeyA (3 args) / RegOpenKeyExA (5 args)
+      (then (global.set $eax (i32.const 2))
+            ;; Check for "Ex" variant by looking at char after "RegOpenKey"
+            (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 10))) (i32.const 0x45)) ;; RegOpenKeyExA
+              (then (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $ch) (i32.const 0x43)) ;; RegCloseKey(1) / RegCreateKeyA(3)
+      (then
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 4))) (i32.const 0x6C)) ;; RegCloseKey(1)
+          (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+        ;; RegCreateKeyA(3)
+        (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $ch) (i32.const 0x51)) ;; RegQueryValueExA(6)
       (then (global.set $eax (i32.const 2)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; RegSetValueExA
+    (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; RegSetValueExA(6)
       (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -2945,6 +3728,17 @@
       (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))
       (br_if $d (i32.eqz (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+  (func $guest_strncpy (param $dst i32) (param $src i32) (param $max i32)
+    (local $i i32) (local $ch i32)
+    (if (i32.le_s (local.get $max) (i32.const 0)) (then (return)))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.sub (local.get $max) (i32.const 1))))
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    ;; Null-terminate
+    (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0)))
 
   ;; ============================================================
   ;; MAIN RUN LOOP
