@@ -212,6 +212,7 @@ Resource-aware Win98 emulator
           e.preventDefault();
         }
         if (e.ctrlKey && (vk === 65 || vk === 67 || vk === 88 || vk === 86)) e.preventDefault();
+        if (e.altKey) e.preventDefault();
       });
       canvas.addEventListener('keyup', e => {
         wine.renderer.handleKeyUp(e.keyCode);
