@@ -52,7 +52,9 @@ class WineAssembly {
         exit: (code) => {
           console.log('[ExitProcess] code:', code);
           self.logToUI('[ExitProcess] code: ' + code);
+          self.logToUI('--- Program exited ---');
           self.running = false;
+          if (self.renderer) self.renderer._exited = true;
         },
 
         draw_rect: (x, y, w, h, color) => {
