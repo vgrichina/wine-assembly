@@ -143,7 +143,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 157 funcref)
+  (table $handlers 159 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -327,6 +327,8 @@
     $th_alu_r8_i8          ;; 154: byte ALU reg8,imm8 (op=alu_op<<8|reg, imm in next word)
     $th_mov_r8_r8          ;; 155: MOV reg8,reg8 (op=dst<<4|src)
     $th_mov_r8_i8          ;; 156: MOV reg8,imm8 (op=reg, imm in next word)
+    $th_imul_r_m_ro        ;; 157: imul reg, [base+disp] (op=reg<<4|base, disp in word)
+    $th_imul_r_m_abs       ;; 158: imul reg, [addr] (op=reg, addr in next word)
   )
 
   ;; ============================================================
@@ -1518,6 +1520,18 @@
     (local $d i32) (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (call $set_reg (local.get $d) (i32.mul (call $get_reg (local.get $d))
       (call $get_reg (i32.and (local.get $op) (i32.const 0xF))))) (call $next))
+  ;; 157: imul reg, [base+disp] — 2-operand imul with memory source (simple base)
+  (func $th_imul_r_m_ro (param $op i32)
+    (local $addr i32) (local $dst i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (call $set_reg (local.get $dst) (i32.mul (call $get_reg (local.get $dst)) (call $gl32 (local.get $addr))))
+    (call $next))
+  ;; 158: imul reg, [addr] — 2-operand imul with memory source (absolute/SIB)
+  (func $th_imul_r_m_abs (param $op i32)
+    (local $addr i32) (local.set $addr (call $read_addr))
+    (call $set_reg (local.get $op) (i32.mul (call $get_reg (local.get $op)) (call $gl32 (local.get $addr))))
+    (call $next))
   (func $th_call_r (param $op i32)
     (local $reg i32) (local $target i32)
     (local.set $reg (call $read_thread_word))
@@ -2754,9 +2768,13 @@
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else ;; load then multiply
-                  (call $emit_load32 (global.get $mr_reg))
-                  (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_reg)))))
+                (else ;; imul reg, [mem] — dedicated opcodes to avoid clobbering dst
+                  (if (call $mr_simple_base)
+                    (then (call $te (i32.const 157) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
+                          (call $te_raw (global.get $mr_disp)))
+                    (else (local.set $imm (call $emit_sib_or_abs))
+                          (call $te (i32.const 158) (global.get $mr_reg))
+                          (call $te_raw (local.get $imm))))))
               (br $decode)))
 
           ;; 0x0F 0xB6: MOVZX r32, r/m8
@@ -3355,8 +3373,11 @@
         ;; If we have a WndProc, call it with the message
         (if (i32.and (global.get $wndproc_addr) (i32.ne (local.get $arg0) (i32.const 0)))
           (then
-            ;; Read MSG struct fields
-            ;; Push WndProc args: hwnd, msg, wParam, lParam (right to left)
+            ;; Save the caller's return address before we modify the stack
+            (local.set $tmp (call $gl32 (global.get $esp)))
+            ;; Pop DispatchMessageA's own frame (ret + MSG* = 8 bytes)
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+            ;; Now push WndProc args: lParam, wParam, msg, hwnd (right to left)
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
             (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; lParam
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -3365,21 +3386,12 @@
             (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))  ;; msg
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
             (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))                          ;; hwnd
-            ;; Push return address (we'll set EIP to wndproc)
-            ;; The return from DispatchMessage pops 1 arg (the MSG*) = ESP+8
-            ;; But we need to return back after WndProc finishes
-            ;; For now, just set EIP to wndproc — WndProc will ret to wherever
-            ;; We need a fake return addr that continues after DispatchMessage
-            ;; Use the return address from the original call
+            ;; Push return address — when WndProc returns, go back to DispatchMessage's caller
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; ret addr from caller
-            ;; Clean up DispatchMessageA's stack frame (pop ret+arg above the pushed wndproc frame)
-            ;; Stack layout: [wndproc_ret, hwnd, msg, wParam, lParam, ...orig_ret, MSG*...]
-            ;; We need to remove the original DispatchMessageA ret+arg
-            ;; Actually, let's just do: pop DispatchMessage's ret+arg, then set EIP
-            ;; Simpler: set EIP to WndProc, it'll return to DispatchMessage's caller
+            (call $gs32 (global.get $esp) (local.get $tmp))
+            ;; Jump to WndProc
             (global.set $eip (global.get $wndproc_addr))
-            (global.set $steps (i32.const 0)) ;; force re-decode at new EIP
+            (global.set $steps (i32.const 0))
             (return)))
         ;; No WndProc: just return 0
         (global.set $eax (i32.const 0))

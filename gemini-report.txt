@@ -1,0 +1,57 @@
+# Wine-Assembly Code Review Report
+
+## Executive Summary
+The `src/main.wat` implementation is a sophisticated but incomplete x86 emulator and Win32 environment. While it successfully implements a large subset of the i486 ISA and many common Win32 APIs, several critical bugs in the flag system and significant implementation gaps (especially FPU support and correct carry propagation) likely explain why complex applications like `calc.exe` are failing or performing poorly.
+
+---
+
+## 1. Critical Bugs
+
+### 1.1. Lazy Flag System: INC/DEC Carry Flag Violation
+**Issue:** The `INC` and `DEC` instructions (flag operations 4 and 5) overwrite the global `flag_op` variable.
+**Effect:** When `get_cf` is called after an `INC` or `DEC`, it returns 0 because it only knows how to calculate carry for `ADD` (1) and `SUB` (2).
+**Impact:** In x86, `INC` and `DEC` **must preserve** the existing Carry Flag (CF). The current implementation effectively clears CF after every `INC`/`DEC`. This will break any code sequence that relies on a carry from a previous operation across an `INC` or `DEC` (e.g., a loop counter incrementing between a multi-word addition).
+
+### 1.2. ADC/SBB Carry Flag Calculation Bug
+**Issue:** In `do_alu32`, the `ADC` and `SBB` implementations use `set_flags_add(a, b + cf, r)` and `set_flags_sub(a, b + cf, r)`.
+**Effect:** If `b + cf` overflows 32 bits (e.g., `b = 0xFFFFFFFF` and `cf = 1`), `b + cf` becomes 0. The subsequent flag calculation `res < a` will fail to detect the actual overflow that occurred during the 33-bit addition.
+**Impact:** Bignum math libraries (like the one in `calc.exe`) rely heavily on `ADC` and `SBB` for correct multi-word arithmetic. This bug will cause incorrect results in scientific mode and bignum initialization.
+
+### 1.3. Missing Flags on MUL/IMUL
+**Issue:** `th_mul32` and `th_imul32` (handlers 55, 56) do not set any flags.
+**Effect:** x86 `MUL` and `IMUL` should set CF and OF if the upper half of the result is non-zero.
+**Impact:** While less critical than `ADC` bugs, code that checks for overflow after a multiplication will behave incorrectly.
+
+### 1.4. No-op Heap Freeing
+**Issue:** `heap_free` (line 4435) is a no-op stub.
+**Effect:** Memory allocated via `LocalAlloc` or `GlobalAlloc` is never reclaimed, despite `calc.md` claiming this was fixed.
+**Impact:** Applications that perform many temporary allocations (like bignum math during initialization) will eventually hit the 32MB memory limit and crash or OOM.
+
+---
+
+## 2. Implementation Gaps
+
+### 2.1. Complete Lack of FPU (x87) Support
+**Gap:** There is no implementation for opcodes `D8`-`DF`.
+**Impact:** Any application using floating-point math will hit an "unrecognized opcode" and halt. Even if `calc.exe` uses bignums for scientific mode, standard mode or CRT initialization may still use x87 instructions.
+
+### 2.2. Missing x86 Instructions
+*   **RCL/RCR (Rotate Through Carry):** Currently stubbed as "approximate" (just returning the value or doing `SHL`). These are vital for certain bignum and bit-manipulation algorithms.
+*   **Two-byte Opcodes (0x0F):** Only a small subset (Jcc, SETcc, IMUL, MOVZX/MOVSX, BSF/BSR, BSWAP) is implemented. Many others (e.g., bit scans, shifts, CMov) are missing.
+*   **String Operations:** `CMPSD` and `SCASD` (dword versions) are missing, only `CMPSB` and `SCASB` (byte versions) are implemented.
+
+### 2.3. Brittle Win32 API Dispatch
+**Gap:** `win32_dispatch` uses string matching on the first 12 bytes of the function name.
+**Impact:** This is prone to collisions and requires careful ordering (as seen with `TranslateMessage` vs `TranslateAcceleratorA`). It also makes adding new APIs tedious and error-prone.
+
+### 2.4. PE Loader: No Ordinal Imports
+**Gap:** The loader (line 2998) ignores imports where the MSB is set (imports by ordinal).
+**Impact:** Many system DLLs (like `COMCTL32.DLL`) export functions primarily by ordinal. Applications relying on these will fail to load.
+
+---
+
+## 3. Recommendations for `calc.exe`
+1.  **Fix Flag Logic:** Prioritize fixing the `INC`/`DEC` CF preservation and the `ADC`/`SBB` carry calculation. This is likely the root cause of the "stuck" bignum initialization if it's producing incorrect mathematical results or infinite loops.
+2.  **Implement RCL/RCR:** Proper rotation-through-carry is essential for the bignum library identified in `calc.md`.
+3.  **Implement Real Heap Freeing:** Move away from the bump allocator to a simple free-list or similar mechanism to prevent OOM during the millions of blocks required for bignum init.
+4.  **FPU Stubbing:** If full FPU is too complex, at least stub the common instructions to prevent immediate halts, though this may lead to incorrect results later.

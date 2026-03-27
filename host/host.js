@@ -152,6 +152,7 @@ class WineAssembly {
           const evt = self.renderer.checkInput();
           if (!evt) return 0;
           self._lastInputEvent = evt;
+          self.logToUI('[input] msg=0x' + evt.msg.toString(16) + ' wParam=0x' + evt.wParam.toString(16) + ' lParam=0x' + (evt.lParam||0).toString(16));
           return (evt.wParam << 16) | (evt.msg & 0xFFFF);
         },
         check_input_lparam: () => {
@@ -223,7 +224,15 @@ class WineAssembly {
         return;
       }
       try {
+        const eipBefore = this.instance.exports.get_eip();
         this.instance.exports.run(stepsPerSlice);
+        const eipAfter = this.instance.exports.get_eip();
+        if (!eipAfter) {
+          this.logToUI('EIP reached 0, halting');
+          this.running = false;
+          this.dumpRegs();
+          return;
+        }
       } catch (e) {
         this.logToUI('ERROR: ' + e.message);
         this.running = false;
