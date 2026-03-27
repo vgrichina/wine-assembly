@@ -37,6 +37,7 @@ async function main() {
   let stopped = false;
   let apiCount = 0;
   let lastApiName = null;  // track last API name for return value correlation
+  let inputEvent = null;   // pending input event to inject via check_input
 
   // Parse resources directly from EXE
   const resourceJson = parseResources(exeBytes);
@@ -147,6 +148,11 @@ async function main() {
     show_window: (hwnd, cmd) => {
       logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
       if (renderer) renderer.showWindow(hwnd, cmd);
+      // Inject WM_CLOSE to test exit flow
+      if (!inputEvent) {
+        inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };  // WM_CLOSE
+        logs.push('[test] Injecting WM_CLOSE');
+      }
     },
     create_dialog: (hwnd, dlgId) => {
       logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId}`);
@@ -183,9 +189,25 @@ async function main() {
       ctx.font = renderer.font;
       ctx.fillText(text, x, y);
     },
-    check_input: () => 0,
+    check_input: () => {
+      if (inputEvent) {
+        const evt = inputEvent;
+        inputEvent = null;
+        const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
+        logs.push(`[check_input] returning msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
+        return packed;
+      }
+      return 0;
+    },
     check_input_lparam: () => 0,
-    set_window_class: () => {},
+    set_window_class: (hwnd, classPtr) => {
+      if (renderer) {
+        const bytes = new Uint8Array(instance.exports.memory.buffer);
+        let s = '';
+        for (let i = classPtr; bytes[i] && i < classPtr + 256; i++) s += String.fromCharCode(bytes[i]);
+        renderer.setWindowClass(hwnd, s);
+      }
+    },
   }};
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);

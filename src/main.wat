@@ -3449,9 +3449,17 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
     ;; DefWindowProcA(4) "DefW"
+    ;; Args: hwnd(+4), msg(+8), wParam(+12), lParam(+16)
     (if (i32.eq (local.get $w0) (i32.const 0x57666544))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (then
+        ;; WM_CLOSE (0x10): call DestroyWindow(hwnd)
+        (if (i32.eq (local.get $arg1) (i32.const 0x0010))
+          (then
+            ;; DestroyWindow sends WM_DESTROY to WndProc
+            ;; For now, just set quit_flag directly since WM_DESTROY→PostQuitMessage
+            (global.set $quit_flag (i32.const 1))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; PostQuitMessage(1) "Post"+"Quit"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736F50)) (i32.eq (local.get $w1) (i32.const 0x74697551)))
