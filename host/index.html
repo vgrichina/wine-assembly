@@ -82,21 +82,53 @@
     #taskbar {
       background: #c0c0c0;
       border-top: 2px outset #dfdfdf;
-      padding: 4px 8px;
-      font-size: 12px;
+      padding: 2px 4px;
+      font-size: 11px;
       display: flex;
-      justify-content: space-between;
+      align-items: center;
+      gap: 2px;
+      font-family: "Microsoft Sans Serif", "MS Sans Serif", Tahoma, Arial, sans-serif;
     }
     #taskbar .start-btn {
       font-weight: bold;
-      padding: 2px 8px;
+      padding: 2px 6px 2px 2px;
       background: #c0c0c0;
       border: 2px outset #dfdfdf;
       font-family: inherit;
-      font-size: 12px;
+      font-size: 11px;
       cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 22px;
     }
     #taskbar .start-btn:active { border-style: inset; }
+    .win-flag { display: inline-grid; grid-template-columns: 5px 5px; gap: 1px; }
+    .win-flag span { width: 5px; height: 5px; display: block; }
+    #task-buttons { display: flex; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
+    #task-buttons .task-btn {
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 2px 6px;
+      height: 22px;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+    #task-buttons .task-btn.active { border-style: inset; font-weight: bold; }
+    #clock-area {
+      margin-left: auto;
+      border: 1px inset #808080;
+      padding: 2px 8px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+    }
   </style>
 </head>
 <body>
@@ -123,8 +155,9 @@ Resource-aware Win98 emulator
     </div>
   </div>
   <div id="taskbar">
-    <button class="start-btn">Start</button>
-    <span id="clock"></span>
+    <button class="start-btn"><span class="win-flag"><span style="background:#FF0000"></span><span style="background:#00FF00"></span><span style="background:#0000FF"></span><span style="background:#FFFF00"></span></span>Start</button>
+    <div id="task-buttons"></div>
+    <div id="clock-area"><span id="clock"></span></div>
   </div>
 
   <script src="../lib/resources.js"></script>
