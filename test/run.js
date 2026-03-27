@@ -150,7 +150,7 @@ async function main() {
       if (renderer) renderer.showWindow(hwnd, cmd);
       // Inject WM_CLOSE to test exit flow
       if (!inputEvent) {
-        inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };  // WM_CLOSE
+        inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
         logs.push('[test] Injecting WM_CLOSE');
       }
     },

@@ -1798,12 +1798,12 @@
     (local.set $disp (call $read_thread_word))
     (local.set $mem_addr (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
-                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $op))
-        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
         (global.set $eip (local.get $op))
         (return)))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -1816,10 +1816,10 @@
     (local.set $disp (call $read_thread_word))
     (local.set $mem_addr (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
-                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
-        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
         (return)))
     (global.set $eip (local.get $target)))
   ;; 142: push [base+disp]. op=base, disp in word.
@@ -4533,13 +4533,12 @@
   ;; MAIN RUN LOOP
   ;; ============================================================
   (func $run (export "run") (param $max_blocks i32)
-    (local $thread i32) (local $blocks i32)
+    (local $thread i32) (local $blocks i32) (local $saved_eip i32)
     (local.set $blocks (local.get $max_blocks))
     (global.set $yield_flag (i32.const 0))
     (block $halt (loop $main
       (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
-      (br_if $halt (global.get $yield_flag))
       (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 4096)))
@@ -4550,9 +4549,16 @@
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
       (global.set $ip (local.get $thread))
+      ;; Save EIP before executing block (for yield rewind)
+      (local.set $saved_eip (global.get $eip))
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
+      ;; If yield was requested, rewind EIP so GetMessageA is re-called
+      (if (global.get $yield_flag)
+        (then
+          (global.set $eip (local.get $saved_eip))
+          (br $halt)))
       (br $main))))
 
   ;; ============================================================
