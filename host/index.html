@@ -13,6 +13,14 @@
       flex-direction: column;
       height: 100vh;
     }
+    #shell {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      margin: 8px;
+    }
     #titlebar {
       background: linear-gradient(to right, #000080, #1084d0);
       color: white;
@@ -23,55 +31,49 @@
       align-items: center;
       gap: 6px;
     }
-    #main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      background: #c0c0c0;
-      border: 2px outset #dfdfdf;
-      margin: 20px;
-    }
     #toolbar {
-      padding: 6px;
+      padding: 4px 6px;
       border-bottom: 1px solid #808080;
       display: flex;
       gap: 8px;
       align-items: center;
+      font-size: 12px;
     }
-    #toolbar button {
+    #toolbar select, #toolbar button {
       font-family: inherit;
       font-size: 12px;
-      padding: 2px 12px;
+      padding: 2px 8px;
       background: #c0c0c0;
       border: 2px outset #dfdfdf;
       cursor: pointer;
     }
     #toolbar button:active { border-style: inset; }
-    #toolbar input[type="file"] { font-size: 12px; }
     #content {
       flex: 1;
       display: flex;
       gap: 0;
+      min-height: 0;
     }
-    #screen-container {
+    #screen-wrap {
       flex: 1;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
-      background: #000;
-      min-height: 300px;
+      padding: 8px;
+      background: #008080;
+      overflow: auto;
     }
     canvas {
       image-rendering: pixelated;
-      background: #000;
+      cursor: default;
     }
     #log {
-      width: 400px;
+      width: 320px;
       background: #000;
       color: #0f0;
       font-family: "Fixedsys", "Courier New", monospace;
-      font-size: 12px;
-      padding: 8px;
+      font-size: 11px;
+      padding: 6px;
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-all;
@@ -85,47 +87,99 @@
       display: flex;
       justify-content: space-between;
     }
+    #taskbar .start-btn {
+      font-weight: bold;
+      padding: 2px 8px;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #taskbar .start-btn:active { border-style: inset; }
   </style>
 </head>
 <body>
-  <div id="main">
-    <div id="titlebar">
-      &#128187; Wine-Assembly — Windows 98 Emulator
-    </div>
+  <div id="shell">
+    <div id="titlebar">Wine-Assembly — Windows 98 Emulator</div>
     <div id="toolbar">
-      <input type="file" id="exe-file" accept=".exe">
-      <button onclick="loadFromFile()">Load EXE</button>
-      <button onclick="loadDemo()">Load Demo (hello.exe)</button>
-      <button onclick="wine.running = false">Stop</button>
+      <label>Program:</label>
+      <select id="app-select">
+        <option value="notepad">Notepad</option>
+        <option value="calc">Calculator</option>
+      </select>
+      <button onclick="launchApp()">Launch</button>
+      <button onclick="wine && (wine.running = false)">Stop</button>
+      <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
     <div id="content">
-      <div id="screen-container">
+      <div id="screen-wrap">
         <canvas id="screen" width="640" height="480"></canvas>
       </div>
-      <div id="log">Wine-Assembly v0.1
-Forth-threaded x86 interpreter
+      <div id="log">Wine-Assembly v0.2
+Resource-aware Win98 emulator
 ================================
 </div>
     </div>
   </div>
   <div id="taskbar">
-    <span>Ready</span>
+    <button class="start-btn">Start</button>
     <span id="clock"></span>
   </div>
 
+  <script src="../lib/renderer.js"></script>
   <script src="host.js"></script>
   <script>
-    // Load from file picker
-    function loadFromFile() {
-      const file = document.getElementById('exe-file').files[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      loadAndRun(url);
-    }
+    let wine = null;
 
-    // Load the built-in demo PE
-    function loadDemo() {
-      loadAndRun('../test/hello.exe');
+    const apps = {
+      notepad: { exe: '../test/binaries/notepad.exe', json: 'notepad.json', w: 640, h: 480 },
+      calc:    { exe: '../test/binaries/calc.exe',    json: 'calc.json',    w: 520, h: 380 },
+    };
+
+    async function launchApp() {
+      const sel = document.getElementById('app-select').value;
+      const app = apps[sel];
+      if (!app) return;
+
+      const canvas = document.getElementById('screen');
+      canvas.width = app.w;
+      canvas.height = app.h;
+
+      const log = document.getElementById('log');
+      log.textContent = `Launching ${sel}.exe...\n`;
+
+      wine = new WineAssembly();
+      await wine.init(canvas);
+      await wine.loadResources(app.json);
+
+      // Wire canvas events
+      canvas.onmousedown = e => {
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        wine.renderer.handleMouseDown(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy)
+        );
+      };
+      canvas.onmouseup = e => {
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        wine.renderer.handleMouseUp(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy)
+        );
+      };
+
+      document.getElementById('status').textContent = 'Loading PE...';
+
+      const ok = await wine.loadExe(app.exe);
+      if (ok) {
+        document.getElementById('status').textContent = 'Running ' + sel + '.exe';
+        wine.run();
+      } else {
+        document.getElementById('status').textContent = 'Failed to load';
+      }
     }
 
     // Taskbar clock

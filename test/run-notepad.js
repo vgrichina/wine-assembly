@@ -1,4 +1,9 @@
 const fs = require('fs');
+let createCanvas, Win98Renderer;
+try {
+  createCanvas = require('canvas').createCanvas;
+  Win98Renderer = require('../lib/renderer').Win98Renderer;
+} catch (_) {}
 
 // Parse args
 const args = process.argv.slice(2);
@@ -11,6 +16,7 @@ const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
+const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 
@@ -21,6 +27,21 @@ async function main() {
   const logs = [];
   let stopped = false;
   let apiCount = 0;
+
+  // Set up renderer if node-canvas is available
+  let renderer = null;
+  let resourceJson = null;
+  if (createCanvas && Win98Renderer) {
+    const canvas = createCanvas(640, 480);
+    renderer = new Win98Renderer(canvas);
+    // Try loading resource JSON
+    const resPath = EXE_PATH.replace(/\.exe$/i, '.json').replace(/test\/binaries\//, 'host/');
+    if (fs.existsSync(resPath)) {
+      resourceJson = JSON.parse(fs.readFileSync(resPath, 'utf8'));
+      renderer.loadResources(resourceJson);
+      console.log('Resources loaded:', resPath);
+    }
+  }
 
   const readStr = (mem, ptr, maxLen = 512) => {
     let s = '';
@@ -62,8 +83,54 @@ async function main() {
       return 1;
     },
     exit: code => { logs.push('[Exit] code=' + code); stopped = true; },
-    draw_rect: () => {},
+    draw_rect: (x, y, w, h, color) => {
+      if (renderer) { const ctx = renderer.ctx; ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0'); ctx.fillRect(x, y, w, h); }
+    },
     read_file: () => 0,
+    // GUI host imports — use shared renderer when node-canvas available, otherwise log-only stubs
+    create_window: (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
+      const mem = new Uint8Array(instance.exports.memory.buffer);
+      const title = readStr(mem, titlePtr);
+      logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId}`);
+      if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
+      return hwnd;
+    },
+    show_window: (hwnd, cmd) => {
+      logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
+      if (renderer) renderer.showWindow(hwnd, cmd);
+    },
+    create_dialog: (hwnd, dlgId) => {
+      logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId}`);
+      if (renderer) return renderer.createDialog(hwnd, dlgId);
+      return hwnd;
+    },
+    load_string: (id, bufPtr, bufLen) => {
+      if (!resourceJson || !resourceJson.strings) return 0;
+      const str = resourceJson.strings[id];
+      if (!str || bufLen <= 0) return 0;
+      const bytes = new Uint8Array(instance.exports.memory.buffer);
+      const maxLen = Math.min(str.length, bufLen - 1);
+      for (let i = 0; i < maxLen; i++) bytes[bufPtr + i] = str.charCodeAt(i) & 0xFF;
+      bytes[bufPtr + maxLen] = 0;
+      return maxLen;
+    },
+    set_window_text: (hwnd, textPtr) => {
+      const mem = new Uint8Array(instance.exports.memory.buffer);
+      const text = readStr(mem, textPtr);
+      logs.push(`[SetWindowText] "${text}"`);
+      if (renderer) renderer.setWindowText(hwnd, text);
+    },
+    invalidate: (hwnd) => { if (renderer) renderer.invalidate(hwnd); },
+    draw_text: (x, y, textPtr, textLen, color) => {
+      if (!renderer) return;
+      const bytes = new Uint8Array(instance.exports.memory.buffer, textPtr, textLen);
+      const text = new TextDecoder().decode(bytes);
+      const ctx = renderer.ctx;
+      ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
+      ctx.font = renderer.font;
+      ctx.fillText(text, x, y);
+    },
+    check_input: () => 0,
   }};
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
@@ -163,6 +230,14 @@ async function main() {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  // Output PNG if requested and renderer is available
+  if (PNG_OUT && renderer) {
+    renderer.repaint();
+    const pngBuf = renderer.canvas.toBuffer('image/png');
+    fs.writeFileSync(PNG_OUT, pngBuf);
+    console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
+  }
 }
 
 main().catch(e => console.error(e));

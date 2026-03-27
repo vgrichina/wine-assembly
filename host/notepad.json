@@ -1,0 +1,704 @@
+{
+  "file": "notepad.exe",
+  "imageBase": 4194304,
+  "menus": {
+    "1": [
+      {
+        "text": "&File",
+        "children": [
+          {
+            "text": "&New",
+            "id": 9
+          },
+          {
+            "text": "&Open...",
+            "id": 10
+          },
+          {
+            "text": "&Save",
+            "id": 1
+          },
+          {
+            "text": "Save &As...",
+            "id": 2
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "Page Se&tup...",
+            "id": 32
+          },
+          {
+            "text": "&Print",
+            "id": 14
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "E&xit",
+            "id": 28
+          }
+        ]
+      },
+      {
+        "text": "&Edit",
+        "children": [
+          {
+            "text": "&Undo\tCtrl+Z",
+            "id": 25
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "Cu&t\tCtrl+X",
+            "id": 768,
+            "grayed": true
+          },
+          {
+            "text": "&Copy\tCtrl+C",
+            "id": 769,
+            "grayed": true
+          },
+          {
+            "text": "&Paste\tCtrl+V",
+            "id": 770,
+            "grayed": true
+          },
+          {
+            "text": "De&lete\tDel",
+            "id": 771,
+            "grayed": true
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "Select &All",
+            "id": 7
+          },
+          {
+            "text": "Time/&Date\tF5",
+            "id": 12
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "&Word Wrap",
+            "id": 27
+          },
+          {
+            "text": "Set &Font...",
+            "id": 37
+          }
+        ]
+      },
+      {
+        "text": "&Search",
+        "children": [
+          {
+            "text": "&Find...",
+            "id": 3
+          },
+          {
+            "text": "Find &Next\tF3",
+            "id": 8
+          }
+        ]
+      },
+      {
+        "text": "&Help",
+        "children": [
+          {
+            "text": "&Help Topics",
+            "id": 5
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "&About Notepad",
+            "id": 11
+          }
+        ]
+      }
+    ]
+  },
+  "dialogs": {
+    "12": {
+      "controls": [
+        {
+          "style": 1342373889,
+          "exStyle": 0,
+          "x": 29,
+          "y": 44,
+          "cx": 32,
+          "cy": 14,
+          "id": 2,
+          "className": "Button",
+          "text": "Cancel",
+          "type": "defpushbutton"
+        },
+        {
+          "style": 1342308353,
+          "exStyle": 0,
+          "x": 0,
+          "y": 8,
+          "cx": 90,
+          "cy": 8,
+          "id": 65535,
+          "className": "Static",
+          "text": "Now Printing"
+        },
+        {
+          "style": 1342308481,
+          "exStyle": 0,
+          "x": 0,
+          "y": 18,
+          "cx": 90,
+          "cy": 8,
+          "id": 20,
+          "className": "Static",
+          "text": ""
+        }
+      ],
+      "style": 2429026496,
+      "exStyle": 0,
+      "x": 20,
+      "y": 20,
+      "cx": 90,
+      "cy": 64,
+      "menu": null,
+      "className": null,
+      "title": "Notepad",
+      "fontSize": 8,
+      "fontName": "MS Sans Serif"
+    },
+    "14": {
+      "controls": [
+        {
+          "style": 1342308359,
+          "exStyle": 0,
+          "x": 8,
+          "y": 8,
+          "cx": 224,
+          "cy": 56,
+          "id": 1073,
+          "className": "Button",
+          "text": "Paper",
+          "type": "groupbox"
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 16,
+          "y": 24,
+          "cx": 36,
+          "cy": 8,
+          "id": 1089,
+          "className": "Static",
+          "text": "Si&ze:"
+        },
+        {
+          "style": 1344471299,
+          "exStyle": 0,
+          "x": 64,
+          "y": 23,
+          "cx": 160,
+          "cy": 160,
+          "id": 1137,
+          "className": "ComboBox",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 16,
+          "y": 45,
+          "cx": 36,
+          "cy": 8,
+          "id": 1090,
+          "className": "Static",
+          "text": "&Source:"
+        },
+        {
+          "style": 1344471299,
+          "exStyle": 0,
+          "x": 64,
+          "y": 42,
+          "cx": 160,
+          "cy": 160,
+          "id": 1138,
+          "className": "ComboBox",
+          "text": ""
+        },
+        {
+          "style": 1342308359,
+          "exStyle": 0,
+          "x": 8,
+          "y": 69,
+          "cx": 64,
+          "cy": 56,
+          "id": 1072,
+          "className": "Button",
+          "text": "Orientation",
+          "type": "groupbox"
+        },
+        {
+          "style": 1342373897,
+          "exStyle": 0,
+          "x": 16,
+          "y": 82,
+          "cx": 52,
+          "cy": 12,
+          "id": 1056,
+          "className": "Button",
+          "text": "P&ortrait",
+          "type": "radiobutton"
+        },
+        {
+          "style": 1342177289,
+          "exStyle": 0,
+          "x": 16,
+          "y": 103,
+          "cx": 52,
+          "cy": 12,
+          "id": 1057,
+          "className": "Button",
+          "text": "L&andscape",
+          "type": "radiobutton"
+        },
+        {
+          "style": 1342308359,
+          "exStyle": 0,
+          "x": 80,
+          "y": 69,
+          "cx": 152,
+          "cy": 56,
+          "id": 1075,
+          "className": "Button",
+          "text": "Margins",
+          "type": "groupbox"
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 88,
+          "y": 85,
+          "cx": 32,
+          "cy": 8,
+          "id": 1102,
+          "className": "Static",
+          "text": "&Left:"
+        },
+        {
+          "style": 1350762496,
+          "exStyle": 0,
+          "x": 120,
+          "y": 82,
+          "cx": 28,
+          "cy": 12,
+          "id": 1155,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 164,
+          "y": 85,
+          "cx": 32,
+          "cy": 8,
+          "id": 1103,
+          "className": "Static",
+          "text": "&Right:"
+        },
+        {
+          "style": 1350762496,
+          "exStyle": 0,
+          "x": 196,
+          "y": 82,
+          "cx": 28,
+          "cy": 12,
+          "id": 1157,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 88,
+          "y": 104,
+          "cx": 32,
+          "cy": 8,
+          "id": 1104,
+          "className": "Static",
+          "text": "&Top:"
+        },
+        {
+          "style": 1350762496,
+          "exStyle": 0,
+          "x": 120,
+          "y": 103,
+          "cx": 28,
+          "cy": 12,
+          "id": 1156,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 164,
+          "y": 104,
+          "cx": 32,
+          "cy": 8,
+          "id": 1105,
+          "className": "Static",
+          "text": "&Bottom:"
+        },
+        {
+          "style": 1350762496,
+          "exStyle": 0,
+          "x": 196,
+          "y": 103,
+          "cx": 28,
+          "cy": 12,
+          "id": 1158,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 8,
+          "y": 135,
+          "cx": 29,
+          "cy": 8,
+          "id": 32,
+          "className": "Static",
+          "text": "&Header:"
+        },
+        {
+          "style": 1350631552,
+          "exStyle": 0,
+          "x": 56,
+          "y": 134,
+          "cx": 174,
+          "cy": 12,
+          "id": 30,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 8,
+          "y": 154,
+          "cx": 29,
+          "cy": 8,
+          "id": 33,
+          "className": "Static",
+          "text": "&Footer:"
+        },
+        {
+          "style": 1350631552,
+          "exStyle": 0,
+          "x": 56,
+          "y": 153,
+          "cx": 174,
+          "cy": 12,
+          "id": 31,
+          "className": "Edit",
+          "text": ""
+        },
+        {
+          "style": 1342373889,
+          "exStyle": 0,
+          "x": 190,
+          "y": 174,
+          "cx": 50,
+          "cy": 14,
+          "id": 1,
+          "className": "Button",
+          "text": "OK",
+          "type": "defpushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 244,
+          "y": 174,
+          "cx": 50,
+          "cy": 14,
+          "id": 2,
+          "className": "Button",
+          "text": "Cancel",
+          "type": "pushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 298,
+          "y": 174,
+          "cx": 50,
+          "cy": 14,
+          "id": 1026,
+          "className": "Button",
+          "text": "&Printer...",
+          "type": "pushbutton"
+        },
+        {
+          "style": 1342177287,
+          "exStyle": 0,
+          "x": 240,
+          "y": 8,
+          "cx": 108,
+          "cy": 158,
+          "id": 34,
+          "className": "Button",
+          "text": "Preview",
+          "type": "groupbox"
+        },
+        {
+          "style": 1342177286,
+          "exStyle": 0,
+          "x": 254,
+          "y": 46,
+          "cx": 80,
+          "cy": 80,
+          "id": 1080,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "style": 1342177285,
+          "exStyle": 0,
+          "x": 334,
+          "y": 50,
+          "cx": 4,
+          "cy": 80,
+          "id": 1081,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "style": 1342177285,
+          "exStyle": 0,
+          "x": 262,
+          "y": 122,
+          "cx": 80,
+          "cy": 4,
+          "id": 1082,
+          "className": "Static",
+          "text": ""
+        }
+      ],
+      "style": 2429034692,
+      "exStyle": 0,
+      "x": 0,
+      "y": 0,
+      "cx": 356,
+      "cy": 196,
+      "menu": null,
+      "className": null,
+      "title": "Page Setup",
+      "fontSize": 8,
+      "fontName": "MS Sans Serif"
+    }
+  },
+  "strings": {
+    "1": "Cannot open the %% file.\n\nMake sure a disk is in the drive you specified.",
+    "3": "Cannot find the %% file.\n\nDo you want to create a new file?",
+    "5": "The %% file already exists.\n\nDo you want to overwrite it?",
+    "10": "The text in the %% file has changed.\n\nDo you want to save the changes?",
+    "11": "Untitled",
+    "12": " - Notepad",
+    "16": "Cannot find \"%%\"",
+    "17": "Not enough memory available to complete this operation. Quit one or more applications to increase available memory, and then try again.",
+    "18": "The %% file is too large for Notepad.\n\nUse another editor to edit the file.",
+    "19": "Notepad",
+    "20": "The Clipboard line is too long to paste.\n\nCopy and paste smaller portions of the line.",
+    "21": "Not enough disk space to save the %% file.\n\nDelete one or more files to increase available disk space, or save the file to a different disk.",
+    "22": "The %% file is not in the correct format for use with Notepad.\n\nCreate a new file or try opening a different file.",
+    "25": "Cannot print the %% file. Be sure that your printer is connected properly and use Control Panel to verify that the printer is configured properly.",
+    "26": "Not a valid file name.",
+    "27": "The filename %% is not valid.\n\nVerify that the filename is no longer than 8 characters, followed by a period and an extension.",
+    "28": "Not enough disk space to print the %% file.\nDelete one or more files to increase available disk space, and then try again.",
+    "29": "Not enough memory to print.\n\nQuit one or more applications to increase available memory, and then try again.",
+    "30": "Cannot create the %% file.\n\nMake sure that the path and filename are correct.",
+    "31": "Cannot carry out the Word Wrap command because there is too much text in the file.",
+    "32": "%%",
+    "33": "\\*.txt",
+    "34": "notepad.hlp",
+    "36": "&f",
+    "37": "Page &p",
+    "42": "fFpPtTdDcCrRlL",
+    "43": "Cannot open the %% file.\n\nCannot print the file because it can't be found or is currently being used by another application. Be sure that the path and filename are correct, or wait until the application is finished, and then t \nry again.",
+    "44": "Text Documents",
+    "45": "All Files (*.*)",
+    "48": "You cannot quit Windows because the Save As dialog\nbox in Notepad is open. Switch to Notepad, close this\ndialog box, and then try quitting Windows again.",
+    "50": "Cannot load the driver for your printer.\nThere may not be enough memory, or the printer-driver file is missing.  \n\nReinstall your printer, or quit one or more applications to increase available memory, and then try again.",
+    "51": "%%\nYou do not have permission to open this file.  See the owner of the file or an administrator to obtain permission.",
+    "52": "This file is too large for Notepad to open.\nWould you like to use WordPad to read this file?",
+    "53": "There was a failure in launching WordPad.",
+    "55": "/p ",
+    "56": "wordpad.exe",
+    "57": "Courier New"
+  },
+  "icons": {
+    "1": {
+      "width": 32,
+      "height": 32,
+      "bpp": 4,
+      "data": "KAAAACAAAABAAAAAAQAEAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAIAAAACAgACAAAAAgACAAICAAADAwMAAgICAAAAA/wAA/wAAAP//AP8AAAD/AP8A//8AAP///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIiIiIiIiIiIAAAAAAAAAHd3d3d3d3d3eIAAAAAAAA///////////3eAAAAAAAAHd3d3d3f////3gAAAAAAACIiIiIiIiIiIh4AAAAAAAAd3d3d3d3f///eAAAAAAAAHd3d3d3d3///3gAAAAAAACIiIiIiIiIiIh4AAAAAAAAd3d3d3d3d///eAAAAAAAAAAAAAAAd3f//3gAAGZmZmZmZmZmZgiIiIh4AADn5+fn5+fn5+YHd3//eAAAfn5+fn5+fn5+YHd//3gAAAfn5+fn5+fn52CIiIh4AAAOfn5+fn5+fn52B3f/eAAAAOfn5+fn5+fn5gd3/3gAAAB+fn5+fn5+fn5giIh4AAAAB+fn5+fn5+fnYHd/eAAAAA5+fn5+fn5+fnYHf3gAAAAA5+fn5+fn5+fmCIh4AAAAAH5+AAAAAAB+fmB3eAAAAAAH5+fn5+fn5+dgd3gAAAAADn5wAAAAAA5+dgd4AAAAAADn5+fn5+fn5+YHeAAAAAAAfn5+fn5+fn5+YHgAAAAAAAfn5+fn5+fn52B4AAAAAAAODnB+DnB+DnB2AAAAAAAAAPAPAPAPAPAPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////4AAP/8AAB/+AAAP/AAAD/wAAA/8AAAP/AAAD/wAAA/8AAAP/AAADgAAAAwAAAAMAAAADAAAAA4AAAAOAAAADwAAAA8AAAAPgAAAD4AAAA/AAAAPwAAAD+AAAA/gAAAP8AAAD/AAAA/4AAAP+AAAH/wAAD/+SST//////"
+    },
+    "2": {
+      "width": 48,
+      "height": 48,
+      "bpp": 8,
+      "data": "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"
+    }
+  },
+  "accelerators": {
+    "1": [
+      {
+        "flags": 9,
+        "key": 45,
+        "cmd": 769,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 112,
+        "cmd": 5,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 114,
+        "cmd": 8,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 116,
+        "cmd": 12,
+        "virtKey": true
+      },
+      {
+        "flags": 17,
+        "key": 8,
+        "cmd": 25,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 26,
+        "cmd": 25,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 24,
+        "cmd": 768,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 3,
+        "cmd": 769,
+        "virtKey": false
+      },
+      {
+        "flags": 128,
+        "key": 22,
+        "cmd": 770,
+        "virtKey": false
+      }
+    ],
+    "2": [
+      {
+        "flags": 9,
+        "key": 45,
+        "cmd": 769,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 112,
+        "cmd": 5,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 114,
+        "cmd": 8,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 116,
+        "cmd": 12,
+        "virtKey": true
+      },
+      {
+        "flags": 17,
+        "key": 8,
+        "cmd": 25,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 26,
+        "cmd": 25,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 24,
+        "cmd": 768,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 3,
+        "cmd": 769,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 22,
+        "cmd": 770,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 27,
+        "cmd": 28,
+        "virtKey": true
+      },
+      {
+        "flags": 9,
+        "key": 67,
+        "cmd": 28,
+        "virtKey": true
+      },
+      {
+        "flags": 9,
+        "key": 68,
+        "cmd": 28,
+        "virtKey": true
+      },
+      {
+        "flags": 137,
+        "key": 90,
+        "cmd": 28,
+        "virtKey": true
+      }
+    ]
+  }
+}

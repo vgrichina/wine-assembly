@@ -1,0 +1,2284 @@
+{
+  "file": "calc.exe",
+  "imageBase": 16777216,
+  "menus": {
+    "106": [
+      {
+        "text": "&Edit",
+        "children": [
+          {
+            "text": "&Copy\tCtrl+C",
+            "id": 300
+          },
+          {
+            "text": "&Paste\tCtrl+V",
+            "id": 301
+          }
+        ]
+      },
+      {
+        "text": "&View",
+        "children": [
+          {
+            "text": "S&tandard",
+            "id": 304
+          },
+          {
+            "text": "&Scientific",
+            "id": 303
+          }
+        ]
+      },
+      {
+        "text": "&Help",
+        "children": [
+          {
+            "text": "&Help Topics ",
+            "id": 305
+          },
+          {
+            "separator": true
+          },
+          {
+            "text": "&About Calculator",
+            "id": 302
+          }
+        ]
+      }
+    ],
+    "107": [
+      {
+        "text": "",
+        "children": [
+          {
+            "text": "&What's This?",
+            "id": 8
+          }
+        ]
+      }
+    ]
+  },
+  "dialogs": {
+    "101": {
+      "controls": [
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 8,
+          "y": 21,
+          "cx": 35,
+          "cy": 10,
+          "id": 143,
+          "className": "Button",
+          "text": "Hex",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 49,
+          "y": 21,
+          "cx": 35,
+          "cy": 10,
+          "id": 142,
+          "className": "Button",
+          "text": "Dec",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 90,
+          "y": 21,
+          "cx": 35,
+          "cy": 10,
+          "id": 141,
+          "className": "Button",
+          "text": "Oct",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 129,
+          "y": 21,
+          "cx": 33,
+          "cy": 10,
+          "id": 140,
+          "className": "Button",
+          "text": "Bin",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 171,
+          "y": 21,
+          "cx": 40,
+          "cy": 10,
+          "id": 146,
+          "className": "Button",
+          "text": "Cannot divide by zero.",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 215,
+          "y": 21,
+          "cx": 40,
+          "cy": 10,
+          "id": 147,
+          "className": "Button",
+          "text": "Invalid input for function.",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242820,
+          "x": 261,
+          "y": 21,
+          "cx": 45,
+          "cy": 10,
+          "id": 148,
+          "className": "Button",
+          "text": "Result of function is undefined.",
+          "type": "radiobutton"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242819,
+          "x": 49,
+          "y": 41,
+          "cx": 34,
+          "cy": 10,
+          "id": 145,
+          "className": "Button",
+          "text": "Hyp",
+          "type": "autocheckbox"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342242819,
+          "x": 8,
+          "y": 41,
+          "cx": 34,
+          "cy": 10,
+          "id": 144,
+          "className": "Button",
+          "text": "Inv",
+          "type": "autocheckbox"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 84,
+          "className": "Button",
+          "text": "Sta",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 512,
+          "style": 1342309122,
+          "x": 144,
+          "y": 0,
+          "cx": 166,
+          "cy": 16,
+          "id": 403,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "helpId": 0,
+          "exStyle": 4,
+          "style": 1342177287,
+          "x": 5,
+          "y": 14,
+          "cx": 161,
+          "cy": 20,
+          "id": 4294967295,
+          "className": "Button",
+          "text": "",
+          "type": "groupbox"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 4,
+          "style": 1342177287,
+          "x": 167,
+          "y": 14,
+          "cx": 143,
+          "cy": 20,
+          "id": 4294967295,
+          "className": "Button",
+          "text": "",
+          "type": "groupbox"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 4,
+          "style": 1342177287,
+          "x": 5,
+          "y": 34,
+          "cx": 82,
+          "cy": 20,
+          "id": 4294967295,
+          "className": "Button",
+          "text": "",
+          "type": "groupbox"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 118,
+          "className": "Button",
+          "text": "Ave",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 119,
+          "className": "Button",
+          "text": "Sum",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 120,
+          "className": "Button",
+          "text": "s",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 121,
+          "className": "Button",
+          "text": "Dat",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 38,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 110,
+          "className": "Button",
+          "text": "F-E",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 38,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 108,
+          "className": "Button",
+          "text": "dms",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 38,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 98,
+          "className": "Button",
+          "text": "sin",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 38,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 99,
+          "className": "Button",
+          "text": "cos",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 38,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 100,
+          "className": "Button",
+          "text": "tan",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 64,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 122,
+          "className": "Button",
+          "text": "(",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 64,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 117,
+          "className": "Button",
+          "text": "Exp",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 64,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 95,
+          "className": "Button",
+          "text": "x^y",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 64,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 105,
+          "className": "Button",
+          "text": "x^3",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 64,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 104,
+          "className": "Button",
+          "text": "x^2",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 90,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 123,
+          "className": "Button",
+          "text": ")",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 90,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 101,
+          "className": "Button",
+          "text": "ln",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 90,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 102,
+          "className": "Button",
+          "text": "log",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 90,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 106,
+          "className": "Button",
+          "text": "n!",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 90,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 107,
+          "className": "Button",
+          "text": "1/x",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 113,
+          "className": "Button",
+          "text": "MC",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 114,
+          "className": "Button",
+          "text": "MR",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 115,
+          "className": "Button",
+          "text": "MS",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 116,
+          "className": "Button",
+          "text": "M+",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 111,
+          "className": "Button",
+          "text": "pi",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 156,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 131,
+          "className": "Button",
+          "text": "7",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 156,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 128,
+          "className": "Button",
+          "text": "4",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 156,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 125,
+          "className": "Button",
+          "text": "1",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 156,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 124,
+          "className": "Button",
+          "text": "0",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 156,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 134,
+          "className": "Button",
+          "text": "A",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 182,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 132,
+          "className": "Button",
+          "text": "8",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 182,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 129,
+          "className": "Button",
+          "text": "5",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 182,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 126,
+          "className": "Button",
+          "text": "2",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 182,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 80,
+          "className": "Button",
+          "text": "+/-",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 182,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 135,
+          "className": "Button",
+          "text": "B",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 208,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 133,
+          "className": "Button",
+          "text": "9",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 208,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 130,
+          "className": "Button",
+          "text": "6",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 208,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 127,
+          "className": "Button",
+          "text": "3",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 208,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 85,
+          "className": "Button",
+          "text": ".",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 208,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 136,
+          "className": "Button",
+          "text": "C",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 234,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 90,
+          "className": "Button",
+          "text": "/",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 234,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 91,
+          "className": "Button",
+          "text": "*",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 234,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 93,
+          "className": "Button",
+          "text": "-",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 234,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 92,
+          "className": "Button",
+          "text": "+",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 234,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 137,
+          "className": "Button",
+          "text": "D",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 260,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 94,
+          "className": "Button",
+          "text": "Mod",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 260,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 87,
+          "className": "Button",
+          "text": "Or",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 260,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 89,
+          "className": "Button",
+          "text": "Lsh",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 260,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 112,
+          "className": "Button",
+          "text": "=",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 260,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 138,
+          "className": "Button",
+          "text": "E",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 286,
+          "y": 60,
+          "cx": 24,
+          "cy": 18,
+          "id": 86,
+          "className": "Button",
+          "text": "And",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 286,
+          "y": 80,
+          "cx": 24,
+          "cy": 18,
+          "id": 88,
+          "className": "Button",
+          "text": "Xor",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 286,
+          "y": 100,
+          "cx": 24,
+          "cy": 18,
+          "id": 97,
+          "className": "Button",
+          "text": "Not",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 286,
+          "y": 120,
+          "cx": 24,
+          "cy": 18,
+          "id": 96,
+          "className": "Button",
+          "text": "Int",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 286,
+          "y": 140,
+          "cx": 24,
+          "cy": 18,
+          "id": 139,
+          "className": "Button",
+          "text": "F",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 177,
+          "y": 38,
+          "cx": 43,
+          "cy": 18,
+          "id": 83,
+          "className": "Button",
+          "text": "Backspace",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 222,
+          "y": 38,
+          "cx": 43,
+          "cy": 18,
+          "id": 82,
+          "className": "Button",
+          "text": "CE",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 267,
+          "y": 38,
+          "cx": 43,
+          "cy": 18,
+          "id": 81,
+          "className": "Button",
+          "text": "C",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 512,
+          "style": 1342309121,
+          "x": 126,
+          "y": 38,
+          "cx": 18,
+          "cy": 16,
+          "id": 401,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "helpId": 0,
+          "exStyle": 512,
+          "style": 1342309121,
+          "x": 93,
+          "y": 38,
+          "cx": 18,
+          "cy": 16,
+          "id": 402,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342308352,
+          "x": 0,
+          "y": 155,
+          "cx": 8,
+          "cy": 8,
+          "id": 1000,
+          "className": "Static",
+          "text": ""
+        }
+      ],
+      "helpId": 0,
+      "exStyle": 262144,
+      "style": 13238336,
+      "x": -32768,
+      "y": 0,
+      "cx": 316,
+      "cy": 164,
+      "menu": 106,
+      "className": "SciCalc",
+      "title": "Calculator",
+      "fontSize": 8,
+      "fontWeight": 0,
+      "fontItalic": 0,
+      "fontCharset": 1,
+      "fontName": "MS Shell Dlg"
+    },
+    "102": {
+      "controls": [
+        {
+          "helpId": 0,
+          "exStyle": 512,
+          "style": 1342309122,
+          "x": 5,
+          "y": 0,
+          "cx": 159,
+          "cy": 16,
+          "id": 403,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 113,
+          "className": "Button",
+          "text": "MC",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 114,
+          "className": "Button",
+          "text": "MR",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 115,
+          "className": "Button",
+          "text": "MS",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 5,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 116,
+          "className": "Button",
+          "text": "M+",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 36,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 131,
+          "className": "Button",
+          "text": "7",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 36,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 128,
+          "className": "Button",
+          "text": "4",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 36,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 125,
+          "className": "Button",
+          "text": "1",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 36,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 124,
+          "className": "Button",
+          "text": "0",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 62,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 132,
+          "className": "Button",
+          "text": "8",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 62,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 129,
+          "className": "Button",
+          "text": "5",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 62,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 126,
+          "className": "Button",
+          "text": "2",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 62,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 80,
+          "className": "Button",
+          "text": "+/-",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 88,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 133,
+          "className": "Button",
+          "text": "9",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 88,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 130,
+          "className": "Button",
+          "text": "6",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 88,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 127,
+          "className": "Button",
+          "text": "3",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 88,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 85,
+          "className": "Button",
+          "text": ".",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 114,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 90,
+          "className": "Button",
+          "text": "/",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 114,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 91,
+          "className": "Button",
+          "text": "*",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 114,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 93,
+          "className": "Button",
+          "text": "-",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 114,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 92,
+          "className": "Button",
+          "text": "+",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 140,
+          "y": 105,
+          "cx": 24,
+          "cy": 18,
+          "id": 112,
+          "className": "Button",
+          "text": "=",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 36,
+          "y": 23,
+          "cx": 42,
+          "cy": 18,
+          "id": 83,
+          "className": "Button",
+          "text": "Backspace",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 80,
+          "y": 23,
+          "cx": 41,
+          "cy": 18,
+          "id": 82,
+          "className": "Button",
+          "text": "CE",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 123,
+          "y": 23,
+          "cx": 41,
+          "cy": 18,
+          "id": 81,
+          "className": "Button",
+          "text": "C",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 512,
+          "style": 1342309121,
+          "x": 8,
+          "y": 24,
+          "cx": 18,
+          "cy": 16,
+          "id": 401,
+          "className": "Static",
+          "text": ""
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 140,
+          "y": 85,
+          "cx": 24,
+          "cy": 18,
+          "id": 107,
+          "className": "Button",
+          "text": "1/x",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 140,
+          "y": 45,
+          "cx": 24,
+          "cy": 18,
+          "id": 103,
+          "className": "Button",
+          "text": "sqrt",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342177291,
+          "x": 140,
+          "y": 65,
+          "cx": 24,
+          "cy": 18,
+          "id": 109,
+          "className": "Button",
+          "text": "%",
+          "type": "button"
+        },
+        {
+          "helpId": 0,
+          "exStyle": 0,
+          "style": 1342308352,
+          "x": 0,
+          "y": 120,
+          "cx": 8,
+          "cy": 8,
+          "id": 1000,
+          "className": "Static",
+          "text": ""
+        }
+      ],
+      "helpId": 0,
+      "exStyle": 262144,
+      "style": 13238336,
+      "x": -32768,
+      "y": 0,
+      "cx": 169,
+      "cy": 129,
+      "menu": 106,
+      "className": "SciCalc",
+      "title": "Calculator",
+      "fontSize": 8,
+      "fontWeight": 0,
+      "fontItalic": 0,
+      "fontCharset": 1,
+      "fontName": "MS Shell Dlg"
+    },
+    "103": {
+      "controls": [
+        {
+          "style": 1352663041,
+          "exStyle": 0,
+          "x": 3,
+          "y": 3,
+          "cx": 140,
+          "cy": 50,
+          "id": 407,
+          "className": "ListBox",
+          "text": ""
+        },
+        {
+          "style": 1342242817,
+          "exStyle": 0,
+          "x": 4,
+          "y": 58,
+          "cx": 28,
+          "cy": 14,
+          "id": 411,
+          "className": "Button",
+          "text": "&RET",
+          "type": "defpushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 40,
+          "y": 58,
+          "cx": 28,
+          "cy": 14,
+          "id": 410,
+          "className": "Button",
+          "text": "&LOAD",
+          "type": "pushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 76,
+          "y": 58,
+          "cx": 28,
+          "cy": 14,
+          "id": 404,
+          "className": "Button",
+          "text": "&CD",
+          "type": "pushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 112,
+          "y": 58,
+          "cx": 28,
+          "cy": 14,
+          "id": 405,
+          "className": "Button",
+          "text": "C&AD",
+          "type": "pushbutton"
+        },
+        {
+          "style": 1342308354,
+          "exStyle": 0,
+          "x": 0,
+          "y": 76,
+          "cx": 74,
+          "cy": 8,
+          "id": 409,
+          "className": "Static",
+          "text": "n="
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 74,
+          "y": 76,
+          "cx": 32,
+          "cy": 8,
+          "id": 408,
+          "className": "Static",
+          "text": "0"
+        }
+      ],
+      "style": 2160590912,
+      "exStyle": 0,
+      "x": 80,
+      "y": 80,
+      "cx": 146,
+      "cy": 86,
+      "menu": null,
+      "className": null,
+      "title": "Statistics Box",
+      "fontSize": 8,
+      "fontName": "MS Shell Dlg"
+    },
+    "104": {
+      "controls": [
+        {
+          "style": 1342177283,
+          "exStyle": 0,
+          "x": 6,
+          "y": 6,
+          "cx": 20,
+          "cy": 20,
+          "id": 65535,
+          "className": "Static",
+          "text": "#32515"
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 34,
+          "y": 4,
+          "cx": 198,
+          "cy": 20,
+          "id": 65535,
+          "className": "Static",
+          "text": "The requested operation may take a very long time to complete."
+        },
+        {
+          "style": 1342308352,
+          "exStyle": 0,
+          "x": 34,
+          "y": 31,
+          "cx": 198,
+          "cy": 20,
+          "id": 65535,
+          "className": "Static",
+          "text": "Do you want to let the calculation continue, or stop the operation now?"
+        },
+        {
+          "style": 1342242817,
+          "exStyle": 0,
+          "x": 73,
+          "y": 52,
+          "cx": 40,
+          "cy": 14,
+          "id": 4,
+          "className": "Button",
+          "text": "&Continue",
+          "type": "defpushbutton"
+        },
+        {
+          "style": 1342242816,
+          "exStyle": 0,
+          "x": 119,
+          "y": 52,
+          "cx": 40,
+          "cy": 14,
+          "id": 2,
+          "className": "Button",
+          "text": "&Stop",
+          "type": "pushbutton"
+        }
+      ],
+      "style": 2429026496,
+      "exStyle": 0,
+      "x": 8,
+      "y": 18,
+      "cx": 240,
+      "cy": 70,
+      "menu": null,
+      "className": null,
+      "title": "Calculator",
+      "fontSize": 8,
+      "fontName": "MS Shell Dlg"
+    }
+  },
+  "strings": {
+    "0": "+/-",
+    "1": "C",
+    "2": "CE",
+    "3": "Backspace",
+    "4": "Sta",
+    "5": ".",
+    "6": "And",
+    "7": "Or",
+    "8": "Xor",
+    "9": "Lsh",
+    "10": "/",
+    "11": "*",
+    "12": "+",
+    "13": "-",
+    "14": "Mod",
+    "15": "x^y",
+    "16": "Int",
+    "17": "Not",
+    "18": "sin",
+    "19": "cos",
+    "20": "tan",
+    "21": "ln",
+    "22": "log",
+    "23": "sqrt",
+    "24": "x^2",
+    "25": "x^3",
+    "26": "n!",
+    "27": "1/x",
+    "28": "dms",
+    "29": "%",
+    "30": "F-E",
+    "31": "pi",
+    "32": "=",
+    "33": "MC",
+    "34": "MR",
+    "35": "MS",
+    "36": "M+",
+    "37": "Exp",
+    "38": "Ave",
+    "39": "Sum",
+    "40": "s",
+    "41": "Dat",
+    "42": "(",
+    "43": ")",
+    "44": "0",
+    "45": "1",
+    "46": "2",
+    "47": "3",
+    "48": "4",
+    "49": "5",
+    "50": "6",
+    "51": "7",
+    "52": "8",
+    "53": "9",
+    "54": "A",
+    "55": "B",
+    "56": "C",
+    "57": "D",
+    "58": "E",
+    "59": "F",
+    "60": "Dword",
+    "61": "Word",
+    "62": "Byte",
+    "63": "Degrees",
+    "64": "Radians",
+    "65": "Gradients",
+    "66": "Cannot divide by zero.",
+    "67": "Invalid input for function.",
+    "68": "Result of function is undefined.",
+    "69": "Error: Positive Infinity.",
+    "70": "Error: Negative Infinity.",
+    "71": "Operation was canceled.",
+    "72": "Calc does not have enough memory to continue.",
+    "73": "The requested function may take a very long time to complete.\rDo you want to want to abort the operation now?",
+    "74": "calc.hlp",
+    "75": "Cannot open Clipboard.",
+    "76": "There is not enough memory for data.\rClose one or more programs, and then try again.",
+    "77": "calc.chm",
+    "78": "Calculator",
+    "79": "Not Enough Memory"
+  },
+  "icons": {
+    "2147484600": {
+      "width": 32,
+      "height": 32,
+      "bpp": 4,
+      "data": "KAAAACAAAABAAAAAAQAEAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAIAAAACAgACAAAAAgACAAICAAADAwMAAgICAAAAA/wAA/wAAAP//AP8AAAD/AP8A//8AAP///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGZERERERERERERERERERABuZmZmZmZmZmZmZmZmZmQAb2YABgAGAAYABgAAAAZkAG5m9wb3BvcG9wb3d3cGZABvZv8G/wb/Bv8G////BmQAbmZmZmZmZmZmZmZmZmZkAG9mAAYABgAGAAYABgAGZABuZvcG9wb3BvcG9wb3BmQAb2b/Bv8G/wb/Bv8G/wZkAG5mZmZmZmZmZmZmZmZmZABvZgAGAAYABgAGAAYABmQAbmb3BvcG9wb3BvcG9wZkAG9m/wb/Bv8G/wb/Bv8GZABuZmZmZmZmZmZmZmZmZmQAb2YHd3d3d3d3dmZmZmZkAG5mD////////3ZmZmZmZABvZgd3d3d3d3d2ZmZmZmQAbmYAAAAAAAAABmZmZmZkAG/v7+/v7+/v7+/v7+/v5AAGZmZmZmZmZmZmZmZmZmYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////////////////////wAAAAYAAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAADAAAAB////////////////////////////////"
+    }
+  },
+  "accelerators": {
+    "105": [
+      {
+        "flags": 0,
+        "key": 48,
+        "cmd": 124,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 49,
+        "cmd": 125,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 50,
+        "cmd": 126,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 51,
+        "cmd": 127,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 52,
+        "cmd": 128,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 53,
+        "cmd": 129,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 54,
+        "cmd": 130,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 55,
+        "cmd": 131,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 56,
+        "cmd": 132,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 57,
+        "cmd": 133,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 65,
+        "cmd": 134,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 66,
+        "cmd": 135,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 67,
+        "cmd": 136,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 68,
+        "cmd": 137,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 69,
+        "cmd": 138,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 70,
+        "cmd": 139,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 33,
+        "cmd": 106,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 83,
+        "cmd": 98,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 79,
+        "cmd": 99,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 84,
+        "cmd": 100,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 82,
+        "cmd": 107,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 89,
+        "cmd": 95,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 35,
+        "cmd": 105,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 64,
+        "cmd": 104,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 77,
+        "cmd": 108,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 78,
+        "cmd": 101,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 76,
+        "cmd": 102,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 86,
+        "cmd": 110,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 88,
+        "cmd": 117,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 73,
+        "cmd": 144,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 72,
+        "cmd": 145,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 80,
+        "cmd": 111,
+        "virtKey": true
+      },
+      {
+        "flags": 13,
+        "key": 75,
+        "cmd": 302,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 37,
+        "cmd": 83,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 8,
+        "cmd": 83,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 46,
+        "cmd": 82,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 27,
+        "cmd": 81,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 113,
+        "cmd": 146,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 114,
+        "cmd": 147,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 115,
+        "cmd": 148,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 116,
+        "cmd": 143,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 117,
+        "cmd": 142,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 118,
+        "cmd": 141,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 119,
+        "cmd": 140,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 120,
+        "cmd": 80,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 19,
+        "cmd": 84,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 13,
+        "cmd": 115,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 16,
+        "cmd": 116,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 12,
+        "cmd": 113,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 18,
+        "cmd": 114,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 1,
+        "cmd": 118,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 20,
+        "cmd": 119,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 4,
+        "cmd": 120,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 47,
+        "cmd": 90,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 42,
+        "cmd": 91,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 37,
+        "cmd": 94,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 45,
+        "cmd": 93,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 61,
+        "cmd": 112,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 43,
+        "cmd": 92,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 107,
+        "cmd": 92,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 38,
+        "cmd": 86,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 124,
+        "cmd": 87,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 126,
+        "cmd": 97,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 94,
+        "cmd": 88,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 40,
+        "cmd": 122,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 41,
+        "cmd": 123,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 59,
+        "cmd": 96,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 60,
+        "cmd": 89,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 46,
+        "cmd": 85,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 44,
+        "cmd": 85,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 59,
+        "cmd": 85,
+        "virtKey": false
+      },
+      {
+        "flags": 1,
+        "key": 13,
+        "cmd": 112,
+        "virtKey": true
+      },
+      {
+        "flags": 1,
+        "key": 45,
+        "cmd": 121,
+        "virtKey": true
+      },
+      {
+        "flags": 0,
+        "key": 3,
+        "cmd": 300,
+        "virtKey": false
+      },
+      {
+        "flags": 0,
+        "key": 22,
+        "cmd": 301,
+        "virtKey": false
+      },
+      {
+        "flags": 9,
+        "key": 45,
+        "cmd": 300,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 45,
+        "cmd": 301,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 65,
+        "cmd": 134,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 66,
+        "cmd": 135,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 67,
+        "cmd": 136,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 68,
+        "cmd": 137,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 69,
+        "cmd": 138,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 70,
+        "cmd": 139,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 83,
+        "cmd": 98,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 79,
+        "cmd": 99,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 84,
+        "cmd": 100,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 82,
+        "cmd": 107,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 89,
+        "cmd": 95,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 77,
+        "cmd": 108,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 78,
+        "cmd": 101,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 76,
+        "cmd": 102,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 86,
+        "cmd": 110,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 88,
+        "cmd": 117,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 73,
+        "cmd": 144,
+        "virtKey": true
+      },
+      {
+        "flags": 5,
+        "key": 72,
+        "cmd": 145,
+        "virtKey": true
+      },
+      {
+        "flags": 133,
+        "key": 80,
+        "cmd": 111,
+        "virtKey": true
+      }
+    ]
+  }
+}

@@ -11,6 +11,23 @@
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
+  ;; GUI host imports — call into JS canvas renderer
+  (import "host" "create_window" (func $host_create_window (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
+  (import "host" "show_window" (func $host_show_window (param i32 i32)))
+  ;; show_window(hwnd, cmd)
+  (import "host" "create_dialog" (func $host_create_dialog (param i32 i32) (result i32)))
+  ;; create_dialog(hwnd, dlg_resource_id) → hwnd
+  (import "host" "load_string" (func $host_load_string (param i32 i32 i32) (result i32)))
+  ;; load_string(string_id, buf_ptr, buf_len) → chars_written
+  (import "host" "set_window_text" (func $host_set_window_text (param i32 i32)))
+  ;; set_window_text(hwnd, text_ptr)
+  (import "host" "invalidate" (func $host_invalidate (param i32)))
+  ;; invalidate(hwnd)
+  (import "host" "draw_text" (func $host_draw_text (param i32 i32 i32 i32 i32)))
+  ;; draw_text(x, y, text_ptr, text_len, color)
+  (import "host" "check_input" (func $host_check_input (result i32)))
+  ;; check_input() → packed event (0 = none)
 
   ;; ---- Memory: 512 pages = 32MB initial ----
   (memory (export "memory") 512)
@@ -20,21 +37,25 @@
   ;; ============================================================
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
-  ;; 0x00002000  64KB    PE staging area
+  ;; 0x00002000  ...     (unused — staging moved below)
   ;; 0x00012000  8MB     Guest address space (PE sections)
   ;; 0x00812000  1MB     Guest stack (ESP starts at top)
   ;; 0x00912000  2MB     Guest heap
   ;; 0x00B12000  256KB   IAT thunk zone
   ;; 0x00B52000  1MB     Thread cache
   ;; 0x00C52000  64KB    Block cache index (4096 slots × 16 bytes)
-  ;; 0x00C62000  ...     Free
+  ;; 0x00C62000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x00E62000  ...     Free
 
   ;; Memory region bases
-  (global $PE_STAGING   i32 (i32.const 0x00002000))
+  (global $PE_STAGING   i32 (i32.const 0x00C62000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
   (global $GUEST_STACK  i32 (i32.const 0x00912000))
   (global $THUNK_BASE   i32 (i32.const 0x00B12000))
   (global $THUNK_END    i32 (i32.const 0x00B52000))
+  ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
+  (global $thunk_guest_base (mut i32) (i32.const 0))
+  (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
 
@@ -79,6 +100,14 @@
   ;; Heap
   (global $heap_ptr (mut i32) (i32.const 0x00912000))
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
+  ;; MSVCRT static data pointers (allocated on first use from heap)
+  (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
+  (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_acmdln_ptr  (mut i32) (i32.const 0))
+  ;; FS segment base — points to fake TIB (allocated from heap during PE load)
+  (global $fs_base (mut i32) (i32.const 0))
+  ;; Current segment prefix during decoding (set before decode_modrm)
+  (global $d_seg (mut i32) (i32.const 0))
 
   ;; Runtime EA temp for SIB addressing
   (global $ea_temp (mut i32) (i32.const 0))
@@ -792,13 +821,13 @@
     (local $mem_addr i32) (local $target i32)
     (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    ;; Check thunk zone
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
-                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+    ;; Check thunk zone (guest-space bounds)
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $op))
-        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
         (global.set $eip (local.get $op))
         (return)))
     ;; Regular indirect call
@@ -1350,13 +1379,13 @@
     (local $reg i32) (local $target i32)
     (local.set $reg (call $read_thread_word))
     (local.set $target (call $get_reg (local.get $reg)))
-    ;; Check thunk zone
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
-                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+    ;; Check thunk zone (guest-space bounds)
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $op))
-        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
         (global.set $eip (local.get $op))
         (return)))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -1387,14 +1416,12 @@
     (local $mem_addr i32) (local $target i32) (local $ret_addr i32)
     (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    ;; Check thunk zone — JMP, not CALL. The caller's return address is already on stack.
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $THUNK_BASE))
-                 (i32.lt_u (local.get $target) (global.get $THUNK_END)))
+    ;; Check thunk zone (guest-space bounds) — JMP, not CALL. Return addr already on stack.
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
-        ;; Save return address before dispatch pops it
         (local.set $ret_addr (call $gl32 (global.get $esp)))
-        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $THUNK_BASE)) (i32.const 8)))
-        ;; Set EIP to the saved return address
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
         (global.set $eip (local.get $ret_addr))
         (return)))
     ;; Not a thunk — regular indirect jump
@@ -1765,6 +1792,11 @@
     (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch32)))
   )
 
+  ;; Apply FS segment override to mr_disp (call after decode_modrm when mr_mod != 3)
+  (func $apply_seg_override
+    (if (i32.eq (global.get $d_seg) (i32.const 5))
+      (then (global.set $mr_disp (i32.add (global.get $mr_disp) (global.get $fs_base))))))
+
   ;; Decode SIB, store base/index/scale info (not resolved)
   (func $decode_sib_info (param $mod i32)
     (local $sib i32) (local $base i32) (local $index i32)
@@ -1819,6 +1851,7 @@
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
 
   (func $emit_load32 (param $dst i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 26) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
@@ -1826,6 +1859,7 @@
     (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
 
   (func $emit_store32 (param $src i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 27) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
@@ -1833,6 +1867,7 @@
     (call $te (i32.const 21) (local.get $src)) (call $te_raw (local.get $a)))
 
   (func $emit_load8 (param $dst i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 28) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
@@ -1840,6 +1875,7 @@
     (call $te (i32.const 24) (local.get $dst)) (call $te_raw (local.get $a)))
 
   (func $emit_store8 (param $src i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 29) (i32.or (i32.shl (local.get $src) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
@@ -1848,6 +1884,7 @@
 
   (func $emit_lea (param $dst i32)
     ;; LEA computes address without memory access
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then
         (if (i32.eqz (global.get $mr_disp))
@@ -1927,6 +1964,7 @@
 
   ;; MOV [mem], imm32
   (func $emit_store32_imm (param $imm i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 133) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
@@ -1936,6 +1974,7 @@
 
   ;; MOV [mem], imm8
   (func $emit_store8_imm (param $imm i32) (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 134) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
@@ -2103,6 +2142,9 @@
         (br $pfx_done)
       ))
 
+      ;; Propagate segment prefix to global for ModRM decoder
+      (global.set $d_seg (local.get $prefix_seg))
+
       ;; ---- NOP (0x90) ----
       (if (i32.eq (local.get $op) (i32.const 0x90)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode)))
 
@@ -2248,10 +2290,11 @@
           (br $decode)))
 
       ;; ---- 0xA0-0xA3: MOV AL/EAX, [abs] / MOV [abs], AL/EAX ----
-      (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (call $d_fetch32)) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA1)) (then (call $te (i32.const 20) (i32.const 0)) (call $te_raw (call $d_fetch32)) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (call $d_fetch32)) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA3)) (then (call $te (i32.const 21) (i32.const 0)) (call $te_raw (call $d_fetch32)) (br $decode)))
+      ;; Apply FS base if segment override is active
+      (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA1)) (then (call $te (i32.const 20) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA3)) (then (call $te (i32.const 21) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
 
       ;; ---- 0xC6: MOV r/m8, imm8 ----
       (if (i32.eq (local.get $op) (i32.const 0xC6))
@@ -2684,6 +2727,9 @@
     (local.set $opt_hdr_size (i32.load16_u (i32.add (local.get $pe_off) (i32.const 20))))
     (global.set $image_base (i32.load (i32.add (local.get $pe_off) (i32.const 52))))
     (global.set $entry_point (i32.add (global.get $image_base) (i32.load (i32.add (local.get $pe_off) (i32.const 40)))))
+    ;; Compute guest-space thunk zone bounds
+    (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))
+    (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
 
     ;; Set heap to be above the image
@@ -2714,11 +2760,23 @@
       (then (call $process_imports (local.get $import_rva))))
 
     (global.set $eip (global.get $entry_point))
-    (global.set $esp (global.get $GUEST_STACK))
+    ;; ESP must be a guest address: GUEST_STACK(WASM) → guest = WASM - GUEST_BASE + image_base
+    (global.set $esp (i32.add (i32.sub (global.get $GUEST_STACK) (global.get $GUEST_BASE)) (global.get $image_base)))
     (global.set $eax (i32.const 0)) (global.set $ecx (i32.const 0))
     (global.set $edx (i32.const 0)) (global.set $ebx (i32.const 0))
     (global.set $ebp (i32.const 0)) (global.set $esi (i32.const 0))
     (global.set $edi (i32.const 0)) (global.set $df (i32.const 0))
+    ;; Allocate fake TIB (Thread Information Block) for FS segment
+    (global.set $fs_base (call $heap_alloc (i32.const 256)))
+    (call $zero_memory (call $g2w (global.get $fs_base)) (i32.const 256))
+    ;; TIB+0: SEH chain head (set to -1 = end of chain)
+    (call $gs32 (global.get $fs_base) (i32.const 0xFFFFFFFF))
+    ;; TIB+0x18: Self-pointer (linear address of TIB)
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x18)) (global.get $fs_base))
+    ;; TIB+0x04: Stack top
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04)) (global.get $esp))
+    ;; TIB+0x08: Stack bottom (1MB below top)
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08)) (i32.sub (global.get $esp) (i32.const 0x100000)))
     (global.get $entry_point))
 
   ;; ============================================================
@@ -2737,11 +2795,15 @@
       (block $fd (loop $fl
         (local.set $entry (i32.load (local.get $ilt_ptr)))
         (br_if $fd (i32.eqz (local.get $entry)))
-        (local.set $thunk_addr (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))))
+        ;; WASM addr of thunk data = THUNK_BASE + idx*8
+        ;; Guest addr = WASM_addr - GUEST_BASE + image_base
+        (local.set $thunk_addr (i32.add
+          (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                   (global.get $GUEST_BASE))
+          (global.get $image_base)))
         (i32.store (local.get $iat_ptr) (local.get $thunk_addr))
         (if (i32.eqz (i32.and (local.get $entry) (i32.const 0x80000000)))
-          (then (i32.store (i32.add (global.get $GUEST_BASE)
-            (i32.sub (local.get $thunk_addr) (global.get $image_base))) (local.get $entry))))
+          (then (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))))
         (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
         (local.set $iat_ptr (i32.add (local.get $iat_ptr) (i32.const 4)))
@@ -2759,9 +2821,8 @@
     (local $w0 i32) (local $w1 i32) (local $w2 i32)
     (local $msg_ptr i32)
 
-    (local.set $name_rva (i32.load (i32.add (global.get $GUEST_BASE)
-      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))
-               (global.get $image_base)))))
+    ;; Read name RVA from thunk data (stored at WASM addr THUNK_BASE + idx*8)
+    (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
     (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
 
     (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
@@ -2826,10 +2887,17 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
 
-    ;; GetProfileStringA(5) "GetP"+"rofi"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x50746547)) (i32.eq (local.get $w1) (i32.const 0x69666F72)))
+    ;; GetProfileStringA(5) "GetP"+"rofi" + char10='S'
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x50746547)) (i32.eq (local.get $w1) (i32.const 0x69666F72)))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 10))) (i32.const 0x53)))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; GetProfileIntA(3) "GetP"+"rofi" + char10='I' — return default (arg2)
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x50746547)) (i32.eq (local.get $w1) (i32.const 0x69666F72)))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 10))) (i32.const 0x49)))
+      (then (global.set $eax (local.get $arg2))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
     ;; GetLocaleInfoA(4) "GetL"+"ocal"+"eInf"
     (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x4C746547)) (i32.eq (local.get $w1) (i32.const 0x6C61636F)))
@@ -2902,6 +2970,45 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
+    ;; Sleep(1) "Slee"=0x65656C53
+    (if (i32.eq (local.get $w0) (i32.const 0x65656C53))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CloseHandle(1) "Clos"+"eHan"=0x6E614865
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x736F6C43)) (i32.eq (local.get $w1) (i32.const 0x6E614865)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; CreateEventA(4) "Crea"+"teEv"=0x76456574
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x76456574)))
+      (then (global.set $eax (i32.const 0x70001)) ;; fake event handle
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; CreateThread(6) "Crea"+"teTh"=0x68546574
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x68546574)))
+      (then (global.set $eax (i32.const 0x70002)) ;; fake thread handle
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; WaitForSingleObject(2) "Wait"=0x74696157
+    (if (i32.eq (local.get $w0) (i32.const 0x74696157))
+      (then (global.set $eax (i32.const 0)) ;; WAIT_OBJECT_0
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; ResetEvent(1) "Rese"=0x65736552
+    (if (i32.eq (local.get $w0) (i32.const 0x65736552))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; SetEvent(1) "SetE"+"vent"=0x746E6576
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x45746553)) (i32.eq (local.get $w1) (i32.const 0x746E6576)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; WriteProfileStringA(3) "Writ"=0x74697257
+    (if (i32.eq (local.get $w0) (i32.const 0x74697257))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
     ;; Local* / Global* — memory management
     (if (i32.eq (local.get $w0) (i32.const 0x61636F4C)) ;; "Loca"
       (then (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2)) (return)))
@@ -2930,17 +3037,35 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
     ;; CreateWindowExA(12) "Crea"+"teWi"
+    ;; Args: exStyle(+4), className(+8), windowName(+12), style(+16), x(+20), y(+24), w(+28), h(+32), parent(+36), menu(+40)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
       (then
-        ;; Save HWND
+        ;; Save HWND and WndProc
         (global.set $main_hwnd (i32.const 0x10001))
+        ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
+        ;; arg3=style(+16), arg4=x(+20), esp+24=y, esp+28=w, esp+32=h, arg2=windowName(+12), esp+40=menu
+        (drop (call $host_create_window
+          (i32.const 0x10001)                                        ;; hwnd
+          (local.get $arg3)                                           ;; style
+          (local.get $arg4)                                           ;; x
+          (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
+          (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
+          (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
+          (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
+          (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
+        ))
         (global.set $eax (i32.const 0x10001))
         (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
 
     ;; CreateDialogParamA(5) "Crea"+"teDi"
+    ;; Args: hInstance(+4), templateName(+8), hWndParent(+12), dlgProc(+16), initParam(+20)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69446574)))
-      (then (global.set $eax (i32.const 0x10002))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+      (then
+        ;; Call host: create_dialog(hwnd, dlg_resource_id)
+        (global.set $eax (call $host_create_dialog
+          (i32.const 0x10002)    ;; hwnd for dialog
+          (local.get $arg1)))    ;; template name/ID
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
 
     ;; MessageBoxA(4) "Mess"
     (if (i32.eq (local.get $w0) (i32.const 0x7373654D))
@@ -2959,12 +3084,14 @@
 
     ;; ShowWindow(2) "Show"
     (if (i32.eq (local.get $w0) (i32.const 0x776F6853))
-      (then (global.set $eax (i32.const 1))
+      (then (call $host_show_window (local.get $arg0) (local.get $arg1))
+            (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; UpdateWindow(1) "Upda"
     (if (i32.eq (local.get $w0) (i32.const 0x61647055))
-      (then (global.set $eax (i32.const 1))
+      (then (call $host_invalidate (local.get $arg0))
+            (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
     ;; GetMessageA(4) "GetM"+"essa"
@@ -3091,6 +3218,11 @@
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
+    ;; DestroyMenu(1) "Dest"+"royM"=0x4D796F72
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736544)) (i32.eq (local.get $w1) (i32.const 0x4D796F72)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
     ;; GetDC(1) "GetD"+"C\0" — match "GetD" then check 5th char = 'C'
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547))
                  (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x43)))
@@ -3151,8 +3283,9 @@
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; GetWindowTextA(3) "GetW"+"indo"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x57746547)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+    ;; GetWindowTextA(3) "GetW"+"indo" + w2="wTex"=0x78655477
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746547)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+                 (i32.eq (local.get $w2) (i32.const 0x78655477)))
       (then
         ;; Return empty string
         (if (i32.gt_u (local.get $arg2) (i32.const 0))
@@ -3160,18 +3293,35 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
+    ;; GetWindowRect(2) "GetW"+"indo" + w2="wRec"=0x63655277
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746547)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+                 (i32.eq (local.get $w2) (i32.const 0x63655277)))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 640))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 480))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
     ;; GetDlgCtrlID(1) "GetD"+"lgCt"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x7443676C)))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; GetDlgItemTextA(4) "GetD"+"lgIt"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+    ;; GetDlgItemTextA(4) "GetD"+"lgIt" + w2="emTe"=0x65546D65
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+                 (i32.eq (local.get $w2) (i32.const 0x65546D65)))
       (then
         (if (i32.gt_u (local.get $arg3) (i32.const 0))
           (then (call $gs8 (local.get $arg2) (i32.const 0))))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; GetDlgItem(2) "GetD"+"lgIt" + w2 != "emTe" (shorter name)
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746547)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; GetCursorPos(1) "GetC"+"urso"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746547)) (i32.eq (local.get $w1) (i32.const 0x6F737275)))
@@ -3202,16 +3352,24 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
-    ;; SetWindowTextA(2) "SetW"+"indo"+"wTex"
+    ;; SetWindowTextA(2) "SetW"+"indo"+"wTex" — args: hWnd, lpString
     (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746553)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
                  (i32.eq (local.get $w2) (i32.const 0x78655477)))
-      (then (global.set $eax (i32.const 1))
+      (then (call $host_set_window_text (local.get $arg0) (call $g2w (local.get $arg1)))
+            (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; SetDlgItemTextA(3) "SetD"+"lgIt"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x44746553)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+    ;; SetDlgItemTextA(3) "SetD"+"lgIt" + w2="emTe"=0x65546D65
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x44746553)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+                 (i32.eq (local.get $w2) (i32.const 0x65546D65)))
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; SetDlgItemInt(4) "SetD"+"lgIt" + w2="emIn"=0x6E496D65
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x44746553)) (i32.eq (local.get $w1) (i32.const 0x74496C67)))
+                 (i32.eq (local.get $w2) (i32.const 0x6E496D65)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; SetForegroundWindow(1) "SetF"+"oreg"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x46746553)) (i32.eq (local.get $w1) (i32.const 0x6765726F)))
@@ -3238,13 +3396,14 @@
       (then (global.set $eax (i32.const 0x20002))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; LoadStringA(4) "Load"+"Stri"
+    ;; LoadStringA(4) "Load"+"Stri" — args: hInst, uID, lpBuffer, cchMax
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x69727453)))
       (then
-        ;; Return empty string
-        (if (i32.gt_u (local.get $arg3) (i32.const 0))
-          (then (call $gs8 (local.get $arg2) (i32.const 0))))
-        (global.set $eax (i32.const 0))
+        ;; Call host to write string from resource JSON into guest buffer
+        (global.set $eax (call $host_load_string
+          (local.get $arg1)                ;; string ID
+          (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
+          (local.get $arg3)))              ;; max chars
         (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; LoadAcceleratorsA(2) "Load"+"Acce"
@@ -3278,9 +3437,25 @@
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
 
-    ;; CheckMenuItem(3) "Chec"+"kMen"
+    ;; CheckMenuRadioItem(5) "Chec"+"kMen"+"uRad"=0x64615275
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x63656843)) (i32.eq (local.get $w1) (i32.const 0x6E654D6B)))
+                 (i32.eq (local.get $w2) (i32.const 0x64615275)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; CheckMenuItem(3) "Chec"+"kMen" (catch-all for remaining CheckMenu*)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63656843)) (i32.eq (local.get $w1) (i32.const 0x6E654D6B)))
       (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; CheckRadioButton(4) "Chec"+"kRad"=0x6461526B
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63656843)) (i32.eq (local.get $w1) (i32.const 0x6461526B)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; CheckDlgButton(3) "Chec"+"kDlg"=0x676C446B
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63656843)) (i32.eq (local.get $w1) (i32.const 0x676C446B)))
+      (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
     ;; CharNextA(1) "Char"+"Next"
@@ -3341,13 +3516,82 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
 
     ;; Clipboard
-    (if (i32.eq (local.get $w0) (i32.const 0x736F6C43)) ;; "Clos" CloseClipboard(0)
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x736F6C43)) (i32.eq (local.get $w1) (i32.const 0x696C4365))) ;; "Clos"+"eCli" CloseClipboard(0)
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
     (if (i32.eq (local.get $w0) (i32.const 0x6E65704F)) ;; "Open" OpenClipboard(1)
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $w0) (i32.const 0x6C437349)) ;; "IsCl" IsClipboardFormatAvailable(1)
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; IsChild(2) "IsCh"=0x68437349
+    (if (i32.eq (local.get $w0) (i32.const 0x68437349))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; GetSysColorBrush(1) "GetS"+"ysCo"=0x6F437379 + w2="lorB"=0x42726F6C
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x6F437379)))
+                 (i32.eq (local.get $w2) (i32.const 0x42726F6C)))
+      (then (global.set $eax (i32.const 0x30010)) ;; fake HBRUSH
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; GetSysColor(1) "GetS"+"ysCo"=0x6F437379 (catch-all after Brush)
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x53746547)) (i32.eq (local.get $w1) (i32.const 0x6F437379)))
+      (then
+        ;; Return reasonable defaults for common colors
+        ;; COLOR_WINDOW=5 → white, COLOR_BTNFACE=15 → 0xC0C0C0
+        (if (i32.eq (local.get $arg0) (i32.const 5))
+          (then (global.set $eax (i32.const 0x00FFFFFF)))
+          (else (if (i32.eq (local.get $arg0) (i32.const 15))
+            (then (global.set $eax (i32.const 0x00C0C0C0)))
+            (else (global.set $eax (i32.const 0x00C0C0C0))))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+
+    ;; DialogBoxParamA(5) "Dial"=0x6C616944
+    (if (i32.eq (local.get $w0) (i32.const 0x6C616944))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; LoadMenuA(2) "Load"+"Menu"=0x756E654D
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x756E654D)))
+      (then (global.set $eax (i32.const 0x40010)) ;; fake HMENU
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; TrackPopupMenuEx(6) "Trac"=0x63617254
+    (if (i32.eq (local.get $w0) (i32.const 0x63617254))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+
+    ;; OffsetRect(3) "Offs"=0x7366664F
+    (if (i32.eq (local.get $w0) (i32.const 0x7366664F))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+
+    ;; MapWindowPoints(4) "MapW"=0x5770614D
+    (if (i32.eq (local.get $w0) (i32.const 0x5770614D))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; SetWindowPos(7) "SetW"+"indo"+"wPos"=0x736F5077
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x57746553)) (i32.eq (local.get $w1) (i32.const 0x6F646E69)))
+                 (i32.eq (local.get $w2) (i32.const 0x736F5077)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)))
+
+    ;; DrawTextA(5) "Draw"+"Text"=0x74786554
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x77617244)) (i32.eq (local.get $w1) (i32.const 0x74786554)))
+      (then (global.set $eax (i32.const 16)) ;; return text height
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+
+    ;; DrawEdge(4) "Draw"+"Edge"=0x65676445
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x77617244)) (i32.eq (local.get $w1) (i32.const 0x65676445)))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+
+    ;; GetClipboardData(1) "GetC"+"lipb"=0x62706C69
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x43746547)) (i32.eq (local.get $w1) (i32.const 0x62706C69)))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
@@ -3429,9 +3673,19 @@
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; SetBkMode(2) "SetB"
+    ;; SetBkColor(2) "SetB"+"kCol"=0x6C6F436B
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x42746553)) (i32.eq (local.get $w1) (i32.const 0x6C6F436B)))
+      (then (global.set $eax (i32.const 0x00FFFFFF)) ;; prev color
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetBkMode(2) "SetB"+"kMod"=0x646F4D6B (catch-all for remaining SetB*)
     (if (i32.eq (local.get $w0) (i32.const 0x42746553))
       (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetTextColor(2) "SetT"+"extC"=0x43747865
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746553)) (i32.eq (local.get $w1) (i32.const 0x43747865)))
+      (then (global.set $eax (i32.const 0x00000000)) ;; prev color (black)
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; SetMapMode(2) "SetM"
@@ -3573,22 +3827,140 @@
       (then (call $dispatch_reg (local.get $name_ptr)) (return)))
 
     ;; ================================================================
-    ;; MSVCRT
+    ;; MSVCRT — All cdecl: only pop return address (4 bytes). Caller cleans args.
     ;; ================================================================
-    ;; _exit, exit
-    (if (i32.or (i32.eq (local.get $w0) (i32.const 0x74697865))
-                (i32.eq (local.get $w0) (i32.const 0x69785F5F)))
-      (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-            (call $host_exit (local.get $arg0)) (return)))
-    ;; _* CRT stubs — vary in arg count, but most are 0-4 args
+
+    ;; exit(1) "exit"=0x74697865
+    (if (i32.eq (local.get $w0) (i32.const 0x74697865))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+            (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)))
+    ;; _exit(1) "_exi"=0x6978655F
+    (if (i32.eq (local.get $w0) (i32.const 0x6978655F))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+            (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)))
+
+    ;; __getmainargs(4) "__ge"=0x65675F5F — fills argc/argv/envp
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x65675F5F)) (i32.eq (local.get $w1) (i32.const 0x69616D74)))
+      (then
+        ;; arg0=&argc, arg1=&argv, arg2=&envp
+        (call $gs32 (local.get $arg0) (i32.const 1))     ;; argc = 1
+        ;; Allocate a fake argv array: argv[0] = ptr to "CALC", argv[1] = 0
+        (if (i32.eqz (global.get $msvcrt_acmdln_ptr))
+          (then
+            (global.set $msvcrt_acmdln_ptr (call $heap_alloc (i32.const 32)))
+            ;; Write "CALC\0" at acmdln_ptr
+            (i32.store (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 0x434C4143)) ;; "CALC"
+            (i32.store8 (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 4)) (i32.const 0))
+            ;; Write argv array at acmdln_ptr+8: [acmdln_ptr, 0]
+            (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 8)) (global.get $msvcrt_acmdln_ptr))
+            (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 12)) (i32.const 0))
+            ;; envp at acmdln_ptr+16: [0]
+            (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 16)) (i32.const 0))))
+        (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 8)))  ;; argv
+        (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 16))) ;; envp
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; __p__fmode(0) "__p_"=0x705F5F  — returns pointer to _fmode global
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x5F705F5F)) (i32.eq (local.get $w1) (i32.const 0x6F6D665F)))
+      (then
+        (if (i32.eqz (global.get $msvcrt_fmode_ptr))
+          (then (global.set $msvcrt_fmode_ptr (call $heap_alloc (i32.const 4)))
+                (call $gs32 (global.get $msvcrt_fmode_ptr) (i32.const 0))))
+        (global.set $eax (global.get $msvcrt_fmode_ptr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; __p__commode(0) "__p_"+"_com"=0x6D6F635F
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x5F705F5F)) (i32.eq (local.get $w1) (i32.const 0x6D6F635F)))
+      (then
+        (if (i32.eqz (global.get $msvcrt_commode_ptr))
+          (then (global.set $msvcrt_commode_ptr (call $heap_alloc (i32.const 4)))
+                (call $gs32 (global.get $msvcrt_commode_ptr) (i32.const 0))))
+        (global.set $eax (global.get $msvcrt_commode_ptr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _initterm(2) "_ini"=0x696E695F — calls function pointer table, stub as no-op
+    (if (i32.eq (local.get $w0) (i32.const 0x696E695F))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _controlfp(2) "_con"=0x6E6F635F
+    (if (i32.eq (local.get $w0) (i32.const 0x6E6F635F))
+      (then (global.set $eax (i32.const 0x0009001F)) ;; default FP control word
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _acmdln — data import, returns pointer to command line string
+    (if (i32.eq (local.get $w0) (i32.const 0x646D635F)) ;; "_cmd" — wait, _acmdln = "_acm"
+      (then (nop))) ;; dead
+    (if (i32.eq (local.get $w0) (i32.const 0x6D63615F)) ;; "_acm"
+      (then
+        (if (i32.eqz (global.get $msvcrt_acmdln_ptr))
+          (then
+            (global.set $msvcrt_acmdln_ptr (call $heap_alloc (i32.const 32)))
+            (i32.store (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 0x434C4143))
+            (i32.store8 (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 4)) (i32.const 0))))
+        (global.set $eax (global.get $msvcrt_acmdln_ptr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _strrev(1) "_str"=0x7274735F + "ev\0"
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x7274735F))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x65))) ;; 'e' in _strrev
+      (then (global.set $eax (local.get $arg0)) ;; return the pointer (stub: don't actually reverse)
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; toupper(1) "toup"=0x70756F74
+    (if (i32.eq (local.get $w0) (i32.const 0x70756F74))
+      (then
+        ;; Simple ASCII toupper
+        (if (i32.and (i32.ge_u (local.get $arg0) (i32.const 0x61)) (i32.le_u (local.get $arg0) (i32.const 0x7A)))
+          (then (global.set $eax (i32.sub (local.get $arg0) (i32.const 0x20))))
+          (else (global.set $eax (local.get $arg0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; memmove(3) "memm"=0x6D6D656D
+    (if (i32.eq (local.get $w0) (i32.const 0x6D6D656D))
+      (then (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
+            (global.set $eax (local.get $arg0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; strchr(2) "strc"=0x63727473
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63727473))
+                 (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x68))) ;; 'h' in strchr
+      (then (global.set $eax (i32.const 0)) ;; not found (stub)
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _XcptFilter(2) "_Xcp"=0x70635F58... actually "_Xcp"
+    (if (i32.eq (local.get $w0) (i32.const 0x70635858)) ;; wrong, let me recalc
+      (then (nop))) ;; placeholder
+    ;; "_Xcp" = 5F 58 63 70 = 0x7063585F
+    (if (i32.eq (local.get $w0) (i32.const 0x7063585F))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; _CxxThrowException(2) "_Cxx"=0x7878435F
+    (if (i32.eq (local.get $w0) (i32.const 0x7878435F))
+      (then (call $host_exit (i32.const 0xDEAD)) (global.set $steps (i32.const 0)) (return)))
+
+    ;; _EH_prolog — special stack frame setup, stub as simple push ebp; mov ebp,esp equivalent
+    ;; "_EH_"=0x5F48455F
+    (if (i32.eq (local.get $w0) (i32.const 0x5F48455F))
+      (then
+        ;; _EH_prolog pushes -1 and the handler address, sets up an EH frame
+        ;; Minimal stub: just pop return address and jump back (no-op)
+        ;; The ret addr is already on stack from call [thunk]
+        ;; Pop ret addr, push ebp, mov ebp esp, push -1, push 0, then jump to ret addr
+        ;; Actually the simplest: just return, caller code will handle it or crash gracefully
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; Generic _* CRT stubs — cdecl, only pop return address
     (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x5F))
-      (then (call $host_log (local.get $name_ptr) (i32.const 48))
-            (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; C++ mangled names
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+
+    ;; C++ mangled names ??* — thiscall/cdecl, pop ret only
     (if (i32.eq (i32.load16_u (local.get $name_ptr)) (i32.const 0x3F3F))
       (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
 
     ;; ================================================================
     ;; FALLBACK — log and return 0
@@ -3693,6 +4065,12 @@
   ;; ============================================================
   ;; HELPER FUNCTIONS
   ;; ============================================================
+  ;; Apply segment override to an address (FS=5 adds fs_base)
+  (func $seg_adj (param $addr i32) (param $seg i32) (result i32)
+    (if (result i32) (i32.eq (local.get $seg) (i32.const 5))
+      (then (i32.add (local.get $addr) (global.get $fs_base)))
+      (else (local.get $addr))))
+
   (func $memcpy (param $dst i32) (param $src i32) (param $len i32)
     (local $i i32)
     (block $d (loop $l

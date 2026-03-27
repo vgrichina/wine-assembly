@@ -1,13 +1,15 @@
 // Wine-Assembly: JS host for the WASM x86 interpreter
+// Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
   constructor() {
     this.instance = null;
     this.memory = null;
     this.running = false;
+    this.renderer = null;
+    this.resourceJson = null;
   }
 
-  // Read a null-terminated string from WASM memory
   readString(ptr) {
     const bytes = new Uint8Array(this.memory.buffer);
     let str = '';
@@ -17,53 +19,120 @@ class WineAssembly {
     return str;
   }
 
-  // Host imports provided to the WASM module
   getImports() {
+    const self = this;
     return {
       host: {
         log: (ptr, len) => {
-          const bytes = new Uint8Array(this.memory.buffer, ptr, len);
+          const bytes = new Uint8Array(self.memory.buffer, ptr, len);
           const text = new TextDecoder().decode(bytes);
           console.log('[wine-asm]', text);
-          this.logToUI('[wine-asm] ' + text);
+          self.logToUI('[wine-asm] ' + text);
         },
 
         log_i32: (val) => {
           console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
-          this.logToUI('[wine-asm] unknown opcode: 0x' + (val >>> 0).toString(16));
+          self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
         },
 
         message_box: (hWnd, textPtr, captionPtr, uType) => {
-          const text = this.readString(textPtr);
-          const caption = this.readString(captionPtr);
+          const text = self.readString(textPtr);
+          const caption = self.readString(captionPtr);
           console.log(`[MessageBox] "${caption}": "${text}"`);
-          this.logToUI(`[MessageBox] ${caption}: ${text}`);
-
-          // Show as a browser dialog
+          self.logToUI(`[MessageBox] ${caption}: ${text}`);
           alert(`${caption}\n\n${text}`);
-
-          // Return IDOK = 1
           return 1;
         },
 
         exit: (code) => {
           console.log('[ExitProcess] code:', code);
-          this.logToUI('[ExitProcess] code: ' + code);
-          this.running = false;
+          self.logToUI('[ExitProcess] code: ' + code);
+          self.running = false;
         },
 
         draw_rect: (x, y, w, h, color) => {
-          const canvas = document.getElementById('screen');
-          if (!canvas) return;
-          const ctx = canvas.getContext('2d');
+          if (!self.renderer) return;
+          const ctx = self.renderer.ctx;
           ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
           ctx.fillRect(x, y, w, h);
         },
 
         read_file: (namePtr, bufPtr, bufSize) => {
-          // TODO: virtual filesystem
-          console.log('[ReadFile] not implemented');
           return 0;
+        },
+
+        // --- GUI host imports ---
+
+        create_window: (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
+          const title = self.readString(titlePtr);
+          console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
+          self.logToUI(`[CreateWindow] "${title}"`);
+          if (self.renderer) {
+            self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
+          }
+          return hwnd;
+        },
+
+        show_window: (hwnd, cmd) => {
+          console.log(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
+          if (self.renderer) {
+            self.renderer.showWindow(hwnd, cmd);
+          }
+        },
+
+        create_dialog: (hwnd, dlgId) => {
+          console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlgId=${dlgId}`);
+          self.logToUI(`[CreateDialog] template=${dlgId}`);
+          if (self.renderer) {
+            return self.renderer.createDialog(hwnd, dlgId);
+          }
+          return hwnd;
+        },
+
+        load_string: (stringId, bufPtr, bufLen) => {
+          if (!self.resourceJson || !self.resourceJson.strings) return 0;
+          const str = self.resourceJson.strings[stringId];
+          if (!str || bufLen <= 0) return 0;
+          const bytes = new Uint8Array(self.memory.buffer);
+          const maxLen = Math.min(str.length, bufLen - 1);
+          for (let i = 0; i < maxLen; i++) {
+            bytes[bufPtr + i] = str.charCodeAt(i) & 0xFF;
+          }
+          bytes[bufPtr + maxLen] = 0;
+          return maxLen;
+        },
+
+        set_window_text: (hwnd, textPtr) => {
+          const text = self.readString(textPtr);
+          console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
+          if (self.renderer) {
+            self.renderer.setWindowText(hwnd, text);
+          }
+        },
+
+        invalidate: (hwnd) => {
+          if (self.renderer) {
+            self.renderer.invalidate(hwnd);
+          }
+        },
+
+        draw_text: (x, y, textPtr, textLen, color) => {
+          if (!self.renderer) return;
+          const bytes = new Uint8Array(self.memory.buffer, textPtr, textLen);
+          const text = new TextDecoder().decode(bytes);
+          const ctx = self.renderer.ctx;
+          ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
+          ctx.font = self.renderer.font;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillText(text, x, y);
+        },
+
+        check_input: () => {
+          if (!self.renderer) return 0;
+          const evt = self.renderer.checkInput();
+          if (!evt) return 0;
+          return (evt.wParam << 16) | (evt.msg & 0xFFFF);
         },
       },
     };
@@ -77,13 +146,30 @@ class WineAssembly {
     }
   }
 
-  async init() {
+  async init(canvas) {
     const resp = await fetch('../build/wine-assembly.wasm');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
     const result = await WebAssembly.instantiate(bytes, imports);
     this.instance = result.instance;
     this.memory = this.instance.exports.memory;
+
+    if (canvas) {
+      this.renderer = new Win98Renderer(canvas);
+    }
+  }
+
+  async loadResources(jsonUrl) {
+    try {
+      const resp = await fetch(jsonUrl);
+      this.resourceJson = await resp.json();
+      if (this.renderer) {
+        this.renderer.loadResources(this.resourceJson);
+      }
+      console.log('Resources loaded:', jsonUrl);
+    } catch (e) {
+      console.warn('No resources:', jsonUrl, e.message);
+    }
   }
 
   async loadExe(url) {
@@ -92,12 +178,10 @@ class WineAssembly {
     const resp = await fetch(url);
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
 
-    // Copy PE into staging area
     const staging = this.instance.exports.get_staging();
     const dest = new Uint8Array(this.memory.buffer, staging, exeBytes.length);
     dest.set(exeBytes);
 
-    // Parse and load the PE
     const entryPoint = this.instance.exports.load_pe(exeBytes.length);
     if (entryPoint < 0) {
       this.logToUI('ERROR: Failed to load PE (code ' + entryPoint + ')');
@@ -108,7 +192,6 @@ class WineAssembly {
     return true;
   }
 
-  // Run the interpreter in time-sliced chunks
   run(stepsPerSlice = 10000) {
     this.running = true;
     const step = () => {
@@ -125,7 +208,6 @@ class WineAssembly {
         this.dumpRegs();
         return;
       }
-      // Yield to browser, then continue
       if (this.running) {
         setTimeout(step, 0);
       }
@@ -142,24 +224,5 @@ class WineAssembly {
   }
 }
 
-// Boot
-const wine = new WineAssembly();
-
-async function loadAndRun(exeUrl) {
-  try {
-    await wine.init();
-    wine.logToUI('WASM module loaded.');
-    const ok = await wine.loadExe(exeUrl);
-    if (ok) {
-      wine.logToUI('Starting execution...');
-      wine.run();
-    }
-  } catch (e) {
-    wine.logToUI('FATAL: ' + e.message);
-    console.error(e);
-  }
-}
-
 // Expose globally
-window.wine = wine;
-window.loadAndRun = loadAndRun;
+window.WineAssembly = WineAssembly;
