@@ -6,7 +6,7 @@ async function main() {
   const exeBytes = fs.readFileSync('test/binaries/calc.exe');
 
   let createWindowCount = 0, showWindowCount = 0, lastApi = '';
-  let apiCalls = [];
+  let apiCalls = [], dialogCreated = false;
   const imports = { host: {
     log: (ptr, len) => {
       const b = new Uint8Array(mem.buffer, ptr, len);
@@ -24,7 +24,7 @@ async function main() {
       return h;
     },
     show_window: (h, cmd) => { showWindowCount++; console.log(`  ShowWindow hwnd=0x${h.toString(16)} cmd=${cmd}`); },
-    create_dialog: (h, d) => { console.log(`  CreateDialog hwnd=0x${h.toString(16)} dlg=${d}`); return h; },
+    create_dialog: (h, d) => { console.log(`  CreateDialog hwnd=0x${h.toString(16)} dlg=${d}`); dialogCreated = true; return h; },
     load_string: () => 0,
     set_window_text: (h, tPtr) => {
       const bytes = new Uint8Array(mem.buffer);
@@ -44,11 +44,49 @@ async function main() {
   const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
   console.log(`Entry: ${hex(entry)}, image_base: ${hex(e.get_image_base())}`);
 
+  // Check IAT entries for EnableWindow (0x1160) and GetDlgItem (0x1164)
+  const ib = e.get_image_base() >>> 0;
+  const gl32 = (ga) => { const off = ga - ib + 0x12000; return new Uint32Array(mem.buffer)[off >> 2]; };
+  console.log(`IAT[0x1160] (EnableWindow) = ${hex(gl32(ib + 0x1160))}`);
+  console.log(`IAT[0x1164] (GetDlgItem)   = ${hex(gl32(ib + 0x1164))}`);
+  // Check a few more USER32 entries
+  for (let j = 0; j < 5; j++) {
+    const addr = ib + 0x10F8 + j * 4;
+    console.log(`IAT[0x${(0x10F8+j*4).toString(16)}] = ${hex(gl32(addr))}`);
+  }
+
   // Run in batches, report progress
-  const BATCH = 500000;
+  let BATCH = 500000, reportCount = 0;
   const start = Date.now();
 
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 200000; i++) {
+    // After first window, use smaller batches to catch dialog creation
+    if (createWindowCount > 0 && BATCH > 100) { BATCH = 100; }
+    // After dialog created, switch to fine tracing
+    if (dialogCreated && BATCH > 10) {
+      console.log('\n--- Dialog created, switching to block-by-block trace ---');
+      const eipTrace = [];
+      for (let j = 0; j < 5000; j++) {
+        const eipBefore = e.get_eip() >>> 0;
+        if (eipBefore === 0) break;
+        const ediBefore = e.get_edi() >>> 0;
+        const ebxBefore = e.get_ebx() >>> 0;
+        try { e.run(1); } catch(err) { console.log(`CRASH: ${err.message}`); break; }
+        const ediAfter = e.get_edi() >>> 0;
+        if (ediAfter !== ediBefore) {
+          console.log(`  EDI changed: ${hex(ediBefore)} → ${hex(ediAfter)} at EIP=${hex(eipBefore)} (EBX=${hex(ebxBefore)})`);
+        }
+        eipTrace.push(eipBefore);
+        if ((e.get_eip() >>> 0) === 0) {
+          console.log(`EIP went to 0 after block at ${hex(eipBefore)}`);
+          console.log(`Last 20 EIPs: ${eipTrace.slice(-20).map(hex).join(' ')}`);
+          console.log(`EDI=${hex(e.get_edi())} EBX=${hex(e.get_ebx())} lastAPI=${lastApi}`);
+          break;
+        }
+      }
+      BATCH = 500000; // reset
+      dialogCreated = false; // only trace once
+    }
     try {
       e.run(BATCH);
     } catch (err) {
@@ -79,11 +117,24 @@ async function main() {
       console.log(`\nHALTED at ${(totalBlocks/1e6).toFixed(1)}M blocks (${elapsed}s)`);
       console.log(`  EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())}`);
       console.log(`  ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())}`);
+      console.log(`  ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`);
       console.log(`  lastAPI=${lastApi}`);
+      // Dump stack
+      const esp = e.get_esp() >>> 0;
+      const ib = e.get_image_base() >>> 0;
+      console.log('  Stack:');
+      for (let j = 0; j < 10; j++) {
+        const addr = esp + j * 4;
+        const off = addr - ib + 0x12000;
+        if (off >= 0 && off + 4 <= mem.buffer.byteLength) {
+          const val = new Uint32Array(mem.buffer)[off >> 2];
+          console.log(`    [ESP+${(j*4).toString(16)}] ${hex(val)}`);
+        }
+      }
       break;
     }
 
-    if ((i + 1) % 10 === 0) {
+    if (Date.now() - start > (reportCount + 1) * 5000) { reportCount++;
       console.log(`${(totalBlocks/1e6).toFixed(0)}M blocks (${elapsed}s): EIP=${hex(e.get_eip())} lastAPI=${lastApi} CW=${createWindowCount}`);
     }
   }
