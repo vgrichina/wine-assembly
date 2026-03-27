@@ -115,6 +115,13 @@ class WineAssembly {
           }
         },
 
+        set_window_class: (hwnd, classPtr) => {
+          if (self.renderer) {
+            const className = self.readString(classPtr);
+            self.renderer.setWindowClass(hwnd, className);
+          }
+        },
+
         invalidate: (hwnd) => {
           if (self.renderer) {
             self.renderer.invalidate(hwnd);

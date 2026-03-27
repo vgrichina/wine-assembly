@@ -30,6 +30,8 @@
   ;; check_input() → packed event (0 = none)
   (import "host" "check_input_lparam" (func $host_check_input_lparam (result i32)))
   ;; check_input_lparam() → lParam of last check_input event
+  (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
+  ;; set_window_class(hwnd, class_name_ptr)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
 
@@ -103,6 +105,7 @@
 
   ;; Heap
   (global $heap_ptr (mut i32) (i32.const 0x00912000))
+  (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
   ;; MSVCRT static data pointers (allocated on first use from heap)
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
@@ -3249,6 +3252,8 @@
           (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
           (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
         ))
+        ;; Pass className to host so it knows the window type (e.g. "Edit")
+        (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
         (global.set $eax (global.get $next_hwnd))
         (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
@@ -4295,7 +4300,8 @@
       (then (global.set $eax (call $heap_alloc (local.get $a1)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; LocalFree
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (then (call $heap_free (local.get $a0))
+            (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x4C)) ;; LocalLock
       (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; LocalUnlock
@@ -4310,7 +4316,8 @@
       (then (global.set $eax (call $heap_alloc (local.get $a1)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; GlobalFree
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (then (call $heap_free (local.get $a0))
+            (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x4C)) ;; GlobalLock
       (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; GlobalUnlock
@@ -4401,10 +4408,50 @@
       (br_if $d (i32.ge_u (local.get $i) (local.get $len)))
       (i32.store8 (i32.add (local.get $ptr) (local.get $i)) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+  ;; heap_alloc: returns a GUEST-SPACE pointer.
+  ;; Stores aligned_size at g2w(returned_ptr - 4) as a header.
+  ;; Free list is in WASM-space: each freed block has [wasm] = size, [wasm+4] = next_wasm.
+  ;; heap_ptr is in GUEST-SPACE (set during PE load to image_base + SizeOfImage).
   (func $heap_alloc (param $size i32) (result i32)
-    (local $ptr i32) (local.set $ptr (global.get $heap_ptr))
-    (global.set $heap_ptr (i32.and (i32.add (i32.add (global.get $heap_ptr) (local.get $size)) (i32.const 7)) (i32.const 0xFFFFFFF8)))
-    (local.get $ptr))
+    (local $aligned i32) (local $prev_wasm i32) (local $cur_wasm i32)
+    (local $blk_size i32) (local $guest_ptr i32)
+    ;; Align size to 8 bytes, min 8
+    (local.set $aligned (i32.and (i32.add (local.get $size) (i32.const 7)) (i32.const 0xFFFFFFF8)))
+    (if (i32.lt_u (local.get $aligned) (i32.const 8)) (then (local.set $aligned (i32.const 8))))
+    ;; Search free list for first fit
+    (local.set $prev_wasm (i32.const 0))
+    (local.set $cur_wasm (global.get $free_list))
+    (block $not_found (loop $search
+      (br_if $not_found (i32.eqz (local.get $cur_wasm)))
+      (local.set $blk_size (i32.load (local.get $cur_wasm)))
+      (if (i32.ge_u (local.get $blk_size) (local.get $aligned))
+        (then
+          ;; Unlink from free list
+          (if (i32.eqz (local.get $prev_wasm))
+            (then (global.set $free_list (i32.load (i32.add (local.get $cur_wasm) (i32.const 4)))))
+            (else (i32.store (i32.add (local.get $prev_wasm) (i32.const 4))
+                             (i32.load (i32.add (local.get $cur_wasm) (i32.const 4))))))
+          ;; Convert wasm_ptr+4 back to guest: guest = wasm - GUEST_BASE + image_base + 4
+          (return (i32.add (i32.sub (i32.add (local.get $cur_wasm) (i32.const 4)) (global.get $GUEST_BASE)) (global.get $image_base)))))
+      (local.set $prev_wasm (local.get $cur_wasm))
+      (local.set $cur_wasm (i32.load (i32.add (local.get $cur_wasm) (i32.const 4))))
+      (br $search)))
+    ;; Bump allocate: heap_ptr is guest-space
+    ;; Write size header at g2w(heap_ptr), return heap_ptr + 4
+    (i32.store (call $g2w (global.get $heap_ptr)) (local.get $aligned))
+    (local.set $guest_ptr (i32.add (global.get $heap_ptr) (i32.const 4)))
+    (global.set $heap_ptr (i32.add (local.get $guest_ptr) (local.get $aligned)))
+    (local.get $guest_ptr))
+
+  ;; heap_free: takes a GUEST-SPACE pointer, adds block to free list
+  (func $heap_free (param $guest_ptr i32)
+    (local $wasm_ptr i32)
+    (if (i32.eqz (local.get $guest_ptr)) (then (return)))
+    ;; wasm_ptr = g2w(guest_ptr - 4) — points to the size header
+    (local.set $wasm_ptr (call $g2w (i32.sub (local.get $guest_ptr) (i32.const 4))))
+    ;; [wasm+4] = next in free list (reuse the user data area)
+    (i32.store (i32.add (local.get $wasm_ptr) (i32.const 4)) (global.get $free_list))
+    (global.set $free_list (local.get $wasm_ptr)))
   (func $store_fake_cmdline
     (local $ptr i32) (local.set $ptr (call $heap_alloc (i32.const 16)))
     (global.set $fake_cmdline_addr (local.get $ptr))

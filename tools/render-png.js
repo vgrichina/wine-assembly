@@ -97,6 +97,7 @@ async function main() {
     },
     check_input: () => 0,
     check_input_lparam: () => 0,
+    set_window_class: () => {},
   }};
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);

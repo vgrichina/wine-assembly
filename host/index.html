@@ -170,6 +170,29 @@ Resource-aware Win98 emulator
           Math.floor((e.clientY - r.top) * sy)
         );
       };
+      canvas.setAttribute('tabindex', '0');
+      canvas.focus();
+      canvas.addEventListener('keydown', e => {
+        const vk = e.keyCode;
+        console.log('keydown', vk, e.key);
+        wine.renderer.handleKeyDown(vk);
+        if (vk === 8 || vk === 9 || (vk >= 112 && vk <= 123)) {
+          e.preventDefault();
+        }
+      });
+      canvas.addEventListener('keypress', e => {
+        e.preventDefault();
+        console.log('keypress', e.charCode, String.fromCharCode(e.charCode));
+        wine.renderer.handleKeyPress(e.charCode || e.keyCode);
+      });
+      // Fallback for browsers where keypress doesn't fire
+      canvas.addEventListener('beforeinput', e => {
+        if (e.data) {
+          for (const ch of e.data) {
+            wine.renderer.handleKeyPress(ch.charCodeAt(0));
+          }
+        }
+      });
       canvas.onmousemove = e => {
         if (e.buttons & 1) { // only while button held
           const r = canvas.getBoundingClientRect();
