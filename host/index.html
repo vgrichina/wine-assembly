@@ -170,6 +170,16 @@ Resource-aware Win98 emulator
           Math.floor((e.clientY - r.top) * sy)
         );
       };
+      canvas.onmousemove = e => {
+        if (e.buttons & 1) { // only while button held
+          const r = canvas.getBoundingClientRect();
+          const sx = canvas.width / r.width, sy = canvas.height / r.height;
+          wine.renderer.handleMouseMove(
+            Math.floor((e.clientX - r.left) * sx),
+            Math.floor((e.clientY - r.top) * sy)
+          );
+        }
+      };
 
       document.getElementById('status').textContent = 'Loading PE...';
 

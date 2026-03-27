@@ -8,6 +8,7 @@ class WineAssembly {
     this.running = false;
     this.renderer = null;
     this.resourceJson = null;
+    this.verbose = false;
   }
 
   readString(ptr) {
@@ -24,15 +25,19 @@ class WineAssembly {
     return {
       host: {
         log: (ptr, len) => {
-          const bytes = new Uint8Array(self.memory.buffer, ptr, len);
-          const text = new TextDecoder().decode(bytes);
-          console.log('[wine-asm]', text);
-          self.logToUI('[wine-asm] ' + text);
+          if (self.verbose) {
+            const bytes = new Uint8Array(self.memory.buffer, ptr, len);
+            const text = new TextDecoder().decode(bytes);
+            console.log('[wine-asm]', text);
+            self.logToUI('[wine-asm] ' + text);
+          }
         },
 
         log_i32: (val) => {
-          console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
-          self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
+          if (self.verbose) {
+            console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
+            self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
+          }
         },
 
         message_box: (hWnd, textPtr, captionPtr, uType) => {
@@ -139,7 +144,11 @@ class WineAssembly {
           if (!self.renderer) return 0;
           const evt = self.renderer.checkInput();
           if (!evt) return 0;
+          self._lastInputEvent = evt;
           return (evt.wParam << 16) | (evt.msg & 0xFFFF);
+        },
+        check_input_lparam: () => {
+          return self._lastInputEvent ? (self._lastInputEvent.lParam | 0) : 0;
         },
       },
     };

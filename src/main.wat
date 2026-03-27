@@ -28,6 +28,8 @@
   ;; draw_text(x, y, text_ptr, text_len, color)
   (import "host" "check_input" (func $host_check_input (result i32)))
   ;; check_input() → packed event (0 = none)
+  (import "host" "check_input_lparam" (func $host_check_input_lparam (result i32)))
+  ;; check_input_lparam() → lParam of last check_input event
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
 
@@ -3000,7 +3002,7 @@
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32)
     (local $w0 i32) (local $w1 i32) (local $w2 i32)
-    (local $msg_ptr i32) (local $tmp i32)
+    (local $msg_ptr i32) (local $tmp i32) (local $packed i32)
 
     ;; Read name RVA from thunk data (stored at WASM addr THUNK_BASE + idx*8)
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
@@ -3304,10 +3306,9 @@
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))     ;; lParam
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-        ;; Send WM_PAINT once, then block (return -1 to keep looping but do nothing)
+        ;; First call: send WM_PAINT
         (if (i32.eqz (global.get $msg_phase))
           (then
-            ;; First message: WM_PAINT
             (global.set $msg_phase (i32.const 1))
             (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
@@ -3315,13 +3316,27 @@
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-        ;; Subsequent: signal quit to end gracefully
-        (global.set $quit_flag (i32.const 1))
+        ;; Poll for input events from the host
+        (local.set $packed (call $host_check_input))
+        (if (i32.ne (local.get $packed) (i32.const 0))
+          (then
+            ;; Unpack: msg = low 16 bits, wParam = high 16 bits
+            (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
+              (i32.and (local.get $packed) (i32.const 0xFFFF)))            ;; msg
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
+              (i32.shr_u (local.get $packed) (i32.const 16)))              ;; wParam
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+              (call $host_check_input_lparam))                              ;; lParam
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+        ;; No input available — return WM_NULL (0) so message loop keeps spinning
+        ;; DispatchMessage will call WndProc with msg=0 which DefWindowProc handles
         (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012)) ;; WM_QUIT
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))  ;; WM_NULL
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-        (global.set $eax (i32.const 0))
+        (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; PeekMessageA(5) "Peek"
