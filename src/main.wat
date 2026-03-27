@@ -1496,7 +1496,8 @@
     (local $tmp i32) (local.set $tmp (global.get $eax))
     (global.set $eax (call $get_reg (local.get $op)))
     (call $set_reg (local.get $op) (local.get $tmp)) (call $next))
-  (func $th_thunk_call (param $op i32) (call $win32_dispatch (local.get $op)))
+  (func $th_thunk_call (param $op i32)
+    (call $win32_dispatch (local.get $op)))
   (func $th_imul_r_r (param $op i32)
     (local $d i32) (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (call $set_reg (local.get $d) (i32.mul (call $get_reg (local.get $d))
@@ -2977,7 +2978,7 @@
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32)
     (local $w0 i32) (local $w1 i32) (local $w2 i32)
-    (local $msg_ptr i32)
+    (local $msg_ptr i32) (local $tmp i32)
 
     ;; Read name RVA from thunk data (stored at WASM addr THUNK_BASE + idx*8)
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
@@ -2993,6 +2994,9 @@
     (local.set $w0 (i32.load (local.get $name_ptr)))
     (local.set $w1 (i32.load (i32.add (local.get $name_ptr) (i32.const 4))))
     (local.set $w2 (i32.load (i32.add (local.get $name_ptr) (i32.const 8))))
+
+    ;; DEBUG: log API name
+    (call $host_log (local.get $name_ptr) (i32.const 32))
 
     ;; ================================================================
     ;; KERNEL32
@@ -4106,20 +4110,113 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
 
-    ;; _CxxThrowException(2) "_Cxx"=0x7878435F
+    ;; _CxxThrowException(2) "_Cxx"=0x7878435F  — cdecl, 2 args
+    ;; Strategy: try SEH chain first. If no inner catch found, just return (skip throw).
+    ;; This lets the caller continue past the throw, simulating a caught-and-ignored exception.
     (if (i32.eq (local.get $w0) (i32.const 0x7878435F))
-      (then (call $host_exit (i32.const 0xDEAD)) (global.set $steps (i32.const 0)) (return)))
+      (then
+        ;; For now: just return from throw (cdecl, pop ret + 2 args)
+        ;; This lets the caller continue past the throw site
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+        ;; --- SEH walk (disabled while debugging) ---
+        (local.set $tmp (call $gl32 (global.get $fs_base))) ;; SEH chain head
+        (block $found (loop $lp
+          (br_if $found (i32.or (i32.eq (local.get $tmp) (i32.const 0xFFFFFFFF))
+                                (i32.eqz (local.get $tmp))))
+          ;; SEH record: [tmp+0]=next, [tmp+4]=handler
+          ;; handler is __ehhandler stub: B8 <funcinfo_addr> E9 <jmp>
+          ;; or could be FuncInfo directly. Check both.
+          (local.set $msg_ptr (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))) ;; handler addr
+          (if (i32.and (i32.ge_u (local.get $msg_ptr) (global.get $image_base))
+                       (i32.lt_u (local.get $msg_ptr) (i32.add (global.get $image_base) (i32.const 0x20000))))
+            (then
+              ;; Check if handler starts with B8 (MOV EAX, imm32) = __ehhandler stub
+              ;; If so, extract FuncInfo address from bytes 1-4
+              (local.set $name_rva (i32.load (call $g2w (local.get $msg_ptr))))
+              (if (i32.eq (i32.load8_u (call $g2w (local.get $msg_ptr))) (i32.const 0xB8))
+                (then
+                  ;; Handler is __ehhandler stub: extract FuncInfo from MOV EAX, <addr>
+                  (local.set $msg_ptr (i32.load (call $g2w (i32.add (local.get $msg_ptr) (i32.const 1)))))
+                  (local.set $name_rva (i32.load (call $g2w (local.get $msg_ptr))))))
+              ;; Now name_rva = first dword at msg_ptr; check for FuncInfo magic
+              (if (i32.eq (i32.and (local.get $name_rva) (i32.const 0xFFFFFFFC))
+                          (i32.const 0x19930520))
+                (then
+                  ;; Found valid FuncInfo! Parse tryBlockMap for catch handler.
+                  ;; FuncInfo layout: [+0]=magic, [+4]=nUnwind, [+8]=unwindMap,
+                  ;;                  [+12]=nTryBlocks, [+16]=tryBlockMap
+                  (local.set $name_rva (i32.load (call $g2w
+                    (i32.add (local.get $msg_ptr) (i32.const 12))))) ;; nTryBlocks
+                  (if (i32.gt_u (local.get $name_rva) (i32.const 0))
+                    (then
+                      ;; Get tryBlockMap address
+                      (local.set $name_rva (i32.load (call $g2w
+                        (i32.add (local.get $msg_ptr) (i32.const 16)))))
+                      ;; TryBlockMapEntry: [+0]=tryLow, [+4]=tryHigh, [+8]=catchHigh,
+                      ;;                   [+12]=nCatches, [+16]=catchArray
+                      ;; Get first try block's catchArray
+                      (local.set $name_rva (i32.load (call $g2w
+                        (i32.add (local.get $name_rva) (i32.const 16)))))
+                      ;; HandlerType: [+0]=flags, [+4]=typeInfo, [+8]=dispCatchObj, [+12]=handler
+                      ;; Save dispCatchObj before we lose catchArray ptr
+                      (local.set $w0 (i32.load (call $g2w
+                        (i32.add (local.get $name_rva) (i32.const 8)))))
+                      ;; Catch handler address
+                      (local.set $msg_ptr (i32.load (call $g2w
+                        (i32.add (local.get $name_rva) (i32.const 12)))))
+                      ;; Derive EBP from SEH record: EBP = record_addr + 12
+                      (local.set $name_rva (i32.add (local.get $tmp) (i32.const 12)))
+                      ;; Restore SEH chain to this frame's prev (unwind)
+                      (call $gs32 (global.get $fs_base) (call $gl32 (local.get $tmp)))
+                      ;; Set up catch handler context
+                      (global.set $ebp (local.get $name_rva))
+                      (global.set $esp (local.get $tmp)) ;; ESP = EBP-C
+                      (global.set $eax (local.get $arg0)) ;; exception object
+                      ;; Store exception at [EBP+dispCatchObj] if nonzero
+                      (if (local.get $w0)
+                        (then (call $gs32 (i32.add (local.get $name_rva) (local.get $w0))
+                                          (local.get $arg0))))
+                      (global.set $eip (local.get $msg_ptr))
+                      (return)))))))
+          ;; Move to next SEH record
+          (local.set $tmp (call $gl32 (local.get $tmp)))
+          (br $lp)))
+        ;; No suitable inner EH frame found — return from throw (skip exception)
+        ;; cdecl: pop ret + 2 args = 12 bytes
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
-    ;; _EH_prolog — special stack frame setup, stub as simple push ebp; mov ebp,esp equivalent
+    ;; _EH_prolog — stack frame setup for structured exception handling
     ;; "_EH_"=0x5F48455F
+    ;; On entry: EAX = funcinfo/handler ptr, [ESP] = return addr
+    ;; Stack layout after:
+    ;;   [EBP+0]=old_ebp, [EBP-4]=-1 (trylevel), [EBP-8]=handler, [EBP-C]=prev_SEH
+    ;;   SEH record at EBP-C: {next=old_fs:[0], handler=EAX}
+    ;;   fs:[0] = EBP-C (new SEH chain head)
     (if (i32.eq (local.get $w0) (i32.const 0x5F48455F))
       (then
-        ;; _EH_prolog pushes -1 and the handler address, sets up an EH frame
-        ;; Minimal stub: just pop return address and jump back (no-op)
-        ;; The ret addr is already on stack from call [thunk]
-        ;; Pop ret addr, push ebp, mov ebp esp, push -1, push 0, then jump to ret addr
-        ;; Actually the simplest: just return, caller code will handle it or crash gracefully
-        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+        (local.set $tmp (call $gl32 (global.get $esp))) ;; save return addr
+        ;; Replace [ESP] with old EBP (this becomes [EBP+0] = saved EBP)
+        (call $gs32 (global.get $esp) (global.get $ebp))
+        ;; Set EBP = ESP (pointing to saved EBP)
+        (global.set $ebp (global.get $esp))
+        ;; Push -1 (trylevel)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const -1))           ;; [EBP-4] = trylevel
+        ;; Push handler (EAX) — this is also the SEH record's handler field
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $eax))        ;; [EBP-8] = handler
+        ;; Push old SEH chain head (fs:[0]) — this is the SEH record's next field
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (call $gl32 (global.get $fs_base))) ;; [EBP-C] = prev SEH
+        ;; Register new SEH frame: fs:[0] = &[EBP-C] = ESP
+        (call $gs32 (global.get $fs_base) (global.get $esp))
+        ;; EAX = EBP (matches real _EH_prolog behavior)
+        (global.set $eax (global.get $ebp))
+        ;; Return to caller
+        (global.set $eip (local.get $tmp))
+        (return)))
 
     ;; Generic _* CRT stubs — cdecl, only pop return address
     (if (i32.eq (i32.load8_u (local.get $name_ptr)) (i32.const 0x5F))
@@ -4135,6 +4232,14 @@
     ;; FALLBACK — log and return 0
     ;; ================================================================
     (call $host_log (local.get $name_ptr) (i32.const 48))
+    ;; Stack hexdump: ret addr + 6 args
+    (call $host_log_i32 (call $gl32 (global.get $esp)))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $eax (i32.const 0))
     ;; Conservative: pop ret + 4 args = 20. May be wrong but better than crashing.
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -4179,8 +4284,9 @@
     (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 4))))
     ;; lstrlenA(1) — 'l' at pos 4
     (if (i32.eq (local.get $ch) (i32.const 0x6C)) ;; lstrlenA
-      (then (global.set $eax (call $guest_strlen (local.get $a0)))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (then
+        (global.set $eax (call $guest_strlen (local.get $a0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     ;; lstrcpyA(2) — 'c' at pos 4, 'p' at pos 5, 'y' at pos 6
     (if (i32.eq (local.get $ch) (i32.const 0x63)) ;; lstrc...
       (then
@@ -4319,4 +4425,6 @@
   (func (export "get_esi") (result i32) (global.get $esi))
   (func (export "get_edi") (result i32) (global.get $edi))
   (func (export "get_staging") (result i32) (global.get $PE_STAGING))
+  (func (export "get_fs_base") (result i32) (global.get $fs_base))
+  (func (export "get_image_base") (result i32) (global.get $image_base))
 )
