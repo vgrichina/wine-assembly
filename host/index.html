@@ -127,14 +127,15 @@ Resource-aware Win98 emulator
     <span id="clock"></span>
   </div>
 
+  <script src="../lib/resources.js"></script>
   <script src="../lib/renderer.js"></script>
   <script src="host.js"></script>
   <script>
     let wine = null;
 
     const apps = {
-      notepad: { exe: '../test/binaries/notepad.exe', json: 'notepad.json', w: 640, h: 480 },
-      calc:    { exe: '../test/binaries/calc.exe',    json: 'calc.json',    w: 520, h: 380 },
+      notepad: { exe: '../test/binaries/notepad.exe', w: 640, h: 480 },
+      calc:    { exe: '../test/binaries/calc.exe',    w: 520, h: 380 },
     };
 
     async function launchApp() {
@@ -151,7 +152,6 @@ Resource-aware Win98 emulator
 
       wine = new WineAssembly();
       await wine.init(canvas);
-      await wine.loadResources(app.json);
 
       // Wire canvas events
       canvas.onmousedown = e => {

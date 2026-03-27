@@ -4,12 +4,12 @@
 const fs = require('fs');
 const { createCanvas } = require('canvas');
 const { Win98Renderer } = require('../lib/renderer');
+const { parseResources } = require('../lib/resources');
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
 
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
-const RES_PATH = getArg('resources', null);
 const OUT_PATH = getArg('out', 'notepad.png');
 const WIDTH = parseInt(getArg('width', '640'));
 const HEIGHT = parseInt(getArg('height', '480'));
@@ -24,14 +24,12 @@ async function main() {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const renderer = new Win98Renderer(canvas);
 
-  // Load resource JSON if available
-  let resourceJson = null;
-  const resPath = RES_PATH || EXE_PATH.replace(/\.exe$/i, '.json').replace(/test\/binaries\//, 'host/');
-  if (fs.existsSync(resPath)) {
-    resourceJson = JSON.parse(fs.readFileSync(resPath, 'utf8'));
-    renderer.loadResources(resourceJson);
-    console.log('Resources loaded:', resPath);
-  }
+  // Parse resources directly from EXE
+  const resourceJson = parseResources(exeBytes);
+  renderer.loadResources(resourceJson);
+  console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
+    Object.keys(resourceJson.dialogs).length, 'dialogs,',
+    Object.keys(resourceJson.strings).length, 'strings');
 
   let stopped = false;
 
@@ -86,6 +84,7 @@ async function main() {
       renderer.setWindowText(hwnd, readStr(mem, textPtr));
     },
     invalidate: (hwnd) => { renderer.invalidate(hwnd); },
+    set_menu: (hwnd, menuResId) => { renderer.setMenu(hwnd, menuResId); },
     draw_text: (x, y, textPtr, textLen, color) => {
       const bytes = new Uint8Array(instance.exports.memory.buffer, textPtr, textLen);
       const text = new TextDecoder().decode(bytes);

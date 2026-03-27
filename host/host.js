@@ -116,6 +116,13 @@ class WineAssembly {
           }
         },
 
+        set_menu: (hwnd, menuResId) => {
+          console.log(`[SetMenu] hwnd=0x${hwnd.toString(16)} menuRes=${menuResId}`);
+          if (self.renderer) {
+            self.renderer.setMenu(hwnd, menuResId);
+          }
+        },
+
         draw_text: (x, y, textPtr, textLen, color) => {
           if (!self.renderer) return;
           const bytes = new Uint8Array(self.memory.buffer, textPtr, textLen);
@@ -159,24 +166,23 @@ class WineAssembly {
     }
   }
 
-  async loadResources(jsonUrl) {
-    try {
-      const resp = await fetch(jsonUrl);
-      this.resourceJson = await resp.json();
-      if (this.renderer) {
-        this.renderer.loadResources(this.resourceJson);
-      }
-      console.log('Resources loaded:', jsonUrl);
-    } catch (e) {
-      console.warn('No resources:', jsonUrl, e.message);
-    }
-  }
-
   async loadExe(url) {
     if (!this.instance) await this.init();
 
     const resp = await fetch(url);
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
+
+    // Parse PE resources directly from EXE bytes
+    if (typeof parseResources === 'function') {
+      this.resourceJson = parseResources(exeBytes);
+      if (this.renderer) {
+        this.renderer.loadResources(this.resourceJson);
+      }
+      const rm = Object.keys(this.resourceJson.menus).length;
+      const rd = Object.keys(this.resourceJson.dialogs).length;
+      const rs = Object.keys(this.resourceJson.strings).length;
+      this.logToUI(`Resources: ${rm} menus, ${rd} dialogs, ${rs} strings`);
+    }
 
     const staging = this.instance.exports.get_staging();
     const dest = new Uint8Array(this.memory.buffer, staging, exeBytes.length);

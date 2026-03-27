@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { parseResources } = require('../lib/resources');
 let createCanvas, Win98Renderer;
 try {
   createCanvas = require('canvas').createCanvas;
@@ -28,19 +29,18 @@ async function main() {
   let stopped = false;
   let apiCount = 0;
 
+  // Parse resources directly from EXE
+  const resourceJson = parseResources(exeBytes);
+  console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
+    Object.keys(resourceJson.dialogs).length, 'dialogs,',
+    Object.keys(resourceJson.strings).length, 'strings');
+
   // Set up renderer if node-canvas is available
   let renderer = null;
-  let resourceJson = null;
   if (createCanvas && Win98Renderer) {
     const canvas = createCanvas(640, 480);
     renderer = new Win98Renderer(canvas);
-    // Try loading resource JSON
-    const resPath = EXE_PATH.replace(/\.exe$/i, '.json').replace(/test\/binaries\//, 'host/');
-    if (fs.existsSync(resPath)) {
-      resourceJson = JSON.parse(fs.readFileSync(resPath, 'utf8'));
-      renderer.loadResources(resourceJson);
-      console.log('Resources loaded:', resPath);
-    }
+    renderer.loadResources(resourceJson);
   }
 
   const readStr = (mem, ptr, maxLen = 512) => {
@@ -121,6 +121,10 @@ async function main() {
       if (renderer) renderer.setWindowText(hwnd, text);
     },
     invalidate: (hwnd) => { if (renderer) renderer.invalidate(hwnd); },
+    set_menu: (hwnd, menuResId) => {
+      logs.push(`[SetMenu] hwnd=0x${hwnd.toString(16)} menu=${menuResId}`);
+      if (renderer) renderer.setMenu(hwnd, menuResId);
+    },
     draw_text: (x, y, textPtr, textLen, color) => {
       if (!renderer) return;
       const bytes = new Uint8Array(instance.exports.memory.buffer, textPtr, textLen);

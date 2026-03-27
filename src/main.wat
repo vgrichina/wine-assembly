@@ -28,6 +28,8 @@
   ;; draw_text(x, y, text_ptr, text_len, color)
   (import "host" "check_input" (func $host_check_input (result i32)))
   ;; check_input() → packed event (0 = none)
+  (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
+  ;; set_menu(hwnd, menu_resource_id)
 
   ;; ---- Memory: 512 pages = 32MB initial ----
   (memory (export "memory") 512)
@@ -115,6 +117,7 @@
   ;; Window system state
   (global $wndproc_addr (mut i32) (i32.const 0))    ;; WndProc function pointer (guest VA)
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
+  (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop: 0=WM_CREATE sent, 1+=message index
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
@@ -372,7 +375,16 @@
   ;; GUEST MEMORY
   ;; ============================================================
   (func $g2w (param $ga i32) (result i32)
-    (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE))
+    (local $wa i32)
+    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (if (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
+                (i32.ge_u (local.get $wa) (i32.const 0x2000000))) ;; 32MB
+      (then
+        (call $host_log_i32 (local.get $ga))
+        (call $host_log_i32 (local.get $wa))
+        (call $host_log_i32 (global.get $eip))
+        (return (global.get $GUEST_BASE))))
+    (local.get $wa)
   )
   (func $gl32 (param $ga i32) (result i32) (i32.load (call $g2w (local.get $ga))))
   (func $gl16 (param $ga i32) (result i32) (i32.load16_u (call $g2w (local.get $ga))))
@@ -3040,12 +3052,12 @@
     ;; Args: exStyle(+4), className(+8), windowName(+12), style(+16), x(+20), y(+24), w(+28), h(+32), parent(+36), menu(+40)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
       (then
-        ;; Save HWND and WndProc
-        (global.set $main_hwnd (i32.const 0x10001))
+        ;; Allocate HWND; first top-level window becomes main_hwnd
+        (if (i32.eqz (global.get $main_hwnd))
+          (then (global.set $main_hwnd (global.get $next_hwnd))))
         ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
-        ;; arg3=style(+16), arg4=x(+20), esp+24=y, esp+28=w, esp+32=h, arg2=windowName(+12), esp+40=menu
         (drop (call $host_create_window
-          (i32.const 0x10001)                                        ;; hwnd
+          (global.get $next_hwnd)                                    ;; hwnd
           (local.get $arg3)                                           ;; style
           (local.get $arg4)                                           ;; x
           (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
@@ -3054,7 +3066,8 @@
           (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
           (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
         ))
-        (global.set $eax (i32.const 0x10001))
+        (global.set $eax (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
 
     ;; CreateDialogParamA(5) "Crea"+"teDi"
@@ -3554,9 +3567,10 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
 
-    ;; LoadMenuA(2) "Load"+"Menu"=0x756E654D
+    ;; LoadMenuA(2) "Load"+"Menu"=0x756E654D — args: hInst, lpMenuName
+    ;; Return HMENU = 0x40000 | resourceId so SetMenu can decode it
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x756E654D)))
-      (then (global.set $eax (i32.const 0x40010)) ;; fake HMENU
+      (then (global.set $eax (i32.or (i32.const 0x40000) (local.get $arg1)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; TrackPopupMenuEx(6) "Trac"=0x63617254
@@ -3686,6 +3700,15 @@
     ;; SetTextColor(2) "SetT"+"extC"=0x43747865
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x54746553)) (i32.eq (local.get $w1) (i32.const 0x43747865)))
       (then (global.set $eax (i32.const 0x00000000)) ;; prev color (black)
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+
+    ;; SetMenu(2) "SetM"+"enu\0" — args: hWnd, hMenu
+    ;; Decode HMENU: resource ID = hMenu & 0xFFFF
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746553)) (i32.eq (local.get $w1) (i32.const 0x00756E65)))
+      (then (call $host_set_menu
+              (local.get $arg0)                                       ;; hWnd
+              (i32.and (local.get $arg1) (i32.const 0xFFFF)))         ;; resource ID from HMENU
+            (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; SetMapMode(2) "SetM"
