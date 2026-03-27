@@ -136,7 +136,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 153 funcref)
+  (table $handlers 157 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -316,6 +316,10 @@
     $th_test_r8_r8         ;; 150: test reg8, reg8 (operand = r1<<4|r2)
     $th_test_m8_r          ;; 151: test [addr], reg8 (operand=reg, addr in next word)
     $th_test_m8_r_ro       ;; 152: test [base+disp], reg8 (op=reg<<4|base, disp in word)
+    $th_alu_r8_r8          ;; 153: byte ALU reg8,reg8 (op=alu_op<<8|dst<<4|src)
+    $th_alu_r8_i8          ;; 154: byte ALU reg8,imm8 (op=alu_op<<8|reg, imm in next word)
+    $th_mov_r8_r8          ;; 155: MOV reg8,reg8 (op=dst<<4|src)
+    $th_mov_r8_i8          ;; 156: MOV reg8,imm8 (op=reg, imm in next word)
   )
 
   ;; ============================================================
@@ -1109,6 +1113,101 @@
     (local $addr i32)
     (local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
     (call $set_flags_logic (i32.and (call $gl8 (local.get $addr)) (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4))))) (call $next))
+
+  ;; --- Byte register-register ALU (op = alu_op<<8 | dst<<4 | src) ---
+  (func $th_alu_r8_r8 (param $op i32)
+    (local $alu i32) (local $d i32) (local $s i32) (local $a i32) (local $b i32) (local $r i32)
+    (local.set $alu (i32.shr_u (local.get $op) (i32.const 8)))
+    (local.set $d (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $s (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $a (call $get_reg8 (local.get $d)))
+    (local.set $b (call $get_reg8 (local.get $s)))
+    (block $done (block $cmp (block $xor (block $sub (block $and (block $sbb (block $adc (block $or (block $add
+      (br_table $add $or $adc $sbb $and $sub $xor $cmp (local.get $alu)))
+    ;; 0: ADD (after $add block end)
+    (local.set $r (i32.and (i32.add (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    ) ;; 1: OR (after $or block end)
+    (local.set $r (i32.or (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    ) ;; end $adc — ADC case
+    (local.set $r (i32.and (i32.add (i32.add (local.get $a) (local.get $b)) (call $get_cf)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    ) ;; end $sbb — SBB case
+    (local.set $r (i32.and (i32.sub (i32.sub (local.get $a) (local.get $b)) (call $get_cf)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    ) ;; end $and — AND case
+    (local.set $r (i32.and (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    ) ;; end $sub — SUB case
+    (local.set $r (i32.and (i32.sub (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    ) ;; end $xor — XOR case
+    (local.set $r (i32.xor (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $d) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    ) ;; end $cmp — CMP case
+    (local.set $r (i32.and (i32.sub (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))
+    ) ;; end $done
+    (call $next))
+
+  ;; --- Byte register-immediate ALU (op = alu_op<<8 | reg, imm in next word) ---
+  (func $th_alu_r8_i8 (param $op i32)
+    (local $alu i32) (local $reg i32) (local $a i32) (local $b i32) (local $r i32)
+    (local.set $alu (i32.shr_u (local.get $op) (i32.const 8)))
+    (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $a (call $get_reg8 (local.get $reg)))
+    (local.set $b (i32.and (call $read_thread_word) (i32.const 0xFF)))
+    (block $done (block $cmp (block $xor (block $sub (block $and (block $sbb (block $adc (block $or (block $add
+      (br_table $add $or $adc $sbb $and $sub $xor $cmp (local.get $alu)))
+    ;; 0: ADD
+    (local.set $r (i32.and (i32.add (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.or (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.and (i32.add (i32.add (local.get $a) (local.get $b)) (call $get_cf)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.and (i32.sub (i32.sub (local.get $a) (local.get $b)) (call $get_cf)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.and (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.and (i32.sub (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.xor (local.get $a) (local.get $b)))
+    (call $set_reg8 (local.get $reg) (local.get $r))
+    (call $set_flags_logic (local.get $r)) (br $done)
+    )
+    (local.set $r (i32.and (i32.sub (local.get $a) (local.get $b)) (i32.const 0xFF)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))
+    )
+    (call $next))
+
+  ;; --- Byte MOV reg8, reg8 (op = dst<<4 | src) ---
+  (func $th_mov_r8_r8 (param $op i32)
+    (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))) (call $next))
+
+  ;; --- Byte MOV reg8, imm8 (op = reg, imm in next word) ---
+  (func $th_mov_r8_i8 (param $op i32)
+    (call $set_reg8 (local.get $op) (i32.and (call $read_thread_word) (i32.const 0xFF))) (call $next))
 
   ;; --- MOV memory-immediate ---
   (func $th_mov_m32_i32 (param $op i32)
@@ -2206,10 +2305,7 @@
       ;; ---- MOV reg8, imm8 (0xB0-0xB7) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xB0)) (i32.le_u (local.get $op) (i32.const 0xB7)))
         (then
-          ;; Use load8 absolute to a scratch location? No — use store to reg8 directly.
-          ;; For simplicity, emit mov_r_i32 for the base register (clobbers full reg — acceptable for low regs)
-          ;; TODO: proper byte register handling in decoder
-          (call $te (i32.const 2) (i32.sub (local.get $op) (i32.const 0xB0)))
+          (call $te (i32.const 156) (i32.sub (local.get $op) (i32.const 0xB0)))
           (call $te_raw (call $d_fetch8)) (br $decode)))
       ;; ---- XCHG eax, reg (0x91-0x97) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x91)) (i32.le_u (local.get $op) (i32.const 0x97)))
@@ -2226,9 +2322,9 @@
           (local.set $imm (i32.and (i32.shr_u (local.get $op) (i32.const 3)) (i32.const 7))) ;; ALU op index
           ;; Check for AL/EAX, imm forms (bit pattern: xx100 = AL,imm8 and xx101 = EAX,imm32)
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 4))
-            (then ;; AL, imm8 — use cmp_r_i32 on reg 0 (approximation)
-              (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
-              (call $te_raw (call $sign_ext8 (call $d_fetch8)))
+            (then ;; AL, imm8 — byte ALU handler 154
+              (call $te (i32.const 154) (i32.or (i32.shl (local.get $imm) (i32.const 8)) (i32.const 0))) ;; reg=AL(0)
+              (call $te_raw (i32.and (call $d_fetch8) (i32.const 0xFF)))
               (br $decode)))
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 5))
             (then ;; EAX, imm32 (or AX, imm16 with 0x66 prefix)
@@ -2241,14 +2337,22 @@
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then
-              ;; reg, reg
-              (if (i32.and (local.get $op) (i32.const 2))
-                (then ;; r, r/m (direction=1): dst=reg, src=rm
-                  (call $te (i32.add (i32.const 12) (local.get $imm))
-                    (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else ;; r/m, r (direction=0): dst=rm, src=reg
-                  (call $te (i32.add (i32.const 12) (local.get $imm))
-                    (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
+              ;; reg, reg — check byte vs dword
+              (if (i32.and (local.get $op) (i32.const 1))
+                (then ;; dword (odd opcode)
+                  (if (i32.and (local.get $op) (i32.const 2))
+                    (then (call $te (i32.add (i32.const 12) (local.get $imm))
+                      (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                    (else (call $te (i32.add (i32.const 12) (local.get $imm))
+                      (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
+                (else ;; byte (even opcode) — use r8 handler 153
+                  (if (i32.and (local.get $op) (i32.const 2))
+                    (then (call $te (i32.const 153)
+                      (i32.or (i32.shl (local.get $imm) (i32.const 8))
+                        (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))))
+                    (else (call $te (i32.const 153)
+                      (i32.or (i32.shl (local.get $imm) (i32.const 8))
+                        (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))))))
             (else
               ;; memory involved — use runtime EA helpers
               (if (i32.and (local.get $op) (i32.const 2))
@@ -2275,8 +2379,13 @@
             (else (local.set $imm (call $sign_ext8 (call $d_fetch8)))))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then ;; reg, imm
-              (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
-              (call $te_raw (local.get $imm)))
+              (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
+                (then ;; byte reg, imm8 — handler 154
+                  (call $te (i32.const 154) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (global.get $mr_val)))
+                  (call $te_raw (local.get $imm)))
+                (else ;; dword reg, imm32
+                  (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
+                  (call $te_raw (local.get $imm)))))
             (else ;; [mem], imm — use runtime EA
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
                 (then (call $emit_alu_m8_i (global.get $mr_reg) (local.get $imm)))
@@ -2306,7 +2415,10 @@
         (then
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
-            (then (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+            (then
+              (if (i32.eq (local.get $op) (i32.const 0x88))
+                (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x89))
                 (then (call $emit_store32 (global.get $mr_reg)))
@@ -2318,7 +2430,10 @@
         (then
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
-            (then (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+            (then
+              (if (i32.eq (local.get $op) (i32.const 0x8A))
+                (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x8B))
                 (then (call $emit_load32 (global.get $mr_reg)))
