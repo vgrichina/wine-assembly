@@ -208,9 +208,13 @@ Resource-aware Win98 emulator
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
         wine.renderer.handleKeyDown(vk);
-        if (vk === 8 || vk === 9 || (vk >= 112 && vk <= 123)) {
+        if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
           e.preventDefault();
         }
+        if (e.ctrlKey && vk === 65) e.preventDefault(); // Ctrl+A
+      });
+      canvas.addEventListener('keyup', e => {
+        wine.renderer.handleKeyUp(e.keyCode);
       });
       canvas.addEventListener('keypress', e => {
         e.preventDefault();
