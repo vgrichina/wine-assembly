@@ -89,10 +89,11 @@
   (global $df (mut i32) (i32.const 0))
 
   ;; Lazy flags
-  (global $flag_op   (mut i32) (i32.const 0))  ;; 1=add,2=sub,3=logic,4=inc,5=dec
+  (global $flag_op   (mut i32) (i32.const 0))  ;; 1=add,2=sub,3=logic,4=inc,5=dec,6=mul
   (global $flag_a    (mut i32) (i32.const 0))
   (global $flag_b    (mut i32) (i32.const 0))
   (global $flag_res  (mut i32) (i32.const 0))
+  (global $saved_cf  (mut i32) (i32.const 0))  ;; preserved CF across INC/DEC
 
   ;; Threaded interpreter
   (global $ip    (mut i32) (i32.const 0))
@@ -439,9 +440,11 @@
   (func $set_flags_logic (param $r i32)
     (global.set $flag_op (i32.const 3)) (global.set $flag_res (local.get $r)))
   (func $set_flags_inc (param $a i32) (param $r i32)
+    (global.set $saved_cf (call $get_cf))  ;; INC preserves CF
     (global.set $flag_op (i32.const 4))
     (global.set $flag_a (local.get $a)) (global.set $flag_b (i32.const 1)) (global.set $flag_res (local.get $r)))
   (func $set_flags_dec (param $a i32) (param $r i32)
+    (global.set $saved_cf (call $get_cf))  ;; DEC preserves CF
     (global.set $flag_op (i32.const 5))
     (global.set $flag_a (local.get $a)) (global.set $flag_b (i32.const 1)) (global.set $flag_res (local.get $r)))
 
@@ -452,9 +455,17 @@
       (then (i32.lt_u (global.get $flag_res) (global.get $flag_a)))
     (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 2))
       (then (i32.lt_u (global.get $flag_a) (global.get $flag_b)))
-    (else (i32.const 0))))))
+    (else (if (result i32) (i32.or (i32.eq (global.get $flag_op) (i32.const 4))
+                                   (i32.eq (global.get $flag_op) (i32.const 5)))
+      (then (global.get $saved_cf))  ;; INC/DEC preserve CF
+    (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 6))
+      (then (global.get $flag_b))  ;; MUL/IMUL: flag_b stores CF/OF
+    (else (i32.const 0))))))))))
   (func $get_of (result i32)
     (local $sa i32) (local $sb i32) (local $sr i32)
+    ;; MUL/IMUL: OF = CF = flag_b
+    (if (i32.eq (global.get $flag_op) (i32.const 6))
+      (then (return (global.get $flag_b))))
     (local.set $sa (i32.shr_u (global.get $flag_a) (i32.const 31)))
     (local.set $sb (i32.shr_u (global.get $flag_b) (i32.const 31)))
     (local.set $sr (i32.shr_u (global.get $flag_res) (i32.const 31)))
@@ -587,7 +598,7 @@
   ;; ============================================================
   ;; op: 0=ADD,1=OR,2=ADC,3=SBB,4=AND,5=SUB,6=XOR,7=CMP
   (func $do_alu32 (param $op i32) (param $a i32) (param $b i32) (result i32)
-    (local $r i32)
+    (local $r i32) (local $cf_in i32) (local $b_eff i32)
     (if (i32.eq (local.get $op) (i32.const 0)) ;; ADD
       (then
         (local.set $r (i32.add (local.get $a) (local.get $b)))
@@ -598,15 +609,29 @@
         (local.set $r (i32.or (local.get $a) (local.get $b)))
         (call $set_flags_logic (local.get $r))
         (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 2)) ;; ADC
+    (if (i32.eq (local.get $op) (i32.const 2)) ;; ADC: r = a + b + cf_in
       (then
-        (local.set $r (i32.add (i32.add (local.get $a) (local.get $b)) (call $get_cf)))
-        (call $set_flags_add (local.get $a) (i32.add (local.get $b) (call $get_cf)) (local.get $r))
+        (local.set $cf_in (call $get_cf))
+        (local.set $b_eff (i32.add (local.get $b) (local.get $cf_in)))
+        (local.set $r (i32.add (local.get $a) (local.get $b_eff)))
+        ;; Set flags as ADD(a, b_eff) for OF/ZF/SF
+        (call $set_flags_add (local.get $a) (local.get $b_eff) (local.get $r))
+        ;; Fix CF: if b+cf_in wrapped (b_eff < b), carry is always 1
+        (if (i32.lt_u (local.get $b_eff) (local.get $b))
+          (then (global.set $flag_a (i32.const 0xFFFFFFFF))
+                (global.set $flag_res (i32.const 0))))
         (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 3)) ;; SBB
+    (if (i32.eq (local.get $op) (i32.const 3)) ;; SBB: r = a - b - cf_in
       (then
-        (local.set $r (i32.sub (i32.sub (local.get $a) (local.get $b)) (call $get_cf)))
-        (call $set_flags_sub (local.get $a) (i32.add (local.get $b) (call $get_cf)) (local.get $r))
+        (local.set $cf_in (call $get_cf))
+        (local.set $b_eff (i32.add (local.get $b) (local.get $cf_in)))
+        (local.set $r (i32.sub (local.get $a) (local.get $b_eff)))
+        ;; Set flags as SUB(a, b_eff) for OF/ZF/SF
+        (call $set_flags_sub (local.get $a) (local.get $b_eff) (local.get $r))
+        ;; Fix CF: if b+cf_in wrapped, borrow is always 1
+        (if (i32.lt_u (local.get $b_eff) (local.get $b))
+          (then (global.set $flag_a (i32.const 0))
+                (global.set $flag_b (i32.const 1))))
         (return (local.get $r))))
     (if (i32.eq (local.get $op) (i32.const 4)) ;; AND
       (then
@@ -975,18 +1000,27 @@
     (call $gs32 (local.get $addr) (call $do_shift32 (local.get $type) (call $gl32 (local.get $addr)) (local.get $count)))
     (call $next))
 
+  ;; Set CF=OF for MUL/IMUL (1 if upper half non-zero)
+  (func $set_flags_mul (param $upper_nonzero i32)
+    (global.set $flag_op (i32.const 6))
+    (global.set $flag_b (local.get $upper_nonzero))  ;; CF=OF=flag_b for op=6
+    (global.set $flag_res (global.get $eax)))         ;; ZF/SF from low result
+
   ;; --- Multiply / Divide ---
   (func $th_mul32 (param $op i32)
     (local $val i64)
     (local.set $val (i64.mul (i64.extend_i32_u (global.get $eax)) (i64.extend_i32_u (call $get_reg (local.get $op)))))
     (global.set $eax (i32.wrap_i64 (local.get $val)))
     (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val) (i64.const 32))))
+    (call $set_flags_mul (i32.ne (global.get $edx) (i32.const 0)))
     (call $next))
   (func $th_imul32 (param $op i32)
     (local $val i64)
     (local.set $val (i64.mul (i64.extend_i32_s (global.get $eax)) (i64.extend_i32_s (call $get_reg (local.get $op)))))
     (global.set $eax (i32.wrap_i64 (local.get $val)))
     (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val) (i64.const 32))))
+    ;; CF=OF=1 if result doesn't fit in 32-bit signed (edx != sign-extend of eax)
+    (call $set_flags_mul (i32.ne (global.get $edx) (i32.shr_s (global.get $eax) (i32.const 31))))
     (call $next))
   (func $th_div32 (param $op i32)
     (local $divisor i64) (local $dividend i64)
@@ -1018,12 +1052,14 @@
     (local $val i64) (local $addr i32) (local.set $addr (call $read_thread_word))
     (local.set $val (i64.mul (i64.extend_i32_u (global.get $eax)) (i64.extend_i32_u (call $gl32 (local.get $addr)))))
     (global.set $eax (i32.wrap_i64 (local.get $val)))
-    (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val) (i64.const 32)))) (call $next))
+    (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val) (i64.const 32))))
+    (call $set_flags_mul (i32.ne (global.get $edx) (i32.const 0))) (call $next))
   (func $th_imul_m32 (param $op i32)
     (local $val i64) (local $addr i32) (local.set $addr (call $read_thread_word))
     (local.set $val (i64.mul (i64.extend_i32_s (global.get $eax)) (i64.extend_i32_s (call $gl32 (local.get $addr)))))
     (global.set $eax (i32.wrap_i64 (local.get $val)))
-    (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val) (i64.const 32)))) (call $next))
+    (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val) (i64.const 32))))
+    (call $set_flags_mul (i32.ne (global.get $edx) (i32.shr_s (global.get $eax) (i32.const 31)))) (call $next))
   (func $th_div_m32 (param $op i32)
     (local $divisor i64) (local $dividend i64) (local $addr i32) (local.set $addr (call $read_thread_word))
     (local.set $divisor (i64.extend_i32_u (call $gl32 (local.get $addr))))
@@ -1818,11 +1854,13 @@
     (if (i32.eq (local.get $mtype) (i32.const 0)) ;; MUL
       (then (local.set $val64 (i64.mul (i64.extend_i32_u (global.get $eax)) (i64.extend_i32_u (local.get $mval))))
             (global.set $eax (i32.wrap_i64 (local.get $val64)))
-            (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val64) (i64.const 32))))))
+            (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $val64) (i64.const 32))))
+            (call $set_flags_mul (i32.ne (global.get $edx) (i32.const 0)))))
     (if (i32.eq (local.get $mtype) (i32.const 1)) ;; IMUL
       (then (local.set $val64 (i64.mul (i64.extend_i32_s (global.get $eax)) (i64.extend_i32_s (local.get $mval))))
             (global.set $eax (i32.wrap_i64 (local.get $val64)))
-            (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val64) (i64.const 32))))))
+            (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val64) (i64.const 32))))
+            (call $set_flags_mul (i32.ne (global.get $edx) (i32.shr_s (global.get $eax) (i32.const 31))))))
     (if (i32.eq (local.get $mtype) (i32.const 2)) ;; DIV
       (then (local.set $divisor (i64.extend_i32_u (local.get $mval)))
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
@@ -3430,9 +3468,34 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; SendMessageA(4) "Send"+"Mess"
+    ;; Args: hwnd(+4), msg(+8), wParam(+12), lParam(+16)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6553)) (i32.eq (local.get $w1) (i32.const 0x7373654D)))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (then
+        (if (global.get $wndproc_addr)
+          (then
+            ;; Save caller's return address
+            (local.set $tmp (call $gl32 (global.get $esp)))
+            ;; Pop SendMessageA frame (ret + 4 args = 20 bytes)
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            ;; Push WndProc args: lParam, wParam, msg, hwnd (right to left)
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg3))  ;; lParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg2))  ;; wParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg1))  ;; msg
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg0))  ;; hwnd
+            ;; Push return address
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $tmp))
+            ;; Jump to WndProc
+            (global.set $eip (global.get $wndproc_addr))
+            (global.set $steps (i32.const 0))
+            (return)))
+        ;; No WndProc: just return 0
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; SendDlgItemMessageA(5) "Send"+"DlgI"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6553)) (i32.eq (local.get $w1) (i32.const 0x49676C44)))

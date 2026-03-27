@@ -174,7 +174,6 @@ Resource-aware Win98 emulator
       canvas.focus();
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
-        console.log('keydown', vk, e.key);
         wine.renderer.handleKeyDown(vk);
         if (vk === 8 || vk === 9 || (vk >= 112 && vk <= 123)) {
           e.preventDefault();
@@ -182,7 +181,6 @@ Resource-aware Win98 emulator
       });
       canvas.addEventListener('keypress', e => {
         e.preventDefault();
-        console.log('keypress', e.charCode, String.fromCharCode(e.charCode));
         wine.renderer.handleKeyPress(e.charCode || e.keyCode);
       });
       // Fallback for browsers where keypress doesn't fire
