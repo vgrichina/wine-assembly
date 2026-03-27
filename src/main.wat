@@ -128,6 +128,7 @@
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop: 0=WM_CREATE sent, 1+=message index
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
+  (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
 
@@ -3391,14 +3392,10 @@
               (call $host_check_input_lparam))                              ;; lParam
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-        ;; No input available — return WM_NULL (0) so message loop keeps spinning
-        ;; DispatchMessage will call WndProc with msg=0 which DefWindowProc handles
-        (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))  ;; WM_NULL
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+        ;; No input available — yield back to host
+        ;; Don't pop the stack — we want to re-enter this exact GetMessageA call
+        (global.set $yield_flag (i32.const 1))
+        (return)))
 
     ;; PeekMessageA(5) "Peek"
     (if (i32.eq (local.get $w0) (i32.const 0x6B656550))
@@ -3471,7 +3468,10 @@
     ;; Args: hwnd(+4), msg(+8), wParam(+12), lParam(+16)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x646E6553)) (i32.eq (local.get $w1) (i32.const 0x7373654D)))
       (then
-        (if (global.get $wndproc_addr)
+        ;; Only dispatch to WndProc for main window messages
+        ;; Edit control messages (EM_*, 0xB0+) and messages to child windows are handled here
+        (if (i32.and (global.get $wndproc_addr)
+                     (i32.eq (local.get $arg0) (global.get $main_hwnd)))
           (then
             ;; Save caller's return address
             (local.set $tmp (call $gl32 (global.get $esp)))
@@ -3493,7 +3493,7 @@
             (global.set $eip (global.get $wndproc_addr))
             (global.set $steps (i32.const 0))
             (return)))
-        ;; No WndProc: just return 0
+        ;; Non-main window or no WndProc: stub — return 0
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
@@ -4527,9 +4527,11 @@
   (func $run (export "run") (param $max_blocks i32)
     (local $thread i32) (local $blocks i32)
     (local.set $blocks (local.get $max_blocks))
+    (global.set $yield_flag (i32.const 0))
     (block $halt (loop $main
       (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
+      (br_if $halt (global.get $yield_flag))
       (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 4096)))

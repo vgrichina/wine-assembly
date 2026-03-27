@@ -11,6 +11,7 @@ async function main() {
     log: (ptr, len) => {
       const b = new Uint8Array(mem.buffer, ptr, len);
       lastApi = new TextDecoder().decode(b).replace(/\0.*/, '').split(/\s/)[0];
+      if (dialogCreated) apiCalls.push(lastApi);
     },
     log_i32: () => {},
     message_box: () => 1,
@@ -70,11 +71,15 @@ async function main() {
         const eipBefore = e.get_eip() >>> 0;
         if (eipBefore === 0) break;
         const ediBefore = e.get_edi() >>> 0;
-        const ebxBefore = e.get_ebx() >>> 0;
+        const espBefore = e.get_esp() >>> 0;
         try { e.run(1); } catch(err) { console.log(`CRASH: ${err.message}`); break; }
         const ediAfter = e.get_edi() >>> 0;
-        if (ediAfter !== ediBefore) {
-          console.log(`  EDI changed: ${hex(ediBefore)} → ${hex(ediAfter)} at EIP=${hex(eipBefore)} (EBX=${hex(ebxBefore)})`);
+        const espAfter = e.get_esp() >>> 0;
+        // Only log near the crash area (0x01005Dxx)
+        if (eipBefore >= 0x01005d00 && eipBefore <= 0x01005dff) {
+          const newApis = apiCalls.length > 0 ? ` API=${apiCalls.join(',')}` : '';
+          apiCalls.length = 0;
+          console.log(`  [${hex(eipBefore)}] ESP=${hex(espBefore)}→${hex(espAfter)} EDI=${hex(ediAfter)}${newApis}`);
         }
         eipTrace.push(eipBefore);
         if ((e.get_eip() >>> 0) === 0) {
