@@ -211,7 +211,7 @@ Resource-aware Win98 emulator
         if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
           e.preventDefault();
         }
-        if (e.ctrlKey && vk === 65) e.preventDefault(); // Ctrl+A
+        if (e.ctrlKey && (vk === 65 || vk === 67 || vk === 88 || vk === 86)) e.preventDefault();
       });
       canvas.addEventListener('keyup', e => {
         wine.renderer.handleKeyUp(e.keyCode);
