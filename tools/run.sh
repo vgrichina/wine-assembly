@@ -9,6 +9,10 @@
 #   -a         trace-api: log API calls with args + return values
 #   -e         trace-seh: log SEH chain operations
 #   -d         dump-seh: detailed SEH dump at end
+#   -B ADDR    breakpoint at address (hex, comma-separated for multiple)
+#   -A NAME    break on API call (comma-separated for multiple)
+#   -W ADDR:LEN  watchpoint: break when memory changes
+#   -D ADDR:LEN  hexdump memory region at end
 #   -o FILE    save output to file (also prints to stdout)
 #   -p FILE    render to PNG
 set -e
@@ -22,10 +26,14 @@ TRACE=0
 TRACE_API=0
 TRACE_SEH=0
 DUMP_SEH=0
+BREAK=""
+BREAK_API=""
+WATCH=""
+DUMP=""
 OUTFILE=""
 PNG=""
 
-while getopts "bn:s:vtaedo:p:" opt; do
+while getopts "bn:s:vtaedB:A:W:D:o:p:" opt; do
   case $opt in
     b) SKIP_BUILD=1 ;;
     n) MAX_BATCHES=$OPTARG ;;
@@ -35,6 +43,10 @@ while getopts "bn:s:vtaedo:p:" opt; do
     a) TRACE_API=1 ;;
     e) TRACE_SEH=1 ;;
     d) DUMP_SEH=1 ;;
+    B) BREAK=$OPTARG ;;
+    A) BREAK_API=$OPTARG ;;
+    W) WATCH=$OPTARG ;;
+    D) DUMP=$OPTARG ;;
     o) OUTFILE=$OPTARG ;;
     p) PNG=$OPTARG ;;
     *) echo "Unknown option: -$opt" >&2; exit 1 ;;
@@ -55,6 +67,10 @@ CMD="node test/run.js --exe=$EXE --max-batches=$MAX_BATCHES --batch-size=$BATCH_
 [ "$TRACE_API" -eq 1 ] && CMD="$CMD --trace-api"
 [ "$TRACE_SEH" -eq 1 ] && CMD="$CMD --trace-seh"
 [ "$DUMP_SEH" -eq 1 ] && CMD="$CMD --dump-seh"
+[ -n "$BREAK" ] && CMD="$CMD --break=$BREAK"
+[ -n "$BREAK_API" ] && CMD="$CMD --break-api=$BREAK_API"
+[ -n "$WATCH" ] && CMD="$CMD --watch=$WATCH"
+[ -n "$DUMP" ] && CMD="$CMD --dump=$DUMP"
 [ -n "$PNG" ] && CMD="$CMD --png=$PNG"
 
 if [ -n "$OUTFILE" ]; then

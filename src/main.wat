@@ -524,6 +524,15 @@
       (i32.mul (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (i32.const 0xFFF)) (i32.const 8))))
     (i32.store (local.get $idx) (local.get $ga))
     (i32.store offset=4 (local.get $idx) (local.get $off)))
+  (func $clear_cache
+    (local $i i32)
+    (local.set $i (i32.const 0))
+    (block $d (loop $s
+      (br_if $d (i32.ge_u (local.get $i) (i32.const 4096)))
+      (i32.store (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
+      (i32.store offset=4 (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $s))))
   (func $invalidate_page (param $ga i32)
     (local $page i32) (local $i i32) (local $idx i32)
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
@@ -4403,6 +4412,11 @@
       (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
       (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      ;; Reset thread buffer if approaching cache region (leave 4KB margin)
+      (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 4096)))
+        (then
+          (global.set $thread_alloc (global.get $THREAD_BASE))
+          (call $clear_cache)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -4427,4 +4441,5 @@
   (func (export "get_staging") (result i32) (global.get $PE_STAGING))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "get_image_base") (result i32) (global.get $image_base))
+  (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
 )

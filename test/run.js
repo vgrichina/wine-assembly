@@ -17,14 +17,17 @@ const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
-const BREAKPOINT = getArg('break', null); // --break=0xADDR: break at address
+const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
+const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
+const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR:LEN: break on memory change
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
-const breakAddr = BREAKPOINT ? parseInt(BREAKPOINT, 16) : null;
+const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
+const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 
 async function main() {
   const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
@@ -67,6 +70,11 @@ async function main() {
       let t = '';
       for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
       apiCount++;
+
+      // Check API breakpoints
+      if (breakApis.length && breakApis.some(name => t.includes(name))) {
+        apiBreakHit = t;
+      }
 
       if (TRACE_API) {
         const e = instance.exports;
@@ -333,23 +341,81 @@ async function main() {
   };
 
   let prevEip = 0, stuckCount = 0;
+  let stepping = false;  // single-step mode after breakpoint
+  let apiBreakHit = null; // set when an API breakpoint triggers
+
+  // Watchpoint: snapshot memory region to detect changes
+  let watchAddr = 0, watchLen = 0, watchSnapshot = null;
+  if (WATCH_SPEC) {
+    const [addrStr, lenStr] = WATCH_SPEC.split(':');
+    watchAddr = parseInt(addrStr, 16);
+    watchLen = parseInt(lenStr) || 4;
+    console.log(`Watchpoint set: ${hex(watchAddr)} (${watchLen} bytes)`);
+  }
+
+  const takeWatchSnapshot = () => {
+    if (!watchLen) return null;
+    try {
+      const off = g2w(watchAddr);
+      return Buffer.from(instance.exports.memory.buffer.slice(off, off + watchLen));
+    } catch (_) { return null; }
+  };
+
+  const checkWatchpoint = (batch) => {
+    if (!watchLen) return false;
+    const cur = takeWatchSnapshot();
+    if (!cur || !watchSnapshot) { watchSnapshot = cur; return false; }
+    if (cur.equals(watchSnapshot)) return false;
+    console.log(`\n*** WATCHPOINT hit at batch ${batch}: memory at ${hex(watchAddr)} changed`);
+    console.log('  Old:', watchSnapshot.toString('hex'));
+    console.log('  New:', cur.toString('hex'));
+    watchSnapshot = cur;
+    return true;
+  };
+
+  if (watchLen) watchSnapshot = takeWatchSnapshot();
+
+  const debugPrompt = async (reason) => {
+    console.log('  ' + regs());
+    dumpStack(reason);
+    disasmAt(instance.exports.get_eip());
+    if (TRACE_SEH) dumpSEH();
+    while (logs.length) console.log(logs.shift());
+    const readline = require('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise(resolve =>
+      rl.question('[s]tep / [c]ontinue / [d]ump ADDR:LEN / [r]egs / [q]uit > ', resolve)
+    );
+    rl.close();
+    const cmd = answer.trim().toLowerCase();
+    if (cmd === 'q') { process.exit(0); }
+    if (cmd === 'c') { stepping = false; return; }
+    if (cmd === 's' || cmd === '') { stepping = true; return; }
+    if (cmd === 'r') { console.log(regs()); return debugPrompt(reason); }
+    if (cmd.startsWith('d')) {
+      const parts = cmd.slice(1).trim().split(':');
+      const addr = parseInt(parts[0], 16);
+      const len = parseInt(parts[1]) || 64;
+      if (!isNaN(addr)) hexdump(addr, len);
+      return debugPrompt(reason);
+    }
+    stepping = true;
+  };
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     const eipBefore = instance.exports.get_eip();
 
-    // Breakpoint check
-    if (breakAddr !== null && eipBefore === breakAddr) {
-      console.log(`\n*** BREAKPOINT hit at ${hex(breakAddr)} (batch ${batch})`);
-      console.log('  ' + regs());
-      dumpStack('Break');
-      disasmAt(eipBefore);
-      if (TRACE_SEH) dumpSEH();
-      // Flush pending logs
-      while (logs.length) console.log(logs.shift());
-      // Pause — user can Ctrl+C or we continue after Enter
-      const readline = require('readline');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      await new Promise(resolve => rl.question('Press Enter to continue...', () => { rl.close(); resolve(); }));
+    // Breakpoint check (EIP)
+    if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
+      console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
+      stepping = true;
+      await debugPrompt('Break');
+    }
+
+    // Single-step mode
+    if (stepping) {
+      console.log(`[${batch}] EIP=${hex(eipBefore)}`);
+      await debugPrompt('Step');
     }
 
     if (TRACE) {
@@ -362,6 +428,7 @@ async function main() {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
       console.log('  EIP before batch: ' + hex(eipBefore));
+      try { console.log('  thread_alloc: ' + hex(instance.exports.get_thread_alloc())); } catch (_) {}
       console.log('  ' + regs());
       disasmAt(eipBefore);
       disasmAt(instance.exports.get_eip());
@@ -374,6 +441,21 @@ async function main() {
         frames.slice(0, 8).forEach(f => console.log('    ' + f.trim()));
       }
       process.exit(1);
+    }
+
+    // Watchpoint check
+    if (checkWatchpoint(batch)) {
+      stepping = true;
+      await debugPrompt('Watch');
+    }
+
+    // API breakpoint check (might have been set during batch)
+    if (apiBreakHit) {
+      while (logs.length) console.log(logs.shift());
+      console.log(`\n*** API BREAKPOINT: ${apiBreakHit} (batch ${batch})`);
+      apiBreakHit = null;
+      stepping = true;
+      await debugPrompt('API Break');
     }
 
     // Flush logs
