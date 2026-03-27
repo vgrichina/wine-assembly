@@ -194,6 +194,13 @@ Resource-aware Win98 emulator
         }
       });
       canvas.onmousemove = e => {
+        // Track hover for menus
+        const rr = canvas.getBoundingClientRect();
+        const ssx = canvas.width / rr.width, ssy = canvas.height / rr.height;
+        wine.renderer.handleMenuHover(
+          Math.floor((e.clientX - rr.left) * ssx),
+          Math.floor((e.clientY - rr.top) * ssy)
+        );
         if (e.buttons & 1) { // only while button held
           const r = canvas.getBoundingClientRect();
           const sx = canvas.width / r.width, sy = canvas.height / r.height;
