@@ -106,6 +106,17 @@ async function main() {
 
         lastApiName = t;
         logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}`);
+        // Dump MSG struct contents for DispatchMessageA
+        if (t.includes('DispatchMessage') && apiCount <= 100) {
+          try {
+            const msgPtr = dv.getUint32(g2w(esp + 4), true);
+            const msgHwnd = dv.getUint32(g2w(msgPtr), true);
+            const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
+            const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
+            const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
+            logs.push(`  MSG: hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wP=0x${msgWP.toString(16)} lP=0x${msgLP.toString(16)}`);
+          } catch (_) {}
+        }
 
         // SEH tracing for _EH_prolog and _CxxThrowException
         if (TRACE_SEH && (t.includes('_EH_prolog') || t.includes('_CxxThrowException'))) {
@@ -141,7 +152,7 @@ async function main() {
     create_window: (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
       const mem = new Uint8Array(instance.exports.memory.buffer);
       const title = readStr(mem, titlePtr);
-      logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId}`);
+      logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" style=0x${style.toString(16)} pos=${x},${y} size=${cx}x${cy} menu=${menuId}`);
       if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
       return hwnd;
     },
