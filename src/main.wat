@@ -173,6 +173,11 @@
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
 
+  ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
+  (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
+  (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
+  (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word
+
   ;; ============================================================
   ;; THREAD HANDLER TABLE
   ;; ============================================================
@@ -405,6 +410,10 @@
     $th_lodsw              ;; 185
     $th_rep_movsw          ;; 186
     $th_rep_stosw          ;; 187
+    ;; -- x87 FPU --
+    $th_fpu_mem            ;; 188
+    $th_fpu_reg            ;; 189
+    $th_fpu_mem_ro         ;; 190
   )
 
   ;; ============================================================
@@ -1879,6 +1888,347 @@
         (else (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
       (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
       (br $l))) (call $next))
+
+  ;; ============================================================
+  ;; x87 FPU SUPPORT
+  ;; ============================================================
+  (func $fpu_get (param $i i32) (result f64)
+    (f64.load (i32.add (i32.const 0x200)
+      (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))))
+
+  (func $fpu_set (param $i i32) (param $v f64)
+    (f64.store (i32.add (i32.const 0x200)
+      (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))
+      (local.get $v)))
+
+  (func $fpu_push (param $v f64)
+    (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (call $fpu_set (i32.const 0) (local.get $v)))
+
+  (func $fpu_pop (result f64)
+    (local $v f64)
+    (local.set $v (call $fpu_get (i32.const 0)))
+    (global.set $fpu_top (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (local.get $v))
+
+  (func $fpu_compare (param $a f64) (param $b f64)
+    (local $cc i32)
+    (if (f64.lt (local.get $a) (local.get $b))
+      (then (local.set $cc (i32.const 0x0100)))
+      (else (if (f64.gt (local.get $a) (local.get $b))
+        (then (local.set $cc (i32.const 0x0000)))
+        (else (if (f64.eq (local.get $a) (local.get $b))
+          (then (local.set $cc (i32.const 0x4000)))
+          (else (local.set $cc (i32.const 0x4500))))))))
+    (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (local.get $cc))))
+
+  (func $fpu_compare_eflags (param $a f64) (param $b f64)
+    (if (f64.lt (local.get $a) (local.get $b))
+      (then
+        (global.set $flag_op (i32.const 2))
+        (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))
+        (global.set $flag_res (i32.const 0xFFFFFFFF)))
+      (else (if (f64.eq (local.get $a) (local.get $b))
+        (then
+          (global.set $flag_op (i32.const 3))
+          (global.set $flag_res (i32.const 0)))
+        (else (if (f64.gt (local.get $a) (local.get $b))
+          (then
+            (global.set $flag_op (i32.const 3))
+            (global.set $flag_res (i32.const 1)))
+          (else
+            (global.set $flag_op (i32.const 2))
+            (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))
+            (global.set $flag_res (i32.const 0)))))))))
+
+  (func $fpu_arith (param $a f64) (param $b f64) (param $op i32) (result f64)
+    (if (result f64) (i32.eq (local.get $op) (i32.const 0)) (then (f64.add (local.get $a) (local.get $b)))
+    (else (if (result f64) (i32.eq (local.get $op) (i32.const 1)) (then (f64.mul (local.get $a) (local.get $b)))
+    (else (if (result f64) (i32.eq (local.get $op) (i32.const 4)) (then (f64.sub (local.get $a) (local.get $b)))
+    (else (if (result f64) (i32.eq (local.get $op) (i32.const 5)) (then (f64.sub (local.get $b) (local.get $a)))
+    (else (if (result f64) (i32.eq (local.get $op) (i32.const 6)) (then (f64.div (local.get $a) (local.get $b)))
+    (else (f64.div (local.get $b) (local.get $a)))))))))))))
+
+  (func $fpu_load_mem (param $addr i32) (param $group i32) (result f64)
+    (if (result f64) (i32.eq (local.get $group) (i32.const 0))
+      (then (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))
+    (else (if (result f64) (i32.eq (local.get $group) (i32.const 4))
+      (then (f64.load (call $g2w (local.get $addr))))
+    (else (if (result f64) (i32.or (i32.eq (local.get $group) (i32.const 2)) (i32.eq (local.get $group) (i32.const 3)))
+      (then (f64.convert_i32_s (i32.load (call $g2w (local.get $addr)))))
+    (else (if (result f64) (i32.or (i32.eq (local.get $group) (i32.const 6)) (i32.eq (local.get $group) (i32.const 7)))
+      (then (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr)))))
+    (else
+      (f64.load (call $g2w (local.get $addr))))))))))))
+
+  (func $fpu_exec_mem (param $group i32) (param $reg i32) (param $addr i32)
+    (local $val f64)
+    ;; Group 0 (D8) / Group 4 (DC): arithmetic with float32/float64
+    (if (i32.or (i32.eq (local.get $group) (i32.const 0)) (i32.eq (local.get $group) (i32.const 4)))
+      (then
+        (local.set $val (call $fpu_load_mem (local.get $addr) (local.get $group)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (call $fpu_compare (call $fpu_get (i32.const 0)) (local.get $val)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (call $fpu_compare (call $fpu_get (i32.const 0)) (local.get $val)) (drop (call $fpu_pop)) (return)))
+        (call $fpu_set (i32.const 0) (call $fpu_arith (call $fpu_get (i32.const 0)) (local.get $val) (local.get $reg)))
+        (return)))
+    ;; Group 2 (DA) / Group 6 (DE): arithmetic with int32/int16
+    (if (i32.or (i32.eq (local.get $group) (i32.const 2)) (i32.eq (local.get $group) (i32.const 6)))
+      (then
+        (local.set $val (call $fpu_load_mem (local.get $addr) (local.get $group)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (call $fpu_compare (call $fpu_get (i32.const 0)) (local.get $val)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (call $fpu_compare (call $fpu_get (i32.const 0)) (local.get $val)) (drop (call $fpu_pop)) (return)))
+        (call $fpu_set (i32.const 0) (call $fpu_arith (call $fpu_get (i32.const 0)) (local.get $val) (local.get $reg)))
+        (return)))
+    ;; Group 1 (D9): FLD/FST/FSTP float32, FLDCW, FNSTCW
+    (if (i32.eq (local.get $group) (i32.const 1))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_push (f64.promote_f32 (f32.load (call $g2w (local.get $addr))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_get (i32.const 0)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_pop))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_cw)) (return)))
+        (return)))
+    ;; Group 5 (DD): FLD/FST/FSTP float64, FNSTSW m16
+    (if (i32.eq (local.get $group) (i32.const 5))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (f64.store (call $g2w (local.get $addr)) (call $fpu_get (i32.const 0))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (f64.store (call $g2w (local.get $addr)) (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then
+            (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+              (i32.shl (global.get $fpu_top) (i32.const 11))))
+            (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_sw)) (return)))
+        (return)))
+    ;; Group 3 (DB): FILD/FIST/FISTP int32, FLD/FSTP m80
+    (if (i32.eq (local.get $group) (i32.const 3))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_push (f64.convert_i32_s (call $gl32 (local.get $addr)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (i32.store (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_get (i32.const 0)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (i32.store (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_pop))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then (f64.store (call $g2w (local.get $addr)) (call $fpu_pop))
+            (i32.store16 (call $g2w (i32.add (local.get $addr) (i32.const 8))) (i32.const 0)) (return)))
+        (return)))
+    ;; Group 7 (DF): FILD/FIST/FISTP int16, FILD/FISTP int64
+    (if (i32.eq (local.get $group) (i32.const 7))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_push (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (i32.store16 (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_get (i32.const 0)))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (i32.store16 (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_pop))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_push (f64.convert_i64_s (i64.load (call $g2w (local.get $addr))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then (i64.store (call $g2w (local.get $addr)) (i64.trunc_sat_f64_s (call $fpu_pop))) (return)))
+        (return)))
+  )
+
+  (func $fpu_exec_reg (param $group i32) (param $reg i32) (param $rm i32)
+    (local $v f64) (local $st0 f64)
+    (local.set $st0 (call $fpu_get (i32.const 0)))
+    ;; Group 0 (D8): arith ST(0), ST(rm)
+    (if (i32.eq (local.get $group) (i32.const 0))
+      (then
+        (local.set $v (call $fpu_get (local.get $rm)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (call $fpu_compare (local.get $st0) (local.get $v)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (call $fpu_compare (local.get $st0) (local.get $v)) (drop (call $fpu_pop)) (return)))
+        (call $fpu_set (i32.const 0) (call $fpu_arith (local.get $st0) (local.get $v) (local.get $reg)))
+        (return)))
+    ;; Group 1 (D9): FLD, FXCH, constants, transcendentals
+    (if (i32.eq (local.get $group) (i32.const 1))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_push (call $fpu_get (local.get $rm))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 1))
+          (then
+            (local.set $v (call $fpu_get (local.get $rm)))
+            (call $fpu_set (local.get $rm) (local.get $st0))
+            (call $fpu_set (i32.const 0) (local.get $v))
+            (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2)) (then (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 0))
+              (then (call $fpu_set (i32.const 0) (f64.neg (local.get $st0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 1))
+              (then (call $fpu_set (i32.const 0) (f64.abs (local.get $st0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 4))
+              (then (call $fpu_compare (local.get $st0) (f64.const 0)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 5))
+              (then (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (i32.const 0x0400))) (return)))
+            (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 0)) (then (call $fpu_push (f64.const 1.0)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 1)) (then (call $fpu_push (f64.const 3.321928094887362)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 2)) (then (call $fpu_push (f64.const 1.4426950408889634)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 3)) (then (call $fpu_push (f64.const 3.141592653589793)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 4)) (then (call $fpu_push (f64.const 0.3010299957316877)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 5)) (then (call $fpu_push (f64.const 0.6931471805599453)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 6)) (then (call $fpu_push (f64.const 0.0)) (return)))
+            (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 6))
+              (then (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 7))
+              (then (global.set $fpu_top (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 4))
+              (then (call $fpu_set (i32.const 0) (f64.const 1.0)) (call $fpu_push (f64.const 0.0)) (return)))
+            (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 2))
+              (then (call $fpu_set (i32.const 0) (f64.sqrt (local.get $st0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 4))
+              (then (call $fpu_set (i32.const 0) (f64.nearest (local.get $st0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 0))
+              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF))) (return)))
+            (return)))
+        (return)))
+    ;; Group 2 (DA): FCMOV
+    (if (i32.eq (local.get $group) (i32.const 2))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (if (call $get_cf) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 1))
+          (then (if (call $get_zf) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (if (i32.or (call $get_cf) (call $get_zf)) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (return)))
+    ;; Group 3 (DB): FCMOVN, FNINIT, FNCLEX, FUCOMI, FCOMI
+    (if (i32.eq (local.get $group) (i32.const 3))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (if (i32.eqz (call $get_cf)) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 1))
+          (then (if (i32.eqz (call $get_zf)) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (if (i32.eqz (i32.or (call $get_cf) (call $get_zf))) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 2)))
+          (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0x7F00))) (return)))
+        (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 3)))
+          (then (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F)) (global.set $fpu_sw (i32.const 0)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
+        (return)))
+    ;; Group 4 (DC): arith ST(rm), ST(0)
+    (if (i32.eq (local.get $group) (i32.const 4))
+      (then
+        (local.set $v (call $fpu_get (local.get $rm)))
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_set (local.get $rm) (f64.add (local.get $v) (local.get $st0))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 1))
+          (then (call $fpu_set (local.get $rm) (f64.mul (local.get $v) (local.get $st0))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (call $fpu_set (local.get $rm) (f64.sub (local.get $st0) (local.get $v))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_set (local.get $rm) (f64.sub (local.get $v) (local.get $st0))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_set (local.get $rm) (f64.div (local.get $st0) (local.get $v))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then (call $fpu_set (local.get $rm) (f64.div (local.get $v) (local.get $st0))) (return)))
+        (return)))
+    ;; Group 5 (DD): FFREE, FST, FSTP, FUCOM, FUCOMP
+    (if (i32.eq (local.get $group) (i32.const 5))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 0)) (then (return)))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (call $fpu_set (local.get $rm) (local.get $st0)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 3))
+          (then (call $fpu_set (local.get $rm) (local.get $st0)) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (call $fpu_compare (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_compare (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
+        (return)))
+    ;; Group 6 (DE): FADDP/FMULP/FCOMPP/FSUBRP/FSUBP/FDIVRP/FDIVP
+    (if (i32.eq (local.get $group) (i32.const 6))
+      (then
+        (local.set $v (call $fpu_get (local.get $rm)))
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_set (local.get $rm) (f64.add (local.get $v) (local.get $st0))) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 1))
+          (then (call $fpu_set (local.get $rm) (f64.mul (local.get $v) (local.get $st0))) (drop (call $fpu_pop)) (return)))
+        (if (i32.and (i32.eq (local.get $reg) (i32.const 3)) (i32.eq (local.get $rm) (i32.const 1)))
+          (then (call $fpu_compare (local.get $st0) (call $fpu_get (i32.const 1))) (drop (call $fpu_pop)) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (call $fpu_set (local.get $rm) (f64.sub (local.get $st0) (local.get $v))) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_set (local.get $rm) (f64.sub (local.get $v) (local.get $st0))) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_set (local.get $rm) (f64.div (local.get $st0) (local.get $v))) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 7))
+          (then (call $fpu_set (local.get $rm) (f64.div (local.get $v) (local.get $st0))) (drop (call $fpu_pop)) (return)))
+        (return)))
+    ;; Group 7 (DF): FNSTSW AX, FUCOMIP, FCOMIP
+    (if (i32.eq (local.get $group) (i32.const 7))
+      (then
+        (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 0)))
+          (then
+            (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+              (i32.shl (global.get $fpu_top) (i32.const 11))))
+            (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000)) (global.get $fpu_sw)))
+            (return)))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
+        (return)))
+  )
+
+  ;; 188: FPU memory op — op=(group<<4)|reg, addr in next word
+  (func $th_fpu_mem (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $read_thread_word))
+    (if (i32.eq (local.get $addr) (i32.const 0xEADEAD))
+      (then (local.set $addr (global.get $ea_temp))))
+    (call $fpu_exec_mem
+      (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.and (local.get $op) (i32.const 0xF))
+      (local.get $addr))
+    (call $next))
+
+  ;; 189: FPU register op — op=(group<<8)|(reg<<4)|rm
+  (func $th_fpu_reg (param $op i32)
+    (call $fpu_exec_reg
+      (i32.shr_u (local.get $op) (i32.const 8))
+      (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+      (i32.and (local.get $op) (i32.const 0xF)))
+    (call $next))
+
+  ;; 190: FPU memory op with base+disp — op=(group<<8)|(reg<<4)|base, disp in next word
+  (func $th_fpu_mem_ro (param $op i32)
+    (call $fpu_exec_mem
+      (i32.shr_u (local.get $op) (i32.const 8))
+      (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+      (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+    (call $next))
+
   (func $th_cld (param $op i32) (global.set $df (i32.const 0)) (call $next))
   (func $th_std (param $op i32) (global.set $df (i32.const 1)) (call $next))
   (func $th_clc (param $op i32)
@@ -2010,8 +2360,6 @@
     (local $reg i32) (local $target i32)
     (local.set $reg (call $read_thread_word))
     (local.set $target (call $get_reg (local.get $reg)))
-    ;; DEBUG: log call reg targets
-    (call $host_log_i32 (local.get $target))
     ;; Check thunk zone (guest-space bounds)
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
@@ -2808,6 +3156,7 @@
     (local $prefix_seg i32)    ;; segment override (ignored but consumed)
     (local $imm i32)
     (local $disp i32)
+    (local $a i32)
 
     (local.set $tstart (global.get $thread_alloc))
     (global.set $d_pc (local.get $start_eip))
@@ -3488,6 +3837,38 @@
           ;; TODO: memory xchg
           (br $decode)))
 
+      ;; ---- x87 FPU (D8-DF) ----
+      (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xD8)) (i32.le_u (local.get $op) (i32.const 0xDF)))
+        (then
+          (call $decode_modrm)
+          (if (i32.eq (global.get $mr_mod) (i32.const 3))
+            (then
+              ;; Register-register: emit th_fpu_reg (189) with (group<<8)|(reg<<4)|rm
+              (call $te (i32.const 189) (i32.or (i32.or
+                (i32.shl (i32.sub (local.get $op) (i32.const 0xD8)) (i32.const 8))
+                (i32.shl (global.get $mr_reg) (i32.const 4)))
+                (global.get $mr_val))))
+            (else
+              ;; Memory operand
+              (call $apply_seg_override)
+              (if (call $mr_simple_base)
+                (then
+                  ;; base+disp: emit th_fpu_mem_ro (190) with (group<<8)|(reg<<4)|base, disp
+                  (call $te (i32.const 190) (i32.or (i32.or
+                    (i32.shl (i32.sub (local.get $op) (i32.const 0xD8)) (i32.const 8))
+                    (i32.shl (global.get $mr_reg) (i32.const 4)))
+                    (global.get $mr_base)))
+                  (call $te_raw (global.get $mr_disp)))
+                (else
+                  ;; absolute or SIB: use emit_sib_or_abs
+                  (local.set $a (call $emit_sib_or_abs))
+                  (call $te (i32.const 188) (i32.or
+                    (i32.shl (i32.sub (local.get $op) (i32.const 0xD8)) (i32.const 4))
+                    (global.get $mr_reg)))
+                  (call $te_raw (local.get $a))))))
+          (local.set $done (i32.const 1))
+          (br $decode)))
+
       ;; ---- Unrecognized opcode ----
       (call $host_log_i32 (local.get $op))
       (call $te (i32.const 45) (i32.sub (global.get $d_pc) (i32.const 1)))
@@ -4138,6 +4519,9 @@
 
     ;; CreateWindowExA(12) "Crea"+"teWi"
     ;; Args: exStyle(+4), className(+8), windowName(+12), style(+16), x(+20), y(+24), w(+28), h(+32), parent(+36), menu(+40)
+    ;; DEBUG: log return address (on stack) to see who called CreateWindowExA
+    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
+      (then (call $host_log_i32 (call $gl32 (global.get $esp)))))
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x61657243)) (i32.eq (local.get $w1) (i32.const 0x69576574)))
       (then
         ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
