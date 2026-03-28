@@ -151,6 +151,12 @@ async function main() {
       logs.push(`[SetDlgItemText] hwnd=0x${hwnd.toString(16)} ctrl=${ctrlId} "${text}"`);
       if (renderer) renderer.setDlgItemText(hwnd, ctrlId, text);
     },
+    check_dlg_button: (hwnd, ctrlId, checkState) => {
+      if (renderer) renderer.checkDlgButton(hwnd, ctrlId, checkState);
+    },
+    check_radio_button: (hwnd, firstId, lastId, checkId) => {
+      if (renderer) renderer.checkRadioButton(hwnd, firstId, lastId, checkId);
+    },
     message_box: (h, t, c, u) => {
       const mem = new Uint8Array(instance.exports.memory.buffer);
       logs.push(`[MessageBox] "${readStr(mem, c)}": "${readStr(mem, t)}"`);

@@ -46,6 +46,7 @@ async function main() {
     check_input: () => 0, check_input_lparam: () => 0, check_input_hwnd: () => 0,
     set_window_class: () => {}, set_menu: () => {},
     shell_about: () => 0,
+    check_dlg_button: () => {}, check_radio_button: () => {},
     gdi_create_pen: () => 1, gdi_create_solid_brush: () => 1,
     gdi_create_compat_dc: () => 1, gdi_create_compat_bitmap: () => 1,
     gdi_select_object: () => 0, gdi_delete_object: () => 1, gdi_delete_dc: () => 1,

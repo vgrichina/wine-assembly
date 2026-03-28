@@ -165,6 +165,13 @@ class WineAssembly {
           }
         },
 
+        check_dlg_button: (hwnd, ctrlId, checkState) => {
+          if (self.renderer) self.renderer.checkDlgButton(hwnd, ctrlId, checkState);
+        },
+        check_radio_button: (hwnd, firstId, lastId, checkId) => {
+          if (self.renderer) self.renderer.checkRadioButton(hwnd, firstId, lastId, checkId);
+        },
+
         set_window_text: (hwnd, textPtr) => {
           const text = self.readString(textPtr);
           console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
