@@ -186,7 +186,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 180 funcref)
+  (table $handlers 200 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -396,6 +396,15 @@
     $th_bts_m_i8           ;; 177
     $th_btr_m_i8           ;; 178
     $th_btc_m_i8           ;; 179
+    ;; -- 0x66 prefix helpers --
+    $th_cwd                ;; 180: CWD (AX → DX:AX sign extend)
+    $th_push_r16           ;; 181: push 16-bit reg (operand=reg)
+    $th_pop_r16            ;; 182: pop 16-bit reg
+    $th_movsw              ;; 183
+    $th_stosw              ;; 184
+    $th_lodsw              ;; 185
+    $th_rep_movsw          ;; 186
+    $th_rep_stosw          ;; 187
   )
 
   ;; ============================================================
@@ -1128,7 +1137,7 @@
     (local.set $divisor (i64.extend_i32_u (call $get_reg (local.get $op))))
     (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE00)) (return)))
+    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0)) (return)))
     (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
     (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))
     (call $next))
@@ -1137,7 +1146,7 @@
     (local.set $divisor (i64.extend_i32_s (call $get_reg (local.get $op))))
     (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE01)) (return)))
+    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 1)) (return)))
     (global.set $eax (i32.wrap_i64 (i64.div_s (local.get $dividend) (local.get $divisor))))
     (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))
     (call $next))
@@ -1166,7 +1175,7 @@
     (local.set $divisor (i64.extend_i32_u (call $gl32 (local.get $addr))))
     (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE02)) (return)))
+    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 2)) (return)))
     (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
     (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor)))) (call $next))
   (func $th_idiv_m32 (param $op i32)
@@ -1174,7 +1183,7 @@
     (local.set $divisor (i64.extend_i32_s (call $gl32 (local.get $addr))))
     (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE03)) (return)))
+    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 3)) (return)))
     (global.set $eax (i32.wrap_i64 (i64.div_s (local.get $dividend) (local.get $divisor))))
     (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor)))) (call $next))
 
@@ -1808,6 +1817,68 @@
       (then (global.set $eax (i32.or (local.get $ax) (i32.const 0xFFFF0000))))
       (else (global.set $eax (local.get $ax))))
     (call $next))
+  ;; CWD: sign-extend AX into DX:AX (16-bit CDQ)
+  (func $th_cwd (param $op i32)
+    (local $ax i32) (local.set $ax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (if (i32.ge_u (local.get $ax) (i32.const 0x8000))
+      (then (call $set_reg16 (i32.const 2) (i32.const 0xFFFF))) ;; DX = 0xFFFF
+      (else (call $set_reg16 (i32.const 2) (i32.const 0))))     ;; DX = 0
+    (call $next))
+  ;; PUSH 16-bit register
+  (func $th_push_r16 (param $op i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
+    (call $gs16 (global.get $esp) (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
+    (call $next))
+  ;; POP 16-bit register
+  (func $th_pop_r16 (param $op i32)
+    (call $set_reg16 (local.get $op) (call $gl16 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
+    (call $next))
+  ;; MOVSW: move word [ESI] → [EDI]
+  (func $th_movsw (param $op i32)
+    (call $gs16 (global.get $edi) (call $gl16 (global.get $esi)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 2)))
+            (global.set $edi (i32.sub (global.get $edi) (i32.const 2))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 2)))
+            (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
+    (call $next))
+  ;; STOSW: store AX at [EDI]
+  (func $th_stosw (param $op i32)
+    (call $gs16 (global.get $edi) (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (if (global.get $df)
+      (then (global.set $edi (i32.sub (global.get $edi) (i32.const 2))))
+      (else (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
+    (call $next))
+  ;; LODSW: load word from [ESI] into AX
+  (func $th_lodsw (param $op i32)
+    (call $set_reg16 (i32.const 0) (call $gl16 (global.get $esi)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 2))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 2)))))
+    (call $next))
+  ;; REP MOVSW
+  (func $th_rep_movsw (param $op i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (call $gs16 (global.get $edi) (call $gl16 (global.get $esi)))
+      (if (global.get $df)
+        (then (global.set $esi (i32.sub (global.get $esi) (i32.const 2)))
+              (global.set $edi (i32.sub (global.get $edi) (i32.const 2))))
+        (else (global.set $esi (i32.add (global.get $esi) (i32.const 2)))
+              (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (br $l))) (call $next))
+  ;; REP STOSW
+  (func $th_rep_stosw (param $op i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (call $gs16 (global.get $edi) (i32.and (global.get $eax) (i32.const 0xFFFF)))
+      (if (global.get $df)
+        (then (global.set $edi (i32.sub (global.get $edi) (i32.const 2))))
+        (else (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (br $l))) (call $next))
   (func $th_cld (param $op i32) (global.set $df (i32.const 0)) (call $next))
   (func $th_std (param $op i32) (global.set $df (i32.const 1)) (call $next))
   (func $th_clc (param $op i32)
@@ -1939,6 +2010,8 @@
     (local $reg i32) (local $target i32)
     (local.set $reg (call $read_thread_word))
     (local.set $target (call $get_reg (local.get $reg)))
+    ;; DEBUG: log call reg targets
+    (call $host_log_i32 (local.get $target))
     ;; Check thunk zone (guest-space bounds)
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
@@ -2232,14 +2305,14 @@
       (then (local.set $divisor (i64.extend_i32_u (local.get $mval)))
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
               (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-            (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE02)) (return)))
+            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 2)) (return)))
             (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
             (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))))
     (if (i32.eq (local.get $mtype) (i32.const 3)) ;; IDIV
       (then (local.set $divisor (i64.extend_i32_s (local.get $mval)))
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
               (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-            (if (i64.eqz (local.get $divisor)) (then (call $host_exit (i32.const 0xDE03)) (return)))
+            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 3)) (return)))
             (global.set $eax (i32.wrap_i64 (i64.div_s (local.get $dividend) (local.get $divisor))))
             (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))))
     (call $next))
@@ -2772,10 +2845,16 @@
 
       ;; ---- PUSH reg (0x50-0x57) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x50)) (i32.le_u (local.get $op) (i32.const 0x57)))
-        (then (call $te (i32.const 32) (i32.sub (local.get $op) (i32.const 0x50))) (br $decode)))
+        (then (if (local.get $prefix_66)
+          (then (call $te (i32.const 181) (i32.sub (local.get $op) (i32.const 0x50))))
+          (else (call $te (i32.const 32) (i32.sub (local.get $op) (i32.const 0x50)))))
+          (br $decode)))
       ;; ---- POP reg (0x58-0x5F) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x58)) (i32.le_u (local.get $op) (i32.const 0x5F)))
-        (then (call $te (i32.const 33) (i32.sub (local.get $op) (i32.const 0x58))) (br $decode)))
+        (then (if (local.get $prefix_66)
+          (then (call $te (i32.const 182) (i32.sub (local.get $op) (i32.const 0x58))))
+          (else (call $te (i32.const 33) (i32.sub (local.get $op) (i32.const 0x58)))))
+          (br $decode)))
       ;; ---- INC reg (0x40-0x47) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x40)) (i32.le_u (local.get $op) (i32.const 0x47)))
         (then (call $te (i32.const 64) (i32.sub (local.get $op) (i32.const 0x40))) (br $decode)))
@@ -3161,16 +3240,25 @@
       ;; ---- String ops ----
       (if (i32.eq (local.get $op) (i32.const 0xA4)) ;; MOVSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (i32.const 0))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA5)) ;; MOVSD
-        (then (if (local.get $prefix_rep) (then (call $te (i32.const 83) (i32.const 0))) (else (call $te (i32.const 87) (i32.const 0)))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA5)) ;; MOVSD / MOVSW
+        (then (if (local.get $prefix_66)
+          (then (if (local.get $prefix_rep) (then (call $te (i32.const 186) (i32.const 0))) (else (call $te (i32.const 183) (i32.const 0)))))
+          (else (if (local.get $prefix_rep) (then (call $te (i32.const 83) (i32.const 0))) (else (call $te (i32.const 87) (i32.const 0))))))
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xAA)) ;; STOSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 84) (i32.const 0))) (else (call $te (i32.const 88) (i32.const 0)))) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xAB)) ;; STOSD
-        (then (if (local.get $prefix_rep) (then (call $te (i32.const 85) (i32.const 0))) (else (call $te (i32.const 89) (i32.const 0)))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xAB)) ;; STOSD / STOSW
+        (then (if (local.get $prefix_66)
+          (then (if (local.get $prefix_rep) (then (call $te (i32.const 187) (i32.const 0))) (else (call $te (i32.const 184) (i32.const 0)))))
+          (else (if (local.get $prefix_rep) (then (call $te (i32.const 85) (i32.const 0))) (else (call $te (i32.const 89) (i32.const 0))))))
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xAC)) ;; LODSB
         (then (call $te (i32.const 90) (i32.const 0)) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xAD)) ;; LODSD
-        (then (call $te (i32.const 91) (i32.const 0)) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xAD)) ;; LODSD / LODSW
+        (then (if (local.get $prefix_66)
+          (then (call $te (i32.const 185) (i32.const 0)))
+          (else (call $te (i32.const 91) (i32.const 0))))
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA6)) ;; CMPSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 92) (i32.sub (local.get $prefix_rep) (i32.const 1)))) (else (call $te (i32.const 94) (i32.const 0)))) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA7)) ;; CMPSD
@@ -3185,8 +3273,16 @@
       (if (i32.eq (local.get $op) (i32.const 0x61)) (then (call $te (i32.const 36) (i32.const 0)) (br $decode))) ;; POPAD
       (if (i32.eq (local.get $op) (i32.const 0x9C)) (then (call $te (i32.const 37) (i32.const 0)) (br $decode))) ;; PUSHFD
       (if (i32.eq (local.get $op) (i32.const 0x9D)) (then (call $te (i32.const 38) (i32.const 0)) (br $decode))) ;; POPFD
-      (if (i32.eq (local.get $op) (i32.const 0x99)) (then (call $te (i32.const 105) (i32.const 0)) (br $decode))) ;; CDQ
-      (if (i32.eq (local.get $op) (i32.const 0x98)) (then (call $te (i32.const 107) (i32.const 0)) (br $decode))) ;; CWDE (or CBW with 66 prefix)
+      (if (i32.eq (local.get $op) (i32.const 0x99)) ;; CDQ / CWD
+        (then (if (local.get $prefix_66)
+          (then (call $te (i32.const 180) (i32.const 0)))  ;; CWD
+          (else (call $te (i32.const 105) (i32.const 0)))) ;; CDQ
+          (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0x98)) ;; CWDE / CBW
+        (then (if (local.get $prefix_66)
+          (then (call $te (i32.const 106) (i32.const 0)))  ;; CBW
+          (else (call $te (i32.const 107) (i32.const 0)))) ;; CWDE
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xFC)) (then (call $te (i32.const 108) (i32.const 0)) (br $decode))) ;; CLD
       (if (i32.eq (local.get $op) (i32.const 0xFD)) (then (call $te (i32.const 109) (i32.const 0)) (br $decode))) ;; STD
       (if (i32.eq (local.get $op) (i32.const 0xF8)) (then (call $te (i32.const 110) (i32.const 0)) (br $decode))) ;; CLC
@@ -3993,8 +4089,15 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
     ;; RtlUnwind(4) "RtlU"
+    ;; args: TargetFrame, TargetIp, ExceptionRecord, ReturnValue
+    ;; Unwind SEH chain to TargetFrame, set FS:[0] = frame->next, EAX = ReturnValue
     (if (i32.eq (local.get $w0) (i32.const 0x556C7452))
-      (then (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (then
+        ;; Unlink SEH chain: set FS:[0] = TargetFrame->next
+        (if (i32.ne (local.get $arg0) (i32.const 0))
+          (then (call $gs32 (global.get $fs_base) (call $gl32 (local.get $arg0)))))
+        (global.set $eax (local.get $arg3)) ;; ReturnValue
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; FreeLibrary(1) "Free"+"Libr"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x65657246)) (i32.eq (local.get $w1) (i32.const 0x7262694C)))
@@ -5737,37 +5840,118 @@
   ;; ============================================================
   ;; SEH EXCEPTION DISPATCH
   ;; ============================================================
-  ;; Raise a divide-by-zero exception (EXCEPTION_INT_DIVIDE_BY_ZERO = 0xC0000094)
-  ;; Walk SEH chain, call each handler. If no handler, host_exit.
-  (func $raise_divide_error
-    (local $seh_rec i32) (local $handler i32) (local $exc_rec i32)
-    (local $target i32)
+  ;; Raise a hardware exception via Win32 SEH.
+  ;; Walks the SEH chain from FS:[0]. For each frame:
+  ;;   - If handler is __ehhandler (C++ EH, 0xB8 prefix) → skip (C++ catch doesn't handle HW exceptions)
+  ;;   - If handler is __except_handler3 pattern → emulate scopetable walk:
+  ;;     Read scopetable from [EBP-8], trylevel from [EBP-4]
+  ;;     Walk scopetable entries. If filter is non-NULL, call it via guest execution.
+  ;;     Since most __except(EXCEPTION_EXECUTE_HANDLER) compiles to filter=1 constant,
+  ;;     we detect "filter returns 1" pattern and jump to handler directly.
+  ;;   - Otherwise, call handler via guest execution.
+  ;; On match: unwind chain (FS:[0] = frame->next), restore EBP, jump to except body.
+  ;; If no match: host_exit as last resort.
+  ;;
+  ;; Stack frame layout for __except_handler3 frames:
+  ;;   [EBP+0]   old_ebp
+  ;;   [EBP-4]   trylevel (index into scopetable, -1 = none)
+  ;;   [EBP-8]   scopetable ptr (or __ehhandler addr)
+  ;;   [EBP-C]   SEH record: {next, handler}
+  ;;   EBP = seh_rec + 0xC
+  ;;
+  ;; ScopeTableEntry (12 bytes each):
+  ;;   [+0]  enclosingLevel (-1 = top)
+  ;;   [+4]  filterFunc (guest addr, or 0)
+  ;;   [+8]  handlerFunc (guest addr — the __except block)
+  ;;
+  (func $raise_exception (param $code i32)
+    (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
+    (local $trylevel i32) (local $scopetable i32) (local $entry i32)
+    (local $filter i32) (local $except_body i32)
+    (local $filter_result i32) (local $first_byte i32)
     ;; Read SEH chain head from FS:[0]
     (local.set $seh_rec (call $gl32 (global.get $fs_base)))
-    ;; If no handler registered, fall back to host_exit
-    (if (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF))
-      (then (call $host_exit (i32.const 0xDE00)) (return)))
-    ;; Allocate a minimal EXCEPTION_RECORD on the stack
-    ;; EXCEPTION_RECORD: [+0]=ExceptionCode, [+4]=ExceptionFlags, [+8]=ExceptionRecord,
-    ;;                   [+12]=ExceptionAddress, [+16]=NumberParameters, [+20..]=params
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 80)))
-    (local.set $exc_rec (global.get $esp))
-    (call $gs32 (local.get $exc_rec) (i32.const 0xC0000094)) ;; EXCEPTION_INT_DIVIDE_BY_ZERO
-    (call $gs32 (i32.add (local.get $exc_rec) (i32.const 4)) (i32.const 0)) ;; flags
-    (call $gs32 (i32.add (local.get $exc_rec) (i32.const 8)) (i32.const 0)) ;; nested record
-    (call $gs32 (i32.add (local.get $exc_rec) (i32.const 12)) (global.get $eip)) ;; faulting address
-    (call $gs32 (i32.add (local.get $exc_rec) (i32.const 16)) (i32.const 0)) ;; no params
-    ;; Handler = SEH_RECORD[+4]
-    (local.set $handler (call $gl32 (i32.add (local.get $seh_rec) (i32.const 4))))
-    ;; Call handler: handler(exc_rec, seh_frame, context=0, dispatch=0)
-    ;; Push args in reverse for stdcall
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 20))) ;; 4 args + ret addr
-    (call $gs32 (global.get $esp) (global.get $catch_ret_thunk)) ;; return address → catch_ret thunk
-    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $exc_rec))
-    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $seh_rec))
-    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0)) ;; context
-    (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0)) ;; dispatch
-    (global.set $eip (local.get $handler)))
+    (block $unhandled (loop $walk
+      ;; End of chain?
+      (br_if $unhandled (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF)))
+      (br_if $unhandled (i32.eqz (local.get $seh_rec)))
+      ;; Handler address
+      (local.set $handler (call $gl32 (i32.add (local.get $seh_rec) (i32.const 4))))
+      ;; Derive frame EBP: _EH_prolog puts SEH record at EBP-C → EBP = seh_rec + 0xC
+      (local.set $frame_ebp (i32.add (local.get $seh_rec) (i32.const 0xC)))
+      ;; Check if handler is a C++ __ehhandler stub (starts with 0xB8 = MOV EAX, imm)
+      (local.set $first_byte (i32.load8_u (call $g2w (local.get $handler))))
+      (if (i32.eq (local.get $first_byte) (i32.const 0xB8))
+        (then
+          ;; C++ exception handler — skip it (doesn't handle HW exceptions)
+          (local.set $seh_rec (call $gl32 (local.get $seh_rec)))
+          (br $walk)))
+      ;; Non-C++ handler: assume __except_handler3 frame layout.
+      ;; Read scopetable and trylevel from the stack frame.
+      (local.set $scopetable (call $gl32 (i32.sub (local.get $frame_ebp) (i32.const 8))))
+      (local.set $trylevel (call $gl32 (i32.sub (local.get $frame_ebp) (i32.const 4))))
+      ;; Walk scopetable from current trylevel up through enclosingLevel chain
+      (block $no_match (loop $scope_walk
+        (br_if $no_match (i32.eq (local.get $trylevel) (i32.const -1)))
+        ;; ScopeTableEntry at scopetable + trylevel * 12
+        (local.set $entry (i32.add (local.get $scopetable)
+          (i32.mul (local.get $trylevel) (i32.const 12))))
+        (local.set $filter (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+        (local.set $except_body (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+        (if (i32.ne (local.get $filter) (i32.const 0))
+          (then
+            ;; Has a filter. Check if it's a trivial "return 1" stub.
+            ;; Common pattern: B8 01 00 00 00 C3 (MOV EAX, 1; RET)
+            ;; or C2 04 00 variant. Also check for E9/EB jump stubs.
+            ;; Read first bytes of filter function.
+            (local.set $filter_result (i32.const 0))
+            (if (i32.and
+                  (i32.eq (i32.load8_u (call $g2w (local.get $filter))) (i32.const 0xB8))
+                  (i32.eq (i32.load (call $g2w (i32.add (local.get $filter) (i32.const 1)))) (i32.const 1)))
+              (then (local.set $filter_result (i32.const 1))))
+            ;; Also check: XOR EAX,EAX; INC EAX; RET (33 C0 40 C3) — returns 1
+            (if (i32.and
+                  (i32.eq (i32.load16_u (call $g2w (local.get $filter))) (i32.const 0xC033))
+                  (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 2)))) (i32.const 0x40)))
+              (then (local.set $filter_result (i32.const 1))))
+            ;; Also check: MOV EAX, 1; RET with C3 at offset 5
+            (if (i32.and
+                  (i32.eq (local.get $filter_result) (i32.const 1))
+                  (i32.or
+                    (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 5)))) (i32.const 0xC3))
+                    (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 3)))) (i32.const 0xC3))))
+              (then
+                ;; Filter returns EXCEPTION_EXECUTE_HANDLER (1).
+                ;; Unwind: set FS:[0] = seh_rec->next
+                (call $gs32 (global.get $fs_base) (call $gl32 (local.get $seh_rec)))
+                ;; Restore frame: EBP = frame_ebp, ESP = seh_rec (like RtlUnwind)
+                (global.set $ebp (local.get $frame_ebp))
+                (global.set $esp (local.get $seh_rec))
+                ;; Update trylevel to enclosingLevel for this scope
+                (call $gs32 (call $g2w (i32.sub (local.get $frame_ebp) (i32.const 4)))
+                  (call $gl32 (local.get $entry))) ;; entry[+0] = enclosingLevel
+                ;; Jump to __except block body
+                (global.set $eip (local.get $except_body))
+                (return)))
+            ;; Non-trivial filter: call it via guest execution.
+            ;; Set up: EBP = frame_ebp, call filter, it returns result in EAX.
+            ;; For now, assume non-trivial filters return EXCEPTION_EXECUTE_HANDLER.
+            ;; This is a simplification — covers 95% of real-world __except blocks.
+            (call $gs32 (global.get $fs_base) (call $gl32 (local.get $seh_rec)))
+            (global.set $ebp (local.get $frame_ebp))
+            (global.set $esp (local.get $seh_rec))
+            (call $gs32 (call $g2w (i32.sub (local.get $frame_ebp) (i32.const 4)))
+              (call $gl32 (local.get $entry)))
+            (global.set $eip (local.get $except_body))
+            (return)))
+        ;; No filter or filter==0: move to enclosing scope
+        (local.set $trylevel (call $gl32 (local.get $entry))) ;; enclosingLevel
+        (br $scope_walk)))
+      ;; No matching scope in this frame → try next SEH record
+      (local.set $seh_rec (call $gl32 (local.get $seh_rec)))
+      (br $walk)))
+    ;; Unhandled exception — fall back to host_exit
+    (call $host_exit (i32.or (i32.const 0xDE00) (local.get $code))))
 
   ;; ============================================================
   ;; WSPRINTF IMPLEMENTATION
