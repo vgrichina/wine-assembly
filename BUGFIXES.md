@@ -49,3 +49,15 @@
 **Example:** `ADC 0xFF, 0xFF` with CF=1: full sum = 0x1FF, should carry. But `flag_res=0xFF, flag_a=0xFF`, so CF = `0xFF < 0xFF` = false (wrong).
 
 **Fix:** Compute the full unmasked sum/difference, then after `$set_flags_add`/`$set_flags_sub`, override the CF globals if the full result overflows 8 bits (>= 0x100 for ADC, or has bits above 0xFF set for SBB). Also save `$cf_in` once to avoid calling `$get_cf` after flag state changes.
+
+## 7. 8-bit and 16-bit shifts executed as 32-bit
+
+**Problem:** Opcodes 0xC0, 0xD0, 0xD2 (8-bit shifts) and 0xC1/0xD1/0xD3 with 0x66 prefix (16-bit shifts) were decoded identically to their 32-bit counterparts, using `$do_shift32`. This meant SHR on an 8-bit register would shift out bits 0-7 as if they were 32-bit, giving wrong results for SHR, SAR, ROL, ROR, RCL, RCR.
+
+**Fix:** Added `$do_shift8` (8-bit) and `$do_shift16` (16-bit) shift functions with correct bit widths for all shift/rotate types. Added thread handlers `$th_shift_r8` (191), `$th_shift_m8` (192), `$th_shift_r16` (193), `$th_shift_m16` (194). Updated the decoder to emit the correct handler based on opcode parity (even=8-bit, odd=32/16-bit) and 0x66 prefix.
+
+## 8. CMPXCHG8B not implemented
+
+**Problem:** The 0x0F 0xC7 opcode (CMPXCHG8B) was not decoded, causing unrecognized opcode errors. This instruction is used for 64-bit compare-and-swap operations, common in CRT initialization and lock-free data structures.
+
+**Fix:** Added `$th_cmpxchg8b` (handler 195) which compares EDX:EAX with the 8-byte value at [addr]. If equal, sets ZF=1 and stores ECX:EBX; if not equal, sets ZF=0 and loads the memory value into EDX:EAX. Added decoder support for 0x0F 0xC7 with ModRM reg=1.
