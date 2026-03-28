@@ -145,6 +145,21 @@
       <select id="app-select">
         <option value="notepad">Notepad</option>
         <option value="calc">Calculator</option>
+        <optgroup label="Entertainment Pack">
+          <option value="freecell">FreeCell</option>
+          <option value="sol">Solitaire</option>
+          <option value="cruel">Cruel</option>
+          <option value="golf">Golf</option>
+          <option value="pegged">Pegged</option>
+          <option value="snake">Rattler Race</option>
+          <option value="taipei">Taipei</option>
+          <option value="tictac">TicTactics</option>
+          <option value="mspaint">Paint</option>
+        </optgroup>
+        <optgroup label="Other">
+          <option value="ski32">SkiFree</option>
+          <option value="winmine">Minesweeper (XP)</option>
+        </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
       <button onclick="wine && (wine.running = false)">Stop</button>
@@ -173,8 +188,19 @@ Resource-aware Win98 emulator
     let wine = null;
 
     const apps = {
-      notepad: { exe: '../test/binaries/notepad.exe' },
-      calc:    { exe: '../test/binaries/calc.exe' },
+      notepad:  { exe: '../test/binaries/notepad.exe' },
+      calc:     { exe: '../test/binaries/calc.exe' },
+      freecell: { exe: '../test/binaries/entertainment-pack/freecell.exe' },
+      sol:      { exe: '../test/binaries/entertainment-pack/sol.exe' },
+      cruel:    { exe: '../test/binaries/entertainment-pack/cruel.exe' },
+      golf:     { exe: '../test/binaries/entertainment-pack/golf.exe' },
+      pegged:   { exe: '../test/binaries/entertainment-pack/pegged.exe' },
+      snake:    { exe: '../test/binaries/entertainment-pack/snake.exe' },
+      taipei:   { exe: '../test/binaries/entertainment-pack/taipei.exe' },
+      tictac:   { exe: '../test/binaries/entertainment-pack/tictac.exe' },
+      mspaint:  { exe: '../test/binaries/entertainment-pack/mspaint.exe' },
+      ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
+      winmine:  { exe: '../test/binaries/xp/winmine.exe' },
     };
 
     async function launchApp() {
