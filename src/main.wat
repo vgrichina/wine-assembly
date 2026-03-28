@@ -152,6 +152,12 @@
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
+  (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
+  (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
+  (global $main_win_cy       (mut i32) (i32.const 0)) ;; main window height
+  ;; Posted message queue: up to 8 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
+  ;; Stored at fixed WASM address 0x400 (well below guest memory)
+  (global $post_queue_count (mut i32) (i32.const 0))
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
@@ -3125,6 +3131,7 @@
     (local $arg4 i32)
     (local $w0 i32) (local $w1 i32) (local $w2 i32)
     (local $msg_ptr i32) (local $tmp i32) (local $packed i32)
+    (local $i i32) (local $j i32) (local $v i32)
 
     ;; Read name RVA from thunk data (stored at WASM addr THUNK_BASE + idx*8)
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
@@ -3377,9 +3384,17 @@
         ))
         ;; Pass className to host so it knows the window type (e.g. "Edit")
         (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
-        ;; Flag to deliver WM_CREATE as first message in GetMessageA
+        ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
         (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
-          (then (global.set $pending_wm_create (i32.const 1))))
+          (then
+            (global.set $pending_wm_create (i32.const 1))
+            ;; Store window outer dimensions; compute client area (subtract borders+titlebar+menu)
+            (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+            (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+            ;; Client = outer - borders(6) - caption(19) - menu(20) approximately
+            (global.set $pending_wm_size (i32.or
+              (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
+              (i32.shl (i32.sub (global.get $main_win_cy) (i32.const 45)) (i32.const 16))))))
         (global.set $eax (global.get $next_hwnd))
         (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)))
@@ -3447,6 +3462,33 @@
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
             (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+        ;; Deliver pending WM_SIZE after WM_CREATE
+        (if (global.get $pending_wm_size)
+          (then
+            (local.set $packed (global.get $pending_wm_size))
+            (global.set $pending_wm_size (i32.const 0))
+            (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+        ;; Drain posted message queue first
+        (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (then
+            ;; Dequeue first message (shift queue down)
+            (local.set $tmp (i32.const 0x400))
+            (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))                        ;; hwnd
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; msg
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))  ;; wParam
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12)))) ;; lParam
+            ;; Shift remaining messages down
+            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+                      (i32.mul (global.get $post_queue_count) (i32.const 16)))))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
         ;; First call: send WM_PAINT
@@ -3556,10 +3598,21 @@
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
-    ;; PostMessageA(4) "Post"+"Mess"
+    ;; PostMessageA(4) "Post"+"Mess" — queue message for delivery by GetMessageA
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x74736F50)) (i32.eq (local.get $w1) (i32.const 0x7373654D)))
-      (then (global.set $eax (i32.const 1))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (then
+        ;; Queue if room (max 8 messages, 16 bytes each, at WASM addr 0x400)
+        (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+          (then
+            (local.set $tmp (i32.add (i32.const 0x400)
+              (i32.mul (global.get $post_queue_count) (i32.const 16))))
+            (i32.store (local.get $tmp) (local.get $arg0))                         ;; hwnd
+            (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1)) ;; msg
+            (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2)) ;; wParam
+            (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3));; lParam
+            (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; SendMessageA(4) "Send"+"Mess"
     ;; Args: hwnd(+4), msg(+8), wParam(+12), lParam(+16)
@@ -3630,11 +3683,18 @@
           (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSX
         (if (i32.eq (local.get $arg1) (i32.const 90))
           (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSY
-        (if (i32.and (i32.ne (local.get $arg1) (i32.const 8))
-              (i32.and (i32.ne (local.get $arg1) (i32.const 10))
-                (i32.and (i32.ne (local.get $arg1) (i32.const 88))
-                         (i32.ne (local.get $arg1) (i32.const 90)))))
-          (then (global.set $eax (i32.const 0))))
+        (if (i32.eq (local.get $arg1) (i32.const 12))
+          (then (global.set $eax (i32.const 32))))  ;; BITSPIXEL
+        (if (i32.eq (local.get $arg1) (i32.const 14))
+          (then (global.set $eax (i32.const 1))))   ;; PLANES
+        (if (i32.eq (local.get $arg1) (i32.const 24))
+          (then (global.set $eax (i32.const 256)))) ;; NUMCOLORS (0x18) — not exact but close
+        (if (i32.eq (local.get $arg1) (i32.const 40))
+          (then (global.set $eax (i32.const -1))))  ;; NUMCOLORS (0x28) — -1 = >256 colors
+        (if (i32.eq (local.get $arg1) (i32.const 42))
+          (then (global.set $eax (i32.const 24))))  ;; COLORRES (0x2A) — 24-bit color
+        (if (i32.eq (local.get $arg1) (i32.const 104))
+          (then (global.set $eax (i32.const 32))))  ;; SIZEPALETTE (0x68)
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; GetMenu(1) "GetM"+"enu\0"
@@ -4492,8 +4552,29 @@
     ;; _strrev(1) "_str"=0x7274735F + "ev\0"
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x7274735F))
                  (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x65))) ;; 'e' in _strrev
-      (then (global.set $eax (local.get $arg0)) ;; return the pointer (stub: don't actually reverse)
-            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+      (then
+        ;; Implement _strrev: reverse string in-place
+        (local.set $i (call $g2w (local.get $arg0)))  ;; start pointer (wasm addr)
+        (local.set $j (local.get $i))
+        ;; Find end of string
+        (block $end (loop $find
+          (br_if $end (i32.eqz (i32.load8_u (local.get $j))))
+          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+          (br $find)))
+        ;; j now points to null terminator; back up one
+        (if (i32.gt_u (local.get $j) (local.get $i))
+          (then (local.set $j (i32.sub (local.get $j) (i32.const 1)))))
+        ;; Swap from both ends
+        (block $done (loop $swap
+          (br_if $done (i32.ge_u (local.get $i) (local.get $j)))
+          (local.set $v (i32.load8_u (local.get $i)))
+          (i32.store8 (local.get $i) (i32.load8_u (local.get $j)))
+          (i32.store8 (local.get $j) (local.get $v))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+          (br $swap)))
+        (global.set $eax (local.get $arg0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
 
     ;; toupper(1) "toup"=0x70756F74
     (if (i32.eq (local.get $w0) (i32.const 0x70756F74))
@@ -4513,8 +4594,19 @@
     ;; strchr(2) "strc"=0x63727473
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x63727473))
                  (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 4))) (i32.const 0x68))) ;; 'h' in strchr
-      (then (global.set $eax (i32.const 0)) ;; not found (stub)
-            (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
+      (then
+        ;; Implement strchr(str, char) — find char in string, return ptr or NULL
+        (local.set $i (call $g2w (local.get $arg0)))
+        (local.set $v (i32.and (local.get $arg1) (i32.const 0xFF)))
+        (global.set $eax (i32.const 0)) ;; default: not found
+        (block $done (loop $scan
+          (local.set $j (i32.load8_u (local.get $i)))
+          (if (i32.eq (local.get $j) (local.get $v))
+            (then (global.set $eax (i32.add (i32.sub (local.get $i) (global.get $GUEST_BASE)) (global.get $image_base))) (br $done)))
+          (br_if $done (i32.eqz (local.get $j)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)))
 
     ;; _XcptFilter(2) "_Xcp"=0x70635F58... actually "_Xcp"
     (if (i32.eq (local.get $w0) (i32.const 0x70635858)) ;; wrong, let me recalc
