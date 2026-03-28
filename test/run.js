@@ -565,6 +565,8 @@ async function main() {
   if (!stopped) {
     console.log('\n--- Final state ---');
     console.log(regs());
+    if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
+    if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
