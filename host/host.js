@@ -9,6 +9,35 @@ class WineAssembly {
     this.renderer = null;
     this.resourceJson = null;
     this.verbose = false;
+    // GDI state
+    this._nextGdiHandle = 0x80001;
+    this._gdiObjects = {}; // handle -> {type, color, width, ...}
+    this._dcState = {};    // hdc -> {penColor, penWidth, brushColor, posX, posY}
+  }
+
+  _gdiAlloc(obj) {
+    const h = this._nextGdiHandle++;
+    this._gdiObjects[h] = obj;
+    return h;
+  }
+
+  _getDC(hdc) {
+    if (!this._dcState[hdc]) {
+      this._dcState[hdc] = { penColor: 0x000000, penWidth: 1, brushColor: 0xC0C0C0, posX: 0, posY: 0 };
+    }
+    return this._dcState[hdc];
+  }
+
+  _getClientOrigin(hwnd) {
+    if (!this.renderer) return { x: 0, y: 0 };
+    // Find the window and compute client area origin
+    const win = this.renderer.windows[hwnd];
+    if (!win) return { x: 0, y: 0 };
+    let cy = win.y + 2; // border
+    const hasCaption = !!(win.style & 0x00C00000);
+    if (hasCaption) cy += 20; // titlebar height approx
+    if (win.menu) cy += 20; // menubar height approx
+    return { x: win.x + 3, y: cy + 1 };
   }
 
   readString(ptr) {
@@ -129,6 +158,13 @@ class WineAssembly {
           return maxLen;
         },
 
+        set_dlg_item_text: (hwnd, ctrlId, textPtr) => {
+          const text = self.readString(textPtr);
+          if (self.renderer) {
+            self.renderer.setDlgItemText(hwnd, ctrlId, text);
+          }
+        },
+
         set_window_text: (hwnd, textPtr) => {
           const text = self.readString(textPtr);
           console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
@@ -169,6 +205,118 @@ class WineAssembly {
           ctx.fillText(text, x, y);
         },
 
+        // --- GDI host imports ---
+        gdi_create_pen: (style, width, color) => {
+          return self._gdiAlloc({ type: 'pen', style, width, color: color & 0xFFFFFF });
+        },
+        gdi_create_solid_brush: (color) => {
+          return self._gdiAlloc({ type: 'brush', color: color & 0xFFFFFF });
+        },
+        gdi_create_compat_dc: (hdcSrc) => {
+          const h = self._gdiAlloc({ type: 'dc' });
+          self._dcState[h] = { penColor: 0, penWidth: 1, brushColor: 0xFFFFFF, posX: 0, posY: 0 };
+          return h;
+        },
+        gdi_create_compat_bitmap: (hdc, w, h) => {
+          return self._gdiAlloc({ type: 'bitmap', w, h });
+        },
+        gdi_select_object: (hdc, hObj) => {
+          const obj = self._gdiObjects[hObj];
+          const dc = self._getDC(hdc);
+          const prev = 0x30001; // generic previous handle
+          if (obj) {
+            if (obj.type === 'pen') { dc.penColor = obj.color; dc.penWidth = obj.width || 1; }
+            if (obj.type === 'brush') { dc.brushColor = obj.color; }
+          }
+          return prev;
+        },
+        gdi_delete_object: (h) => {
+          delete self._gdiObjects[h];
+          return 1;
+        },
+        gdi_delete_dc: (hdc) => {
+          delete self._dcState[hdc];
+          delete self._gdiObjects[hdc];
+          return 1;
+        },
+        gdi_rectangle: (hdc, left, top, right, bottom, hwnd) => {
+          if (!self.renderer) return 1;
+          const ctx = self.renderer.ctx;
+          const o = self._getClientOrigin(hwnd);
+          const dc = self._getDC(hdc);
+          const x = o.x + left, y = o.y + top, w = right - left, h = bottom - top;
+          // Fill with brush
+          const bc = dc.brushColor;
+          ctx.fillStyle = `rgb(${bc & 0xFF},${(bc >> 8) & 0xFF},${(bc >> 16) & 0xFF})`;
+          ctx.fillRect(x, y, w, h);
+          // Stroke with pen
+          const pc = dc.penColor;
+          ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
+          ctx.lineWidth = dc.penWidth;
+          ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+          return 1;
+        },
+        gdi_ellipse: (hdc, left, top, right, bottom, hwnd) => {
+          if (!self.renderer) return 1;
+          const ctx = self.renderer.ctx;
+          const o = self._getClientOrigin(hwnd);
+          const dc = self._getDC(hdc);
+          const cx = o.x + (left + right) / 2, cy = o.y + (top + bottom) / 2;
+          const rx = (right - left) / 2, ry = (bottom - top) / 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, 0, Math.PI * 2);
+          const bc = dc.brushColor;
+          ctx.fillStyle = `rgb(${bc & 0xFF},${(bc >> 8) & 0xFF},${(bc >> 16) & 0xFF})`;
+          ctx.fill();
+          const pc = dc.penColor;
+          ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
+          ctx.lineWidth = dc.penWidth;
+          ctx.stroke();
+          return 1;
+        },
+        gdi_move_to: (hdc, x, y) => {
+          const dc = self._getDC(hdc);
+          dc.posX = x; dc.posY = y;
+          return 1;
+        },
+        gdi_line_to: (hdc, x, y, hwnd) => {
+          if (!self.renderer) return 1;
+          const ctx = self.renderer.ctx;
+          const o = self._getClientOrigin(hwnd);
+          const dc = self._getDC(hdc);
+          const pc = dc.penColor;
+          ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
+          ctx.lineWidth = dc.penWidth;
+          ctx.beginPath();
+          ctx.moveTo(o.x + dc.posX + 0.5, o.y + dc.posY + 0.5);
+          ctx.lineTo(o.x + x + 0.5, o.y + y + 0.5);
+          ctx.stroke();
+          dc.posX = x; dc.posY = y;
+          return 1;
+        },
+        gdi_arc: (hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd, hwnd) => {
+          if (!self.renderer) return 1;
+          const ctx = self.renderer.ctx;
+          const o = self._getClientOrigin(hwnd);
+          const dc = self._getDC(hdc);
+          const cx = o.x + (left + right) / 2, cy = o.y + (top + bottom) / 2;
+          const rx = (right - left) / 2, ry = (bottom - top) / 2;
+          const startAngle = Math.atan2(yStart - (top + bottom) / 2, xStart - (left + right) / 2);
+          const endAngle = Math.atan2(yEnd - (top + bottom) / 2, xEnd - (left + right) / 2);
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, startAngle, endAngle, true);
+          const pc = dc.penColor;
+          ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
+          ctx.lineWidth = dc.penWidth;
+          ctx.stroke();
+          return 1;
+        },
+        gdi_bitblt: (dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd) => {
+          // For now, BitBlt between memory DCs is a no-op since we don't track bitmap contents
+          // But if dst is a window DC, we could clear/fill the area
+          return 1;
+        },
+
         check_input: () => {
           if (!self.renderer) return 0;
           const evt = self.renderer.checkInput();
@@ -181,6 +329,9 @@ class WineAssembly {
         },
         check_input_lparam: () => {
           return self._lastInputEvent ? (self._lastInputEvent.lParam | 0) : 0;
+        },
+        check_input_hwnd: () => {
+          return self._lastInputEvent ? (self._lastInputEvent.hwnd | 0) : 0;
         },
       },
     };

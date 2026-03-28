@@ -38,6 +38,7 @@ async function main() {
   let apiCount = 0;
   let lastApiName = null;  // track last API name for return value correlation
   let inputEvent = null;   // pending input event to inject via check_input
+  let inputQueue = null;   // button ID sequence to inject
 
   // Parse resources directly from EXE
   const resourceJson = parseResources(exeBytes);
@@ -144,6 +145,12 @@ async function main() {
       logs.push(`[ShellAbout] "${readStr(mem, appPtr)}"`);
       return 1;
     },
+    set_dlg_item_text: (hwnd, ctrlId, textPtr) => {
+      const mem = new Uint8Array(instance.exports.memory.buffer);
+      const text = readStr(mem, textPtr);
+      logs.push(`[SetDlgItemText] hwnd=0x${hwnd.toString(16)} ctrl=${ctrlId} "${text}"`);
+      if (renderer) renderer.setDlgItemText(hwnd, ctrlId, text);
+    },
     message_box: (h, t, c, u) => {
       const mem = new Uint8Array(instance.exports.memory.buffer);
       logs.push(`[MessageBox] "${readStr(mem, c)}": "${readStr(mem, t)}"`);
@@ -164,10 +171,16 @@ async function main() {
     show_window: (hwnd, cmd) => {
       logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
       if (renderer) renderer.showWindow(hwnd, cmd);
-      // Inject WM_CLOSE to test exit flow
-      if (!inputEvent) {
-        inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
-        logs.push('[test] Injecting WM_CLOSE');
+      // Inject button sequence if --buttons provided, else WM_CLOSE
+      if (!inputEvent && !inputQueue) {
+        const btnArg = args.find(a => a.startsWith('--buttons='));
+        if (btnArg) {
+          inputQueue = btnArg.split('=')[1].split(',').map(Number);
+          logs.push(`[test] Button queue: ${inputQueue}`);
+        } else {
+          inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
+          logs.push('[test] Injecting WM_CLOSE');
+        }
       }
     },
     create_dialog: (hwnd, dlgId) => {
@@ -213,9 +226,20 @@ async function main() {
         logs.push(`[check_input] returning msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
         return packed;
       }
+      if (inputQueue && inputQueue.length > 0) {
+        const id = inputQueue.shift();
+        inputEvent = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
+        const evt = inputEvent; inputEvent = null;
+        const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
+        logs.push(`[check_input] button id=${id} packed=0x${packed.toString(16)}`);
+        return packed;
+      }
       return 0;
     },
     check_input_lparam: () => 0,
+    check_input_hwnd: () => {
+      return 0x10002; // dialog hwnd for button clicks
+    },
     set_window_class: (hwnd, classPtr) => {
       if (renderer) {
         const bytes = new Uint8Array(instance.exports.memory.buffer);
@@ -224,6 +248,20 @@ async function main() {
         renderer.setWindowClass(hwnd, s);
       }
     },
+    // GDI stubs for test runner
+    gdi_create_pen: (style, width, color) => 0x80001,
+    gdi_create_solid_brush: (color) => 0x80002,
+    gdi_create_compat_dc: (hdc) => 0x50003,
+    gdi_create_compat_bitmap: (hdc, w, h) => 0x80003,
+    gdi_select_object: (hdc, hObj) => 0x30001,
+    gdi_delete_object: (h) => 1,
+    gdi_delete_dc: (hdc) => 1,
+    gdi_rectangle: (hdc, l, t, r, b, hwnd) => 1,
+    gdi_ellipse: (hdc, l, t, r, b, hwnd) => 1,
+    gdi_move_to: (hdc, x, y) => 1,
+    gdi_line_to: (hdc, x, y, hwnd) => 1,
+    gdi_arc: (hdc, l, t, r, b, xs, ys, xe, ye, hwnd) => 1,
+    gdi_bitblt: (dst, dx, dy, w, h, src, sx, sy, rop, hwnd) => 1,
   }};
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
