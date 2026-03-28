@@ -4347,12 +4347,8 @@
     (local.set $w1 (i32.load (i32.add (local.get $name_ptr) (i32.const 4))))
     (local.set $w2 (i32.load (i32.add (local.get $name_ptr) (i32.const 8))))
 
-    ;; DEBUG: log API name
+    ;; Log API name for trace
     (call $host_log (local.get $name_ptr) (i32.const 32))
-    ;; Debug: if w0 looks like "Regi", log w0 and w2
-    (if (i32.eq (local.get $w0) (i32.const 0x69676552))
-      (then (call $host_log_i32 (local.get $w0))
-            (call $host_log_i32 (local.get $w2))))
 
     ;; ================================================================
     ;; KERNEL32
@@ -4363,8 +4359,9 @@
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
             (call $host_exit (local.get $arg0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)))
 
-    ;; GetModuleHandleA(1) "GetM"+"odul"
-    (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547)) (i32.eq (local.get $w1) (i32.const 0x6C75646F)))
+    ;; GetModuleHandleA(1) "GetM"+"odul"+"eHan" — must NOT match GetModuleFileNameA
+    (if (i32.and (i32.and (i32.eq (local.get $w0) (i32.const 0x4D746547)) (i32.eq (local.get $w1) (i32.const 0x6C75646F)))
+                 (i32.eq (local.get $w2) (i32.const 0x6E614865))) ;; "eHan"
       (then (global.set $eax (global.get $image_base))
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
@@ -4822,8 +4819,6 @@
             (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))))
           (else ;; WNDCLASSA: lpfnWndProc at +4
             (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))))
-        ;; Debug: log wndproc value
-        (call $host_log_i32 (local.get $tmp))
         ;; Store first wndproc as main, subsequent as child
         (if (i32.eqz (global.get $wndproc_addr))
           (then (global.set $wndproc_addr (local.get $tmp)))
@@ -6877,14 +6872,6 @@
             (then
               (global.set $watch_val (call $gl32 (global.get $watch_addr)))
               (br $halt)))))
-      ;; DEBUG: break when ESI first becomes 0x104
-      (if (i32.and (i32.eq (global.get $esi) (i32.const 0x104))
-                   (i32.eqz (global.get $watch_val))) ;; one-shot using watch_val as flag
-        (then
-          (global.set $watch_val (i32.const 1))
-          (call $host_log_i32 (i32.const 0xDEAD0004))
-          (call $host_log_i32 (global.get $eip))
-          (br $halt)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
