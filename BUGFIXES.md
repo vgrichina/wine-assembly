@@ -29,3 +29,23 @@
 **Problem:** `IDIV` with dividend `0xFFFFFFFF80000000` (i.e. EDX:EAX = -2147483648) and divisor `-1` should raise a #DE exception (the result 2147483648 doesn't fit in a signed 32-bit register). The old code attempted the division, which would produce an incorrect result or trap in WebAssembly.
 
 **Fix:** Added an explicit check in both `$th_idiv32` and `$th_idiv_m32` that raises exception #DE when `divisor == -1 && dividend == 0xFFFFFFFF80000000`.
+
+## 4. RCL/RCR (Rotate through Carry) were no-ops
+
+**Problem:** `$do_shift32` had no implementation for shift types 2 (RCL) and 3 (RCR). They fell through to the fallback which returned the value unchanged. These are needed for multi-precision arithmetic and compiler-generated bit manipulation.
+
+**Fix:** Implemented both as loop-based 33-bit rotations (32 data bits + carry flag). Each iteration shifts one bit through the carry, correctly maintaining the CF. The result and final CF are stored via `$set_flags_shift`.
+
+## 5. ROL/ROR did not set Carry Flag
+
+**Problem:** `ROL` and `ROR` in `$do_shift32` returned the rotated value without calling `$set_flags_shift`, so CF was not updated. On real x86, ROL sets CF to bit 0 of the result (the bit that rotated around), and ROR sets CF to bit 31.
+
+**Fix:** Both now call `$set_flags_shift` with the appropriate CF value after rotation.
+
+## 6. 8-bit ADC/SBB Carry Flag incorrect when b+cf overflows 8 bits
+
+**Problem:** In `$th_alu_r8_r8` and `$th_alu_r8_i8`, the ADC case passed `b+cf` (which can be 0x100 when b=0xFF and cf=1) to `$set_flags_add`. The CF check (`flag_res < flag_a`) would give wrong results because `b_eff` exceeds the 8-bit range. Similarly for SBB.
+
+**Example:** `ADC 0xFF, 0xFF` with CF=1: full sum = 0x1FF, should carry. But `flag_res=0xFF, flag_a=0xFF`, so CF = `0xFF < 0xFF` = false (wrong).
+
+**Fix:** Compute the full unmasked sum/difference, then after `$set_flags_add`/`$set_flags_sub`, override the CF globals if the full result overflows 8 bits (>= 0x100 for ADC, or has bits above 0xFF set for SBB). Also save `$cf_in` once to avoid calling `$get_cf` after flag state changes.
