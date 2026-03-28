@@ -12,9 +12,11 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
+      overflow: hidden;
     }
     #shell {
       flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       background: #c0c0c0;
@@ -72,6 +74,7 @@
     }
     #log {
       width: 320px;
+      min-height: 0;
       background: #000;
       color: #0f0;
       font-family: "Fixedsys", "Courier New", monospace;
