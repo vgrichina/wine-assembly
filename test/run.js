@@ -139,6 +139,11 @@ async function main() {
         logs.push('[i32] ' + hex(val));
       }
     },
+    shell_about: (h, appPtr) => {
+      const mem = new Uint8Array(instance.exports.memory.buffer);
+      logs.push(`[ShellAbout] "${readStr(mem, appPtr)}"`);
+      return 1;
+    },
     message_box: (h, t, c, u) => {
       const mem = new Uint8Array(instance.exports.memory.buffer);
       logs.push(`[MessageBox] "${readStr(mem, c)}": "${readStr(mem, t)}"`);

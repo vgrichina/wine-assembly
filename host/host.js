@@ -40,6 +40,22 @@ class WineAssembly {
           }
         },
 
+        shell_about: (hWnd, szAppPtr) => {
+          const appName = self.readString(szAppPtr);
+          const versionInfo = self._getVersionInfo();
+          let text = appName;
+          if (versionInfo.FileVersion) text += '\nVersion ' + versionInfo.FileVersion;
+          if (versionInfo.LegalCopyright) text += '\n' + versionInfo.LegalCopyright;
+          console.log(`[ShellAbout] "${appName}"`);
+          self.logToUI(`[ShellAbout] ${appName}`);
+          if (self.renderer) {
+            self.renderer.showAboutDialog(hWnd, appName, versionInfo);
+          } else {
+            alert(text);
+          }
+          return 1;
+        },
+
         message_box: (hWnd, textPtr, captionPtr, uType) => {
           const text = self.readString(textPtr);
           const caption = self.readString(captionPtr);
@@ -172,6 +188,53 @@ class WineAssembly {
       el.textContent += msg + '\n';
       el.scrollTop = el.scrollHeight;
     }
+  }
+
+  _getVersionInfo() {
+    const info = {};
+    try {
+      const mem = new Uint8Array(this.memory.buffer);
+      // Scan guest memory for VS_VERSION_INFO (UTF-16LE) signature
+      // The PE sections are loaded at GUEST_BASE (0x12000) + section RVA
+      const needle = 'VS_VERSION_INFO';
+      const searchStart = 0x12000;
+      const searchEnd = Math.min(searchStart + 0x200000, mem.length);
+      let viBase = 0;
+      for (let p = searchStart; p < searchEnd - needle.length * 2; p += 2) {
+        let match = true;
+        for (let j = 0; j < needle.length; j++) {
+          if (mem[p + j * 2] !== needle.charCodeAt(j) || mem[p + j * 2 + 1] !== 0) { match = false; break; }
+        }
+        if (match) { viBase = p - 6; break; } // -6 for wLength + wValueLength + wType before string
+      }
+      if (!viBase) return info;
+      const dv = new DataView(this.memory.buffer);
+      const viSize = dv.getUint16(viBase, true);
+      // Scan for UTF-16LE key-value pairs within the version resource
+      const keys = ['CompanyName', 'FileDescription', 'FileVersion', 'LegalCopyright', 'ProductName', 'ProductVersion'];
+      for (const key of keys) {
+        for (let p = viBase; p < viBase + viSize - key.length * 2; p += 2) {
+          let match = true;
+          for (let j = 0; j < key.length; j++) {
+            if (mem[p + j * 2] !== key.charCodeAt(j) || mem[p + j * 2 + 1] !== 0) { match = false; break; }
+          }
+          if (!match) continue;
+          let vp = p + (key.length + 1) * 2;
+          while (vp % 4 !== 0) vp++;
+          let val = '';
+          for (let j = vp; j < viBase + viSize - 1; j += 2) {
+            const ch = mem[j] | (mem[j + 1] << 8);
+            if (ch === 0) break;
+            val += String.fromCharCode(ch);
+          }
+          if (val) info[key] = val;
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn('[ShellAbout] version info parse error:', e);
+    }
+    return info;
   }
 
   async init(canvas) {

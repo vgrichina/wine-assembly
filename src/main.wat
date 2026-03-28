@@ -34,6 +34,8 @@
   ;; set_window_class(hwnd, class_name_ptr)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
+  (import "host" "shell_about" (func $host_shell_about (param i32 i32) (result i32)))
+  ;; shell_about(hwnd, szApp_ptr) → result
 
   ;; ---- Memory: 512 pages = 32MB initial ----
   (memory (export "memory") 512)
@@ -4131,9 +4133,9 @@
       (then (global.set $eax (i32.const 33)) ;; > 32 means success
             (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
 
-    ;; ShellAboutA(4) "Shel"+"lAbo"
+    ;; ShellAboutA(4) "Shel"+"lAbo" — (hWnd, szApp, szOtherStuff, hIcon)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x6C656853)) (i32.eq (local.get $w1) (i32.const 0x6F62416C)))
-      (then (global.set $eax (i32.const 1))
+      (then (global.set $eax (call $host_shell_about (local.get $arg0) (call $g2w (local.get $arg1))))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
 
     ;; SHGetSpecialFolderPathA(4) "SHGe"
