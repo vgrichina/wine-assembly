@@ -57,15 +57,18 @@
     #screen-wrap {
       flex: 1;
       display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 8px;
       background: #008080;
-      overflow: auto;
+      overflow: hidden;
+      position: relative;
     }
     canvas {
       image-rendering: pixelated;
       cursor: default;
+      display: block;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
     }
     #log {
       width: 320px;
@@ -146,7 +149,7 @@
     </div>
     <div id="content">
       <div id="screen-wrap">
-        <canvas id="screen" width="640" height="480"></canvas>
+        <canvas id="screen"></canvas>
       </div>
       <div id="log">Wine-Assembly v0.2
 Resource-aware Win98 emulator
@@ -167,8 +170,8 @@ Resource-aware Win98 emulator
     let wine = null;
 
     const apps = {
-      notepad: { exe: '../test/binaries/notepad.exe', w: 640, h: 480 },
-      calc:    { exe: '../test/binaries/calc.exe',    w: 520, h: 380 },
+      notepad: { exe: '../test/binaries/notepad.exe' },
+      calc:    { exe: '../test/binaries/calc.exe' },
     };
 
     async function launchApp() {
@@ -177,8 +180,9 @@ Resource-aware Win98 emulator
       if (!app) return;
 
       const canvas = document.getElementById('screen');
-      canvas.width = app.w;
-      canvas.height = app.h;
+      const wrap = document.getElementById('screen-wrap');
+      canvas.width = wrap.clientWidth;
+      canvas.height = wrap.clientHeight;
 
       const log = document.getElementById('log');
       log.textContent = `Launching ${sel}.exe...\n`;
@@ -257,6 +261,24 @@ Resource-aware Win98 emulator
         document.getElementById('status').textContent = 'Failed to load';
       }
     }
+
+    // Resize canvas to match container
+    function resizeCanvas() {
+      const canvas = document.getElementById('screen');
+      const wrap = document.getElementById('screen-wrap');
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
+        console.log('[resize] canvas', canvas.width + 'x' + canvas.height, '->', w + 'x' + h);
+        canvas.width = w;
+        canvas.height = h;
+        if (wine && wine.renderer) {
+          wine.renderer.repaint();
+        }
+      }
+    }
+    window.addEventListener('resize', resizeCanvas);
+    new ResizeObserver(resizeCanvas).observe(document.getElementById('screen-wrap'));
 
     // Taskbar clock
     setInterval(() => {
