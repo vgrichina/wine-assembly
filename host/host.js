@@ -70,7 +70,11 @@ class WineAssembly {
           self.logToUI('[ExitProcess] code: ' + code);
           self.logToUI('--- Program exited ---');
           self.running = false;
-          if (self.renderer) self.renderer._exited = true;
+          if (self.renderer) {
+            self.renderer._exited = true;
+            self.renderer.windows = {};
+            self.renderer.repaint();
+          }
         },
 
         draw_rect: (x, y, w, h, color) => {
