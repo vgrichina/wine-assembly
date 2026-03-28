@@ -3340,11 +3340,15 @@
     ;; USER32
     ;; ================================================================
 
-    ;; RegisterClassExA(1) "Regi"+"ster"+"Clas"
+    ;; RegisterClassA / RegisterClassExA(1) "Regi"+"ster"+"Clas"
+    ;; Distinguish by byte 13: 'E' (0x45) = ExA (WNDCLASSEX, wndproc at +8), 'A' (0x41) = A (WNDCLASSA, wndproc at +4)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x69676552)) (i32.eq (local.get $w2) (i32.const 0x73616C43)))
       (then
-        ;; WNDCLASSEX: cbSize=0, style=4, lpfnWndProc=8
-        (global.set $wndproc_addr (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 13))) (i32.const 0x45)) ;; 'E' = ExA
+          (then ;; WNDCLASSEX: lpfnWndProc at +8
+            (global.set $wndproc_addr (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))))
+          (else ;; WNDCLASSA: lpfnWndProc at +4
+            (global.set $wndproc_addr (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))))
         (global.set $eax (i32.const 0xC001))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
