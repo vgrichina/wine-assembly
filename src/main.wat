@@ -64,6 +64,12 @@
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd)
 
+  ;; Math host imports (for FPU transcendentals)
+  (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
+  (import "host" "math_cos" (func $host_math_cos (param f64) (result f64)))
+  (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
+  (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
+
   ;; ---- Memory: 512 pages = 32MB initial ----
   (memory (export "memory") 512)
 
@@ -426,6 +432,14 @@
     $th_shift_m16          ;; 194
     ;; -- CMPXCHG8B --
     $th_cmpxchg8b          ;; 195
+    ;; -- XCHG memory --
+    $th_xchg_m_r           ;; 196: xchg [addr], reg (op=reg, addr in next word)
+    $th_xchg_m_r_ro        ;; 197: xchg [base+disp], reg (op=reg<<4|base, disp in word)
+    ;; -- BT/BTS/BTR/BTC r,r --
+    $th_bt_r_r             ;; 198: bt reg, reg (op=dst<<4|src)
+    $th_bts_r_r            ;; 199: bts reg, reg
+    $th_btr_r_r            ;; 200: btr reg, reg
+    $th_btc_r_r            ;; 201: btc reg, reg
   )
 
   ;; ============================================================
@@ -1544,6 +1558,22 @@
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $b))
     (call $set_reg (i32.and (local.get $op) (i32.const 0xF)) (local.get $a))
     (call $next))
+  ;; 196: xchg [addr], reg (op=reg, addr in next word)
+  (func $th_xchg_m_r (param $op i32)
+    (local $addr i32) (local $tmp i32)
+    (local.set $addr (call $read_thread_word))
+    (local.set $tmp (call $gl32 (local.get $addr)))
+    (call $gs32 (local.get $addr) (call $get_reg (local.get $op)))
+    (call $set_reg (local.get $op) (local.get $tmp))
+    (call $next))
+  ;; 197: xchg [base+disp], reg (op=reg<<4|base, disp in word)
+  (func $th_xchg_m_r_ro (param $op i32)
+    (local $addr i32) (local $tmp i32)
+    (local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+    (local.set $tmp (call $gl32 (local.get $addr)))
+    (call $gs32 (local.get $addr) (call $get_reg (i32.shr_u (local.get $op) (i32.const 4))))
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $tmp))
+    (call $next))
 
   ;; --- TEST ---
   (func $th_test_r_r (param $op i32)
@@ -1992,6 +2022,36 @@
     (local $bit i32) (local.set $bit (call $read_thread_word))
     (call $set_reg (local.get $op) (i32.xor (call $get_reg (local.get $op)) (i32.shl (i32.const 1) (local.get $bit))))
     (call $next))
+  ;; --- BT/BTS/BTR/BTC r,r (198-201) ---
+  ;; op = dst<<4|src, bit = get_reg(src) & 31
+  (func $th_bt_r_r (param $op i32)
+    (local $dst i32) (local $bit i32)
+    (local.set $dst (i32.shr_u (local.get $op) (i32.const 4)))
+    (local.set $bit (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 31)))
+    (call $set_cf_bit (call $get_reg (local.get $dst)) (local.get $bit))
+    (call $next))
+  (func $th_bts_r_r (param $op i32)
+    (local $dst i32) (local $bit i32)
+    (local.set $dst (i32.shr_u (local.get $op) (i32.const 4)))
+    (local.set $bit (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 31)))
+    (call $set_cf_bit (call $get_reg (local.get $dst)) (local.get $bit))
+    (call $set_reg (local.get $dst) (i32.or (call $get_reg (local.get $dst)) (i32.shl (i32.const 1) (local.get $bit))))
+    (call $next))
+  (func $th_btr_r_r (param $op i32)
+    (local $dst i32) (local $bit i32)
+    (local.set $dst (i32.shr_u (local.get $op) (i32.const 4)))
+    (local.set $bit (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 31)))
+    (call $set_cf_bit (call $get_reg (local.get $dst)) (local.get $bit))
+    (call $set_reg (local.get $dst) (i32.and (call $get_reg (local.get $dst))
+      (i32.xor (i32.shl (i32.const 1) (local.get $bit)) (i32.const -1))))
+    (call $next))
+  (func $th_btc_r_r (param $op i32)
+    (local $dst i32) (local $bit i32)
+    (local.set $dst (i32.shr_u (local.get $op) (i32.const 4)))
+    (local.set $bit (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 31)))
+    (call $set_cf_bit (call $get_reg (local.get $dst)) (local.get $bit))
+    (call $set_reg (local.get $dst) (i32.xor (call $get_reg (local.get $dst)) (i32.shl (i32.const 1) (local.get $bit))))
+    (call $next))
   ;; --- Memory BT/BTS/BTR/BTC with imm8 ---
   ;; All read addr from next word, bit from word after
   (func $set_cf_bit (param $val i32) (param $bit i32)
@@ -2372,21 +2432,37 @@
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 6))
           (then
+            (if (i32.eq (local.get $rm) (i32.const 2))
+              (then ;; FPTAN: ST(0) = tan(ST(0)), push 1.0
+                (call $fpu_set (i32.const 0) (call $host_math_tan (local.get $st0)))
+                (call $fpu_push (f64.const 1.0)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 3))
+              (then ;; FPATAN: ST(1) = atan2(ST(1), ST(0)), pop
+                (call $fpu_set (i32.const 1) (call $host_math_atan2 (call $fpu_get (i32.const 1)) (local.get $st0)))
+                (drop (call $fpu_pop)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 4))
+              (then (call $fpu_set (i32.const 0) (f64.const 1.0)) (call $fpu_push (f64.const 0.0)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6))
               (then (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 7))
               (then (global.set $fpu_top (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
-            (if (i32.eq (local.get $rm) (i32.const 4))
-              (then (call $fpu_set (i32.const 0) (f64.const 1.0)) (call $fpu_push (f64.const 0.0)) (return)))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then
+            (if (i32.eq (local.get $rm) (i32.const 0))
+              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF))) (return))) ;; FPREM result ready
             (if (i32.eq (local.get $rm) (i32.const 2))
               (then (call $fpu_set (i32.const 0) (f64.sqrt (local.get $st0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 3))
+              (then ;; FSINCOS: ST(0) = sin, push cos
+                (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0)))
+                (call $fpu_push (call $host_math_cos (local.get $st0))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 4))
               (then (call $fpu_set (i32.const 0) (f64.nearest (local.get $st0))) (return)))
-            (if (i32.eq (local.get $rm) (i32.const 0))
-              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 6))
+              (then (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0))) (return))) ;; FSIN
+            (if (i32.eq (local.get $rm) (i32.const 7))
+              (then (call $fpu_set (i32.const 0) (call $host_math_cos (local.get $st0))) (return))) ;; FCOS
             (return)))
         (return)))
     ;; Group 2 (DA): FCMOV
@@ -3993,6 +4069,31 @@
                 (else (call $te_raw (global.get $mr_disp)))) ;; TODO: runtime EA for SETcc mem
               (br $decode)))
 
+          ;; 0x0F 0xA3: BT r/m32, r32
+          (if (i32.eq (local.get $op) (i32.const 0xA3))
+            (then (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 198) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
+              (br $decode)))
+          ;; 0x0F 0xAB: BTS r/m32, r32
+          (if (i32.eq (local.get $op) (i32.const 0xAB))
+            (then (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 199) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
+              (br $decode)))
+          ;; 0x0F 0xB3: BTR r/m32, r32
+          (if (i32.eq (local.get $op) (i32.const 0xB3))
+            (then (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 200) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
+              (br $decode)))
+          ;; 0x0F 0xBB: BTC r/m32, r32
+          (if (i32.eq (local.get $op) (i32.const 0xBB))
+            (then (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 201) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
+              (br $decode)))
+
           ;; 0x0F 0xAF: IMUL r32, r/m32
           (if (i32.eq (local.get $op) (i32.const 0xAF))
             (then
@@ -4088,8 +4189,8 @@
                   (call $te_raw (local.get $imm)))
                 (else
                   ;; Memory BT/BTS/BTR/BTC: mr_reg 4=BT,5=BTS,6=BTR,7=BTC → handler 176-179
-                  ;; TODO: implement memory BT — for now treat as reg form with val=0
-                  (call $te (i32.add (i32.const 92) (global.get $mr_reg)) (i32.const 0))
+                  (call $te (i32.add (i32.const 172) (global.get $mr_reg)) (i32.const 0))
+                  (call $te_raw (call $emit_sib_or_abs))
                   (call $te_raw (local.get $imm))))
               (br $decode)))
 
@@ -4152,8 +4253,12 @@
         (then
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
-            (then (call $te (i32.const 71) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
-          ;; TODO: memory xchg
+            (then (call $te (i32.const 71) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+            (else (if (call $mr_simple_base)
+              (then (call $te (i32.const 197) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
+                    (call $te_raw (global.get $mr_disp)))
+              (else (call $te (i32.const 196) (global.get $mr_reg))
+                    (call $te_raw (call $emit_sib_or_abs))))))
           (br $decode)))
 
       ;; ---- x87 FPU (D8-DF) ----
@@ -6494,13 +6599,63 @@
       (br_if $d (i32.ge_u (local.get $i) (local.get $len)))
       (i32.store8 (i32.add (local.get $ptr) (local.get $i)) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+  ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
+  ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
+  ;; Falls back to bump allocation when no free block fits.
   (func $heap_alloc (param $size i32) (result i32)
-    (local $ptr i32) (local.set $ptr (global.get $heap_ptr))
-    (global.set $heap_ptr (i32.and (i32.add (i32.add (global.get $heap_ptr) (local.get $size)) (i32.const 7)) (i32.const 0xFFFFFFF8)))
-    (local.get $ptr))
+    (local $need i32) (local $ptr i32)
+    (local $prev_w i32) (local $cur i32) (local $cur_w i32)
+    (local $bsz i32) (local $rem i32)
+    ;; need = align8(size + 4 header), minimum 16
+    (local.set $need (i32.and (i32.add (i32.add (local.get $size) (i32.const 4)) (i32.const 7)) (i32.const 0xFFFFFFF8)))
+    (if (i32.lt_u (local.get $need) (i32.const 16)) (then (local.set $need (i32.const 16))))
+    ;; Walk free list (guest pointers)
+    (local.set $prev_w (i32.const 0)) ;; 0 = scanning from head
+    (local.set $cur (global.get $free_list))
+    (block $found (block $scan (loop $fl
+      (br_if $scan (i32.eqz (local.get $cur)))
+      (local.set $cur_w (call $g2w (local.get $cur)))
+      (local.set $bsz (i32.load (local.get $cur_w)))
+      (if (i32.ge_u (local.get $bsz) (local.get $need))
+        (then
+          ;; Found a fit. Split if remainder >= 16, else use whole block.
+          (local.set $rem (i32.sub (local.get $bsz) (local.get $need)))
+          (if (i32.ge_u (local.get $rem) (i32.const 16))
+            (then
+              ;; Shrink free block from the end: free block keeps first (rem) bytes
+              (i32.store (local.get $cur_w) (local.get $rem))
+              ;; Allocated block starts at cur + rem
+              (local.set $ptr (i32.add (local.get $cur) (local.get $rem)))
+              (i32.store (call $g2w (local.get $ptr)) (local.get $need)))
+            (else
+              ;; Use whole block — unlink from free list
+              (local.set $ptr (local.get $cur))
+              (if (local.get $prev_w)
+                (then (i32.store (i32.add (local.get $prev_w) (i32.const 4))
+                  (i32.load (i32.add (local.get $cur_w) (i32.const 4)))))
+                (else (global.set $free_list
+                  (i32.load (i32.add (local.get $cur_w) (i32.const 4))))))))
+          (br $found)))
+      (local.set $prev_w (local.get $cur_w))
+      (local.set $cur (i32.load (i32.add (local.get $cur_w) (i32.const 4))))
+      (br $fl)))
+      ;; No free block found — bump allocate
+      (local.set $ptr (global.get $heap_ptr))
+      (i32.store (call $g2w (local.get $ptr)) (local.get $need))
+      (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need))))
+    ;; Return guest pointer past the size header
+    (i32.add (local.get $ptr) (i32.const 4)))
 
-  ;; heap_free: no-op for now (bump allocator)
-  (func $heap_free (param $guest_ptr i32))
+  ;; heap_free: return block to free list
+  (func $heap_free (param $guest_ptr i32)
+    (local $block i32) (local $w i32)
+    (if (i32.eqz (local.get $guest_ptr)) (then (return)))
+    ;; Block starts 4 bytes before the user pointer
+    (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
+    (local.set $w (call $g2w (local.get $block)))
+    ;; Prepend to free list: store next = old head
+    (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
+    (global.set $free_list (local.get $block)))
   (func $store_fake_cmdline
     (local $ptr i32) (local.set $ptr (call $heap_alloc (i32.const 16)))
     (global.set $fake_cmdline_addr (local.get $ptr))

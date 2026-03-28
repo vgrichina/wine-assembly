@@ -324,6 +324,12 @@ class WineAssembly {
           return 1;
         },
 
+        // Math imports for FPU transcendentals
+        math_sin: (x) => Math.sin(x),
+        math_cos: (x) => Math.cos(x),
+        math_tan: (x) => Math.tan(x),
+        math_atan2: (y, x) => Math.atan2(y, x),
+
         check_input: () => {
           if (!self.renderer) return 0;
           const evt = self.renderer.checkInput();
