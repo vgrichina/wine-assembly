@@ -1,5 +1,35 @@
 # Calc.exe Execution Analysis
 
+## Current Status (2026-03-27)
+
+### Fixed
+- **imul r,[mem] clobbered dst** — 0F AF decoded as load+square instead of multiply. Calc bignum init now completes in ~1M blocks (was stuck at 100M+).
+- **INC/DEC cleared CF** — added saved_cf; bignum adc chains now preserve carry across inc counters.
+- **ADC/SBB carry overflow** — b+cf_in wrap (0xFFFFFFFF+1) now forces CF=1.
+- **MUL/IMUL missing flags** — CF=OF set when upper half non-zero (flag_op=6).
+- **Heap OOM** — LocalFree was a no-op (bump allocator). Added free-list allocator, then reverted to bump since imul fix eliminated the 100M-block alloc storm. Re-add free-list when needed.
+
+### Fixed (cont.)
+- **Button clicks not working** — Three issues:
+  1. Resource parser `readOrdOrSz` lost string values (`.str` vs `.val` key mismatch) → dialog className "SciCalc" was `undefined`
+  2. `GetMessageA` always set msg.hwnd to `$main_hwnd` (0x10001, hidden helper window) instead of the actual target hwnd from the input event → message loop couldn't route to dialog
+  3. `IsChild` always returned 0; `SendMessageA` only dispatched to main window
+  - Added `host_check_input_hwnd` import to pass hwnd from renderer through input pipeline
+  - Added `$dlg_hwnd` global (saved from CreateDialogParamA) for IsChild and SendMessageA routing
+  - Confirmed: calc's dialog template specifies `className="SciCalc"` (same class as main window), dlgProc is NULL → all messages dispatched to SciCalc WndProc at 0x100592A via `$wndproc_addr`
+  - Test confirms: injecting WM_COMMAND(id=125="1") triggers SetDlgItemTextA to update display
+
+### Fixed: Arithmetic operations now work
+- **`_strrev` was stubbed as no-op** — BigNum_ToString builds digits in reverse, relies on `_strrev` to flip. Without it, the reversed string was misinterpreted as "0.". Implemented `_strrev` in WASM.
+- **`strchr` was stubbed as "not found"** — needed for decimal point formatting. Implemented properly.
+- **ADC/SBB carry flag in threaded handlers** — `th_adc_r_i32`, `th_adc_r_r`, `th_sbb_r_i32`, `th_sbb_r_r` passed `b` instead of `b_eff=b+cf` to `set_flags_add/sub`. Fixed to match `$do_alu32` pattern with wrap detection. Also fixed 8-bit ADC/SBB in `th_alu_r8_r8` and `th_alu_r8_i8`.
+- **Verified**: 5+9=14, 500/9=55.555...556 (32-digit precision), 123×456=56088. All correct.
+
+### Open Tasks
+1. **Re-add heap free-list** — reverted to bump allocator; will OOM on long runs
+3. **FPU stubs** — no x87 support; may be needed for CRT or standard-mode calc
+4. **RCL/RCR** — rotation-through-carry currently stubbed approximate
+
 ## Overview
 Win98 calc.exe (image_base=0x01000000, entry=0x010119e0). Gets stuck in bignum math
 library initialization — never reaches the message loop or creates the main UI window.
