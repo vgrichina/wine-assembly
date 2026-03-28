@@ -64,6 +64,10 @@
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd)
 
+  (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32) (result i32)))
+  (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
+  (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))
+
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
   (import "host" "math_cos" (func $host_math_cos (param f64) (result f64)))
@@ -5627,10 +5631,16 @@
       (then (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 
-    ;; LoadBitmapA(2) "Load"+"Bitm" — return fake bitmap handle
+    ;; LoadBitmapA(2) "Load"+"Bitm" — load bitmap from PE resources
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x64616F4C)) (i32.eq (local.get $w1) (i32.const 0x6D746942)))
-      (then (global.set $eax (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+      (then
+        ;; arg1 = resource ID (MAKEINTRESOURCE value, low 16 bits)
+        (local.set $tmp (call $host_gdi_load_bitmap (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+        ;; If host couldn't find it, return a fake 32x32 bitmap
+        (if (i32.eqz (local.get $tmp))
+          (then (local.set $tmp (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))))
+        (global.set $eax (local.get $tmp))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
 
     ;; OpenIcon(1) "Open"+"Icon" — restore minimized window, same as ShowWindow(SW_RESTORE)
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x6E65704F)) (i32.eq (local.get $w1) (i32.const 0x6E6F6349)))
@@ -5930,10 +5940,25 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
 
     ;; GetObjectA(3) "GetO"+"bjec"
+    ;; arg0=hObj, arg1=cbBuffer, arg2=lpvObject
     (if (i32.and (i32.eq (local.get $w0) (i32.const 0x4F746547)) (i32.eq (local.get $w1) (i32.const 0x63656A62)))
       (then
         (if (i32.gt_u (local.get $arg1) (i32.const 0))
           (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $arg1))))
+        ;; Try to fill BITMAP struct if it's a bitmap object
+        (local.set $tmp (call $host_gdi_get_object_w (local.get $arg0)))
+        (if (i32.ne (local.get $tmp) (i32.const 0))
+          (then
+            ;; BITMAP: bmType(0), bmWidth(+4), bmHeight(+8), bmWidthBytes(+12), bmPlanes(+14 word), bmBitsPixel(+16 word)
+            (if (i32.ge_u (local.get $arg1) (i32.const 24))
+              (then
+                (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $tmp))  ;; bmWidth
+                (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (call $host_gdi_get_object_h (local.get $arg0))) ;; bmHeight
+                (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
+                  (i32.mul (local.get $tmp) (i32.const 4))) ;; bmWidthBytes (assuming 32bpp)
+                (call $gs16 (i32.add (local.get $arg2) (i32.const 14)) (i32.const 1))    ;; bmPlanes
+                (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 32))   ;; bmBitsPixel
+              ))))
         (global.set $eax (local.get $arg1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
 

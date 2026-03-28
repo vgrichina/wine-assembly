@@ -225,15 +225,17 @@ class WineAssembly {
           return h;
         },
         gdi_create_compat_bitmap: (hdc, w, h) => {
-          return self._gdiAlloc({ type: 'bitmap', w, h });
+          const pixels = new Uint8Array(w * h * 4);
+          return self._gdiAlloc({ type: 'bitmap', w, h, pixels });
         },
         gdi_select_object: (hdc, hObj) => {
           const obj = self._gdiObjects[hObj];
           const dc = self._getDC(hdc);
-          const prev = 0x30001; // generic previous handle
+          let prev = 0x30001; // generic previous handle
           if (obj) {
             if (obj.type === 'pen') { dc.penColor = obj.color; dc.penWidth = obj.width || 1; }
             if (obj.type === 'brush') { dc.brushColor = obj.color; }
+            if (obj.type === 'bitmap') { prev = dc.selectedBitmap || 0x30001; dc.selectedBitmap = hObj; }
           }
           return prev;
         },
@@ -319,9 +321,68 @@ class WineAssembly {
           return 1;
         },
         gdi_bitblt: (dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd) => {
-          // For now, BitBlt between memory DCs is a no-op since we don't track bitmap contents
-          // But if dst is a window DC, we could clear/fill the area
+          if (!self.renderer) return 1;
+          // Find source bitmap
+          const srcState = self._getDC(srcDC);
+          const srcBmpH = srcState.selectedBitmap;
+          const srcBmp = srcBmpH ? self._gdiObjects[srcBmpH] : null;
+          if (!srcBmp || !srcBmp.pixels) return 1;
+          // Check if dst is a window DC (0x50001 = BeginPaint/GetDC)
+          const isWindowDC = (dstDC === 0x50001);
+          if (isWindowDC) {
+            const o = self._getClientOrigin(hwnd);
+            const imgData = self.renderer.ctx.createImageData(w, h);
+            for (let row = 0; row < h; row++) {
+              for (let col = 0; col < w; col++) {
+                const srcX = sx + col, srcY = sy + row;
+                if (srcX < 0 || srcX >= srcBmp.w || srcY < 0 || srcY >= srcBmp.h) continue;
+                const si = (srcY * srcBmp.w + srcX) * 4;
+                const di = (row * w + col) * 4;
+                imgData.data[di] = srcBmp.pixels[si];
+                imgData.data[di + 1] = srcBmp.pixels[si + 1];
+                imgData.data[di + 2] = srcBmp.pixels[si + 2];
+                imgData.data[di + 3] = srcBmp.pixels[si + 3];
+              }
+            }
+            self.renderer.ctx.putImageData(imgData, o.x + dx, o.y + dy);
+          } else {
+            // Memory DC to memory DC copy
+            const dstState = self._getDC(dstDC);
+            const dstBmpH = dstState.selectedBitmap;
+            const dstBmp = dstBmpH ? self._gdiObjects[dstBmpH] : null;
+            if (!dstBmp || !dstBmp.pixels) return 1;
+            for (let row = 0; row < h; row++) {
+              for (let col = 0; col < w; col++) {
+                const srcX = sx + col, srcY = sy + row;
+                const dstX = dx + col, dstY = dy + row;
+                if (srcX < 0 || srcX >= srcBmp.w || srcY < 0 || srcY >= srcBmp.h) continue;
+                if (dstX < 0 || dstX >= dstBmp.w || dstY < 0 || dstY >= dstBmp.h) continue;
+                const si = (srcY * srcBmp.w + srcX) * 4;
+                const di = (dstY * dstBmp.w + dstX) * 4;
+                dstBmp.pixels[di] = srcBmp.pixels[si];
+                dstBmp.pixels[di + 1] = srcBmp.pixels[si + 1];
+                dstBmp.pixels[di + 2] = srcBmp.pixels[si + 2];
+                dstBmp.pixels[di + 3] = srcBmp.pixels[si + 3];
+              }
+            }
+          }
           return 1;
+        },
+        gdi_load_bitmap: (resourceId) => {
+          if (!self.resourceJson || !self.resourceJson.bitmaps) return 0;
+          const bmp = self.resourceJson.bitmaps[resourceId];
+          if (!bmp) return 0;
+          return self._gdiAlloc({ type: 'bitmap', w: bmp.w, h: bmp.h, pixels: new Uint8Array(bmp.pixels) });
+        },
+        gdi_get_object_w: (hObj) => {
+          const obj = self._gdiObjects[hObj];
+          if (!obj || obj.type !== 'bitmap') return 0;
+          return obj.w;
+        },
+        gdi_get_object_h: (hObj) => {
+          const obj = self._gdiObjects[hObj];
+          if (!obj || obj.type !== 'bitmap') return 0;
+          return obj.h;
         },
 
         // Math imports for FPU transcendentals
