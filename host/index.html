@@ -236,6 +236,16 @@ Resource-aware Win98 emulator
           Math.floor((e.clientY - r.top) * sy)
         );
       };
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        wine.renderer.handleWheel(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy),
+          e.deltaY
+        );
+      }, { passive: false });
       canvas.setAttribute('tabindex', '0');
       canvas.focus();
       canvas.addEventListener('keydown', e => {
