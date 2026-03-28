@@ -96,7 +96,7 @@ async function main() {
       ctx.fillText(text, x, y);
     },
     check_input: () => 0,
-    check_input_lparam: () => 0,
+    check_input_lparam: () => 0, check_input_hwnd: () => 0,
     set_window_class: () => {},
   }};
 
