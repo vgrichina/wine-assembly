@@ -61,3 +61,9 @@
 **Problem:** The 0x0F 0xC7 opcode (CMPXCHG8B) was not decoded, causing unrecognized opcode errors. This instruction is used for 64-bit compare-and-swap operations, common in CRT initialization and lock-free data structures.
 
 **Fix:** Added `$th_cmpxchg8b` (handler 195) which compares EDX:EAX with the 8-byte value at [addr]. If equal, sets ZF=1 and stores ECX:EBX; if not equal, sets ZF=0 and loads the memory value into EDX:EAX. Added decoder support for 0x0F 0xC7 with ModRM reg=1.
+
+## 9. POPFD only restored ZF, not CF/SF/OF
+
+**Problem:** `$load_eflags` (used by POPFD and IRET) only set up `flag_res` to encode ZF. CF, SF, and OF were not restored. Any code that pushed flags, modified them, and popped them back would lose carry, sign, and overflow state. This broke SEH dispatch and flag-dependent control flow.
+
+**Fix:** Added a new `flag_op=8` (raw mode) where CF is stored directly in `$flag_a`, OF in `$flag_b`, and ZF/SF encoded in `$flag_res` (bit 31 = SF, zero iff ZF). Updated `$get_cf` and `$get_of` to check for flag_op=8 and return the stored values directly. The existing `$get_zf` and `$get_sf` work automatically via `$flag_res` and `$flag_sign_shift`.

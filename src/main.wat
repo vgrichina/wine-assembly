@@ -557,9 +557,14 @@
       (then (global.get $flag_b))  ;; MUL/IMUL: flag_b stores CF/OF
     (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 7))
       (then (global.get $flag_b))  ;; Shift: flag_b stores last bit shifted out
-    (else (i32.const 0))))))))))))
+    (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 8))
+      (then (global.get $flag_a))  ;; Raw mode: CF stored in flag_a
+    (else (i32.const 0))))))))))))))
   (func $get_of (result i32)
     (local $sa i32) (local $sb i32) (local $sr i32)
+    ;; Raw mode: OF stored in flag_b
+    (if (i32.eq (global.get $flag_op) (i32.const 8))
+      (then (return (global.get $flag_b))))
     ;; MUL/IMUL: OF = CF = flag_b
     (if (i32.eq (global.get $flag_op) (i32.const 6))
       (then (return (global.get $flag_b))))
@@ -612,17 +617,21 @@
         (i32.shl (call $get_of) (i32.const 11))))
   )
 
-  ;; Restore flags from EFLAGS value (for popfd) - approximate
+  ;; Restore flags from EFLAGS value (for popfd)
+  ;; Uses flag_op=8 (raw mode): CF/ZF/SF/OF stored directly in flag globals
   (func $load_eflags (param $f i32)
     (global.set $df (i32.and (i32.shr_u (local.get $f) (i32.const 10)) (i32.const 1)))
-    ;; Set flag state to match. Use a sub that produces the right ZF/SF/CF
-    ;; This is approximate - we store the flags value for later eval_cc checks
-    (global.set $flag_op (i32.const 2))
-    (global.set $flag_res (i32.const 0)) ;; placeholder
-    ;; ZF
-    (if (i32.and (local.get $f) (i32.const 0x40))
+    (global.set $flag_op (i32.const 8))  ;; raw flags mode
+    ;; Store individual flag bits in globals: CF in flag_a, OF in flag_b, ZF/SF encoded in flag_res
+    (global.set $flag_a (i32.and (local.get $f) (i32.const 1)))  ;; CF = bit 0
+    (global.set $flag_b (i32.and (i32.shr_u (local.get $f) (i32.const 11)) (i32.const 1)))  ;; OF = bit 11
+    ;; flag_res: bit 31 = SF, zero iff ZF. This makes get_zf and get_sf work with flag_sign_shift=31.
+    (global.set $flag_sign_shift (i32.const 31))
+    (if (i32.and (local.get $f) (i32.const 0x40))  ;; ZF = bit 6
       (then (global.set $flag_res (i32.const 0)))
-      (else (global.set $flag_res (i32.const 1))))
+      (else (if (i32.and (local.get $f) (i32.const 0x80))  ;; SF = bit 7
+        (then (global.set $flag_res (i32.const 0x80000000)))
+        (else (global.set $flag_res (i32.const 1))))))
   )
 
   ;; ============================================================
@@ -1883,31 +1892,9 @@
 
   ;; --- CMPXCHG/XADD/CPUID ---
   (func $th_cmpxchg (param $op i32)
-    ;; If next word present (memory mode): op=reg, next word=addr
-    ;; If reg mode: op=dst<<4|src (dst=r/m, src=reg)
+    ;; Register mode: op = 0x80 | dst<<4 | src
+    ;; Memory mode: op = src_reg, next word = addr
     (local $dst_val i32) (local $src_reg i32) (local $addr i32) (local $is_mem i32)
-    ;; Detect mode: if op < 16 it's a packed reg pair, else memory
-    ;; Actually, the decoder emits extra word for memory. Use op value to distinguish:
-    ;; reg mode: op = dst<<4|src (both 0-7, so max 0x77)
-    ;; mem mode: op = src_reg (0-7), next word = addr
-    ;; We need a different approach. Let's check if there's a next word.
-    ;; Simpler: for reg mode op has high nibble = dst, for mem mode op = src_reg only.
-    ;; Since we emit differently, let's read: if op >= 8, it's reg mode (packed).
-    ;; No — both encodings have op < 128. Let's use bit 7 as flag.
-    ;; Actually re-examining decoder: reg mode emits op=dst<<4|src, mem mode emits op=src_reg then word=addr.
-    ;; To distinguish: read a word and check. But that's destructive.
-    ;; Better: use separate handler IDs. But let's keep it simple:
-    ;; For reg mode (mod==3): op = 0x80 | dst<<4 | src
-    ;; For mem mode: op = src_reg, word = addr
-    ;; Let me fix the decoder to set bit 7 for reg mode.
-    ;; ... Actually, let's just handle it: if op >= 0x80, reg mode.
-    ;; But we encoded op=dst<<4|src which is max 0x77. So that won't hit 0x80 naturally.
-    ;; I need to revisit the decoder encoding. For now let me use a simpler approach:
-    ;; Just check if op has bits indicating reg mode.
-    ;; Let me re-read: decoder for reg: (i32.or (i32.shl mr_val 4) mr_reg) — mr_val=dst(r/m), mr_reg=src
-    ;; For mem: op=mr_reg, word=mr_addr
-    ;; Problem: op=7 (src_reg) vs op=0x07 (dst=0, src=7) are same.
-    ;; Fix: set high bit for reg mode in decoder.
     (if (i32.ge_u (local.get $op) (i32.const 0x80))
       (then
         ;; Register mode: op = 0x80 | dst<<4 | src
@@ -6879,13 +6866,13 @@
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
-      ;; DEBUG: log state when EIP reaches the critical branch check
-      (if (i32.eq (global.get $eip) (i32.const 0x405475))
+      ;; DEBUG: check when [0x00cfff34] first becomes 0x104
+      (if (i32.and (i32.ne (call $gl32 (i32.const 0x00cfff34)) (i32.const 0))
+                   (i32.lt_u (global.get $eip) (i32.const 0x00405475)))
         (then
-          (call $host_log_i32 (i32.const 0xDEAD0001)) ;; marker
-          (call $host_log_i32 (global.get $esp))
-          (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 0x10)))) ;; [esp+0x10]
-          (call $host_log_i32 (global.get $esi)))) ;; esi
+          (call $host_log_i32 (i32.const 0xDEAD0002))
+          (call $host_log_i32 (global.get $eip))
+          (call $host_log_i32 (call $gl32 (i32.const 0x00cfff34)))))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
