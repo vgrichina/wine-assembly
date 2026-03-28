@@ -19,7 +19,8 @@ const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
-const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR:LEN: break on memory change
+const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
+const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
@@ -428,36 +429,37 @@ async function main() {
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
-  // Watchpoint: snapshot memory region to detect changes
-  let watchAddr = 0, watchLen = 0, watchSnapshot = null;
+  // Watchpoint: WASM-level per-block memory watch (dword granularity)
+  let watchAddr = 0, watchPrevVal = 0;
   if (WATCH_SPEC) {
-    const [addrStr, lenStr] = WATCH_SPEC.split(':');
+    const addrStr = WATCH_SPEC.split(':')[0];
     watchAddr = parseInt(addrStr, 16);
-    watchLen = parseInt(lenStr) || 4;
-    console.log(`Watchpoint set: ${hex(watchAddr)} (${watchLen} bytes)`);
+    console.log(`Watchpoint set: ${hex(watchAddr)} (dword, checked every block)`);
   }
 
-  const takeWatchSnapshot = () => {
-    if (!watchLen) return null;
-    try {
-      const off = g2w(watchAddr);
-      return Buffer.from(instance.exports.memory.buffer.slice(off, off + watchLen));
-    } catch (_) { return null; }
+  const activateWatchpoint = () => {
+    if (!watchAddr) return;
+    instance.exports.set_watchpoint(watchAddr);
+    watchPrevVal = instance.exports.get_watch_val();
   };
+  activateWatchpoint();
+
+  const watchFilterVal = WATCH_VALUE !== null ? parseInt(WATCH_VALUE, 16) : null;
 
   const checkWatchpoint = (batch) => {
-    if (!watchLen) return false;
-    const cur = takeWatchSnapshot();
-    if (!cur || !watchSnapshot) { watchSnapshot = cur; return false; }
-    if (cur.equals(watchSnapshot)) return false;
-    console.log(`\n*** WATCHPOINT hit at batch ${batch}: memory at ${hex(watchAddr)} changed`);
-    console.log('  Old:', watchSnapshot.toString('hex'));
-    console.log('  New:', cur.toString('hex'));
-    watchSnapshot = cur;
+    if (!watchAddr) return false;
+    const newVal = instance.exports.get_watch_val();
+    if (newVal === watchPrevVal) return false;
+    // If filtering by value, only break when it matches
+    if (watchFilterVal !== null && (newVal >>> 0) !== (watchFilterVal >>> 0)) {
+      watchPrevVal = newVal;
+      return false;
+    }
+    console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
+    console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}`);
+    watchPrevVal = newVal;
     return true;
   };
-
-  if (watchLen) watchSnapshot = takeWatchSnapshot();
 
   const debugPrompt = async (reason) => {
     console.log('  ' + regs());
@@ -468,7 +470,7 @@ async function main() {
     const readline = require('readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const answer = await new Promise(resolve =>
-      rl.question('[s]tep / [c]ontinue / [d]ump ADDR:LEN / [r]egs / [q]uit > ', resolve)
+      rl.question('[s]tep/[c]ont/[d]ump ADDR:LEN/[w]atch ADDR/[r]egs/[q]uit > ', resolve)
     );
     rl.close();
     const cmd = answer.trim().toLowerCase();
@@ -481,6 +483,19 @@ async function main() {
       const addr = parseInt(parts[0], 16);
       const len = parseInt(parts[1]) || 64;
       if (!isNaN(addr)) hexdump(addr, len);
+      return debugPrompt(reason);
+    }
+    if (cmd.startsWith('w')) {
+      const addr = parseInt(cmd.slice(1).trim(), 16);
+      if (!isNaN(addr) && addr) {
+        watchAddr = addr;
+        instance.exports.set_watchpoint(addr);
+        watchPrevVal = instance.exports.get_watch_val();
+        console.log(`  Watchpoint set: ${hex(addr)} (current: ${hex(watchPrevVal)})`);
+      } else if (cmd === 'w') {
+        if (watchAddr) console.log(`  Watchpoint: ${hex(watchAddr)} = ${hex(instance.exports.get_watch_val())}`);
+        else console.log('  No watchpoint. Use: w 0xADDR');
+      }
       return debugPrompt(reason);
     }
     stepping = true;

@@ -174,6 +174,10 @@
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
 
+  ;; Watchpoint: break when [watch_addr] changes (0=disabled)
+  (global $watch_addr (mut i32) (i32.const 0))
+  (global $watch_val  (mut i32) (i32.const 0))
+
   ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
@@ -6866,13 +6870,21 @@
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
-      ;; DEBUG: check when [0x00cfff34] first becomes 0x104
-      (if (i32.and (i32.ne (call $gl32 (i32.const 0x00cfff34)) (i32.const 0))
-                   (i32.lt_u (global.get $eip) (i32.const 0x00405475)))
+      ;; Watchpoint: break when watched dword changes
+      (if (global.get $watch_addr)
         (then
-          (call $host_log_i32 (i32.const 0xDEAD0002))
+          (if (i32.ne (call $gl32 (global.get $watch_addr)) (global.get $watch_val))
+            (then
+              (global.set $watch_val (call $gl32 (global.get $watch_addr)))
+              (br $halt)))))
+      ;; DEBUG: break when ESI first becomes 0x104
+      (if (i32.and (i32.eq (global.get $esi) (i32.const 0x104))
+                   (i32.eqz (global.get $watch_val))) ;; one-shot using watch_val as flag
+        (then
+          (global.set $watch_val (i32.const 1))
+          (call $host_log_i32 (i32.const 0xDEAD0004))
           (call $host_log_i32 (global.get $eip))
-          (call $host_log_i32 (call $gl32 (i32.const 0x00cfff34)))))
+          (br $halt)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -6913,6 +6925,15 @@
   (func (export "set_ebx") (param i32) (global.set $ebx (local.get 0)))
   (func (export "set_esi") (param i32) (global.set $esi (local.get 0)))
   (func (export "set_edi") (param i32) (global.set $edi (local.get 0)))
+
+  ;; Watchpoint exports
+  (func (export "set_watchpoint") (param $addr i32)
+    (global.set $watch_addr (local.get $addr))
+    (if (local.get $addr)
+      (then (global.set $watch_val (call $gl32 (local.get $addr))))
+      (else (global.set $watch_val (i32.const 0)))))
+  (func (export "get_watch_val") (result i32) (global.get $watch_val))
+  (func (export "get_watch_addr") (result i32) (global.get $watch_addr))
 
   ;; call_func(addr, arg0, arg1, arg2, arg3): push args right-to-left + halt
   ;; return addr, set EIP, then caller uses run() to execute. Result in EAX.
