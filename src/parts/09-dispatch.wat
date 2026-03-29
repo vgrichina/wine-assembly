@@ -1585,8 +1585,8 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
     ) ;; 181: EndPaint
-      (global.set $eax (i32.const 0)) ;; prev capture hwnd (none)
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
     ) ;; 182: EndDoc
       (global.set $eax (i32.const 1))
@@ -2001,8 +2001,9 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (return)
     ) ;; 253: GetVersion
-      ;; stub
-      (global.set $eax (i32.const 0))
+      ;; Return Windows 98: major=4, minor=10 → 0x0A040000 → low word=version, high=build
+      ;; Format: low byte=major, next byte=minor, high word=build
+      (global.set $eax (i32.const 0xC0000A04)) ;; Win98: 4.10, build 0xC000
       (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (return)
     ) ;; 254: GetTextExtentPoint32A
@@ -2011,9 +2012,11 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
     (return)
     ) ;; 255: wsprintfA
-      ;; stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 0)))
+      ;; wsprintfA(buf, fmt, ...) — cdecl, caller cleans stack
+      (global.set $eax (call $wsprintf_impl
+        (local.get $arg0) (local.get $arg1) (i32.add (global.get $esp) (i32.const 12))))
+      ;; cdecl: only pop return address
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (return)
     ) ;; 256: GetPrivateProfileStringA
       ;; stub
