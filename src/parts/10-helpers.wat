@@ -109,6 +109,54 @@
     ;; Prepend to free list: store next = old head
     (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
     (global.set $free_list (local.get $block)))
+  ;; Find resource entry in PE resource directory
+  ;; Returns offset of data entry (relative to image_base) or 0
+  (func $rsrc_find_entry (param $dir_off i32) (param $id i32) (result i32)
+    (local $named i32) (local $ids i32) (local $total i32)
+    (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
+    ;; dir_off = offset from image_base to resource directory
+    ;; Read number of named + id entries
+    (local.set $named (i32.load16_u (call $g2w (i32.add (global.get $image_base)
+      (i32.add (local.get $dir_off) (i32.const 12))))))
+    (local.set $ids (i32.load16_u (call $g2w (i32.add (global.get $image_base)
+      (i32.add (local.get $dir_off) (i32.const 14))))))
+    (local.set $total (i32.add (local.get $named) (local.get $ids)))
+    (local.set $e (i32.add (local.get $dir_off) (i32.const 16)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $total)))
+      (local.set $eid (call $gl32 (i32.add (global.get $image_base) (local.get $e))))
+      (local.set $doff (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $e) (i32.const 4)))))
+      (if (i32.eq (local.get $eid) (local.get $id))
+        (then (return (local.get $doff))))
+      (local.set $e (i32.add (local.get $e) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (i32.const 0))
+
+  ;; FindResourceA: walk type→name→lang, return data entry offset
+  (func $find_resource (param $type_id i32) (param $name_id i32) (result i32)
+    (local $d i32) (local $lang_off i32) (local $n i32)
+    ;; Level 1: find type
+    (local.set $d (call $rsrc_find_entry (global.get $rsrc_rva) (local.get $type_id)))
+    (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
+    ;; Level 2: find name (d has high bit set if subdirectory)
+    (local.set $d (call $rsrc_find_entry
+      (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF)))
+      (local.get $name_id)))
+    (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
+    ;; Level 3: take first language entry
+    (local.set $lang_off (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
+    (local.set $n (i32.add
+      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 12)))))
+      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    ;; Return the data offset from first entry (skip directory header 16 bytes, read second dword)
+    (local.set $d (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 20)))))
+    ;; d is now the offset of the data entry (RVA, size, codepage, reserved) relative to rsrc start
+    ;; Return as offset from image_base (rsrc_rva + d)
+    (i32.add (global.get $rsrc_rva) (local.get $d)))
+
   (func $store_fake_cmdline
     (local $ptr i32) (local.set $ptr (call $heap_alloc (i32.const 16)))
     (global.set $fake_cmdline_addr (local.get $ptr))

@@ -11,7 +11,10 @@ class WineAssembly {
     this.verbose = false;
     // GDI state
     this._nextGdiHandle = 0x80001;
-    this._gdiObjects = {}; // handle -> {type, color, width, ...}
+    this._gdiObjects = {
+      0x30001: { type: 'bitmap', w: 1, h: 1, pixels: new Uint8Array(4) },
+      0x30002: { type: 'brush', color: 0xFFFFFF },
+    };
     this._dcState = {};    // hdc -> {penColor, penWidth, brushColor, posX, posY}
   }
 
@@ -514,7 +517,8 @@ class WineAssembly {
       const rm = Object.keys(this.resourceJson.menus).length;
       const rd = Object.keys(this.resourceJson.dialogs).length;
       const rs = Object.keys(this.resourceJson.strings).length;
-      this.logToUI(`Resources: ${rm} menus, ${rd} dialogs, ${rs} strings`);
+      const rb = Object.keys(this.resourceJson.bitmaps || {}).length;
+      this.logToUI(`Resources: ${rm} menus, ${rd} dialogs, ${rs} strings, ${rb} bitmaps`);
     }
 
     const staging = this.instance.exports.get_staging();

@@ -706,7 +706,8 @@
       (call $host_exit (local.get $arg1)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)
     (return)
     ) ;; 58: GetTickCount
-      (global.set $eax (i32.const 100000)) ;; fake tick count
+      (global.set $tick_count (i32.add (global.get $tick_count) (i32.const 16)))
+      (global.set $eax (global.get $tick_count))
       (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
     (return)
     ) ;; 59: FindResourceA
@@ -1023,7 +1024,7 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
       ;; Push callback args: GetTickCount, timerID, WM_TIMER, hwnd
       (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-      (call $gs32 (global.get $esp) (i32.const 100000)) ;; dwTime (fake tick count)
+      (call $gs32 (global.get $esp) (global.get $tick_count)) ;; dwTime
       (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
       (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; timerID
       (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
