@@ -90,7 +90,8 @@
   ;; 0x00B52000  1MB     Thread cache
   ;; 0x00C52000  64KB    Block cache index (4096 slots × 16 bytes)
   ;; 0x00C62000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x00E62000  ...     Free
+  ;; 0x00E62000  2KB     API dispatch hash table (227 × 8 bytes)
+  ;; 0x00E62800  ...     Free
 
   ;; Memory region bases
   (global $PE_STAGING   i32 (i32.const 0x00C62000))
@@ -103,6 +104,8 @@
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
+  (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
+  (global $API_HASH_COUNT i32 (i32.const 227))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))

@@ -225,6 +225,10 @@ class WineAssembly {
           return h;
         },
         gdi_create_compat_bitmap: (hdc, w, h) => {
+          // Treat as signed and clamp to avoid negative sizes
+          w = w | 0; h = h | 0;
+          if (w <= 0) w = 1;
+          if (h <= 0) h = 1;
           const pixels = new Uint8Array(w * h * 4);
           return self._gdiAlloc({ type: 'bitmap', w, h, pixels });
         },
@@ -467,7 +471,7 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm');
+    const resp = await fetch('../build/wine-assembly.wasm?v=3');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
     const result = await WebAssembly.instantiate(bytes, imports);

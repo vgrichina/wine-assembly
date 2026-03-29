@@ -1,0 +1,1591 @@
+[
+  {
+    "id": 0,
+    "name": "ExitProcess",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 243334458
+  },
+  {
+    "id": 1,
+    "name": "GetModuleHandleA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3831749180
+  },
+  {
+    "id": 2,
+    "name": "GetCommandLineA",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1610643317
+  },
+  {
+    "id": 3,
+    "name": "GetStartupInfoA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1475132479
+  },
+  {
+    "id": 4,
+    "name": "GetProcAddress",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4176762661
+  },
+  {
+    "id": 5,
+    "name": "GetLastError",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1347870519
+  },
+  {
+    "id": 6,
+    "name": "GetLocalTime",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1114138767
+  },
+  {
+    "id": 7,
+    "name": "GetTimeFormatA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1879020188
+  },
+  {
+    "id": 8,
+    "name": "GetDateFormatA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2291237095
+  },
+  {
+    "id": 9,
+    "name": "GetProfileStringA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 554682768
+  },
+  {
+    "id": 10,
+    "name": "GetProfileIntA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1767409912
+  },
+  {
+    "id": 11,
+    "name": "GetLocaleInfoA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4182241808
+  },
+  {
+    "id": 12,
+    "name": "LoadLibraryA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1404176143
+  },
+  {
+    "id": 13,
+    "name": "DeleteFileA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2185326967
+  },
+  {
+    "id": 14,
+    "name": "CreateFileA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3184183758
+  },
+  {
+    "id": 15,
+    "name": "FindFirstFileA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3611832149
+  },
+  {
+    "id": 16,
+    "name": "FindClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3711289062
+  },
+  {
+    "id": 17,
+    "name": "MulDiv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1980932412
+  },
+  {
+    "id": 18,
+    "name": "RtlMoveMemory",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 623561727
+  },
+  {
+    "id": 19,
+    "name": "_lcreat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1348635219
+  },
+  {
+    "id": 20,
+    "name": "_lopen",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3848135206
+  },
+  {
+    "id": 21,
+    "name": "_lwrite",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3751031809
+  },
+  {
+    "id": 22,
+    "name": "_llseek",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1764871046
+  },
+  {
+    "id": 23,
+    "name": "_lclose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2615722722
+  },
+  {
+    "id": 24,
+    "name": "_lread",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1299594462
+  },
+  {
+    "id": 25,
+    "name": "Sleep",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 799419560
+  },
+  {
+    "id": 26,
+    "name": "CloseHandle",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4206493797
+  },
+  {
+    "id": 27,
+    "name": "CreateEventA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4191346146
+  },
+  {
+    "id": 28,
+    "name": "CreateThread",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1621917241
+  },
+  {
+    "id": 29,
+    "name": "WaitForSingleObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1905560740
+  },
+  {
+    "id": 30,
+    "name": "ResetEvent",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 110094152
+  },
+  {
+    "id": 31,
+    "name": "SetEvent",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1369282289
+  },
+  {
+    "id": 32,
+    "name": "WriteProfileStringA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2759811679
+  },
+  {
+    "id": 33,
+    "name": "HeapCreate",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 834306439
+  },
+  {
+    "id": 34,
+    "name": "HeapDestroy",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2391658575
+  },
+  {
+    "id": 35,
+    "name": "HeapAlloc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 25488756
+  },
+  {
+    "id": 36,
+    "name": "HeapFree",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 694357821
+  },
+  {
+    "id": 37,
+    "name": "HeapReAlloc",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1403412087
+  },
+  {
+    "id": 38,
+    "name": "VirtualAlloc",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 52974849
+  },
+  {
+    "id": 39,
+    "name": "VirtualFree",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 983223410
+  },
+  {
+    "id": 40,
+    "name": "GetACP",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3041411897
+  },
+  {
+    "id": 41,
+    "name": "GetOEMCP",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3733726661
+  },
+  {
+    "id": 42,
+    "name": "GetCPInfo",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2296535320
+  },
+  {
+    "id": 43,
+    "name": "MultiByteToWideChar",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2421422530
+  },
+  {
+    "id": 44,
+    "name": "WideCharToMultiByte",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3867336062
+  },
+  {
+    "id": 45,
+    "name": "GetStringTypeA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3471851401
+  },
+  {
+    "id": 46,
+    "name": "GetStringTypeW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3236964735
+  },
+  {
+    "id": 47,
+    "name": "LCMapStringA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1063102970
+  },
+  {
+    "id": 48,
+    "name": "LCMapStringW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 693995352
+  },
+  {
+    "id": 49,
+    "name": "GetStdHandle",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3820586858
+  },
+  {
+    "id": 50,
+    "name": "GetFileType",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3415330625
+  },
+  {
+    "id": 51,
+    "name": "WriteFile",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2131215434
+  },
+  {
+    "id": 52,
+    "name": "SetHandleCount",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4114674644
+  },
+  {
+    "id": 53,
+    "name": "GetEnvironmentStrings",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3418498206
+  },
+  {
+    "id": 54,
+    "name": "GetModuleFileNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2583414333
+  },
+  {
+    "id": 55,
+    "name": "UnhandledExceptionFilter",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1746298211
+  },
+  {
+    "id": 56,
+    "name": "GetCurrentProcess",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1842915397
+  },
+  {
+    "id": 57,
+    "name": "TerminateProcess",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4165922393
+  },
+  {
+    "id": 58,
+    "name": "GetTickCount",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 256740181
+  },
+  {
+    "id": 59,
+    "name": "FindResourceA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1032869001
+  },
+  {
+    "id": 60,
+    "name": "LoadResource",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2861345017
+  },
+  {
+    "id": 61,
+    "name": "LockResource",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 136193002
+  },
+  {
+    "id": 62,
+    "name": "FreeResource",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2156333847
+  },
+  {
+    "id": 63,
+    "name": "RtlUnwind",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3692815520
+  },
+  {
+    "id": 64,
+    "name": "FreeLibrary",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2873476590
+  },
+  {
+    "id": 65,
+    "name": "sndPlaySoundA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3085215928
+  },
+  {
+    "id": 66,
+    "name": "RegisterWindowMessageA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4015451694
+  },
+  {
+    "id": 67,
+    "name": "CreateWindowExA",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 393369835
+  },
+  {
+    "id": 68,
+    "name": "CreateDialogParamA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 257739661
+  },
+  {
+    "id": 69,
+    "name": "MessageBoxA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 598309348
+  },
+  {
+    "id": 70,
+    "name": "MessageBeep",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2902058944
+  },
+  {
+    "id": 71,
+    "name": "ShowWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3381370368
+  },
+  {
+    "id": 72,
+    "name": "UpdateWindow",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2345122984
+  },
+  {
+    "id": 73,
+    "name": "GetMessageA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3700777589
+  },
+  {
+    "id": 74,
+    "name": "PeekMessageA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 654759124
+  },
+  {
+    "id": 75,
+    "name": "DispatchMessageA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 456773993
+  },
+  {
+    "id": 76,
+    "name": "TranslateAcceleratorA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3700556479
+  },
+  {
+    "id": 77,
+    "name": "TranslateMessage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3807544660
+  },
+  {
+    "id": 78,
+    "name": "DefWindowProcA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 790016267
+  },
+  {
+    "id": 79,
+    "name": "PostQuitMessage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 460452279
+  },
+  {
+    "id": 80,
+    "name": "PostMessageA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4083509285
+  },
+  {
+    "id": 81,
+    "name": "SendMessageA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3281094429
+  },
+  {
+    "id": 82,
+    "name": "SendDlgItemMessageA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 667488445
+  },
+  {
+    "id": 83,
+    "name": "DestroyWindow",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2495907549
+  },
+  {
+    "id": 84,
+    "name": "DestroyMenu",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2274907194
+  },
+  {
+    "id": 85,
+    "name": "GetDC",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3360662078
+  },
+  {
+    "id": 86,
+    "name": "GetDeviceCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2615561328
+  },
+  {
+    "id": 87,
+    "name": "GetMenu",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3864728680
+  },
+  {
+    "id": 88,
+    "name": "GetSubMenu",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4131436140
+  },
+  {
+    "id": 89,
+    "name": "GetSystemMenu",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3512246057
+  },
+  {
+    "id": 90,
+    "name": "GetSystemMetrics",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2956099219
+  },
+  {
+    "id": 91,
+    "name": "GetClientRect",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4005541366
+  },
+  {
+    "id": 92,
+    "name": "GetWindowTextA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 512434803
+  },
+  {
+    "id": 93,
+    "name": "GetWindowRect",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 441405769
+  },
+  {
+    "id": 94,
+    "name": "GetDlgCtrlID",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2852780564
+  },
+  {
+    "id": 95,
+    "name": "GetDlgItemTextA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3138306371
+  },
+  {
+    "id": 96,
+    "name": "GetDlgItem",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1891273367
+  },
+  {
+    "id": 97,
+    "name": "GetCursorPos",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 464351241
+  },
+  {
+    "id": 98,
+    "name": "GetLastActivePopup",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3303894457
+  },
+  {
+    "id": 99,
+    "name": "GetFocus",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 4168871129
+  },
+  {
+    "id": 100,
+    "name": "ReleaseDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 692780823
+  },
+  {
+    "id": 101,
+    "name": "SetWindowLongA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1989745612
+  },
+  {
+    "id": 102,
+    "name": "SetWindowTextA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2740872407
+  },
+  {
+    "id": 103,
+    "name": "SetDlgItemTextA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1207384311
+  },
+  {
+    "id": 104,
+    "name": "SetDlgItemInt",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 62046100
+  },
+  {
+    "id": 105,
+    "name": "SetForegroundWindow",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2159147238
+  },
+  {
+    "id": 106,
+    "name": "SetCursor",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1476769825
+  },
+  {
+    "id": 107,
+    "name": "SetFocus",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3281637989
+  },
+  {
+    "id": 108,
+    "name": "LoadCursorA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 55590630
+  },
+  {
+    "id": 109,
+    "name": "LoadIconA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 220031967
+  },
+  {
+    "id": 110,
+    "name": "LoadStringA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 172870751
+  },
+  {
+    "id": 111,
+    "name": "LoadAcceleratorsA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3299113136
+  },
+  {
+    "id": 112,
+    "name": "EnableWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3715754450
+  },
+  {
+    "id": 113,
+    "name": "EnableMenuItem",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1380794874
+  },
+  {
+    "id": 114,
+    "name": "EndDialog",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 327299738
+  },
+  {
+    "id": 115,
+    "name": "InvalidateRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2467316494
+  },
+  {
+    "id": 116,
+    "name": "FillRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 979982022
+  },
+  {
+    "id": 117,
+    "name": "FrameRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2576154068
+  },
+  {
+    "id": 118,
+    "name": "LoadBitmapA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2594218657
+  },
+  {
+    "id": 119,
+    "name": "OpenIcon",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3209408228
+  },
+  {
+    "id": 120,
+    "name": "MoveWindow",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3264774664
+  },
+  {
+    "id": 121,
+    "name": "CheckMenuRadioItem",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2601522316
+  },
+  {
+    "id": 122,
+    "name": "CheckMenuItem",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3911892071
+  },
+  {
+    "id": 123,
+    "name": "CheckRadioButton",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3848295626
+  },
+  {
+    "id": 124,
+    "name": "CheckDlgButton",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2049331660
+  },
+  {
+    "id": 125,
+    "name": "CharNextA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3557305107
+  },
+  {
+    "id": 126,
+    "name": "CharPrevA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3193941035
+  },
+  {
+    "id": 127,
+    "name": "IsDialogMessageA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 415247475
+  },
+  {
+    "id": 128,
+    "name": "IsIconic",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2774886904
+  },
+  {
+    "id": 129,
+    "name": "ChildWindowFromPoint",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 833948993
+  },
+  {
+    "id": 130,
+    "name": "ScreenToClient",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2422352415
+  },
+  {
+    "id": 131,
+    "name": "TabbedTextOutA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3430445091
+  },
+  {
+    "id": 132,
+    "name": "WinHelpA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2210761837
+  },
+  {
+    "id": 133,
+    "name": "IsChild",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4287605645
+  },
+  {
+    "id": 134,
+    "name": "GetSysColorBrush",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3655577273
+  },
+  {
+    "id": 135,
+    "name": "GetSysColor",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 808507387
+  },
+  {
+    "id": 136,
+    "name": "DialogBoxParamA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1035060866
+  },
+  {
+    "id": 137,
+    "name": "LoadMenuA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 320119085
+  },
+  {
+    "id": 138,
+    "name": "TrackPopupMenuEx",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 590211140
+  },
+  {
+    "id": 139,
+    "name": "OffsetRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1146643928
+  },
+  {
+    "id": 140,
+    "name": "MapWindowPoints",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1196237498
+  },
+  {
+    "id": 141,
+    "name": "SetWindowPos",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2209928619
+  },
+  {
+    "id": 142,
+    "name": "DrawTextA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4189274127
+  },
+  {
+    "id": 143,
+    "name": "DrawEdge",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1753347774
+  },
+  {
+    "id": 144,
+    "name": "GetClipboardData",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2224885991
+  },
+  {
+    "id": 145,
+    "name": "SelectObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2373253186
+  },
+  {
+    "id": 146,
+    "name": "DeleteObject",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4239041921
+  },
+  {
+    "id": 147,
+    "name": "DeleteDC",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3125056139
+  },
+  {
+    "id": 148,
+    "name": "CreatePen",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 397399176
+  },
+  {
+    "id": 149,
+    "name": "CreateSolidBrush",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3429015740
+  },
+  {
+    "id": 150,
+    "name": "CreateCompatibleDC",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3510766298
+  },
+  {
+    "id": 151,
+    "name": "CreateCompatibleBitmap",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3117641712
+  },
+  {
+    "id": 152,
+    "name": "GetViewportOrgEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3074866316
+  },
+  {
+    "id": 153,
+    "name": "Rectangle",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 385702446
+  },
+  {
+    "id": 154,
+    "name": "MoveToEx",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3465295632
+  },
+  {
+    "id": 155,
+    "name": "LineTo",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4187813618
+  },
+  {
+    "id": 156,
+    "name": "Ellipse",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3055437297
+  },
+  {
+    "id": 157,
+    "name": "Arc",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 2633717115
+  },
+  {
+    "id": 158,
+    "name": "BitBlt",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 712574158
+  },
+  {
+    "id": 159,
+    "name": "PatBlt",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 221597160
+  },
+  {
+    "id": 160,
+    "name": "CreateBitmap",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1422932062
+  },
+  {
+    "id": 161,
+    "name": "TextOutA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3988924089
+  },
+  {
+    "id": 162,
+    "name": "GetStockObject",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2242687504
+  },
+  {
+    "id": 163,
+    "name": "GetObjectA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3035458063
+  },
+  {
+    "id": 164,
+    "name": "GetTextMetricsA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 947919340
+  },
+  {
+    "id": 165,
+    "name": "GetTextExtentPointA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3384594693
+  },
+  {
+    "id": 166,
+    "name": "GetTextCharset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 237394724
+  },
+  {
+    "id": 167,
+    "name": "CreateFontIndirectA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3621314973
+  },
+  {
+    "id": 168,
+    "name": "CreateFontA",
+    "nargs": 14,
+    "convention": "stdcall",
+    "hash": 3679469099
+  },
+  {
+    "id": 169,
+    "name": "CreateDCA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 913473419
+  },
+  {
+    "id": 170,
+    "name": "SetAbortProc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2507748815
+  },
+  {
+    "id": 171,
+    "name": "SetBkColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2711128575
+  },
+  {
+    "id": 172,
+    "name": "SetBkMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 506799675
+  },
+  {
+    "id": 173,
+    "name": "SetTextColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3822662763
+  },
+  {
+    "id": 174,
+    "name": "SetMenu",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3904888820
+  },
+  {
+    "id": 175,
+    "name": "SetMapMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3813429468
+  },
+  {
+    "id": 176,
+    "name": "SetWindowExtEx",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 762645603
+  },
+  {
+    "id": 177,
+    "name": "LPtoDP",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2477099060
+  },
+  {
+    "id": 178,
+    "name": "StartDocA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1324418878
+  },
+  {
+    "id": 179,
+    "name": "StartPage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3225503364
+  },
+  {
+    "id": 180,
+    "name": "EndPage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1402847089
+  },
+  {
+    "id": 181,
+    "name": "EndPaint",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 450501542
+  },
+  {
+    "id": 182,
+    "name": "EndDoc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2150909844
+  },
+  {
+    "id": 183,
+    "name": "AbortDoc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 502303393
+  },
+  {
+    "id": 184,
+    "name": "SetCapture",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 809840187
+  },
+  {
+    "id": 185,
+    "name": "ReleaseCapture",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 4068696636
+  },
+  {
+    "id": 186,
+    "name": "ShowCursor",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3743887966
+  },
+  {
+    "id": 187,
+    "name": "KillTimer",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2683771654
+  },
+  {
+    "id": 188,
+    "name": "SetTimer",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1323847608
+  },
+  {
+    "id": 189,
+    "name": "FindWindowA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4132617365
+  },
+  {
+    "id": 190,
+    "name": "BringWindowToTop",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3198469897
+  },
+  {
+    "id": 191,
+    "name": "GetPrivateProfileIntA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 350627923
+  },
+  {
+    "id": 192,
+    "name": "WritePrivateProfileStringA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3599205936
+  },
+  {
+    "id": 193,
+    "name": "ShellExecuteA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 185595327
+  },
+  {
+    "id": 194,
+    "name": "ShellAboutA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 827208593
+  },
+  {
+    "id": 195,
+    "name": "SHGetSpecialFolderPathA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3064513569
+  },
+  {
+    "id": 196,
+    "name": "DragAcceptFiles",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1717138174
+  },
+  {
+    "id": 197,
+    "name": "DragQueryFileA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3282559970
+  },
+  {
+    "id": 198,
+    "name": "DragFinish",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2069786156
+  },
+  {
+    "id": 199,
+    "name": "GetOpenFileNameA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 375560853
+  },
+  {
+    "id": 200,
+    "name": "GetFileTitleA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1584132652
+  },
+  {
+    "id": 201,
+    "name": "ChooseFontA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4033455748
+  },
+  {
+    "id": 202,
+    "name": "FindTextA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 234961968
+  },
+  {
+    "id": 203,
+    "name": "PageSetupDlgA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 205201055
+  },
+  {
+    "id": 204,
+    "name": "CommDlgExtendedError",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 936436495
+  },
+  {
+    "id": 205,
+    "name": "exit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3454868101
+  },
+  {
+    "id": 206,
+    "name": "_exit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 900126006
+  },
+  {
+    "id": 207,
+    "name": "__getmainargs",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 336392573
+  },
+  {
+    "id": 208,
+    "name": "__p__fmode",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3142482076
+  },
+  {
+    "id": 209,
+    "name": "__p__commode",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2688401087
+  },
+  {
+    "id": 210,
+    "name": "_initterm",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2728746990
+  },
+  {
+    "id": 211,
+    "name": "_controlfp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 533454845
+  },
+  {
+    "id": 212,
+    "name": "_strrev",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2703181494
+  },
+  {
+    "id": 213,
+    "name": "toupper",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3691983576
+  },
+  {
+    "id": 214,
+    "name": "memmove",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 17308555
+  },
+  {
+    "id": 215,
+    "name": "strchr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2301597011
+  },
+  {
+    "id": 216,
+    "name": "_XcptFilter",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1846881841
+  },
+  {
+    "id": 217,
+    "name": "_CxxThrowException",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4147810866
+  },
+  {
+    "id": 218,
+    "name": "lstrlenA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2569981992
+  },
+  {
+    "id": 219,
+    "name": "lstrcpyA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2283419363
+  },
+  {
+    "id": 220,
+    "name": "lstrcatA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 437380981
+  },
+  {
+    "id": 221,
+    "name": "lstrcpynA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 320138849
+  },
+  {
+    "id": 222,
+    "name": "lstrcmpA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 629854941
+  },
+  {
+    "id": 223,
+    "name": "RegCloseKey",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 306320714
+  },
+  {
+    "id": 224,
+    "name": "RegCreateKeyA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3136740127
+  },
+  {
+    "id": 225,
+    "name": "RegQueryValueExA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2418535292
+  },
+  {
+    "id": 226,
+    "name": "RegSetValueExA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3662746588
+  }
+]

@@ -1,6 +1,33 @@
   ;; ============================================================
   ;; HELPER FUNCTIONS
   ;; ============================================================
+
+  ;; FNV-1a hash over null-terminated string at WASM address
+  (func $hash_api_name (param $ptr i32) (result i32)
+    (local $h i32) (local $ch i32)
+    (local.set $h (i32.const 0x811c9dc5))
+    (block $done (loop $next
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $h (i32.xor (local.get $h) (local.get $ch)))
+      (local.set $h (i32.mul (local.get $h) (i32.const 0x01000193)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $next)))
+    (local.get $h))
+
+  ;; Lookup API ID from static hash table. Returns 0xFFFF if not found.
+  (func $lookup_api_id (param $name_ptr i32) (result i32)
+    (local $h i32) (local $i i32) (local $entry_addr i32)
+    (local.set $h (call $hash_api_name (local.get $name_ptr)))
+    (local.set $i (i32.const 0))
+    (block $notfound (loop $scan
+      (br_if $notfound (i32.ge_u (local.get $i) (global.get $API_HASH_COUNT)))
+      (local.set $entry_addr (i32.add (global.get $API_HASH_TABLE) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eq (i32.load (local.get $entry_addr)) (local.get $h))
+        (then (return (i32.load (i32.add (local.get $entry_addr) (i32.const 4))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0xFFFF))
   ;; Apply segment override to an address (FS=5 adds fs_base)
   (func $seg_adj (param $addr i32) (param $seg i32) (result i32)
     (if (result i32) (i32.eq (local.get $seg) (i32.const 5))
