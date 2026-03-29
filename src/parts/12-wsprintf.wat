@@ -12,7 +12,7 @@
     (local.set $tmp (local.get $val))
     (block $d (loop $l
       (br_if $d (i32.eqz (local.get $tmp)))
-      (call $gs8 (i32.add (call $g2w (local.get $buf)) (local.get $len))
+      (call $gs8 (i32.add (local.get $buf) (local.get $len))
         (i32.add (i32.const 48) (i32.rem_u (local.get $tmp) (i32.const 10))))
       (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))
       (local.set $len (i32.add (local.get $len) (i32.const 1)))
@@ -22,7 +22,7 @@
     (block $d2 (loop $l2
       (br_if $d2 (i32.ge_u (local.get $i) (local.get $len)))
       (call $gs8 (i32.add (local.get $dst) (local.get $i))
-        (i32.load8_u (i32.add (call $g2w (local.get $buf)) (i32.sub (i32.sub (local.get $len) (i32.const 1)) (local.get $i)))))
+        (call $gl8 (i32.add (local.get $buf) (i32.sub (i32.sub (local.get $len) (i32.const 1)) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2)))
     (local.get $len))
