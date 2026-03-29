@@ -1244,6 +1244,10 @@
                     (call $te_raw (call $emit_sib_or_abs))))))
           (br $decode)))
 
+      ;; ---- FWAIT (0x9B) — NOP, wait for FPU exceptions (we don't generate any) ----
+      (if (i32.eq (local.get $op) (i32.const 0x9B))
+        (then (br $decode)))
+
       ;; ---- x87 FPU (D8-DF) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xD8)) (i32.le_u (local.get $op) (i32.const 0xDF)))
         (then
@@ -1273,7 +1277,7 @@
                     (i32.shl (i32.sub (local.get $op) (i32.const 0xD8)) (i32.const 4))
                     (global.get $mr_reg)))
                   (call $te_raw (local.get $a))))))
-          (local.set $done (i32.const 1))
+          ;; FPU instructions do NOT end blocks — continue decoding
           (br $decode)))
 
       ;; ---- Unrecognized opcode ----

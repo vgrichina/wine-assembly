@@ -2,12 +2,25 @@
 
 ## Current Status (2026-03-29)
 
-### BLOCKER: MFC42u.DLL dependency
+### DLL Loading WORKS — stuck on FPU opcode
 
-MSPaint is an **MFC (Microsoft Foundation Classes) application**. It imports
-**MFC42u.DLL** with **619 ordinal-based imports** — the entire MFC C++ framework.
+DLL loader implemented. msvcrt.dll and MFC42u.DLL load into guest memory with
+relocations applied and imports resolved. MSPaint's IAT entries now point to
+real DLL x86 code. Execution enters msvcrt's `_controlfp` and gets stuck on
+`FWAIT` (0x9B) + `FSTCW [ebp-4]` (0xD9 0x7D) — x87 FPU opcodes not in decoder.
 
-### Crash on startup — CRT init fails
+```
+DLL loaded: msvcrt.dll  at 0x0106f000 (SizeOfImage=0x44000)
+DLL loaded: mfc42u.dll  at 0x010b3000 (SizeOfImage=0xF2000)
+Patched: MSPaint -> MFC42u.DLL (619 ordinal imports resolved)
+Patched: MSPaint -> msvcrt.dll (29 imports resolved)
+Execution reaches msvcrt x86 code at 0x010735fa
+STUCK on: 9b d9 7d fc = FWAIT + FSTCW [EBP-4]
+```
+
+**Next:** Add FWAIT (0x9B as NOP) and FSTCW/FLDCW/FNSTCW handlers to decoder.
+
+### Previous: CRT init fails (FIXED)
 
 ```
 MSPaint.exe CRT Init Flow
