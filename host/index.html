@@ -181,9 +181,10 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/resources.js?v=6"></script>
-  <script src="../lib/renderer.js?v=6"></script>
-  <script src="host.js?v=6"></script>
+  <script src="../lib/resources.js?v=7"></script>
+  <script src="../lib/renderer.js?v=7"></script>
+  <script src="../lib/dll-loader.js?v=7"></script>
+  <script src="host.js?v=7"></script>
   <script>
     let wine = null;
 
@@ -198,7 +199,7 @@ Resource-aware Win98 emulator
       snake:    { exe: '../test/binaries/entertainment-pack/snake.exe' },
       taipei:   { exe: '../test/binaries/entertainment-pack/taipei.exe' },
       tictac:   { exe: '../test/binaries/entertainment-pack/tictac.exe' },
-      mspaint:  { exe: '../test/binaries/entertainment-pack/mspaint.exe' },
+      mspaint:  { exe: '../test/binaries/entertainment-pack/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'] },
       ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: '../test/binaries/xp/winmine.exe' },
     };
@@ -294,6 +295,10 @@ Resource-aware Win98 emulator
 
       const ok = await wine.loadExe(app.exe);
       if (ok) {
+        if (app.dlls && app.dlls.length) {
+          document.getElementById('status').textContent = 'Loading DLLs...';
+          await wine.loadDlls(app.dlls);
+        }
         document.getElementById('status').textContent = 'Running ' + sel + '.exe';
         wine.run();
       } else {

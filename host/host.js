@@ -528,7 +528,23 @@ class WineAssembly {
     }
 
     this.logToUI('PE loaded. Entry point: 0x' + (entryPoint >>> 0).toString(16));
+    this._exeBytes = exeBytes;
     return true;
+  }
+
+  async loadDlls(dllUrls) {
+    if (!this.instance || !this._exeBytes) return;
+    const dlls = [];
+    for (const url of dllUrls) {
+      const resp = await fetch(url);
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      const name = url.split('/').pop();
+      dlls.push({ name, bytes });
+    }
+    if (typeof DllLoader !== 'undefined') {
+      DllLoader.loadDlls(this.instance.exports, this.memory.buffer, this._exeBytes, dlls,
+        msg => this.logToUI(msg));
+    }
   }
 
   run(stepsPerSlice = 10000) {
