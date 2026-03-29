@@ -868,7 +868,17 @@
       (call $host_check_input_lparam))                              ;; lParam
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-      ;; No input available — deliver WM_TIMER if timer is active
+      ;; No input — deliver WM_PAINT if pending (lowest priority per Win32 spec)
+      (if (global.get $paint_pending)
+      (then
+      (global.set $paint_pending (i32.const 0))
+      (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      ;; No paint — deliver WM_TIMER if timer is active
       (if (global.get $timer_id)
       (then
       (call $gs32 (local.get $msg_ptr) (global.get $timer_hwnd))
@@ -1252,6 +1262,8 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
     ) ;; 115: InvalidateRect
+      (global.set $paint_pending (i32.const 1))
+      (call $host_invalidate (local.get $arg0))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
     (return)
@@ -1469,7 +1481,11 @@
       (global.get $main_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
     (return)
-    ) ;; 159: PatBlt
+    ) ;; 159: PatBlt — hdc(arg0), x(arg1), y(arg2), w=[esp+16], h=[esp+20], rop=[esp+24]
+      (call $host_gdi_rectangle (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (i32.add (local.get $arg1) (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+        (i32.add (local.get $arg2) (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+        (global.get $main_hwnd))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
     (return)

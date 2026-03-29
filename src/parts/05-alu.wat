@@ -1510,4 +1510,34 @@
         (else (global.set $edi (i32.add (global.get $edi) (i32.const 2)))))
       (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
       (br $l))) (call $next))
+  ;; 202: inc r16 — preserves upper 16 bits, sets flags with sign_shift=15
+  (func $th_inc_r16 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
+    (local.set $r (i32.and (i32.add (local.get $old) (i32.const 1)) (i32.const 0xFFFF)))
+    (call $set_reg (local.get $op) (i32.or (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF0000)) (local.get $r)))
+    (call $set_flags_inc (local.get $old) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 15)) (call $next))
+  ;; 203: dec r16 — preserves upper 16 bits, sets flags with sign_shift=15
+  (func $th_dec_r16 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
+    (local.set $r (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFFFF)))
+    (call $set_reg (local.get $op) (i32.or (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF0000)) (local.get $r)))
+    (call $set_flags_dec (local.get $old) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 15)) (call $next))
+  ;; 204: test r16, r16 — AND two 16-bit regs, set flags only
+  (func $th_test_r16_r16 (param $op i32)
+    (local $v i32)
+    (local.set $v (i32.and
+      (i32.and (call $get_reg (i32.shr_u (local.get $op) (i32.const 4))) (i32.const 0xFFFF))
+      (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))))
+    (global.set $flag_op (i32.const 6)) (global.set $flag_res (local.get $v))
+    (global.set $flag_sign_shift (i32.const 15)) (call $next))
+  ;; 205: test ax, imm16 — AND AX with immediate word, set flags only
+  (func $th_test_ax_i16 (param $op i32)
+    (local $v i32)
+    (local.set $v (i32.and (i32.and (global.get $eax) (i32.const 0xFFFF)) (call $read_thread_word)))
+    (global.set $flag_op (i32.const 6)) (global.set $flag_res (local.get $v))
+    (global.set $flag_sign_shift (i32.const 15)) (call $next))
 

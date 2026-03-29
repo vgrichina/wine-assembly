@@ -253,19 +253,35 @@ class WineAssembly {
           return 1;
         },
         gdi_rectangle: (hdc, left, top, right, bottom, hwnd) => {
+          const dc = self._getDC(hdc);
+          // Memory DC: write directly to the selected bitmap's pixel buffer
+          const bmpH = dc.selectedBitmap;
+          const bmp = bmpH ? self._gdiObjects[bmpH] : null;
+          if (bmp && bmp.pixels) {
+            const bc = dc.brushColor || 0;
+            const r = bc & 0xFF, g = (bc >> 8) & 0xFF, b = (bc >> 16) & 0xFF;
+            const y0 = Math.max(0, top), y1 = Math.min(bottom, bmp.h);
+            const x0 = Math.max(0, left), x1 = Math.min(right, bmp.w);
+            for (let y = y0; y < y1; y++) {
+              const rowOff = y * bmp.w * 4;
+              for (let x = x0; x < x1; x++) {
+                const i = rowOff + x * 4;
+                bmp.pixels[i] = r; bmp.pixels[i+1] = g; bmp.pixels[i+2] = b; bmp.pixels[i+3] = 255;
+              }
+            }
+            return 1;
+          }
+          // Window DC: draw to canvas
           if (!self.renderer) return 1;
           const ctx = self.renderer.ctx;
           const o = self._getClientOrigin(hwnd);
-          const dc = self._getDC(hdc);
           const x = o.x + left, y = o.y + top, w = right - left, h = bottom - top;
-          // Fill with brush
-          const bc = dc.brushColor;
+          const bc = dc.brushColor || 0;
           ctx.fillStyle = `rgb(${bc & 0xFF},${(bc >> 8) & 0xFF},${(bc >> 16) & 0xFF})`;
           ctx.fillRect(x, y, w, h);
-          // Stroke with pen
-          const pc = dc.penColor;
+          const pc = dc.penColor || 0;
           ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
-          ctx.lineWidth = dc.penWidth;
+          ctx.lineWidth = dc.penWidth || 1;
           ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
           return 1;
         },

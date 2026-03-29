@@ -249,5 +249,11 @@
     $th_bts_r_r            ;; 199: bts reg, reg
     $th_btr_r_r            ;; 200: btr reg, reg
     $th_btc_r_r            ;; 201: btc reg, reg
+    ;; -- 16-bit INC/DEC --
+    $th_inc_r16            ;; 202: inc r16 (op=reg)
+    $th_dec_r16            ;; 203: dec r16 (op=reg)
+    ;; -- 16-bit TEST --
+    $th_test_r16_r16       ;; 204: test r16, r16 (op=dst<<4|src)
+    $th_test_ax_i16        ;; 205: test ax, imm16 (imm in next word)
   )
 
