@@ -1060,10 +1060,13 @@
           (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x90)) (i32.le_u (local.get $op) (i32.const 0x9F)))
             (then
               (call $decode_modrm)
-              (call $te (i32.const 102) (i32.and (local.get $op) (i32.const 0xF)))
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te_raw (global.get $mr_val)))
-                (else (call $te_raw (global.get $mr_disp)))) ;; TODO: runtime EA for SETcc mem
+                (then
+                  (call $te (i32.const 102) (i32.and (local.get $op) (i32.const 0xF)))
+                  (call $te_raw (global.get $mr_val)))
+                (else
+                  (call $te (i32.const 211) (i32.and (local.get $op) (i32.const 0xF)))
+                  (call $te_raw (global.get $mr_disp))))
               (br $decode)))
 
           ;; 0x0F 0xA3: BT r/m32, r32

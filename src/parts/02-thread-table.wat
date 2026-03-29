@@ -261,5 +261,6 @@
     $th_movzx_r_r8         ;; 208: movzx r32, reg8 (op=dst<<4|src_byte_reg)
     $th_movsx_r_r8         ;; 209: movsx r32, reg8 (op=dst<<4|src_byte_reg)
     $th_mov_r16_r16        ;; 210: mov r16, r16 (op=dst<<4|src)
+    $th_setcc_mem          ;; 211: SETcc [addr] (op=cc, addr in next word)
   )
 

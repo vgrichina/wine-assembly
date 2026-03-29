@@ -55,11 +55,17 @@
       (local.set $raw_size (i32.load (i32.add (local.get $section_off) (i32.const 16))))
       (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
+      (local.set $vsize (i32.load (i32.add (local.get $section_off) (i32.const 8))))
+      (local.set $dst (call $g2w (i32.add (local.get $load_addr) (local.get $vaddr))))
       (if (i32.gt_u (local.get $raw_size) (i32.const 0))
         (then
-          (local.set $dst (call $g2w (i32.add (local.get $load_addr) (local.get $vaddr))))
           (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
           (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))))
+      ;; Zero BSS portion: if VirtualSize > RawSize, zero the remainder
+      (if (i32.gt_u (local.get $vsize) (local.get $raw_size))
+        (then (call $zero_memory
+          (i32.add (local.get $dst) (local.get $raw_size))
+          (i32.sub (local.get $vsize) (local.get $raw_size)))))
       (local.set $section_off (i32.add (local.get $section_off) (i32.const 40)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sl)))

@@ -22,9 +22,11 @@
         ;; Set flags as ADD(a, b_eff) for OF/ZF/SF
         (call $set_flags_add (local.get $a) (local.get $b_eff) (local.get $r))
         ;; Fix CF: if b+cf_in wrapped (b_eff < b), carry is always 1
+        ;; Use raw mode to avoid clobbering flag_res (which holds ZF/SF)
         (if (i32.lt_u (local.get $b_eff) (local.get $b))
-          (then (global.set $flag_a (i32.const 0xFFFFFFFF))
-                (global.set $flag_res (i32.const 0))))
+          (then (global.set $flag_op (i32.const 8))
+                (global.set $flag_a (i32.const 1))
+                (global.set $flag_b (i32.const 0))))
         (return (local.get $r))))
     (if (i32.eq (local.get $op) (i32.const 3)) ;; SBB: r = a - b - cf_in
       (then
@@ -904,9 +906,11 @@
     (local.set $r (i32.add (i32.add (local.get $a) (local.get $b)) (local.get $cf_in)))
     (call $set_reg8 (local.get $d) (i32.and (local.get $r) (i32.const 0xFF)))
     (call $set_flags_add (local.get $a) (i32.add (local.get $b) (local.get $cf_in)) (i32.and (local.get $r) (i32.const 0xFF)))
-    ;; Fix 8-bit CF: carry if full sum >= 0x100
+    ;; Fix 8-bit CF: carry if full sum >= 0x100 — use raw mode to preserve flag_res
     (if (i32.ge_u (local.get $r) (i32.const 0x100))
-      (then (global.set $flag_a (i32.const 0xFF)) (global.set $flag_res (i32.const 0))))
+      (then (global.set $flag_op (i32.const 8))
+            (global.set $flag_a (i32.const 1))
+            (global.set $flag_b (i32.const 0))))
     (br $done)
     ) ;; end $sbb — SBB case
     (local.set $cf_in (call $get_cf))
@@ -915,7 +919,9 @@
     (call $set_flags_sub (local.get $a) (i32.add (local.get $b) (local.get $cf_in)) (i32.and (local.get $r) (i32.const 0xFF)))
     ;; Fix 8-bit CF: borrow if result went negative (bit 8+ set)
     (if (i32.and (local.get $r) (i32.const 0xFFFFFF00))
-      (then (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))))
+      (then (global.set $flag_op (i32.const 8))
+            (global.set $flag_a (i32.const 1))
+            (global.set $flag_b (i32.const 0))))
     (br $done)
     ) ;; end $and — AND case
     (local.set $r (i32.and (local.get $a) (local.get $b)))
@@ -959,7 +965,9 @@
     (call $set_reg8 (local.get $reg) (i32.and (local.get $r) (i32.const 0xFF)))
     (call $set_flags_add (local.get $a) (i32.add (local.get $b) (local.get $cf_in)) (i32.and (local.get $r) (i32.const 0xFF)))
     (if (i32.ge_u (local.get $r) (i32.const 0x100))
-      (then (global.set $flag_a (i32.const 0xFF)) (global.set $flag_res (i32.const 0))))
+      (then (global.set $flag_op (i32.const 8))
+            (global.set $flag_a (i32.const 1))
+            (global.set $flag_b (i32.const 0))))
     (br $done)
     )
     (local.set $cf_in (call $get_cf))
@@ -967,7 +975,9 @@
     (call $set_reg8 (local.get $reg) (i32.and (local.get $r) (i32.const 0xFF)))
     (call $set_flags_sub (local.get $a) (i32.add (local.get $b) (local.get $cf_in)) (i32.and (local.get $r) (i32.const 0xFF)))
     (if (i32.and (local.get $r) (i32.const 0xFFFFFF00))
-      (then (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))))
+      (then (global.set $flag_op (i32.const 8))
+            (global.set $flag_a (i32.const 1))
+            (global.set $flag_b (i32.const 0))))
     (br $done)
     )
     (local.set $r (i32.and (local.get $a) (local.get $b)))
@@ -1405,6 +1415,10 @@
   (func $th_setcc (param $op i32)
     (local $reg i32) (local.set $reg (call $read_thread_word))
     (call $set_reg8 (local.get $reg) (call $eval_cc (local.get $op)))
+    (call $next))
+  (func $th_setcc_mem (param $op i32)
+    (local $addr i32) (local.set $addr (call $read_thread_word))
+    (call $gs8 (local.get $addr) (call $eval_cc (local.get $op)))
     (call $next))
 
   ;; --- SHLD/SHRD ---

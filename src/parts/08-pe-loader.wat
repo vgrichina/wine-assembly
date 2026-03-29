@@ -20,6 +20,8 @@
     (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))
     (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
+    ;; Resource directory RVA = data directory entry 2 (offset 136 in optional header)
+    (global.set $rsrc_rva (i32.load (i32.add (local.get $pe_off) (i32.const 136))))
 
     ;; Store SizeOfImage for DLL loader
     (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
@@ -38,6 +40,11 @@
       (local.set $dst (i32.add (global.get $GUEST_BASE) (local.get $vaddr)))
       (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
       (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))
+      ;; Zero BSS portion: if VirtualSize > RawSize, zero the remainder
+      (if (i32.gt_u (local.get $vsize) (local.get $raw_size))
+        (then (call $zero_memory
+          (i32.add (local.get $dst) (local.get $raw_size))
+          (i32.sub (local.get $vsize) (local.get $raw_size)))))
       (if (i32.and (local.get $characteristics) (i32.const 0x20))
         (then
           (global.set $code_start (i32.add (global.get $image_base) (local.get $vaddr)))
