@@ -60,6 +60,7 @@
   (func (export "get_flag_b") (result i32) (global.get $flag_b))
   (func (export "get_flag_sign_shift") (result i32) (global.get $flag_sign_shift))
 
+  (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
   (func (export "get_main_win_cx") (result i32) (global.get $main_win_cx))
   (func (export "get_main_win_cy") (result i32) (global.get $main_win_cy))
 

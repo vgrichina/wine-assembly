@@ -1566,6 +1566,11 @@
       (then (call $set_reg16 (local.get $reg) (local.get $val))))
     (call $next))
 
+  ;; 210: mov r16, r16 (op=dst<<4|src)
+  (func $th_mov_r16_r16 (param $op i32)
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF)))
+    (call $next))
   ;; 208: movzx r32, reg8 (op=dst<<4|src_byte_reg)
   (func $th_movzx_r_r8 (param $op i32)
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))

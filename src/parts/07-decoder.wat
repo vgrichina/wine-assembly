@@ -688,7 +688,9 @@
             (then
               (if (i32.eq (local.get $op) (i32.const 0x88))
                 (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
+                (else (if (local.get $prefix_66)
+                  (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                  (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x89))
                 (then (if (local.get $prefix_66)
@@ -705,7 +707,9 @@
             (then
               (if (i32.eq (local.get $op) (i32.const 0x8A))
                 (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))
+                (else (if (local.get $prefix_66)
+                  (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                  (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x8B))
                 (then (if (local.get $prefix_66)

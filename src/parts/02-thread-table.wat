@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 210 funcref)
+  (table $handlers 211 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -260,5 +260,6 @@
     $th_alu_r16_i16        ;; 207: r16 OP= imm16 (op=alu_op<<4|reg, imm in next word)
     $th_movzx_r_r8         ;; 208: movzx r32, reg8 (op=dst<<4|src_byte_reg)
     $th_movsx_r_r8         ;; 209: movsx r32, reg8 (op=dst<<4|src_byte_reg)
+    $th_mov_r16_r16        ;; 210: mov r16, r16 (op=dst<<4|src)
   )
 
