@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 211 funcref)
+  (table $handlers 212 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
