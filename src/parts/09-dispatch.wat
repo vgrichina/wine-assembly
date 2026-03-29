@@ -794,13 +794,19 @@
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
       ;; Deliver pending WM_CREATE before anything else
+      ;; Build CREATESTRUCT at guest address 0x40C800 (scratch area) for lParam
+      ;; Layout: lpCreateParams(0), hInstance(4), hMenu(8), hwndParent(12),
+      ;;         cy(16), cx(20), y(24), x(28), style(32), lpszName(36), lpszClass(40), dwExStyle(44)
       (if (global.get $pending_wm_create)
       (then
       (global.set $pending_wm_create (i32.const 0))
+      (call $gs32 (i32.const 0x400100) (i32.const 0))                 ;; lpCreateParams
+      (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))    ;; cy (+16)
+      (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))    ;; cx (+20)
       (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
       (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
       (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100)) ;; lParam = &CREATESTRUCT
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
       ;; Deliver pending WM_SIZE after WM_CREATE
