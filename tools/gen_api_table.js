@@ -155,6 +155,7 @@ const extra = [
   // String W-suffix
   { name: 'lstrlenW', nargs: 1 },
   { name: 'lstrcpyW', nargs: 2 },
+  { name: 'lstrcpynW', nargs: 3 },
   { name: 'lstrcmpW', nargs: 2 },
   { name: 'lstrcmpiW', nargs: 2 },
   { name: 'CharNextW', nargs: 1 },

@@ -111,6 +111,14 @@
   (func (export "guest_read32") (param $ga i32) (result i32)
     (call $gl32 (local.get $ga)))
 
+  ;; Allocate guest heap memory (returns guest address)
+  (func (export "guest_alloc") (param $size i32) (result i32)
+    (call $heap_alloc (local.get $size)))
+
+  ;; Write 16-bit value to guest memory
+  (func (export "guest_write16") (param $ga i32) (param $val i32)
+    (call $gs16 (local.get $ga) (local.get $val)))
+
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
 )

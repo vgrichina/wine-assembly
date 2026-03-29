@@ -157,6 +157,18 @@
       (br_if $d (i32.eqz (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
 
+  (func $guest_wcsncpy (param $dst i32) (param $src i32) (param $max i32)
+    (local $i i32) (local $ch i32)
+    ;; lstrcpynW copies up to max-1 chars, NUL-terminates
+    (if (i32.le_s (local.get $max) (i32.const 0)) (then (return)))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.sub (local.get $max) (i32.const 1))))
+      (local.set $ch (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (local.get $ch))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (i32.const 0)))
+
   ;; Convert wide string at guest src to ANSI at guest dst, max bytes. Returns length.
   (func $wide_to_ansi (param $src i32) (param $dst i32) (param $max i32) (result i32)
     (local $i i32) (local $ch i32)

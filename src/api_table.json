@@ -2427,5 +2427,12 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1766493313
+  },
+  {
+    "id": 347,
+    "name": "lstrcpynW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 85252183
   }
 ]

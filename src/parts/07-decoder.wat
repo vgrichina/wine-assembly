@@ -671,12 +671,14 @@
             (else (call $emit_test_m8_r (global.get $mr_reg))))
           (br $decode)))
 
-      ;; ---- 0x85: TEST r/m32, r ----
+      ;; ---- 0x85: TEST r/m32, r (or r/m16, r16 with 0x66) ----
       (if (i32.eq (local.get $op) (i32.const 0x85))
         (then
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
-            (then (call $te (i32.const 72) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+            (then (if (local.get $prefix_66)
+              (then (call $te (i32.const 204) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+              (else (call $te (i32.const 72) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
             (else (call $emit_test_m32_r (global.get $mr_reg))))
           (br $decode)))
 
