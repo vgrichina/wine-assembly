@@ -105,7 +105,7 @@
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
-  (global $API_HASH_COUNT i32 (i32.const 326))
+  (global $API_HASH_COUNT i32 (i32.const 347))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
@@ -169,6 +169,9 @@
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))
+  ;; TLS: simple fixed-size TLS (64 slots), allocated in heap on first use
+  (global $tls_slots (mut i32) (i32.const 0))  ;; guest ptr to 64 x i32 = 256 bytes
+  (global $tls_next_index (mut i32) (i32.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
   ;; Current segment prefix during decoding (set before decode_modrm)

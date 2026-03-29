@@ -2280,5 +2280,152 @@
     "nargs": -1,
     "convention": "stdcall",
     "hash": 2394133621
+  },
+  {
+    "id": 326,
+    "name": "TlsAlloc",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1400863067
+  },
+  {
+    "id": 327,
+    "name": "TlsGetValue",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3436724359
+  },
+  {
+    "id": 328,
+    "name": "TlsSetValue",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2114826995
+  },
+  {
+    "id": 329,
+    "name": "TlsFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 405434144
+  },
+  {
+    "id": 330,
+    "name": "InitializeCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4186845445
+  },
+  {
+    "id": 331,
+    "name": "EnterCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3910877303
+  },
+  {
+    "id": 332,
+    "name": "LeaveCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3339572032
+  },
+  {
+    "id": 333,
+    "name": "DeleteCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3815989074
+  },
+  {
+    "id": 334,
+    "name": "GetCurrentThread",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2613421576
+  },
+  {
+    "id": 335,
+    "name": "GetProcessHeap",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2264827474
+  },
+  {
+    "id": 336,
+    "name": "SetStdHandle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1550326894
+  },
+  {
+    "id": 337,
+    "name": "FlushFileBuffers",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2949748134
+  },
+  {
+    "id": 338,
+    "name": "IsValidCodePage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1988547667
+  },
+  {
+    "id": 339,
+    "name": "GetEnvironmentStringsA",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2711620365
+  },
+  {
+    "id": 340,
+    "name": "InterlockedIncrement",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3698919548
+  },
+  {
+    "id": 341,
+    "name": "InterlockedDecrement",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 152622356
+  },
+  {
+    "id": 342,
+    "name": "InterlockedExchange",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2941017838
+  },
+  {
+    "id": 343,
+    "name": "IsBadReadPtr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1633819654
+  },
+  {
+    "id": 344,
+    "name": "IsBadWritePtr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2125732355
+  },
+  {
+    "id": 345,
+    "name": "SetUnhandledExceptionFilter",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 180298701
+  },
+  {
+    "id": 346,
+    "name": "IsDebuggerPresent",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1766493313
   }
 ]
