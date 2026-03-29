@@ -1563,6 +1563,8 @@
     (local.set $val (call $do_alu32 (local.get $alu)
       (i32.and (call $get_reg (local.get $dst)) (i32.const 0xFFFF))
       (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))))
+    ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
+    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $set_reg16 (local.get $dst) (local.get $val))))
@@ -1575,6 +1577,8 @@
     (local.set $val (call $do_alu32 (local.get $alu)
       (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))
       (call $read_thread_word)))
+    ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
+    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $set_reg16 (local.get $reg) (local.get $val))))
