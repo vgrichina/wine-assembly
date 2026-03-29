@@ -1492,15 +1492,15 @@
       (local.set $tmp (call $host_gdi_get_object_w (local.get $arg0)))
       (if (i32.ne (local.get $tmp) (i32.const 0))
       (then
-      ;; BITMAP: bmType(0), bmWidth(+4), bmHeight(+8), bmWidthBytes(+12), bmPlanes(+14 word), bmBitsPixel(+16 word)
+      ;; BITMAP: bmType(0,4), bmWidth(+4,4), bmHeight(+8,4), bmWidthBytes(+12,4), bmPlanes(+16,2), bmBitsPixel(+18,2), bmBits(+20,4)
       (if (i32.ge_u (local.get $arg1) (i32.const 24))
       (then
       (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $tmp))  ;; bmWidth
       (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (call $host_gdi_get_object_h (local.get $arg0))) ;; bmHeight
       (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
       (i32.mul (local.get $tmp) (i32.const 4))) ;; bmWidthBytes (assuming 32bpp)
-      (call $gs16 (i32.add (local.get $arg2) (i32.const 14)) (i32.const 1))    ;; bmPlanes
-      (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 32))   ;; bmBitsPixel
+      (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))    ;; bmPlanes
+      (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (i32.const 32))   ;; bmBitsPixel
       ))))
       (global.set $eax (local.get $arg1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)

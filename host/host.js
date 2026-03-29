@@ -235,11 +235,11 @@ class WineAssembly {
         gdi_select_object: (hdc, hObj) => {
           const obj = self._gdiObjects[hObj];
           const dc = self._getDC(hdc);
-          let prev = 0x30001; // generic previous handle
+          let prev = 0x30001; // stock object (never 0 — 0 means failure)
           if (obj) {
-            if (obj.type === 'pen') { dc.penColor = obj.color; dc.penWidth = obj.width || 1; }
-            if (obj.type === 'brush') { dc.brushColor = obj.color; }
-            if (obj.type === 'bitmap') { prev = dc.selectedBitmap || 0x30001; dc.selectedBitmap = hObj; }
+            if (obj.type === 'pen') { prev = dc.selectedPen || 0x30001; dc.selectedPen = hObj; dc.penColor = obj.color; dc.penWidth = obj.width || 1; }
+            else if (obj.type === 'brush') { prev = dc.selectedBrush || 0x30001; dc.selectedBrush = hObj; dc.brushColor = obj.color; }
+            else if (obj.type === 'bitmap') { prev = dc.selectedBitmap || 0x30001; dc.selectedBitmap = hObj; }
           }
           return prev;
         },
