@@ -105,7 +105,7 @@
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
-  (global $API_HASH_COUNT i32 (i32.const 347))
+  (global $API_HASH_COUNT i32 (i32.const 348))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
@@ -206,6 +206,12 @@
   ;; Watchpoint: break when [watch_addr] changes (0=disabled)
   (global $watch_addr (mut i32) (i32.const 0))
   (global $watch_val  (mut i32) (i32.const 0))
+  ;; Tick count (incremented by GetTickCount, starts at ~1 second)
+  (global $tick_count (mut i32) (i32.const 1000))
+
+  ;; PE resource directory RVA (set during PE load)
+  (global $rsrc_rva (mut i32) (i32.const 0))
+
   ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
   (global $bp_addr (mut i32) (i32.const 0))
 
