@@ -709,9 +709,17 @@
       ;; ---- 0xA0-0xA3: MOV AL/EAX, [abs] / MOV [abs], AL/EAX ----
       ;; Apply FS base if segment override is active
       (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA1)) (then (call $te (i32.const 20) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA1)) (then
+        (if (local.get $prefix_66)
+          (then (call $te (i32.const 164) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))))  ;; mov ax, [addr]
+          (else (call $te (i32.const 20) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg)))))   ;; mov eax, [addr]
+        (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA3)) (then (call $te (i32.const 21) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA3)) (then
+        (if (local.get $prefix_66)
+          (then (call $te (i32.const 163) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))))  ;; mov [addr], ax
+          (else (call $te (i32.const 21) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg)))))   ;; mov [addr], eax
+        (br $decode)))
 
       ;; ---- 0xC6: MOV r/m8, imm8 ----
       (if (i32.eq (local.get $op) (i32.const 0xC6))
