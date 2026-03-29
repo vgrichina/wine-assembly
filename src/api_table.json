@@ -1587,5 +1587,215 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3662746588
+  },
+  {
+    "id": 227,
+    "name": "LocalAlloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3267574845
+  },
+  {
+    "id": 228,
+    "name": "LocalFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3204646646
+  },
+  {
+    "id": 229,
+    "name": "LocalLock",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 646701087
+  },
+  {
+    "id": 230,
+    "name": "LocalUnlock",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3534954404
+  },
+  {
+    "id": 231,
+    "name": "LocalReAlloc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1197632946
+  },
+  {
+    "id": 232,
+    "name": "GlobalAlloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1001160463
+  },
+  {
+    "id": 233,
+    "name": "GlobalFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1623859276
+  },
+  {
+    "id": 234,
+    "name": "GlobalLock",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 717767305
+  },
+  {
+    "id": 235,
+    "name": "GlobalUnlock",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3212216266
+  },
+  {
+    "id": 236,
+    "name": "GlobalReAlloc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4091749992
+  },
+  {
+    "id": 237,
+    "name": "GlobalSize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2076356143
+  },
+  {
+    "id": 238,
+    "name": "GlobalCompact",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4001517651
+  },
+  {
+    "id": 239,
+    "name": "RegOpenKeyA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3916552355
+  },
+  {
+    "id": 240,
+    "name": "RegOpenKeyExA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 234267932
+  },
+  {
+    "id": 241,
+    "name": "RegisterClassExA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3970118692
+  },
+  {
+    "id": 242,
+    "name": "RegisterClassA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3945250267
+  },
+  {
+    "id": 243,
+    "name": "BeginPaint",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2300373138
+  },
+  {
+    "id": 244,
+    "name": "OpenClipboard",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2347472261
+  },
+  {
+    "id": 245,
+    "name": "CloseClipboard",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3714042891
+  },
+  {
+    "id": 246,
+    "name": "IsClipboardFormatAvailable",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2490060341
+  },
+  {
+    "id": 247,
+    "name": "GetEnvironmentStringsW",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2342512747
+  },
+  {
+    "id": 248,
+    "name": "GetSaveFileNameA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3129354522
+  },
+  {
+    "id": 249,
+    "name": "SetViewportExtEx",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 166268573
+  },
+  {
+    "id": 250,
+    "name": "lstrcmpiA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3318075116
+  },
+  {
+    "id": 251,
+    "name": "FreeEnvironmentStringsA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3509830041
+  },
+  {
+    "id": 252,
+    "name": "FreeEnvironmentStringsW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3811827183
+  },
+  {
+    "id": 253,
+    "name": "GetVersion",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 976181145
+  },
+  {
+    "id": 254,
+    "name": "GetTextExtentPoint32A",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3020746514
+  },
+  {
+    "id": 255,
+    "name": "wsprintfA",
+    "nargs": -1,
+    "convention": "stdcall",
+    "hash": 2025026003
+  },
+  {
+    "id": 256,
+    "name": "GetPrivateProfileStringA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2283556481
   }
 ]

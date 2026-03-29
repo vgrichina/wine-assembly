@@ -269,6 +269,13 @@ async function main() {
     gdi_line_to: (hdc, x, y, hwnd) => 1,
     gdi_arc: (hdc, l, t, r, b, xs, ys, xe, ye, hwnd) => 1,
     gdi_bitblt: (dst, dx, dy, w, h, src, sx, sy, rop, hwnd) => 1,
+    gdi_load_bitmap: (resourceId) => 0,
+    gdi_get_object_w: (h) => 0,
+    gdi_get_object_h: (h) => 0,
+    math_sin: (x) => Math.sin(x),
+    math_cos: (x) => Math.cos(x),
+    math_tan: (x) => Math.tan(x),
+    math_atan2: (y, x) => Math.atan2(y, x),
   }};
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);

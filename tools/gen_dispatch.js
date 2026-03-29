@@ -10,7 +10,7 @@ const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'a
 const { execSync } = require('child_process');
 let dispatchSrc;
 try {
-  dispatchSrc = execSync('git show HEAD:src/parts/09-dispatch.wat', { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+  dispatchSrc = execSync('git show 9b0bf4a:src/parts/09-dispatch.wat', { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
 } catch (e) {
   dispatchSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'parts', '09-dispatch.wat'), 'utf8');
 }
@@ -171,7 +171,8 @@ function findMatchingClose(tokens, openIdx) {
 
 // ── Main logic: extract handlers from dispatch ──────────────────────
 const tokens = tokenizeWithPos(dispatchSrc);
-const commentRe = /^;;\s+(\w+)\((\d+)\)/;
+// Match last ApiName(N) on a comment line (handles "ApiA / ApiB(1)" format)
+const commentRe = /(\w+)\((\d+)\)/;
 
 // Map API name → id
 const nameToId = new Map();
@@ -353,7 +354,15 @@ for (let id = 0; id < N; id++) {
   const api = apiTable[id];
   out.push(`    ) ;; ${id}: ${api.name}`);
 
-  const body = handlers.get(api.name);
+  // Handler aliases: APIs that share a handler with another name
+  const aliases = {
+    'RegisterClassA': 'RegisterClassExA',
+    'GetEnvironmentStringsW': 'GetEnvironmentStrings',
+    'GetSaveFileNameA': 'GetOpenFileNameA',
+    'SetViewportExtEx': 'SetWindowExtEx',
+    'lstrcmpiA': 'lstrcmpA', // both in dispatch_lstr
+  };
+  const body = handlers.get(api.name) || handlers.get(aliases[api.name]);
   if (body) {
     // Indent body and emit
     const bodyLines = body.split('\n');
@@ -362,7 +371,7 @@ for (let id = 0; id < N; id++) {
     }
   } else {
     // Route to sub-dispatchers for grouped APIs
-    const lstrApis = ['lstrlenA', 'lstrcpyA', 'lstrcatA', 'lstrcpynA', 'lstrcmpA'];
+    const lstrApis = ['lstrlenA', 'lstrcpyA', 'lstrcatA', 'lstrcpynA', 'lstrcmpA', 'lstrcmpiA'];
     const localApis = ['LocalAlloc', 'LocalFree', 'LocalReAlloc', 'LocalLock', 'LocalUnlock', 'LocalHandle', 'LocalSize'];
     const globalApis = ['GlobalAlloc', 'GlobalFree', 'GlobalReAlloc', 'GlobalLock', 'GlobalUnlock', 'GlobalHandle', 'GlobalSize'];
     const regApis = ['RegOpenKeyA', 'RegCloseKey', 'RegCreateKeyA', 'RegQueryValueExA', 'RegSetValueExA'];
@@ -375,8 +384,24 @@ for (let id = 0; id < N; id++) {
     } else if (regApis.includes(api.name)) {
       out.push(`      (call $dispatch_reg (local.get $name_ptr))`);
     } else if (api.name === 'MessageBeep') {
-      out.push(`      ;; MessageBeep — no-op`);
       out.push(`      (global.set $eax (i32.const 1))`);
+      out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))`);
+    } else if (api.name === 'BeginPaint') {
+      out.push(`      ;; BeginPaint(hwnd, lpPaint) — zero PAINTSTRUCT, return fake HDC`);
+      out.push(`      (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))`);
+      out.push(`      (global.set $eax (i32.const 0x50001))`);
+      out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))`);
+    } else if (api.name === 'OpenClipboard') {
+      out.push(`      (global.set $eax (i32.const 1))`);
+      out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))`);
+    } else if (api.name === 'CloseClipboard') {
+      out.push(`      (global.set $eax (i32.const 1))`);
+      out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))`);
+    } else if (api.name === 'IsClipboardFormatAvailable') {
+      out.push(`      (global.set $eax (i32.const 0))`);
+      out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))`);
+    } else if (api.name === 'GlobalCompact') {
+      out.push(`      (global.set $eax (i32.const 0x100000))`);
       out.push(`      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))`);
     } else {
       out.push(`      ;; stub`);

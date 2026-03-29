@@ -105,7 +105,7 @@
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
-  (global $API_HASH_COUNT i32 (i32.const 227))
+  (global $API_HASH_COUNT i32 (i32.const 257))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))

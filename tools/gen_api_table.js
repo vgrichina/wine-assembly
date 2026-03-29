@@ -1,44 +1,11 @@
 #!/usr/bin/env node
-// gen_api_table.js — Extract API names from 09-dispatch.wat, compute FNV-1a hashes,
-// generate api_table.json and the static hash data segment.
+// gen_api_table.js — Maintain api_table.json and generate the static hash data segment.
+// Reads existing api_table.json, adds any missing sub-dispatcher APIs, recomputes hashes.
 
 const fs = require('fs');
 const path = require('path');
 
-const dispatchFile = path.join(__dirname, '..', 'src', 'parts', '09-dispatch.wat');
-const src = fs.readFileSync(dispatchFile, 'utf8');
-const lines = src.split('\n');
-
-// Extract API names from comments like: ;; ExitProcess(1) "Exit"
-// Also from patterns like: ;; GetModuleHandleA(1) "GetM"+"odul"+"eHan"
-const apis = [];
-const nameRe = /;;\s+(\w+)\((\d+)\)/;
-
-for (let i = 0; i < lines.length; i++) {
-  const m = lines[i].match(nameRe);
-  if (m) {
-    const name = m[1];
-    const nargs = parseInt(m[2]);
-    // Detect convention: MSVCRT section uses cdecl
-    const isCdecl = i > 0 && src.slice(0, lines.slice(0, i + 1).join('\n').length).includes('MSVCRT') &&
-      lines.slice(Math.max(0, i - 50), i + 1).join('\n').includes('MSVCRT');
-    apis.push({ name, nargs, convention: 'stdcall', line: i + 1 });
-  }
-}
-
-// Also extract from sub-dispatchers via their comments
-// dispatch_local, dispatch_global, dispatch_lstr, dispatch_reg
-const helperFile = path.join(__dirname, '..', 'src', 'parts', '10-helpers.wat');
-if (fs.existsSync(helperFile)) {
-  const helperSrc = fs.readFileSync(helperFile, 'utf8');
-  const helperLines = helperSrc.split('\n');
-  for (let i = 0; i < helperLines.length; i++) {
-    const m = helperLines[i].match(nameRe);
-    if (m) {
-      apis.push({ name: m[1], nargs: parseInt(m[2]), convention: 'stdcall', line: -(i + 1) });
-    }
-  }
-}
+const jsonPath = path.join(__dirname, '..', 'src', 'api_table.json');
 
 // FNV-1a hash
 function fnv1a(str) {
@@ -46,27 +13,66 @@ function fnv1a(str) {
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
-    h = h >>> 0; // keep unsigned
+    h = h >>> 0;
   }
   return h;
 }
 
-// Deduplicate by name
-const seen = new Set();
-const unique = [];
-for (const api of apis) {
+// Load existing table
+let existing = [];
+if (fs.existsSync(jsonPath)) {
+  existing = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+}
+const seen = new Set(existing.map(e => e.name));
+
+// APIs from sub-dispatchers (not in main dispatch comment pattern)
+const extra = [
+  { name: 'LocalAlloc', nargs: 2 },
+  { name: 'LocalFree', nargs: 1 },
+  { name: 'LocalLock', nargs: 1 },
+  { name: 'LocalUnlock', nargs: 1 },
+  { name: 'LocalReAlloc', nargs: 3 },
+  { name: 'GlobalAlloc', nargs: 2 },
+  { name: 'GlobalFree', nargs: 1 },
+  { name: 'GlobalLock', nargs: 1 },
+  { name: 'GlobalUnlock', nargs: 1 },
+  { name: 'GlobalReAlloc', nargs: 3 },
+  { name: 'GlobalSize', nargs: 2 },
+  { name: 'GlobalCompact', nargs: 1 },
+  { name: 'RegOpenKeyA', nargs: 3 },
+  { name: 'RegOpenKeyExA', nargs: 5 },
+  { name: 'MessageBeep', nargs: 1 },
+  // APIs with multi-name comments (not caught by single-name regex)
+  { name: 'RegisterClassExA', nargs: 1 },
+  { name: 'RegisterClassA', nargs: 1 },
+  { name: 'BeginPaint', nargs: 2 },
+  { name: 'OpenClipboard', nargs: 1 },
+  { name: 'CloseClipboard', nargs: 0 },
+  { name: 'IsClipboardFormatAvailable', nargs: 1 },
+  { name: 'GetEnvironmentStringsW', nargs: 0 },
+  { name: 'GetSaveFileNameA', nargs: 1 },
+  { name: 'SetViewportExtEx', nargs: 4 },
+  { name: 'lstrcmpiA', nargs: 2 },
+  { name: 'FreeEnvironmentStringsA', nargs: 1 },
+  { name: 'FreeEnvironmentStringsW', nargs: 1 },
+  { name: 'GetVersion', nargs: 0 },
+  { name: 'GetTextExtentPoint32A', nargs: 4 },
+  { name: 'wsprintfA', nargs: -1 },  // varargs, handled specially
+  { name: 'GetPrivateProfileStringA', nargs: 6 },
+];
+for (const api of extra) {
   if (!seen.has(api.name)) {
+    existing.push({ id: existing.length, name: api.name, nargs: api.nargs, convention: 'stdcall', hash: 0 });
     seen.add(api.name);
-    unique.push(api);
   }
 }
 
-// Assign IDs and compute hashes
-const table = unique.map((api, id) => ({
+// Reassign IDs and recompute hashes
+const table = existing.map((api, id) => ({
   id,
   name: api.name,
   nargs: api.nargs,
-  convention: api.convention,
+  convention: api.convention || 'stdcall',
   hash: fnv1a(api.name),
 }));
 
@@ -80,39 +86,25 @@ for (const entry of table) {
   hashMap.set(entry.hash, entry.name);
 }
 
-// Output api_table.json
-const jsonPath = path.join(__dirname, '..', 'src', 'api_table.json');
+// Write api_table.json
 fs.writeFileSync(jsonPath, JSON.stringify(table, null, 2) + '\n');
 console.log(`Generated ${jsonPath} with ${table.length} APIs`);
 
-// Generate WAT data segment for static hash table
-// Format: 234 entries of [hash:i32, id:i32] at 0x00E62000
-const buf = Buffer.alloc(table.length * 8);
-for (const entry of table) {
-  buf.writeUInt32LE(entry.hash, entry.id * 8);
-  buf.writeUInt32LE(entry.id, entry.id * 8 + 4);
-}
-
-// Output as WAT data segment
+// Generate WAT data segment
 let watData = `  ;; Static API hash table: ${table.length} entries at 0x00E62000\n`;
 watData += `  ;; Generated by tools/gen_api_table.js — do not edit by hand\n`;
 watData += `  (data (i32.const 0x00E62000)\n`;
 for (const entry of table) {
-  const hBytes = Buffer.alloc(4);
-  hBytes.writeUInt32LE(entry.hash);
-  const iBytes = Buffer.alloc(4);
-  iBytes.writeUInt32LE(entry.id);
+  const hBytes = Buffer.alloc(4); hBytes.writeUInt32LE(entry.hash);
+  const iBytes = Buffer.alloc(4); iBytes.writeUInt32LE(entry.id);
   const hHex = [...hBytes].map(b => '\\' + b.toString(16).padStart(2, '0')).join('');
   const iHex = [...iBytes].map(b => '\\' + b.toString(16).padStart(2, '0')).join('');
   watData += `    "${hHex}${iHex}"  ;; ${entry.id}: ${entry.name}\n`;
 }
 watData += `  )\n`;
 
-const watPath = path.join(__dirname, '..', 'src', 'api_hashes.wat');
+const watPath = path.join(__dirname, '..', 'src', 'parts', '01b-api-hashes.wat');
 fs.writeFileSync(watPath, watData);
 console.log(`Generated ${watPath}`);
-
-// Print summary
-console.log(`\nAPI count: ${table.length}`);
 console.log(`Hash collisions: 0`);
 console.log(`Data segment size: ${table.length * 8} bytes`);
