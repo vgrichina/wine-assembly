@@ -191,6 +191,8 @@
   ;; Watchpoint: break when [watch_addr] changes (0=disabled)
   (global $watch_addr (mut i32) (i32.const 0))
   (global $watch_val  (mut i32) (i32.const 0))
+  ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
+  (global $bp_addr (mut i32) (i32.const 0))
 
   ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)

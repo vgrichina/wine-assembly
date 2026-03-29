@@ -1058,9 +1058,9 @@
       ;; Return reasonable defaults for common caps
       ;; HORZRES=8, VERTRES=10, LOGPIXELSX=88, LOGPIXELSY=90
       (if (i32.eq (local.get $arg1) (i32.const 8))
-      (then (global.set $eax (i32.const 800))))  ;; HORZRES
+      (then (global.set $eax (i32.const 640))))  ;; HORZRES
       (if (i32.eq (local.get $arg1) (i32.const 10))
-      (then (global.set $eax (i32.const 600))))  ;; VERTRES
+      (then (global.set $eax (i32.const 480))))  ;; VERTRES
       (if (i32.eq (local.get $arg1) (i32.const 88))
       (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSX
       (if (i32.eq (local.get $arg1) (i32.const 90))
@@ -1141,16 +1141,58 @@
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
-    ) ;; 90: GetSystemMetrics
-      (global.set $eax (i32.const 640))
+    ) ;; 90: GetSystemMetrics (actual slot used by imports)
+      (if (i32.eq (local.get $arg0) (i32.const 0))  ;; SM_CXSCREEN
+      (then (global.set $eax (i32.const 640))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 1))  ;; SM_CYSCREEN
+      (then (global.set $eax (i32.const 480))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 4))  ;; SM_CYCAPTION
+      (then (global.set $eax (i32.const 19))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 5))  ;; SM_CXBORDER
+      (then (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 6))  ;; SM_CYBORDER
+      (then (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 7))  ;; SM_CXFIXEDFRAME
+      (then (global.set $eax (i32.const 3))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 8))  ;; SM_CYFIXEDFRAME
+      (then (global.set $eax (i32.const 3))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 15)) ;; SM_CYMENU
+      (then (global.set $eax (i32.const 19))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 16)) ;; SM_CXFULLSCREEN
+      (then (global.set $eax (i32.const 640))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 17)) ;; SM_CYFULLSCREEN
+      (then (global.set $eax (i32.const 434))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 32)) ;; SM_CXFRAME
+      (then (global.set $eax (i32.const 4))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 33)) ;; SM_CYFRAME
+      (then (global.set $eax (i32.const 4))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
+      (then (global.set $eax (i32.const 648))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (if (i32.eq (local.get $arg0) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
+      (then (global.set $eax (i32.const 488))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
     ) ;; 91: GetClientRect
-      ;; Fill RECT with 800x600
+      ;; Fill RECT with client area (use window dims minus frame)
       (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
       (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
-      (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 800)) ;; right
-      (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 600));; bottom
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.sub (global.get $main_win_cx) (i32.const 6))) ;; right = cx - frame
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.sub (global.get $main_win_cy) (i32.const 45)));; bottom = cy - caption - frame
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)

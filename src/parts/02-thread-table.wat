@@ -255,5 +255,10 @@
     ;; -- 16-bit TEST --
     $th_test_r16_r16       ;; 204: test r16, r16 (op=dst<<4|src)
     $th_test_ax_i16        ;; 205: test ax, imm16 (imm in next word)
+    ;; -- 16-bit register ALU --
+    $th_alu_r16_r16        ;; 206: r16 OP= r16 (op=alu_op<<8|dst<<4|src)
+    $th_alu_r16_i16        ;; 207: r16 OP= imm16 (op=alu_op<<4|reg, imm in next word)
+    $th_movzx_r_r8         ;; 208: movzx r32, reg8 (op=dst<<4|src_byte_reg)
+    $th_movsx_r_r8         ;; 209: movsx r32, reg8 (op=dst<<4|src_byte_reg)
   )
 

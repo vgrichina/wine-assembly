@@ -21,6 +21,7 @@ const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break 
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
+const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
@@ -29,6 +30,7 @@ const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via nod
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
+const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 
 async function main() {
   const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
@@ -510,6 +512,16 @@ async function main() {
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     const eipBefore = instance.exports.get_eip();
+
+    // Skip check: simulate ret when EIP hits a skip address
+    if (skipAddrs.length && skipAddrs.includes(eipBefore)) {
+      const dv = new DataView(instance.exports.memory.buffer);
+      const retAddr = dv.getUint32(g2w(instance.exports.get_esp()), true);
+      console.log(`[skip] ${hex(eipBefore)} -> ret to ${hex(retAddr)}`);
+      instance.exports.set_eip(retAddr);
+      instance.exports.set_esp(instance.exports.get_esp() + 4);
+      continue;
+    }
 
     // Breakpoint check (EIP)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {

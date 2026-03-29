@@ -576,24 +576,35 @@
               (call $te_raw (i32.and (call $d_fetch8) (i32.const 0xFF)))
               (br $decode)))
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 5))
-            (then ;; EAX, imm32 (or AX, imm16 with 0x66 prefix)
-              (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
-              (if (local.get $prefix_66)
-                (then (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
-                (else (call $te_raw (call $d_fetch32))))
+            (then (if (local.get $prefix_66)
+              (then ;; AX, imm16 — handler 207 (alu_r16_i16)
+                (call $te (i32.const 207) (i32.shl (local.get $imm) (i32.const 4))) ;; reg=0(AX)
+                (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
+              (else ;; EAX, imm32
+                (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
+                (call $te_raw (call $d_fetch32))))
               (br $decode)))
 
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then
-              ;; reg, reg — check byte vs dword
+              ;; reg, reg — check byte vs word vs dword
               (if (i32.and (local.get $op) (i32.const 1))
-                (then ;; dword (odd opcode)
-                  (if (i32.and (local.get $op) (i32.const 2))
-                    (then (call $te (i32.add (i32.const 12) (local.get $imm))
-                      (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                    (else (call $te (i32.add (i32.const 12) (local.get $imm))
-                      (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))
+                (then (if (local.get $prefix_66)
+                  (then ;; 16-bit: handler 206, op=alu<<8|dst<<4|src
+                    (if (i32.and (local.get $op) (i32.const 2))
+                      (then (call $te (i32.const 206)
+                        (i32.or (i32.shl (local.get $imm) (i32.const 8))
+                          (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))))
+                      (else (call $te (i32.const 206)
+                        (i32.or (i32.shl (local.get $imm) (i32.const 8))
+                          (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))))
+                  (else ;; 32-bit (odd opcode)
+                    (if (i32.and (local.get $op) (i32.const 2))
+                      (then (call $te (i32.add (i32.const 12) (local.get $imm))
+                        (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                      (else (call $te (i32.add (i32.const 12) (local.get $imm))
+                        (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
                 (else ;; byte (even opcode) — use r8 handler 153
                   (if (i32.and (local.get $op) (i32.const 2))
                     (then (call $te (i32.const 153)
@@ -636,9 +647,13 @@
                 (then ;; byte reg, imm8 — handler 154
                   (call $te (i32.const 154) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (global.get $mr_val)))
                   (call $te_raw (local.get $imm)))
-                (else ;; dword reg, imm32
-                  (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
-                  (call $te_raw (local.get $imm)))))
+                (else (if (i32.and (local.get $prefix_66) (i32.or (i32.eq (local.get $op) (i32.const 0x81)) (i32.eq (local.get $op) (i32.const 0x83))))
+                  (then ;; 16-bit reg, imm16 — handler 207
+                    (call $te (i32.const 207) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
+                    (call $te_raw (local.get $imm)))
+                  (else ;; dword reg, imm32
+                    (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
+                    (call $te_raw (local.get $imm)))))))
             (else ;; [mem], imm — use runtime EA
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
                 (then (call $emit_alu_m8_i (global.get $mr_reg) (local.get $imm)))
@@ -1090,14 +1105,8 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; movzx r32, reg8
-                  (call $te (i32.const 2) (global.get $mr_reg))
-                  (call $te_raw (i32.const 0)) ;; placeholder, will be overwritten by handler
-                  ;; Actually: we need get_reg8. Emit mov_r_r then and with 0xFF. Hack but works.
-                  ;; Better: just use the existing movzx8 handler with a dummy address.
-                  ;; Simplest: emit as mov_r_r then and_r_i32
-                  (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                  (call $te (i32.const 7) (global.get $mr_reg)) (call $te_raw (i32.const 0xFF)))
+                (then ;; movzx r32, reg8 — handler 208
+                  (call $te (i32.const 208) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                 (else (call $emit_movzx8 (global.get $mr_reg))))
               (br $decode)))
 
@@ -1116,10 +1125,8 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then
-                  (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                  (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 4) (i32.const 8)) (i32.shl (i32.const 24) (i32.const 16)))))
-                  (call $te (i32.const 53) (i32.or (global.get $mr_reg) (i32.or (i32.shl (i32.const 7) (i32.const 8)) (i32.shl (i32.const 24) (i32.const 16))))))
+                (then ;; movsx r32, reg8 — handler 209
+                  (call $te (i32.const 209) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                 (else (call $emit_movsx8 (global.get $mr_reg))))
               (br $decode)))
 

@@ -2,39 +2,40 @@
 
 ## 1. Summary
 
-This report provides an updated review of the Wine-Assembly x86 emulator. There has been remarkable progress in addressing previously identified critical bugs and implementing complex Win32 sub-systems. The core architecture remains a Forth-style threaded interpreter, which is proving to be a highly flexible and performant choice for this environment.
+This report provides an updated review of the Wine-Assembly x86 emulator. Recent progress includes a sophisticated **Win32 SEH (Structured Exception Handling)** implementation, a functional **Free-List Heap Allocator**, and expanded GDI/GUI support.
 
-Most notably, the emulator now features a sophisticated **Win32 SEH (Structured Exception Handling)** implementation and has resolved several high-priority flag and instruction encoding bugs. While major architectural gaps still exist (segmentation, I/O ports), the project is rapidly moving toward being a viable runtime for complex Win98 system utilities.
+However, a deep-dive into the instruction decoder and threaded handlers has revealed several critical bugs in memory addressing (especially SIB) and register aliasing that must be addressed to ensure compatibility with real-world Windows binaries.
 
 ## 2. Review of Recent Progress & Bug Fixes
 
-A review of `src/main.wat` reveals that several critical issues have been successfully addressed:
+*   **Fixed: `POPFD` / `$load_eflags` Correctness:** Robust "raw mode" (`flag_op=8`) restoration of flags.
+*   **Fixed: `CMPXCHG r,r` and `XADD r,r` Encoding:** Register-form operands are now correctly handled via `0x80` tagging.
+*   **New: Free-List Heap Allocator:** `heap_alloc` and `heap_free` now implement a proper free-list with block splitting, replacing the previous bump-allocator and preventing memory exhaustion.
+*   **New: Win32 SEH Support:** Full SEH chain walking, `__except_handler3` scopetable emulation, and "catch-return" thunks for C++ exceptions.
 
-*   **Fixed: `POPFD` / `$load_eflags` Correctness:** The `$load_eflags` function has been rewritten to move away from "approximate" behavior. It now correctly restores `CF`, `ZF`, `SF`, `OF`, and `DF` using a robust "raw mode" (`flag_op=8`), ensuring that flag-dependent control flow is reliable.
-*   **Fixed: `CMPXCHG r,r` and `XADD r,r` Encoding:** The decoder now correctly tags register-form operands by OR-ing them with `0x80`, and the handlers `$th_cmpxchg` and `$th_xadd` correctly branch based on this bit. This restores functional atomic-like operations for register operands.
-*   **New: Win32 SEH Support:** A major milestone is the implementation of `$raise_exception`, `_CxxThrowException`, and `_EH_prolog`. The emulator now walks the SEH chain in `FS:[0]`, handles C++ funclet returns via a "catch-return" thunk, and even emulates `__except_handler3` scopetable walks.
-*   **New: GDI/GUI Integration:** The `win32_dispatch` now includes extensive stubs and host-calls for GDI operations (Rectangle, LineTo, BitBlt) and Window management, allowing guest applications to render to the browser canvas.
+## 3. Newly Identified Critical Bugs
 
-## 3. Remaining Implementation Gaps
+A detailed review of `src/parts/` has identified several regression-risk areas:
 
-While progress is excellent, several areas require attention for full compatibility:
-
-*   **Missing Memory Forms:** Several instructions still lack proper memory-operand support. `XCHG [mem], reg` and `BT/BTS/BTR/BTC [mem], imm` are currently implemented as register-only or incomplete stubs.
-*   **Instruction Set Depth:**
-    *   **Prefixes:** While `FS` segment overrides are partially supported for TIB access, other segment overrides and the `LOCK` prefix are ignored.
-    *   **Obscure Opcodes:** BCD arithmetic (`DAA`, `DAS`, etc.) and various system-level instructions (`HLT`, `LIDT`) are still missing.
-*   **Architectural Gaps:**
-    *   **Segmentation:** The memory model is largely flat. Beyond `FS` for the TIB, the interpreter does not yet implement a full GDT/LDT or segment-based address calculation for `DS`/`ES`/`SS`.
-    *   **I/O Ports:** There is no infrastructure for `IN`/`OUT` instructions or port-mapped hardware emulation.
-    *   **Memory Management:** `heap_alloc` is currently a simple bump-allocator with a no-op `heap_free`. Long-running sessions will eventually exhaust guest memory.
+*   **Decoder Addressing Bugs (`07-decoder.wat`):**
+    *   **`0x8F` (POP [mem])** is broken; it incorrectly attempts to read `ESP` at decode time rather than runtime.
+    *   **`SETcc [mem]`** only supports simple displacement; it lacks SIB and register-indirect support.
+    *   **`MOVZX/MOVSX` Register Aliasing:** Moving high-byte registers (AH, CH, DH, BH) to 32-bit registers is currently mapped to 32-bit register IDs (ESP, EBP, ESI, EDI), causing incorrect data transfers.
+*   **Handler Logic & SIB Bugs (`05-alu.wat`):**
+    *   **Broken SIB in Multi-Word Handlers:** `th_bt_m_i8`, `th_xchg_m_r`, `th_cmpxchg`, and `th_xadd` (memory forms) use `read_thread_word` instead of `read_addr`, making them incompatible with SIB addressing sentinels.
+    *   **`BT` Flag Corruption:** `set_cf_bit` incorrectly sets `flag_op=2` (SUB), causing `ZF` and `SF` to be corrupted by the lazy flag system.
+*   **Missing ISA Coverage:**
+    *   Memory-operand forms for `BT/BTS/BTR/BTC [mem], reg` and `SHLD/SHRD [mem], reg` are missing from the decoder.
+    *   `0x86` (XCHG r/m8, reg8) incorrectly invokes 32-bit handlers.
 
 ## 4. Recommendations
 
-1.  **High Priority - Memory Robustness:** 
-    *   Implement a proper **Free-List Allocator** for the guest heap to allow long-term execution.
-    *   Complete the memory-operand forms for `XCHG` and bitwise operations to prevent crashes in real-world binaries.
-2.  **Medium Priority - Refactoring:**
-    *   The `win32_dispatch` function is exceeding 2,000 lines. Transitioning to a **Table-Driven Dispatch** system would significantly improve maintainability and performance.
-    *   Modularize `main.wat` into multiple files (CPU, FPU, Memory, Win32) if the toolchain supports it, or use a pre-processor.
-3.  **Low Priority - Broaden ISA:**
-    *   Begin adding transcendental FPU instructions (`FSIN`, `FCOS`) to support more advanced mathematical applications.
+1.  **High Priority - Addressing & Register Fixes:**
+    *   Refactor the decoder to use runtime EA helpers for all `SETcc`, `BT`, and `SHLD/SHRD` memory forms.
+    *   Update all multi-word handlers to use the `read_addr` helper to support SIB addressing.
+    *   Implement dedicated `th_movzx8_r_r` handlers to correctly handle high-byte register mapping.
+2.  **Medium Priority - Flag System:**
+    *   Implement a specialized `flag_op` for Bit Test (`BT`) instructions that preserves `ZF`, `SF`, `OF`, and `AF` while only updating `CF`.
+    *   Complete the implementation of the Parity Flag (PF) and Auxiliary Carry Flag (AF).
+3.  **Low Priority - ISA Expansion:**
+    *   Implement missing BCD arithmetic (`DAA`, `DAS`) and remaining segment overrides (`DS`, `ES`, `SS`) for full legacy compatibility.

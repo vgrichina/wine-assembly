@@ -20,6 +20,9 @@
             (then
               (global.set $watch_val (call $gl32 (global.get $watch_addr)))
               (br $halt)))))
+      ;; EIP breakpoint
+      (if (i32.eq (global.get $eip) (global.get $bp_addr))
+        (then (br $halt)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -50,6 +53,16 @@
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
   (func (export "get_num_thunks") (result i32) (global.get $num_thunks))
 
+  ;; Flag debugging exports
+  (func (export "get_flag_res") (result i32) (global.get $flag_res))
+  (func (export "get_flag_op") (result i32) (global.get $flag_op))
+  (func (export "get_flag_a") (result i32) (global.get $flag_a))
+  (func (export "get_flag_b") (result i32) (global.get $flag_b))
+  (func (export "get_flag_sign_shift") (result i32) (global.get $flag_sign_shift))
+
+  (func (export "get_main_win_cx") (result i32) (global.get $main_win_cx))
+  (func (export "get_main_win_cy") (result i32) (global.get $main_win_cy))
+
   ;; Register setters for test harness
   (func (export "set_eip") (param i32) (global.set $eip (local.get 0)))
   (func (export "set_esp") (param i32) (global.set $esp (local.get 0)))
@@ -62,6 +75,8 @@
   (func (export "set_edi") (param i32) (global.set $edi (local.get 0)))
 
   ;; Watchpoint exports
+  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
+  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
   (func (export "set_watchpoint") (param $addr i32)
     (global.set $watch_addr (local.get $addr))
     (if (local.get $addr)
