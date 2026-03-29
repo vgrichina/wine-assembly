@@ -1797,5 +1797,488 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2283556481
+  },
+  {
+    "id": 257,
+    "name": "__wgetmainargs",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 769226300
+  },
+  {
+    "id": 258,
+    "name": "__p__wcmdln",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2444970070
+  },
+  {
+    "id": 259,
+    "name": "__p__acmdln",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2564498548
+  },
+  {
+    "id": 260,
+    "name": "__set_app_type",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4065754098
+  },
+  {
+    "id": 261,
+    "name": "__setusermatherr",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2433004579
+  },
+  {
+    "id": 262,
+    "name": "_adjust_fdiv",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2199367379
+  },
+  {
+    "id": 263,
+    "name": "free",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2578706139
+  },
+  {
+    "id": 264,
+    "name": "malloc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1435248461
+  },
+  {
+    "id": 265,
+    "name": "calloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1944191491
+  },
+  {
+    "id": 266,
+    "name": "rand",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2711325910
+  },
+  {
+    "id": 267,
+    "name": "srand",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 465518633
+  },
+  {
+    "id": 268,
+    "name": "_purecall",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2330666216
+  },
+  {
+    "id": 269,
+    "name": "_onexit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1541092487
+  },
+  {
+    "id": 270,
+    "name": "__dllonexit",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 915710144
+  },
+  {
+    "id": 271,
+    "name": "_splitpath",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 536731981
+  },
+  {
+    "id": 272,
+    "name": "_wcsicmp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3299445660
+  },
+  {
+    "id": 273,
+    "name": "_wtoi",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3415650989
+  },
+  {
+    "id": 274,
+    "name": "_itow",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1067838697
+  },
+  {
+    "id": 275,
+    "name": "wcscmp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 681012456
+  },
+  {
+    "id": 276,
+    "name": "wcsncpy",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2227591988
+  },
+  {
+    "id": 277,
+    "name": "wcslen",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2766379835
+  },
+  {
+    "id": 278,
+    "name": "memset",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3414215686
+  },
+  {
+    "id": 279,
+    "name": "memcpy",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2757553252
+  },
+  {
+    "id": 280,
+    "name": "__CxxFrameHandler",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 234850571
+  },
+  {
+    "id": 281,
+    "name": "_global_unwind2",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 802491851
+  },
+  {
+    "id": 282,
+    "name": "_getdcwd",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1316496576
+  },
+  {
+    "id": 283,
+    "name": "GetModuleHandleW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3529752038
+  },
+  {
+    "id": 284,
+    "name": "GetModuleFileNameW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2751190523
+  },
+  {
+    "id": 285,
+    "name": "GetCommandLineW",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1241535699
+  },
+  {
+    "id": 286,
+    "name": "CreateWindowExW",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 762477453
+  },
+  {
+    "id": 287,
+    "name": "RegisterClassW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3777474077
+  },
+  {
+    "id": 288,
+    "name": "RegisterClassExW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4205005358
+  },
+  {
+    "id": 289,
+    "name": "DefWindowProcW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1159123885
+  },
+  {
+    "id": 290,
+    "name": "LoadCursorW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 357587772
+  },
+  {
+    "id": 291,
+    "name": "LoadIconW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 454918633
+  },
+  {
+    "id": 292,
+    "name": "LoadMenuW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4245978763
+  },
+  {
+    "id": 293,
+    "name": "MessageBoxW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 833196014
+  },
+  {
+    "id": 294,
+    "name": "SetWindowTextW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2975759073
+  },
+  {
+    "id": 295,
+    "name": "GetWindowTextW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 881542421
+  },
+  {
+    "id": 296,
+    "name": "SendMessageW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3448870619
+  },
+  {
+    "id": 297,
+    "name": "PostMessageW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4251285475
+  },
+  {
+    "id": 298,
+    "name": "SetErrorMode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3369420852
+  },
+  {
+    "id": 299,
+    "name": "GetCurrentThreadId",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3956145813
+  },
+  {
+    "id": 300,
+    "name": "LoadLibraryW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1102179001
+  },
+  {
+    "id": 301,
+    "name": "GetStartupInfoW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1710019145
+  },
+  {
+    "id": 302,
+    "name": "GetKeyState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3541220595
+  },
+  {
+    "id": 303,
+    "name": "GetParent",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3090324023
+  },
+  {
+    "id": 304,
+    "name": "GetWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 799354119
+  },
+  {
+    "id": 305,
+    "name": "IsWindow",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 611674285
+  },
+  {
+    "id": 306,
+    "name": "GetClassInfoW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1625874786
+  },
+  {
+    "id": 307,
+    "name": "SetWindowLongW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2224632278
+  },
+  {
+    "id": 308,
+    "name": "GetWindowLongW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3818159874
+  },
+  {
+    "id": 309,
+    "name": "InitCommonControlsEx",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2477617401
+  },
+  {
+    "id": 310,
+    "name": "OleInitialize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 319532895
+  },
+  {
+    "id": 311,
+    "name": "CoTaskMemFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1890962689
+  },
+  {
+    "id": 312,
+    "name": "SaveDC",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1264176901
+  },
+  {
+    "id": 313,
+    "name": "RestoreDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2465531204
+  },
+  {
+    "id": 314,
+    "name": "GetTextMetricsW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1182806006
+  },
+  {
+    "id": 315,
+    "name": "CreateFontIndirectW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3789091163
+  },
+  {
+    "id": 316,
+    "name": "SetStretchBltMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1859118405
+  },
+  {
+    "id": 317,
+    "name": "GetPixel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2066195485
+  },
+  {
+    "id": 318,
+    "name": "SetPixel",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3378645025
+  },
+  {
+    "id": 319,
+    "name": "SetROP2",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 961354698
+  },
+  {
+    "id": 320,
+    "name": "lstrlenW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2402205802
+  },
+  {
+    "id": 321,
+    "name": "lstrcpyW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2115643173
+  },
+  {
+    "id": 322,
+    "name": "lstrcmpW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 797631131
+  },
+  {
+    "id": 323,
+    "name": "lstrcmpiW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3552961782
+  },
+  {
+    "id": 324,
+    "name": "CharNextW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3926412725
+  },
+  {
+    "id": 325,
+    "name": "wsprintfW",
+    "nargs": -1,
+    "convention": "stdcall",
+    "hash": 2394133621
   }
 ]

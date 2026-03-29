@@ -36,6 +36,75 @@
 
     ;; === O(1) br_table dispatch ===
     (block $fallback
+    (block $api_325
+    (block $api_324
+    (block $api_323
+    (block $api_322
+    (block $api_321
+    (block $api_320
+    (block $api_319
+    (block $api_318
+    (block $api_317
+    (block $api_316
+    (block $api_315
+    (block $api_314
+    (block $api_313
+    (block $api_312
+    (block $api_311
+    (block $api_310
+    (block $api_309
+    (block $api_308
+    (block $api_307
+    (block $api_306
+    (block $api_305
+    (block $api_304
+    (block $api_303
+    (block $api_302
+    (block $api_301
+    (block $api_300
+    (block $api_299
+    (block $api_298
+    (block $api_297
+    (block $api_296
+    (block $api_295
+    (block $api_294
+    (block $api_293
+    (block $api_292
+    (block $api_291
+    (block $api_290
+    (block $api_289
+    (block $api_288
+    (block $api_287
+    (block $api_286
+    (block $api_285
+    (block $api_284
+    (block $api_283
+    (block $api_282
+    (block $api_281
+    (block $api_280
+    (block $api_279
+    (block $api_278
+    (block $api_277
+    (block $api_276
+    (block $api_275
+    (block $api_274
+    (block $api_273
+    (block $api_272
+    (block $api_271
+    (block $api_270
+    (block $api_269
+    (block $api_268
+    (block $api_267
+    (block $api_266
+    (block $api_265
+    (block $api_264
+    (block $api_263
+    (block $api_262
+    (block $api_261
+    (block $api_260
+    (block $api_259
+    (block $api_258
+    (block $api_257
     (block $api_256
     (block $api_255
     (block $api_254
@@ -293,7 +362,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $fallback (local.get $api_id))
     ) ;; 0: ExitProcess
       (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
       (call $host_exit (local.get $arg0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)
@@ -2086,6 +2155,367 @@
       ;; stub
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    (return)
+    ) ;; 257: __wgetmainargs
+      ;; arg0=&argc, arg1=&argv, arg2=&envp (wide versions)
+      (call $gs32 (local.get $arg0) (i32.const 1))     ;; argc = 1
+      (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
+      (then
+        (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
+        ;; Write L"PAINT\0" at wcmdln_ptr (UTF-16LE)
+        (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0x50))        ;; P
+        (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 2)) (i32.const 0x41))  ;; A
+        (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 4)) (i32.const 0x49))  ;; I
+        (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 6)) (i32.const 0x4E))  ;; N
+        (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 8)) (i32.const 0x54))  ;; T
+        (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 10)) (i32.const 0))    ;; NUL
+        ;; argv array at +16: [ptr_to_string, 0]
+        (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 16)) (global.get $msvcrt_wcmdln_ptr))
+        (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 20)) (i32.const 0))
+        ;; envp at +24: [0]
+        (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 24)) (i32.const 0))))
+      (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 16)))
+      (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 24)))
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 258: __p__wcmdln
+      (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
+      (then
+        (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
+        (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))
+        ;; Store ptr-to-ptr at +32
+        (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)) (global.get $msvcrt_wcmdln_ptr))))
+      (global.set $eax (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 259: __p__acmdln
+      (if (i32.eqz (global.get $msvcrt_acmdln_ptr))
+      (then
+        (global.set $msvcrt_acmdln_ptr (call $heap_alloc (i32.const 32)))
+        (i32.store (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 0x4E494150)) ;; "PAIN"
+        (i32.store8 (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 4)) (i32.const 0x54)) ;; "T"
+        (i32.store8 (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 5)) (i32.const 0))
+        ;; ptr-to-ptr at +8
+        (call $gs32 (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 8)) (global.get $msvcrt_acmdln_ptr))))
+      (global.set $eax (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 8)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 260: __set_app_type
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 261: __setusermatherr
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 262: _adjust_fdiv
+      ;; Return pointer to a 0 dword (no FDIV bug)
+      (if (i32.eqz (global.get $msvcrt_fmode_ptr))
+        (then (global.set $msvcrt_fmode_ptr (call $heap_alloc (i32.const 4)))))
+      (global.set $eax (global.get $msvcrt_fmode_ptr))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 263: free
+      (call $heap_free (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 264: malloc
+      (global.set $eax (call $heap_alloc (local.get $arg0)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 265: calloc
+      (local.set $tmp (i32.mul (local.get $arg0) (local.get $arg1)))
+      (global.set $eax (call $heap_alloc (local.get $tmp)))
+      (call $zero_memory (call $g2w (global.get $eax)) (local.get $tmp))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 266: rand
+      (global.set $rand_seed (i32.add (i32.mul (global.get $rand_seed) (i32.const 1103515245)) (i32.const 12345)))
+      (global.set $eax (i32.and (i32.shr_u (global.get $rand_seed) (i32.const 16)) (i32.const 0x7FFF)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 267: srand
+      (global.set $rand_seed (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 268: _purecall
+      (call $host_exit (i32.const 3))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 269: _onexit
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 270: __dllonexit
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 271: _splitpath — stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
+    (return)
+    ) ;; 272: _wcsicmp
+      (global.set $eax (call $guest_wcsicmp (local.get $arg0) (local.get $arg1)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 273: _wtoi — wide string to int
+      (local.set $i (i32.const 0))
+      (local.set $tmp (i32.const 0))
+      (local.set $v (call $gl16 (local.get $arg0)))
+      ;; Skip whitespace
+      (block $ws_done (loop $ws
+        (br_if $ws_done (i32.ne (local.get $v) (i32.const 0x20)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (local.set $v (call $gl16 (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1)))))
+        (br $ws)))
+      ;; Parse digits
+      (block $done (loop $parse
+        (br_if $done (i32.lt_u (local.get $v) (i32.const 0x30)))
+        (br_if $done (i32.gt_u (local.get $v) (i32.const 0x39)))
+        (local.set $tmp (i32.add (i32.mul (local.get $tmp) (i32.const 10)) (i32.sub (local.get $v) (i32.const 0x30))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (local.set $v (call $gl16 (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1)))))
+        (br $parse)))
+      (global.set $eax (local.get $tmp))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 274: _itow — int to wide string (stub: write "0")
+      (call $gs16 (local.get $arg1) (i32.const 0x30))
+      (call $gs16 (i32.add (local.get $arg1) (i32.const 2)) (i32.const 0))
+      (global.set $eax (local.get $arg1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 275: wcscmp
+      (global.set $eax (call $guest_wcsicmp (local.get $arg0) (local.get $arg1)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 276: wcsncpy
+      (local.set $i (i32.const 0))
+      (block $d (loop $l
+        (br_if $d (i32.ge_u (local.get $i) (local.get $arg2)))
+        (local.set $v (call $gl16 (i32.add (local.get $arg1) (i32.shl (local.get $i) (i32.const 1)))))
+        (call $gs16 (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1))) (local.get $v))
+        (br_if $d (i32.eqz (local.get $v)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 277: wcslen
+      (global.set $eax (call $guest_wcslen (local.get $arg0)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 278: memset
+      (call $zero_memory (call $g2w (local.get $arg0)) (local.get $arg2))
+      ;; TODO: handle non-zero fill byte
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 279: memcpy
+      (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 280: __CxxFrameHandler — C++ exception frame handler (stub, return 1=ExceptionContinueSearch)
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 281: _global_unwind2
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 282: _getdcwd — stub: return empty string
+      (if (local.get $arg1)
+        (then (call $gs8 (local.get $arg1) (i32.const 0))))
+      (global.set $eax (local.get $arg1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 283: GetModuleHandleW — same as A version, return image_base
+      (global.set $eax (global.get $image_base))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 284: GetModuleFileNameW — stub: return 0
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 285: GetCommandLineW
+      ;; Return pointer to wide command line string
+      (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
+      (then
+        (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
+        (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))))
+      (global.set $eax (global.get $msvcrt_wcmdln_ptr))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 286: CreateWindowExW — delegate to existing CreateWindowEx logic
+      ;; For now stub: return 0 (window creation needs more work for W variant)
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
+    (return)
+    ) ;; 287: RegisterClassW — stub, return 1
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 288: RegisterClassExW — stub, return 1
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 289: DefWindowProcW — delegate to existing DefWindowProc
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (return)
+    ) ;; 290: LoadCursorW — return fake handle
+      (global.set $eax (i32.const 0x60001))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 291: LoadIconW — return fake handle
+      (global.set $eax (i32.const 0x70001))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 292: LoadMenuW — return fake handle
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 293: MessageBoxW — stub, return 1 (IDOK)
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (return)
+    ) ;; 294: SetWindowTextW — stub
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 295: GetWindowTextW — stub, return 0
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 296: SendMessageW — stub, return 0
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (return)
+    ) ;; 297: PostMessageW — stub, return 1
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (return)
+    ) ;; 298: SetErrorMode
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 299: GetCurrentThreadId
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+    (return)
+    ) ;; 300: LoadLibraryW — stub, return fake handle
+      (global.set $eax (i32.const 0x7FFE0000))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 301: GetStartupInfoW — zero-fill the struct
+      (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 68))
+      ;; Set cb = 68 (sizeof STARTUPINFOW)
+      (call $gs32 (local.get $arg0) (i32.const 68))
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 302: GetKeyState
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 303: GetParent
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 304: GetWindow
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 305: IsWindow
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 306: GetClassInfoW — stub, return 0
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 307: SetWindowLongW — stub, return 0 (previous value)
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 308: GetWindowLongW — stub, return 0
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 309: InitCommonControlsEx — return 1 (success)
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 310: OleInitialize — return S_OK (0)
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 311: CoTaskMemFree — no-op
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 312: SaveDC
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 313: RestoreDC
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 314: GetTextMetricsW — zero-fill, return 1
+      (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 60))
+      ;; Set tmHeight=16, tmAveCharWidth=8
+      (call $gs32 (local.get $arg1) (i32.const 16))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (i32.const 8))
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 315: CreateFontIndirectW — return fake font handle
+      (global.set $eax (i32.const 0x90001))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 316: SetStretchBltMode
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 317: GetPixel
+      (global.set $eax (i32.const 0)) ;; black
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
+    (return)
+    ) ;; 318: SetPixel
+      (global.set $eax (local.get $arg3)) ;; return color
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (return)
+    ) ;; 319: SetROP2
+      (global.set $eax (i32.const 13)) ;; R2_COPYPEN
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 320: lstrlenW
+      (global.set $eax (call $guest_wcslen (local.get $arg0)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 321: lstrcpyW
+      (call $guest_wcscpy (local.get $arg0) (local.get $arg1))
+      (global.set $eax (local.get $arg0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 322: lstrcmpW
+      (global.set $eax (call $guest_wcsicmp (local.get $arg0) (local.get $arg1)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 323: lstrcmpiW
+      (global.set $eax (call $guest_wcsicmp (local.get $arg0) (local.get $arg1)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+    (return)
+    ) ;; 324: CharNextW — advance by one wide char
+      (global.set $eax (i32.add (local.get $arg0) (i32.const 2)))
+      (if (i32.eqz (call $gl16 (local.get $arg0)))
+        (then (global.set $eax (local.get $arg0))))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (return)
+    ) ;; 325: wsprintfW — wide sprintf stub (return 0)
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
     (return)
     ) ;; fallback
     (call $host_log (local.get $name_ptr) (i32.const 48))

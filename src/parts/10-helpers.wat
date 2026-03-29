@@ -140,6 +140,79 @@
     ;; Null-terminate
     (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0)))
 
+  ;; Wide string helpers (UTF-16LE, 2 bytes per char)
+  (func $guest_wcslen (param $gp i32) (result i32)
+    (local $len i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (call $gl16 (i32.add (local.get $gp) (i32.shl (local.get $len) (i32.const 1))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br_if $d (i32.ge_u (local.get $len) (i32.const 32768))) (br $l)))
+    (local.get $len))
+
+  (func $guest_wcscpy (param $dst i32) (param $src i32)
+    (local $i i32) (local $ch i32)
+    (block $d (loop $l
+      (local.set $ch (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (local.get $ch))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+
+  ;; Convert wide string at guest src to ANSI at guest dst, max bytes. Returns length.
+  (func $wide_to_ansi (param $src i32) (param $dst i32) (param $max i32) (result i32)
+    (local $i i32) (local $ch i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.sub (local.get $max) (i32.const 1))))
+      (local.set $ch (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.and (local.get $ch) (i32.const 0xFF)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (call $gs8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0))
+    (local.get $i))
+
+  ;; Convert ANSI string at guest src to wide string at guest dst, max wchars. Returns length.
+  (func $ansi_to_wide (param $src i32) (param $dst i32) (param $max i32) (result i32)
+    (local $i i32) (local $ch i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.sub (local.get $max) (i32.const 1))))
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (i32.const 0))
+    (local.get $i))
+
+  ;; Wide case-insensitive compare
+  (func $guest_wcsicmp (param $s1 i32) (param $s2 i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $d (loop $l
+      (local.set $a (call $gl16 (i32.add (local.get $s1) (i32.shl (local.get $i) (i32.const 1)))))
+      (local.set $b (call $gl16 (i32.add (local.get $s2) (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x41)) (i32.le_u (local.get $a) (i32.const 0x5A)))
+        (then (local.set $a (i32.add (local.get $a) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x41)) (i32.le_u (local.get $b) (i32.const 0x5A)))
+        (then (local.set $b (i32.add (local.get $b) (i32.const 0x20)))))
+      (if (i32.ne (local.get $a) (local.get $b))
+        (then (return (i32.sub (local.get $a) (local.get $b)))))
+      (br_if $d (i32.eqz (local.get $a)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (i32.const 0))
+
+  ;; DLL name compare: compare guest ANSI string at $name_ptr with WASM string at $cmp_ptr (case-insensitive)
+  (func $dll_name_match (param $name_ptr i32) (param $cmp_ptr i32) (result i32)
+    (local $a i32) (local $b i32) (local $i i32)
+    (block $no (loop $l
+      (local.set $a (call $gl8 (i32.add (local.get $name_ptr) (local.get $i))))
+      (local.set $b (i32.load8_u (i32.add (local.get $cmp_ptr) (local.get $i))))
+      ;; tolower both
+      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x41)) (i32.le_u (local.get $a) (i32.const 0x5A)))
+        (then (local.set $a (i32.add (local.get $a) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x41)) (i32.le_u (local.get $b) (i32.const 0x5A)))
+        (then (local.set $b (i32.add (local.get $b) (i32.const 0x20)))))
+      (br_if $no (i32.ne (local.get $a) (local.get $b)))
+      (if (i32.eqz (local.get $a)) (then (return (i32.const 1)))) ;; both null = match
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (i32.const 0))
+
   (func $guest_stricmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)
     (block $d (loop $l

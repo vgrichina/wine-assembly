@@ -105,7 +105,7 @@
   (global $THREAD_BASE  i32 (i32.const 0x00B52000))
   (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
-  (global $API_HASH_COUNT i32 (i32.const 257))
+  (global $API_HASH_COUNT i32 (i32.const 326))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
@@ -155,8 +155,20 @@
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
   (global $msvcrt_acmdln_ptr  (mut i32) (i32.const 0))
+  (global $msvcrt_wcmdln_ptr (mut i32) (i32.const 0))  ;; wide command line pointer
   ;; Guest-space address of catch-return thunk (set during PE load)
   (global $catch_ret_thunk (mut i32) (i32.const 0))
+  ;; _initterm trampoline state
+  (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table
+  (global $initterm_end (mut i32) (i32.const 0))  ;; end of fn ptr table
+  (global $initterm_ret (mut i32) (i32.const 0))  ;; original caller return address
+  (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
+  ;; DLL loader state
+  (global $dll_count (mut i32) (i32.const 0))
+  (global $DLL_TABLE i32 (i32.const 0x00E63000))  ;; 20 bytes x 16 DLLs = 320 bytes
+  (global $exe_size_of_image (mut i32) (i32.const 0))
+  ;; rand() state
+  (global $rand_seed (mut i32) (i32.const 12345))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
   ;; Current segment prefix during decoding (set before decode_modrm)

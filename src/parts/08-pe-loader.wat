@@ -21,9 +21,10 @@
     (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
 
+    ;; Store SizeOfImage for DLL loader
+    (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
     ;; Set heap to be above the image
-    (global.set $heap_ptr (i32.add (global.get $image_base)
-      (i32.load (i32.add (local.get $pe_off) (i32.const 80))))) ;; SizeOfImage
+    (global.set $heap_ptr (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
 
     (local.set $section_off (i32.add (local.get $pe_off) (i32.add (i32.const 24) (local.get $opt_hdr_size))))
     (local.set $i (i32.const 0))

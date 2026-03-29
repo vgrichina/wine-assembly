@@ -286,6 +286,59 @@ async function main() {
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
 
+  // Load DLLs if specified: --dlls=path1,path2,...
+  const dllArg = getArg('dlls', null);
+  if (dllArg) {
+    const dllPaths = dllArg.split(',');
+    for (const dllPath of dllPaths) {
+      const dllBytes = fs.readFileSync(dllPath.trim());
+      const staging = instance.exports.get_staging();
+      const dllMem = new Uint8Array(instance.exports.memory.buffer, staging, dllBytes.length);
+      dllMem.set(dllBytes);
+      const loadAddr = instance.exports.get_next_dll_addr();
+      const dllMain = instance.exports.load_dll(dllBytes.length, loadAddr);
+      console.log(`DLL loaded: ${dllPath.trim()} at ${hex(loadAddr)}, DllMain=${hex(dllMain)}, thunks=${instance.exports.get_num_thunks()}`);
+    }
+    // After all DLLs loaded, re-patch EXE imports against loaded DLLs
+    // Parse import table from original EXE bytes (PE headers not in guest memory)
+    const imageBase = instance.exports.get_image_base();
+    const g2wF = addr => addr - imageBase + 0x12000;
+    const dv = new DataView(instance.exports.memory.buffer);
+    const exePeOff = exeBytes.readUInt32LE(0x3C);
+    const importRva = exeBytes.readUInt32LE(exePeOff + 128);
+
+    if (importRva) {
+      // Walk import descriptors from guest memory (sections ARE mapped)
+      let descWa = g2wF(imageBase + importRva);
+      while (true) {
+        const iltRva = dv.getUint32(descWa, true);
+        const nameRva = dv.getUint32(descWa + 12, true);
+        if (iltRva === 0 && nameRva === 0) break;
+        // Read DLL name from guest memory (it's in .rdata section which IS mapped)
+        let dllName = '';
+        for (let p = g2wF(imageBase + nameRva); dv.getUint8(p); p++) dllName += String.fromCharCode(dv.getUint8(p));
+        // Check if this DLL is loaded
+        for (let di = 0; di < instance.exports.get_dll_count(); di++) {
+          const tblPtr = 0xE63000 + di * 32;
+          const dllLoadAddr = dv.getUint32(tblPtr, true);
+          const expRva = dv.getUint32(tblPtr + 8, true);
+          if (expRva === 0) continue;
+          const expDirWa = g2wF(dllLoadAddr + expRva);
+          const expNameRva = dv.getUint32(expDirWa + 12, true);
+          let expName = '';
+          for (let p = g2wF(dllLoadAddr + expNameRva); dv.getUint8(p); p++) expName += String.fromCharCode(dv.getUint8(p));
+          if (dllName.toLowerCase() === expName.toLowerCase()) {
+            console.log(`Patching EXE imports for ${dllName} -> DLL #${di} (${expName})`);
+            instance.exports.patch_caller_iat(imageBase, importRva, dllLoadAddr + expNameRva, di);
+            break;
+          }
+        }
+        descWa += 20;
+      }
+    }
+    console.log(`After DLL patching: ${instance.exports.get_num_thunks()} thunks`);
+  }
+
   const regs = () => {
     const e = instance.exports;
     return `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
