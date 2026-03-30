@@ -75,6 +75,10 @@
   (func (export "set_esi") (param i32) (global.set $esi (local.get 0)))
   (func (export "set_edi") (param i32) (global.set $edi (local.get 0)))
 
+  ;; Windows version
+  (func (export "set_winver") (param i32) (global.set $winver (local.get 0)))
+  (func (export "get_winver") (result i32) (global.get $winver))
+
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))

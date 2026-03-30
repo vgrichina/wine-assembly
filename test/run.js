@@ -25,6 +25,7 @@ const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only br
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
+const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 
@@ -274,9 +275,22 @@ async function main() {
     gdi_line_to: (hdc, x, y, hwnd) => 1,
     gdi_arc: (hdc, l, t, r, b, xs, ys, xe, ye, hwnd) => 1,
     gdi_bitblt: (dst, dx, dy, w, h, src, sx, sy, rop, hwnd) => 1,
-    gdi_load_bitmap: (resourceId) => 0,
-    gdi_get_object_w: (h) => 0,
-    gdi_get_object_h: (h) => 0,
+    gdi_load_bitmap: (resourceId) => {
+      if (!resourceJson || !resourceJson.bitmaps) return 0;
+      const bmp = resourceJson.bitmaps[resourceId];
+      if (!bmp) return 0;
+      return 0x80000 | resourceId; // fake handle
+    },
+    gdi_get_object_w: (h) => {
+      const id = h & 0x7FFFF;
+      const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
+      return bmp ? bmp.w : 0;
+    },
+    gdi_get_object_h: (h) => {
+      const id = h & 0x7FFFF;
+      const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
+      return bmp ? bmp.h : 0;
+    },
     math_sin: (x) => Math.sin(x),
     math_cos: (x) => Math.cos(x),
     math_tan: (x) => Math.tan(x),
@@ -288,6 +302,13 @@ async function main() {
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
+
+  // Set emulated Windows version
+  if (WINVER && instance.exports.set_winver) {
+    const versions = { 'win98': 0xC0000A04, 'nt4': 0x05650004, 'win2k': 0x05650005, 'winxp': 0x0A280105 };
+    const v = versions[WINVER.toLowerCase()] || parseInt(WINVER);
+    if (v) { instance.exports.set_winver(v); console.log('Windows version: ' + hex(v)); }
+  }
 
   // Load DLLs if specified: --dlls=path1,path2,...
   const dllArg = getArg('dlls', null);

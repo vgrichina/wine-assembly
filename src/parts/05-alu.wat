@@ -1546,13 +1546,13 @@
     (local.set $v (i32.and
       (i32.and (call $get_reg (i32.shr_u (local.get $op) (i32.const 4))) (i32.const 0xFFFF))
       (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))))
-    (global.set $flag_op (i32.const 6)) (global.set $flag_res (local.get $v))
+    (call $set_flags_logic (local.get $v))
     (global.set $flag_sign_shift (i32.const 15)) (call $next))
   ;; 205: test ax, imm16 — AND AX with immediate word, set flags only
   (func $th_test_ax_i16 (param $op i32)
     (local $v i32)
     (local.set $v (i32.and (i32.and (global.get $eax) (i32.const 0xFFFF)) (call $read_thread_word)))
-    (global.set $flag_op (i32.const 6)) (global.set $flag_res (local.get $v))
+    (call $set_flags_logic (local.get $v))
     (global.set $flag_sign_shift (i32.const 15)) (call $next))
 
   ;; 206: r16 OP= r16 (op=alu_op<<8|dst<<4|src)

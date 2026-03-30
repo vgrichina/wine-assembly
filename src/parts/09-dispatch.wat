@@ -31,9 +31,6 @@
     (local.set $w1 (i32.load (i32.add (local.get $name_ptr) (i32.const 4))))
     (local.set $w2 (i32.load (i32.add (local.get $name_ptr) (i32.const 8))))
 
-    ;; Log API name
-    (call $host_log (local.get $name_ptr) (i32.const 32))
-
     ;; === O(1) br_table dispatch ===
     (block $fallback
     (block $api_698
@@ -2527,9 +2524,9 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (return)
     ) ;; 253: GetVersion
-      ;; Return Windows 98: major=4, minor=10 → 0x0A040000 → low word=version, high=build
-      ;; Format: low byte=major, next byte=minor, high word=build
-      (global.set $eax (i32.const 0xC0000A04)) ;; Win98: 4.10, build 0xC000
+      ;; Format: low byte=major, next byte=minor, high word=build|platform
+      ;; Configurable via set_winver: Win98=0xC0000A04, NT4=0x05650004, Win2K=0x05650005
+      (global.set $eax (global.get $winver))
       (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (return)
     ) ;; 254: GetTextExtentPoint32A
