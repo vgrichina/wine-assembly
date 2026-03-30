@@ -212,6 +212,11 @@
   ;; PE resource directory RVA (set during PE load)
   (global $rsrc_rva (mut i32) (i32.const 0))
 
+  ;; Emulated Windows version for GetVersion/GetVersionEx
+  ;; Default: Win98 = 0xC0000A04 (major=4, minor=10, build=0xC000, platform=Win9x)
+  ;; NT 4.0 = 0x05650004, Win2000 = 0x05650005
+  (global $winver (mut i32) (i32.const 0xC0000A04))
+
   ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
   (global $bp_addr (mut i32) (i32.const 0))
 

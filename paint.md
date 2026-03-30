@@ -1,5 +1,13 @@
 # MSPaint.exe Debug Analysis
 
+## Binary Sources
+
+| Version | Source | File |
+|---------|--------|------|
+| Win95 OSR2 (MFC30) | [archive.org/details/MSPaintWin95](https://archive.org/details/MSPaintWin95) | 312KB, base 0x400000, imports MFC30.DLL + msvcrt20.dll |
+| Win98/2000 (MFC42 ANSI) | [archive.org/details/mspaint_202309](https://archive.org/details/mspaint_202309) | 344KB, base 0x1000000, imports MFC42.DLL + msvcrt.dll |
+| WinXP (MFC42u Unicode) | original `test/binaries/entertainment-pack/mspaint.exe` (moved to `nt/`) | 447KB, base 0x1000000, imports MFC42u.DLL + msvcrt.dll |
+
 ## Current Status (2026-03-29)
 
 ### Past lstrcpynW — MFC accelerator table loading
