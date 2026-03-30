@@ -184,10 +184,12 @@ async function main() {
       // Inject button sequence if --buttons provided, else WM_CLOSE
       if (!inputEvent && !inputQueue) {
         const btnArg = args.find(a => a.startsWith('--buttons='));
+        const noClose = args.includes('--no-close');
         if (btnArg) {
           inputQueue = btnArg.split('=')[1].split(',').map(Number);
           logs.push(`[test] Button queue: ${inputQueue}`);
-        } else {
+        } else if (!noClose) {
+          // Delay WM_CLOSE to let game run through first few frames
           inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
           logs.push('[test] Injecting WM_CLOSE');
         }

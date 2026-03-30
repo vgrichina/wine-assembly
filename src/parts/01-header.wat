@@ -83,36 +83,36 @@
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
   ;; 0x00002000  ...     (unused — staging moved below)
-  ;; 0x00012000  8MB     Guest address space (PE sections)
-  ;; 0x00812000  1MB     Guest stack (ESP starts at top)
-  ;; 0x00912000  2MB     Guest heap
-  ;; 0x00B12000  256KB   IAT thunk zone
-  ;; 0x00B52000  1MB     Thread cache
-  ;; 0x00C52000  64KB    Block cache index (4096 slots × 16 bytes)
-  ;; 0x00C62000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x00E62000  2KB     API dispatch hash table (227 × 8 bytes)
-  ;; 0x00E62800  ...     Free
+  ;; 0x00012000  14MB    Guest address space (PE sections + DLLs)
+  ;; 0x00E12000  1MB     Guest stack (ESP starts at top)
+  ;; 0x00F12000  1MB     Guest heap
+  ;; 0x01012000  256KB   IAT thunk zone
+  ;; 0x01052000  1MB     Thread cache
+  ;; 0x01152000  64KB    Block cache index (4096 slots × 16 bytes)
+  ;; 0x01162000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x01362000  8KB     API dispatch hash table
+  ;; 0x01364000  ...     Free
 
   ;; Memory region bases
-  (global $PE_STAGING   i32 (i32.const 0x00C62000))
+  (global $PE_STAGING   i32 (i32.const 0x01162000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
-  (global $GUEST_STACK  i32 (i32.const 0x00912000))
-  (global $THUNK_BASE   i32 (i32.const 0x00B12000))
-  (global $THUNK_END    i32 (i32.const 0x00B52000))
+  (global $GUEST_STACK  i32 (i32.const 0x00E12000))
+  (global $THUNK_BASE   i32 (i32.const 0x01012000))
+  (global $THUNK_END    i32 (i32.const 0x01052000))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  i32 (i32.const 0x00B52000))
-  (global $CACHE_INDEX  i32 (i32.const 0x00C52000))
-  (global $API_HASH_TABLE i32 (i32.const 0x00E62000))
-  (global $API_HASH_COUNT i32 (i32.const 348))
+  (global $THREAD_BASE  i32 (i32.const 0x01052000))
+  (global $CACHE_INDEX  i32 (i32.const 0x01152000))
+  (global $API_HASH_TABLE i32 (i32.const 0x01362000))
+  (global $API_HASH_COUNT i32 (i32.const 699))
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
   (global $code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x00B52000))
+  (global $thread_alloc (mut i32) (i32.const 0x01052000))
 
   ;; ============================================================
   ;; CPU STATE
@@ -148,7 +148,7 @@
   (global $num_thunks   (mut i32) (i32.const 0))
 
   ;; Heap
-  (global $heap_ptr (mut i32) (i32.const 0x00912000))
+  (global $heap_ptr (mut i32) (i32.const 0x00F12000))
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
   ;; MSVCRT static data pointers (allocated on first use from heap)
@@ -165,7 +165,7 @@
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x00E63000))  ;; 20 bytes x 16 DLLs = 320 bytes
+  (global $DLL_TABLE i32 (i32.const 0x01363000))  ;; 32 bytes x 16 DLLs = 512 bytes
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))

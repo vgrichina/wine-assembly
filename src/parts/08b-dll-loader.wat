@@ -1,7 +1,7 @@
   ;; ============================================================
   ;; DLL LOADER — Load PE DLLs into guest address space
   ;; ============================================================
-  ;; DLL_TABLE layout at 0xE63000: 32 bytes per DLL, max 16 DLLs = 512 bytes
+  ;; DLL_TABLE layout at 0x1363000: 32 bytes per DLL, max 16 DLLs = 512 bytes
   ;; +0:  load_addr (guest)
   ;; +4:  size_of_image
   ;; +8:  export_dir_rva
@@ -91,6 +91,15 @@
       (then (call $process_dll_imports (local.get $load_addr) (local.get $import_rva))))
 
     (global.set $dll_count (i32.add (global.get $dll_count) (i32.const 1)))
+
+    ;; Advance heap_ptr past loaded DLL so heap doesn't overlap DLL memory
+    (local.set $dst (i32.and
+      (i32.add (i32.add (local.get $load_addr)
+        (i32.load (i32.add (local.get $pe_off) (i32.const 80)))) ;; SizeOfImage
+        (i32.const 0xFFF))
+      (i32.const 0xFFFFF000)))
+    (if (i32.gt_u (local.get $dst) (global.get $heap_ptr))
+      (then (global.set $heap_ptr (local.get $dst))))
 
     ;; Return DllMain entry point
     (if (result i32) (i32.ne (local.get $entry_rva) (i32.const 0))

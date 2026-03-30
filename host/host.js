@@ -93,6 +93,8 @@ class WineAssembly {
           const caption = self.readString(captionPtr);
           console.log(`[MessageBox] "${caption}": "${text}"`);
           self.logToUI(`[MessageBox] ${caption}: ${text}`);
+          // Suppress assertion dialogs to avoid blocking execution
+          if (caption.includes('Assertion')) return 1;
           alert(`${caption}\n\n${text}`);
           return 1;
         },
