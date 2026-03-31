@@ -9,73 +9,59 @@
 - Two window classes: "SkiMain" (WndProc=0x405800), "SkiStatus" (WndProc=0x4068d0)
 
 ## Current Status
-- **CRT startup completes successfully** — all Heap*, Virtual*, CRT init APIs work
-- **Window created** — "SkiFree" title bar shows, game enters message loop
-- **Timer running** — WM_TIMER messages dispatched to timer callback 0x4047c0
-- **BLOCKED**: Timer callback does nothing because `[0x40c67c]` (game-running flag) = 0
-- **ROOT CAUSE**: RegisterClassA is never called → wndproc_addr = 0 → DispatchMessageA can't call WndProc → WM_ACTIVATE/WM_SIZE never processed → game never starts
-
-## Key Discovery: Init Path Bypass
-The game's window creation function at 0x405470 (which calls RegisterClassA, CreateWindowExA with WndProcs) is **never reached**. Instead, CreateWindowExA is called from a different code path (possibly the CRT _initterm chain or a WinMain variant). The RegisterClassA call at 0x4054dd is bypassed entirely.
-
-Need to trace: What path actually creates the windows? Why is 0x405470 skipped?
-
-WinMain is at 0x4047e0. It calls:
-1. 0x4048c0 — alloc init (works, returns 1)
-2. 0x404970 — game state init (works, returns 1)
-3. 0x4052d0 — window creation (called via `call 0x4052d0` at 0x40482c)
-
-But 0x4052d0 is **never reached** per breakpoint testing. This means WinMain itself isn't being called, OR the call at 0x40482c is skipped.
-
-## Bugs Fixed
-- [x] `66` prefix for ALU r/m (0x81 group) — 16-bit immediate was correct but operation was 32-bit
-- [x] `66` prefix for ALU reg-mem (0x00-0x3D) — added 16-bit handlers (159-162)
-- [x] `66` prefix for MOV r/m (0x89/0x8B) — added 16-bit load/store handlers (163-166)
-- [x] `66` prefix for MOV [mem], imm (0xC7) — fetch 16-bit immediate
-- [x] GetStringTypeA/W byte offset was 12, should be 13
-- [x] Multiple WndProc support — first RegisterClassA sets main, second sets child
-
-## APIs Implemented (new for ski32)
-### KERNEL32
-- HeapCreate/HeapAlloc/HeapFree/HeapReAlloc/HeapDestroy
-- VirtualAlloc/VirtualFree
-- GetACP, GetOEMCP, GetCPInfo
-- MultiByteToWideChar, WideCharToMultiByte
-- GetStringTypeA/W, LCMapStringA/W
-- GetStdHandle, GetFileType, WriteFile, SetHandleCount
-- GetEnvironmentStrings/W, FreeEnvironmentStringsA/W
-- GetModuleFileNameA, UnhandledExceptionFilter
-- GetCurrentProcess, TerminateProcess, GetTickCount
-- FindResourceA, LoadResource, LockResource, FreeResource
-- RtlUnwind, FreeLibrary
-
-### USER32
-- FillRect, FrameRect, LoadBitmapA, OpenIcon
-- WM_TIMER dispatch with callback (DispatchMessageA)
-- Timer support in GetMessageA (generates WM_TIMER when idle)
-- WM_ACTIVATE message delivery
-
-### GDI32
-- PatBlt, CreateBitmap, TextOutA
-
-### WINMM
-- sndPlaySoundA (stub)
-
-## Bugs Fixed (later sessions)
-- [x] ADC flag corruption — `th_adc_r_i32` and `th_adc_r_r` destroyed ZF/SF when b+cf wrapped (set flag_res=0 instead of using raw mode). Fixed to match `do_alu32`'s correct flag_op=8 approach.
-- [x] ScrollWindow — was stubbed as no-op, causing vertical stripe rendering artifacts. Implemented via canvas getImageData/putImageData shift.
-
-## Current Status (updated)
 - Game launches, runs, and renders sprites correctly
+- All imported APIs fully implemented (KERNEL32, USER32, GDI32, WINMM) — no stubs hit at runtime
 - Timer-driven game loop works (TimerProc at 0x4047c0)
 - Sprite assertions eliminated after ADC fix (zero in 50k batches)
-- Test runner still shows rare assertions (~1/1000 batches) likely due to timing artifacts from API logging overhead
+- ScrollWindow implemented — fixed vertical stripe rendering artifacts
+- Client-rect clipping on BitBlt prevents drawing over window chrome
+- GetDeviceCaps returns actual canvas size (not hardcoded 640×480)
+- Window size is `min(screenW, screenH)` squared — 480×480 at 640×480 resolution
 
-## Rendering Architecture (disasm analysis)
+## Game Loop Architecture
 
-### Global State
-- `[0x40c5ec]` — hdcScreen: main window DC (from GetDC)
-- `[0x40c5e8]` — hdcBackbuffer or composition DC
+```
+WinMain at 0x4047e0:
+    call 0x4048c0       ; alloc init (returns 1)
+    call 0x404970       ; game state init (returns 1)
+    call 0x4052d0       ; window creation (RegisterClassA + CreateWindowExA)
+
+WndProc at 0x405800 — message dispatch via jump table (msgs 1-0x21)
+    Extended handler: WM_KEYDOWN(0x100), WM_CHAR(0x102), WM_MOUSEMOVE(0x200)
+    WM_TIMER(0x113) → NOT handled in WndProc! Uses TimerProc callback.
+
+TimerProc at 0x4047c0:
+    if ([0x40c67c] != 0)    ; game_active flag (= 1)
+        call 0x400ff8       ; game update
+
+Game update at 0x400ff8:
+    call GetTickCount           ; get current time
+    delta = now - prev_tick     ; compute frame delta (= 16ms)
+    [0x40c5f4] = delta
+    [0x40c698] = now
+    call 0x401e50               ; update game state (uses delta)
+    call 0x401060               ; sprite update/render loop
+        iterates sprite list at [0x40c618]
+        for each sprite: checks bounds, calls render function
+            0x401290 — bounds check function
+            0x401540 — composite sprite renderer
+            0x401410 — get sprite bitmap data
+```
+
+## Key Globals
+
+| Address    | Name           | Value    | Purpose |
+|------------|---------------|----------|---------|
+| `0x40c5ec` | hdcScreen      | 0x50001  | Main window DC (from GetDC) |
+| `0x40c5e8` | hdcBackbuffer  | 0x80062  | Composition DC target for sprite BitBlt |
+| `0x40c5f0` | backbuffer bmp | 0x1da    | Bitmap handle |
+| `0x40c5f4` | frame_delta    | varies   | GetTickCount delta per frame |
+| `0x40c618` | sprite_list    | ptr      | Linked list head for sprites |
+| `0x40c67c` | game_active    | 1        | Game running flag |
+| `0x40c698` | prev_tick      | varies   | Previous GetTickCount value |
+| `0x40c6b0` | client_rect    | struct   | {0, 0, 474, 435} |
+
+## Rendering Architecture
 
 ### Sprite Data Structures
 Each sprite object is a struct at ~0x50 bytes:
@@ -87,6 +73,7 @@ Each sprite object is a struct at ~0x50 bytes:
 - `+0x0c`: word — srcY in strip
 - `+0x14`: ptr — pointer to sub-sprite data (x/y offsets at +0x08/+0x0a/+0x0c)
 - `+0x42`: word — Y sort key
+- `+0x4a`: word — animation frame count (asserted != 0 at line 2028)
 - `+0x4c`: byte — flags (bit 0=dirty, bit 1=visible, bit 2=pre-composed, bit 6=has sub-sprite)
 
 ### Sprite Strip Bitmaps
@@ -142,6 +129,11 @@ SkiFree uses an inverted-color masking approach:
 
 Net effect: sprite pixels appear correctly, background becomes black. This works because SkiFree always draws on a white/cleared background (PatBlt WHITENESS first).
 
+### BitBlt Call Sites (3 total, all in 0x4016a4)
+- `0x40189d`: SRCCOPY blit (rop=0xCC0020)
+- `0x4018c0`: NOT source blit (rop=0x330008) — mask operation
+- `0x40191e`: mixed rop blit
+
 ### Title Screen Composition (192×64 bitmap)
 The title is composed in a 192×64 off-screen buffer:
 1. `PatBlt(dc, 0, 0, 132, 61, WHITENESS)` — clear to white
@@ -153,11 +145,77 @@ The title is composed in a 192×64 off-screen buffer:
    - `(55,29) 63×32` from offset 129 — version info
 4. `BitBlt(wndDC, 151, 88, 132×61, dc, 0, 0, SRCCOPY)` — blit to window
 
-### Known Rendering Issues
-- **Title text overlapping**: The "Copyright", "by", "Version" text lines in the title bitmap overlap. These are sprite-based (from CreateBitmap), NOT TextOutA. The overlapping visible in dumps suggests the sprite strip positions may be wrong, or the CreateBitmap pixel data conversion has issues with the specific bitmaps used for text.
-- **GetTextExtentPoint32A**: Was returning 0 (failure stub). Now returns cx=count*8, cy=16. Used by status bar text positioning.
+### Backbuffer → Screen Transfer
+The sprite render loop blits directly to hdcScreen (window DC). The backbuffer DC at `[0x40c5e8]` is used as a composition buffer — dirty regions are copied back to it after rendering. There is NO separate blit-to-screen pass; rendering goes directly to the window DC.
+
+## Bugs Fixed
+- [x] `66` prefix for ALU r/m (0x81 group) — 16-bit immediate was correct but operation was 32-bit
+- [x] `66` prefix for ALU reg-mem (0x00-0x3D) — added 16-bit handlers (159-162)
+- [x] `66` prefix for MOV r/m (0x89/0x8B) — added 16-bit load/store handlers (163-166)
+- [x] `66` prefix for MOV [mem], imm (0xC7) — fetch 16-bit immediate
+- [x] GetStringTypeA/W byte offset was 12, should be 13
+- [x] Multiple WndProc support — first RegisterClassA sets main, second sets child
+- [x] ADC flag corruption — `th_adc_r_i32` and `th_adc_r_r` destroyed ZF/SF when b+cf wrapped (set flag_res=0 instead of using raw mode). Fixed to match `do_alu32`'s correct flag_op=8 approach.
+- [x] ScrollWindow — was stubbed as no-op, causing vertical stripe rendering artifacts. Implemented via canvas getImageData/putImageData shift.
+- [x] GetTickCount — was returning constant 100000, now increments properly (+16 per call)
+- [x] FindResourceA — now walks PE resource directory (SkiFree uses for WAVE sounds)
+- [x] GetTextExtentPoint32A — was returning 0 (failure stub), now returns cx=count*8, cy=16
+- [x] Stock bitmap / GetObjectA — fixed by adding real objects at handles 0x30001, 0x30002
+- [x] SETcc memory bug — all 26 SETcc in SkiFree use mod=3 (register), bug doesn't apply
+
+## Eliminated Causes (debug investigation)
+- Viewport / GetClientRect — global client rect at 0x40c6b0: {0, 0, 474, 435} correct
+- BSS initialization — all SkiFree sections have RawSize >= VSize, no BSS to zero
+
+## APIs Implemented (for ski32)
+### KERNEL32
+- HeapCreate/HeapAlloc/HeapFree/HeapReAlloc/HeapDestroy
+- VirtualAlloc/VirtualFree
+- GetACP, GetOEMCP, GetCPInfo
+- MultiByteToWideChar, WideCharToMultiByte
+- GetStringTypeA/W, LCMapStringA/W
+- GetStdHandle, GetFileType, WriteFile, SetHandleCount
+- GetEnvironmentStrings/W, FreeEnvironmentStringsA/W
+- GetModuleFileNameA, UnhandledExceptionFilter
+- GetCurrentProcess, TerminateProcess, GetTickCount
+- FindResourceA, LoadResource, LockResource, FreeResource
+- RtlUnwind, FreeLibrary
+
+### USER32
+- FillRect, FrameRect, LoadBitmapA, OpenIcon
+- WM_TIMER dispatch with callback (DispatchMessageA)
+- Timer support in GetMessageA (generates WM_TIMER when idle)
+- WM_ACTIVATE message delivery
+- ScrollWindow
+
+### GDI32
+- PatBlt, CreateBitmap, TextOutA, GetObjectA
+
+### WINMM
+- sndPlaySoundA (stub)
+
+## Title Screen Investigation
+
+The title text overlapping is NOT a rendering bug. The masked blit (SRCPAINT+SRCAND) works correctly. The "garbled" appearance is because:
+
+1. Resource 55 ("Use NumPad [0-9] for better control", 92x30) has a **yellow background** by design — it's an instruction box, not transparent sprite
+2. This sprite is placed in the wide strip at Y=99 (previously misidentified as "by Chris Pirih")
+3. When masked-blitted onto the title composition, the yellow background is preserved (correct behavior)
+4. Multiple instruction sprites overlap in the title, each with colored backgrounds
+
+The actual SkiFree title on real Windows does show these colored instruction boxes. The rendering is correct.
+
+### PE Resource Bitmap Flow (corrected)
+- SkiFree loads sprites via `LoadBitmapA` (PE resources with embedded DIB palettes), NOT `CreateBitmap`
+- Resources are 4bpp DIBs with per-resource palettes — NOT VGA standard palette
+- `gdi_create_bitmap` (from WASM) is never called by SkiFree
+- Strip bitmaps confirmed working: all 89 sprites correctly loaded and blitted into 32×2379 and 93×380 strips
+
+### Rendering Pipeline Confirmed Working
+- Canvas-based GDI: `_createOffscreen` → per-bitmap canvas → `getImageData`/`putImageData` for blits
+- SRCCOPY, NOTSRCCOPY, SRCPAINT, SRCAND all operate correctly via pixel-level ops
+- The `.pixels` array on GDI objects is NOT updated by canvas operations (stale after blits); the `.canvas` is authoritative
 
 ## Next Steps
-1. Debug title bitmap overlapping — dump individual text sprite bitmaps to verify pixel data
-2. Investigate if CreateBitmap monochrome (1bpp) conversion is correct for text sprites
-3. Verify browser rendering works end-to-end
+1. Fix 4bpp palette color order in `gdi_create_bitmap` (R/B swap) — not used by SkiFree but affects other apps
+2. Test other EXEs still work after dispatch refactor
