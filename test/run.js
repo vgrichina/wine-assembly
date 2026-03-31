@@ -1,4 +1,6 @@
 const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls } = require('../lib/dll-loader');
@@ -8,16 +10,36 @@ try {
   Win98Renderer = require('../lib/renderer').Win98Renderer;
 } catch (_) {}
 
-// Parse args
+// Auto-build: rebuild wasm if any .wat source is newer
+const ROOT = path.join(__dirname, '..');
+const WASM_PATH = path.join(ROOT, 'build', 'wine-assembly.wasm');
+function autoBuild() {
+  const glob = require('path');
+  const srcDir = path.join(ROOT, 'src', 'parts');
+  let wasmTime = 0;
+  try { wasmTime = fs.statSync(WASM_PATH).mtimeMs; } catch (_) {}
+  const watFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.wat'));
+  const needsBuild = watFiles.some(f => fs.statSync(path.join(srcDir, f)).mtimeMs > wasmTime);
+  if (needsBuild) {
+    console.log('Building...');
+    execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
+    console.log('---');
+  }
+}
+// Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
 const hasFlag = name => args.includes(`--${name}`);
 
+const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
+const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
+const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
+const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
@@ -29,6 +51,8 @@ const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
+
+if (!NO_BUILD) autoBuild();
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
@@ -63,11 +87,15 @@ async function main() {
   // String APIs where we want to log content
   const STRING_APIS = ['lstrlenA', 'lstrcpyA', 'lstrcpynA', 'LoadStringA', 'GetWindowTextA', 'SetWindowTextA', 'SetDlgItemTextA'];
 
+  const traceCategories = new Set();
+  if (TRACE_GDI) traceCategories.add('gdi');
+
   const base = createHostImports({
     getMemory: () => instance.exports.memory.buffer,
     renderer,
     resourceJson,
     onExit: (code) => { stopped = true; },
+    trace: traceCategories,
   });
   const { readStr } = base;
   const h = base.host;
@@ -182,11 +210,10 @@ async function main() {
     // Inject button sequence if --buttons provided, else WM_CLOSE
     if (!inputEvent && !inputQueue) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
-      const noClose = args.includes('--no-close');
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
         logs.push(`[test] Button queue: ${inputQueue}`);
-      } else if (!noClose) {
+      } else if (!NO_CLOSE) {
         inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
         logs.push('[test] Injecting WM_CLOSE');
       }
@@ -257,6 +284,7 @@ async function main() {
     // DllMain may call exit() during CRT init — don't let it stop the main loop
     stopped = false;
   }
+
 
   const regs = () => {
     const e = instance.exports;
@@ -546,6 +574,9 @@ async function main() {
       await debugPrompt('API Break');
     }
 
+    // Simulate browser rAF: repaint between batches (matches browser timing)
+    if (renderer) renderer.repaint();
+
     // Flush logs
     while (logs.length) console.log(logs.shift());
 
@@ -591,6 +622,35 @@ async function main() {
     const pngBuf = renderer.canvas.toBuffer('image/png');
     fs.writeFileSync(PNG_OUT, pngBuf);
     console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
+  }
+
+  // Dump all GDI bitmaps as PNGs
+  if (DUMP_GDI && createCanvas) {
+    fs.mkdirSync(DUMP_GDI, { recursive: true });
+    const gdiObjects = base.gdi._gdiObjects;
+    let count = 0;
+    for (const [handle, obj] of Object.entries(gdiObjects)) {
+      if (!obj || obj.type !== 'bitmap' || !obj.w || !obj.h) continue;
+      let c;
+      if (obj.canvas) {
+        // Read from canvas (authoritative after BitBlt operations)
+        c = createCanvas(obj.w, obj.h);
+        const dstCtx = c.getContext('2d');
+        const srcCtx = obj.canvas.getContext('2d');
+        const imgData = srcCtx.getImageData(0, 0, obj.w, obj.h);
+        dstCtx.putImageData(imgData, 0, 0);
+      } else if (obj.pixels) {
+        c = createCanvas(obj.w, obj.h);
+        const dstCtx = c.getContext('2d');
+        const img = dstCtx.createImageData(obj.w, obj.h);
+        img.data.set(obj.pixels);
+        dstCtx.putImageData(img, 0, 0);
+      } else continue;
+      const outFile = path.join(DUMP_GDI, `gdi_${handle}_${obj.w}x${obj.h}.png`);
+      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      count++;
+    }
+    console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
   }
 }
 
