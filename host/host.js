@@ -56,8 +56,8 @@ class WineAssembly {
     const self = this;
     const base = createHostImports({
       getMemory: () => self.memory.buffer,
-      renderer: self.renderer,
-      resourceJson: self.resourceJson,
+      get renderer() { return self.renderer; },
+      get resourceJson() { return self.resourceJson; },
       onExit: (code) => {
         self.running = false;
         if (self.renderer) {

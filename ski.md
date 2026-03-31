@@ -61,8 +61,17 @@ But 0x4052d0 is **never reached** per breakpoint testing. This means WinMain its
 ### WINMM
 - sndPlaySoundA (stub)
 
+## Bugs Fixed (later sessions)
+- [x] ADC flag corruption — `th_adc_r_i32` and `th_adc_r_r` destroyed ZF/SF when b+cf wrapped (set flag_res=0 instead of using raw mode). Fixed to match `do_alu32`'s correct flag_op=8 approach.
+- [x] ScrollWindow — was stubbed as no-op, causing vertical stripe rendering artifacts. Implemented via canvas getImageData/putImageData shift.
+
+## Current Status (updated)
+- Game launches, runs, and renders sprites correctly
+- Timer-driven game loop works (TimerProc at 0x4047c0)
+- Sprite assertions eliminated after ADC fix (zero in 50k batches)
+- Test runner still shows rare assertions (~1/1000 batches) likely due to timing artifacts from API logging overhead
+
 ## Next Steps
-1. **Find why 0x4052d0/0x405470 is never called** — trace CRT _initterm → WinMain entry
-2. **OR: set wndproc directly** from CreateWindowExA by reading the class name and finding the registered wndproc
-3. Once WndProc works: WM_ACTIVATE → game starts → timer callback does work → rendering begins
-4. Implement proper resource loading (bitmaps) for sprite rendering
+1. Investigate remaining rare assertions in test runner (timing-related?)
+2. Implement missing GDI functions for full rendering fidelity
+3. Verify browser rendering works end-to-end with ScrollWindow fix
