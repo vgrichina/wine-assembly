@@ -1302,10 +1302,20 @@
       (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $main_hwnd)) ;; lParam (non-zero)
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-      ;; Phase 1: send WM_PAINT
+      ;; Phase 1: send WM_ERASEBKGND (wParam = hdc)
       (if (i32.eq (global.get $msg_phase) (i32.const 1))
       (then
       (global.set $msg_phase (i32.const 2))
+      (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0x50001)) ;; wParam = hdc
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      ;; Phase 2: send WM_PAINT
+      (if (i32.eq (global.get $msg_phase) (i32.const 2))
+      (then
+      (global.set $msg_phase (i32.const 3))
       (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
       (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
       (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
@@ -1433,6 +1443,11 @@
       ;; DestroyWindow sends WM_DESTROY to WndProc
       ;; For now, just set quit_flag directly since WM_DESTROY→PostQuitMessage
       (global.set $quit_flag (i32.const 1))))
+      ;; WM_ERASEBKGND (0x14): fill client area with background brush
+      (if (i32.eq (local.get $arg1) (i32.const 0x0014))
+      (then
+      (global.set $eax (call $host_erase_background (local.get $arg0) (global.get $wndclass_bg_brush)))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
     (return)
@@ -1792,7 +1807,8 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
-    ) ;; 120: MoveWindow
+    ) ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
+      (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
     (return)
@@ -2447,27 +2463,29 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (return)
     ) ;; 241: RegisterClassExA
-      (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 13))) (i32.const 0x45)) ;; 'E' = ExA
-      (then ;; WNDCLASSEX: lpfnWndProc at +8
-      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))))
-      (else ;; WNDCLASSA: lpfnWndProc at +4
-      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))))
+      ;; WNDCLASSEX: cbSize(+0) style(+4) lpfnWndProc(+8) ... hbrBackground(+32)
+      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; lpfnWndProc
       ;; Store first wndproc as main, subsequent as child
       (if (i32.eqz (global.get $wndproc_addr))
-      (then (global.set $wndproc_addr (local.get $tmp)))
+      (then
+        (global.set $wndproc_addr (local.get $tmp))
+        (global.set $wndclass_style (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+        (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 32)))))
       (else (global.set $wndproc_addr2 (local.get $tmp))))
       (global.set $eax (i32.const 0xC001))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
     ) ;; 242: RegisterClassA
-      (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 13))) (i32.const 0x45)) ;; 'E' = ExA
-      (then ;; WNDCLASSEX: lpfnWndProc at +8
-      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))))
-      (else ;; WNDCLASSA: lpfnWndProc at +4
-      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))))
+      ;; WNDCLASSA: style(+0) lpfnWndProc(+4) cbClsExtra(+8) cbWndExtra(+12)
+      ;;   hInstance(+16) hIcon(+20) hCursor(+24) hbrBackground(+28)
+      ;;   lpszMenuName(+32) lpszClassName(+36)
+      (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
       ;; Store first wndproc as main, subsequent as child
       (if (i32.eqz (global.get $wndproc_addr))
-      (then (global.set $wndproc_addr (local.get $tmp)))
+      (then
+        (global.set $wndproc_addr (local.get $tmp))
+        (global.set $wndclass_style (call $gl32 (local.get $arg0)))
+        (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 28)))))
       (else (global.set $wndproc_addr2 (local.get $tmp))))
       (global.set $eax (i32.const 0xC001))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)

@@ -24,6 +24,10 @@
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
   ;; invalidate(hwnd)
+  (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
+  ;; erase_background(hwnd, hbrBackground) → 1
+  (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32)))
+  ;; move_window(hwnd, x, y, w, h)
   (import "host" "draw_text" (func $host_draw_text (param i32 i32 i32 i32 i32)))
   ;; draw_text(x, y, text_ptr, text_len, color)
   (import "host" "check_input" (func $host_check_input (result i32)))
@@ -186,6 +190,8 @@
   ;; Window system state
   (global $wndproc_addr (mut i32) (i32.const 0))    ;; WndProc for main window (guest VA)
   (global $wndproc_addr2 (mut i32) (i32.const 0))   ;; WndProc for child/status window
+  (global $wndclass_bg_brush (mut i32) (i32.const 0)) ;; hbrBackground from first RegisterClass
+  (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
