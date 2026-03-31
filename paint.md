@@ -8,15 +8,13 @@
 | Win98/2000 (MFC42 ANSI) | [archive.org/details/mspaint_202309](https://archive.org/details/mspaint_202309) | 344KB, base 0x1000000, imports MFC42.DLL + msvcrt.dll |
 | WinXP (MFC42u Unicode) | original `test/binaries/entertainment-pack/mspaint.exe` (moved to `nt/`) | 447KB, base 0x1000000, imports MFC42u.DLL + msvcrt.dll |
 
-## Current Status (2026-03-29)
+## Current Status (2026-03-31)
 
-### Past lstrcpynW — MFC accelerator table loading
+### DllMain working, MFC init proceeding
 
-CRT init completes, WinMain is called. MFC42u AfxWinMain begins executing.
-lstrcpynW off-by-one fixed (API_HASH_COUNT was 347, should be 348).
-Now ~500+ API calls. Stuck in MFC accelerator table loading — FindResourceW
-loops and unhandled API calls cause stack corruption via fallback handler
-(fallback only does ESP+=4 regardless of actual arg count).
+Both msvcrt.dll and mfc42u.dll DllMains now complete successfully.
+EXE entry runs, CRT init succeeds, WinMain entered, MFC init proceeds.
+50k+ batches stable, 44+ API calls, no crashes.
 
 ```
 MSPaint Execution Progress
@@ -53,32 +51,22 @@ MSPaint Execution Progress
   corrupting stack for stdcall functions with more args.
 ```
 
-### Bugs fixed this session
+### Bugs fixed
 
-1. **API_HASH_COUNT off-by-one**: Was 347, should be 348. The hash table
-   has 348 entries (0-347), but the lookup loop used `< 347` as the bound,
-   so the LAST entry (`lstrcpynW`, id=347) was never found. `lookup_api_id`
-   returned 0xFFFF, causing br_table to hit fallback instead of the real
-   handler. Fallback only did ESP+=4 (not 16 for stdcall 3-arg), corrupting
-   the return address and causing execution to jump into zeroed stack memory.
+1. **Dispatch handler fall-through**: br_table handlers in 09-dispatch.wat
+   MUST end with `(return)`. Without it, execution falls through ALL
+   subsequent handlers in sequence. Root cause of ScrollWindow being
+   called from msvcrt DllMain — fell through 160+ handlers from
+   GetVersionExA (472) to ScrollWindow (630). Fixed by adding `(return)`
+   to 351 handlers.
 
-2. **Test runner --exe= flag**: The positional arg was silently ignored;
-   must use `--exe=path` to specify the binary. Without it, defaults to
-   notepad.exe.
+2. **Soft-stub stack corruption**: Old stubs returned garbage or trapped.
+   Now 342 soft-stubs return 0 with proper stdcall ESP cleanup based on
+   nargs from api_table.json.
 
-### Previous bugs fixed
+3. **API_HASH_COUNT off-by-one**: Was 347, should be 348.
 
-1. **CRT skipping WinMain**: msvcrt's `_wcmdln` was NULL because DllMain
-   never runs. DLL loader now patches `__p__wcmdln`, `__p__wenviron`, etc.
-
-2. **16-bit TEST (66 85)**: Decoded as 32-bit TEST, causing _wsetargv's
-   NUL check to fail.
-
-3. **GetModuleFileNameW**: Was a no-op stub. Now writes L"C:\PAINT.EXE".
-
-4. **GetEnvironmentStrings/W**: Returned empty blocks.
-
-5. **gen_dispatch.js**: Rewritten to extract handler bodies from current file.
+4. **DllMain budget**: Increased from 100k to 2M blocks.
 
 ### What's working
 
@@ -86,31 +74,24 @@ MSPaint Execution Progress
 Component              Status
 ---------              ------
 DLL loader             WORKING — sections mapped, relocations applied
-Export table parsing    WORKING — ordinal + name resolution
-Import patching        WORKING — EXE IAT points to DLL x86 code
-msvcrt.dll x86 exec    WORKING — _controlfp, _initterm, malloc, free
-MFC42u.DLL x86 exec    WORKING — static constructors run via _initterm
+Export resolution       WORKING — ordinal + name lookup
+Import patching        WORKING — EXE→DLL and DLL→DLL IAT resolved
+msvcrt.dll DllMain     WORKING — CRT init completes, EAX=1
+MFC42u.DLL DllMain     WORKING — MFC init completes, EAX=1
 CRT globals init       WORKING — _wcmdln, _wenviron, _environ patched
-TLS                    WORKING — TlsAlloc/Get/Set with 64 slots
-Critical sections      WORKING — no-op stubs (single-threaded)
-Interlocked ops        WORKING — Increment/Decrement/Exchange
-FWAIT opcode           WORKING — treated as NOP
-FPU block continuation WORKING — FPU ops no longer terminate blocks
-Wide-char APIs         WORKING — 20+ W-suffix stubs
-16-bit TEST            WORKING — prefix_66 handled for opcode 0x85
 WinMain entry          WORKING — CRT calls wWinMain, MFC starts
-lstrcpynW              WORKING — API hash count fixed
-MFC module filename    WORKING — path parsing proceeds correctly
+MFC AfxWinMain         RUNNING — 44+ API calls, 50k batches stable
+Soft-stubs             699 APIs total, ~350 soft-stubbed (return 0)
+GetVersionExA          WORKING — fills OSVERSIONINFOA from $winver
+LoadStringW            WORKING — calls host_load_string
 ```
 
 ### Next steps
 
-1. Implement LoadAcceleratorsW (or stub it properly with correct ESP cleanup)
-2. The fallback handler needs smarter ESP cleanup — currently ESP+=4 for
-   ALL unknown APIs causes stack corruption for any stdcall function with
-   args. Consider logging the name and returning with ESP+=4 only for
-   truly 0-arg functions.
-3. MFC will need many more USER32/GDI32 W-stubs for window creation
+1. Trace API calls to identify which soft-stubs need real implementations
+2. MFC window creation flow (CreateWindowExW, RegisterClassExW)
+3. Resource loading (FindResource/LoadResource)
+4. GDI painting operations
 
 ## Architecture
 
@@ -125,7 +106,7 @@ MFC module filename    WORKING — path parsing proceeds correctly
   |          |--IAT patched------------------------------>|
   +----------+                                           |
        |                                                 |
-       +--system DLLs via thunks--> WASM dispatch (348 APIs)
+       +--system DLLs via thunks--> WASM dispatch (699 APIs)
 ```
 
 ## DLL Load Map

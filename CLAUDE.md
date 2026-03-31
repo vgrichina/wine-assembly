@@ -43,12 +43,13 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at its preferred `image_base` (typically `0x400000`) which maps to `GUEST_BASE + (image_base - image_base)` via `g2w` (guest-to-WASM address translation).
 
 Key regions:
-- `0x00012000` — Guest memory (9MB, maps guest addresses)
-- `0x00912000` — Guest stack (grows down)
-- `0x00B12000` — API thunk zone (256KB)
-- `0x00B52000` — Threaded code cache (1MB)
-- `0x00C52000` — Block cache index
-- `0x00C62000` — PE staging buffer (2MB)
+- `0x00012000` — Guest memory (GUEST_BASE, maps guest addresses)
+- `0x00E12000` — Guest stack (grows down)
+- `0x01012000` — API thunk zone (256KB, THUNK_BASE)
+- `0x01052000` — Threaded code cache (1MB, THREAD_BASE)
+- `0x01152000` — Block cache index (CACHE_INDEX)
+- `0x01162000` — PE staging buffer (2MB, PE_STAGING)
+- `0x01362000` — API hash table (8KB, API_HASH_TABLE)
 
 ## Key Concepts
 
@@ -56,6 +57,7 @@ Key regions:
 - **Lazy flags:** Flags (ZF, SF, CF, OF) are not computed after every instruction. Instead, `flag_op`, `flag_a`, `flag_b`, `flag_res` are stored, and flags are computed on demand by `$get_zf`, `$get_cf`, etc. `flag_sign_shift` is 31 for 32-bit ops, 15 for 16-bit, 7 for 8-bit.
 - **g2w / w2g:** Convert between guest (x86) addresses and WASM linear memory addresses. `g2w(guest) = guest - image_base + GUEST_BASE`.
 - **API thunks:** Imported Win32 functions are replaced with thunk addresses. When EIP enters the thunk zone, `$win32_dispatch` handles the call.
+- **Dispatch handlers:** Each API handler in `09-dispatch.wat` MUST end with `(return)` to prevent fall-through to the next handler. The br_table uses nested blocks — without `(return)`, execution falls through ALL subsequent handlers. Soft-stubs (unimplemented APIs) return 0 with proper stdcall stack cleanup.
 
 ## Tools
 
