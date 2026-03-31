@@ -64,6 +64,9 @@
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd)
 
+  (import "host" "gdi_scroll_window" (func $host_gdi_scroll_window (param i32 i32 i32) (result i32)))
+  ;; gdi_scroll_window(hwnd, dx, dy)
+
   (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32) (result i32)))
   (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
   (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))

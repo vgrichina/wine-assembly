@@ -1,5 +1,6 @@
 const fs = require('fs');
 const { parseResources } = require('../lib/resources');
+const { createHostImports } = require('../lib/host-imports');
 const { loadDlls } = require('../lib/dll-loader');
 let createCanvas, Win98Renderer;
 try {
@@ -59,243 +60,196 @@ async function main() {
     renderer.loadResources(resourceJson);
   }
 
-  const readStr = (mem, ptr, maxLen = 512) => {
-    let s = '';
-    for (let i = ptr; i < ptr + maxLen; i++) {
-      if (!mem[i]) break;
-      s += String.fromCharCode(mem[i]);
-    }
-    return s;
-  };
-
   // String APIs where we want to log content
   const STRING_APIS = ['lstrlenA', 'lstrcpyA', 'lstrcpynA', 'LoadStringA', 'GetWindowTextA', 'SetWindowTextA', 'SetDlgItemTextA'];
 
-  const imports = { host: {
-    log: (ptr, len) => {
-      const b = new Uint8Array(instance.exports.memory.buffer, ptr, Math.min(len, 256));
-      let t = '';
-      for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
-      apiCount++;
+  const base = createHostImports({
+    getMemory: () => instance.exports.memory.buffer,
+    renderer,
+    resourceJson,
+    onExit: (code) => { stopped = true; },
+  });
+  const { readStr } = base;
+  const h = base.host;
 
-      // Check API breakpoints
-      if (breakApis.length && breakApis.some(name => t.includes(name))) {
-        apiBreakHit = t;
-      }
+  // --- Override logging ---
+  h.log = (ptr, len) => {
+    const b = new Uint8Array(instance.exports.memory.buffer, ptr, Math.min(len, 256));
+    let t = '';
+    for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
+    apiCount++;
 
-      if (TRACE_API) {
-        const e = instance.exports;
-        const esp = e.get_esp();
-        const imageBase = e.get_image_base();
-        const dv = new DataView(instance.exports.memory.buffer);
-        const g2w = addr => addr - imageBase + 0x12000;
-        let argStr = '';
+    // Check API breakpoints
+    if (breakApis.length && breakApis.some(name => t.includes(name))) {
+      apiBreakHit = t;
+    }
+
+    if (TRACE_API) {
+      const e = instance.exports;
+      const esp = e.get_esp();
+      const imageBase = e.get_image_base();
+      const dv = new DataView(instance.exports.memory.buffer);
+      const g2w = addr => addr - imageBase + 0x12000;
+      let argStr = '';
+      try {
+        for (let i = 0; i < 6; i++) {
+          const a = dv.getUint32(g2w(esp + 4 + i * 4), true);
+          argStr += (i ? ', ' : '') + hex(a);
+        }
+      } catch (_) {}
+
+      // Log string content for string APIs
+      let strInfo = '';
+      const matchedApi = STRING_APIS.find(api => t.includes(api));
+      if (matchedApi) {
         try {
-          for (let i = 0; i < 6; i++) {
-            const a = dv.getUint32(g2w(esp + 4 + i * 4), true);
-            argStr += (i ? ', ' : '') + hex(a);
-          }
+          const mem = new Uint8Array(instance.exports.memory.buffer);
+          const strPtr = dv.getUint32(g2w(esp + 4), true);
+          const strVal = readStr(g2w(strPtr), 64);
+          if (strVal) strInfo = ` str="${strVal}"`;
         } catch (_) {}
+      }
 
-        // Log string content for string APIs
-        let strInfo = '';
-        const matchedApi = STRING_APIS.find(api => t.includes(api));
-        if (matchedApi) {
-          try {
-            const mem = new Uint8Array(instance.exports.memory.buffer);
-            // First arg is usually the string pointer
-            const strPtr = dv.getUint32(g2w(esp + 4), true);
-            const strVal = readStr(mem, g2w(strPtr), 64);
-            if (strVal) strInfo = ` str="${strVal}"`;
-          } catch (_) {}
-        }
+      lastApiName = t;
+      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}`);
+      // Dump MSG struct contents for DispatchMessageA
+      if (t.includes('DispatchMessage') && apiCount <= 100) {
+        try {
+          const msgPtr = dv.getUint32(g2w(esp + 4), true);
+          const msgHwnd = dv.getUint32(g2w(msgPtr), true);
+          const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
+          const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
+          const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
+          logs.push(`  MSG: hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wP=0x${msgWP.toString(16)} lP=0x${msgLP.toString(16)}`);
+        } catch (_) {}
+      }
 
-        lastApiName = t;
-        logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}`);
-        // Dump MSG struct contents for DispatchMessageA
-        if (t.includes('DispatchMessage') && apiCount <= 100) {
-          try {
-            const msgPtr = dv.getUint32(g2w(esp + 4), true);
-            const msgHwnd = dv.getUint32(g2w(msgPtr), true);
-            const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
-            const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
-            const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
-            logs.push(`  MSG: hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wP=0x${msgWP.toString(16)} lP=0x${msgLP.toString(16)}`);
-          } catch (_) {}
-        }
+      // SEH tracing for _EH_prolog and _CxxThrowException
+      if (TRACE_SEH && (t.includes('_EH_prolog') || t.includes('_CxxThrowException'))) {
+        const fsBase = e.get_fs_base();
+        try {
+          const sehHead = dv.getUint32(g2w(fsBase), true);
+          logs.push(`  [SEH] fs:[0]=${hex(sehHead)} EBP=${hex(e.get_ebp())}`);
+        } catch (_) {}
+      }
+    } else {
+      logs.push('[API] ' + t);
+    }
+  };
 
-        // SEH tracing for _EH_prolog and _CxxThrowException
-        if (TRACE_SEH && (t.includes('_EH_prolog') || t.includes('_CxxThrowException'))) {
-          const fsBase = e.get_fs_base();
-          try {
-            const sehHead = dv.getUint32(g2w(fsBase), true);
-            logs.push(`  [SEH] fs:[0]=${hex(sehHead)} EBP=${hex(e.get_ebp())}`);
-          } catch (_) {}
-        }
-      } else {
-        logs.push('[API] ' + t);
+  h.log_i32 = val => {
+    if (TRACE_API && lastApiName) {
+      logs.push(`  => ${hex(val)}`);
+      lastApiName = null;
+    } else {
+      if (logs.length < 10000) logs.push('[i32] ' + hex(val));
+    }
+  };
+
+  // --- Override exit to also log ---
+  h.exit = code => { logs.push('[Exit] code=' + code); stopped = true; };
+
+  // --- Override shell_about to log ---
+  h.shell_about = (h2, appPtr) => {
+    logs.push(`[ShellAbout] "${readStr(appPtr)}"`);
+    return 1;
+  };
+
+  // --- Override set_dlg_item_text to log ---
+  h.set_dlg_item_text = (hwnd, ctrlId, textPtr) => {
+    const text = readStr(textPtr);
+    logs.push(`[SetDlgItemText] hwnd=0x${hwnd.toString(16)} ctrl=${ctrlId} "${text}"`);
+    if (renderer) renderer.setDlgItemText(hwnd, ctrlId, text);
+  };
+
+  // --- Override message_box to log ---
+  h.message_box = (h2, t, c, u) => {
+    logs.push(`[MessageBox] "${readStr(c)}": "${readStr(t)}"`);
+    return 1;
+  };
+
+  // --- Override window functions to log ---
+  h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
+    const title = readStr(titlePtr);
+    logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" style=0x${style.toString(16)} pos=${x},${y} size=${cx}x${cy} menu=${menuId}`);
+    if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
+    return hwnd;
+  };
+
+  h.show_window = (hwnd, cmd) => {
+    logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
+    if (renderer) renderer.showWindow(hwnd, cmd);
+    // Inject button sequence if --buttons provided, else WM_CLOSE
+    if (!inputEvent && !inputQueue) {
+      const btnArg = args.find(a => a.startsWith('--buttons='));
+      const noClose = args.includes('--no-close');
+      if (btnArg) {
+        inputQueue = btnArg.split('=')[1].split(',').map(Number);
+        logs.push(`[test] Button queue: ${inputQueue}`);
+      } else if (!noClose) {
+        inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
+        logs.push('[test] Injecting WM_CLOSE');
       }
-    },
-    log_i32: val => {
-      if (TRACE_API && lastApiName) {
-        // Correlate with last API call as return value
-        logs.push(`  => ${hex(val)}`);
-        lastApiName = null;
-      } else {
-        logs.push('[i32] ' + hex(val));
-      }
-    },
-    shell_about: (h, appPtr) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      logs.push(`[ShellAbout] "${readStr(mem, appPtr)}"`);
-      return 1;
-    },
-    set_dlg_item_text: (hwnd, ctrlId, textPtr) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      const text = readStr(mem, textPtr);
-      logs.push(`[SetDlgItemText] hwnd=0x${hwnd.toString(16)} ctrl=${ctrlId} "${text}"`);
-      if (renderer) renderer.setDlgItemText(hwnd, ctrlId, text);
-    },
-    check_dlg_button: (hwnd, ctrlId, checkState) => {
-      if (renderer) renderer.checkDlgButton(hwnd, ctrlId, checkState);
-    },
-    check_radio_button: (hwnd, firstId, lastId, checkId) => {
-      if (renderer) renderer.checkRadioButton(hwnd, firstId, lastId, checkId);
-    },
-    message_box: (h, t, c, u) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      logs.push(`[MessageBox] "${readStr(mem, c)}": "${readStr(mem, t)}"`);
-      return 1;
-    },
-    exit: code => { logs.push('[Exit] code=' + code); stopped = true; },
-    draw_rect: (x, y, w, h, color) => {
-      if (renderer) { const ctx = renderer.ctx; ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0'); ctx.fillRect(x, y, w, h); }
-    },
-    read_file: () => 0,
-    create_window: (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      const title = readStr(mem, titlePtr);
-      logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" style=0x${style.toString(16)} pos=${x},${y} size=${cx}x${cy} menu=${menuId}`);
-      if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
-      return hwnd;
-    },
-    show_window: (hwnd, cmd) => {
-      logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
-      if (renderer) renderer.showWindow(hwnd, cmd);
-      // Inject button sequence if --buttons provided, else WM_CLOSE
-      if (!inputEvent && !inputQueue) {
-        const btnArg = args.find(a => a.startsWith('--buttons='));
-        const noClose = args.includes('--no-close');
-        if (btnArg) {
-          inputQueue = btnArg.split('=')[1].split(',').map(Number);
-          logs.push(`[test] Button queue: ${inputQueue}`);
-        } else if (!noClose) {
-          // Delay WM_CLOSE to let game run through first few frames
-          inputEvent = { msg: 0x0010, wParam: 0, lParam: 0 };
-          logs.push('[test] Injecting WM_CLOSE');
-        }
-      }
-    },
-    create_dialog: (hwnd, dlgId) => {
-      logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId}`);
-      if (renderer) return renderer.createDialog(hwnd, dlgId);
-      return hwnd;
-    },
-    load_string: (id, bufPtr, bufLen) => {
-      if (!resourceJson || !resourceJson.strings) return 0;
-      const str = resourceJson.strings[id];
-      if (!str || bufLen <= 0) return 0;
-      const bytes = new Uint8Array(instance.exports.memory.buffer);
-      const maxLen = Math.min(str.length, bufLen - 1);
-      for (let i = 0; i < maxLen; i++) bytes[bufPtr + i] = str.charCodeAt(i) & 0xFF;
-      bytes[bufPtr + maxLen] = 0;
-      return maxLen;
-    },
-    set_window_text: (hwnd, textPtr) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      const text = readStr(mem, textPtr);
-      logs.push(`[SetWindowText] "${text}"`);
-      if (renderer) renderer.setWindowText(hwnd, text);
-    },
-    invalidate: (hwnd) => { if (renderer) renderer.invalidate(hwnd); },
-    set_menu: (hwnd, menuResId) => {
-      logs.push(`[SetMenu] hwnd=0x${hwnd.toString(16)} menu=${menuResId}`);
-      if (renderer) renderer.setMenu(hwnd, menuResId);
-    },
-    draw_text: (x, y, textPtr, textLen, color) => {
-      if (!renderer) return;
-      const bytes = new Uint8Array(instance.exports.memory.buffer, textPtr, textLen);
-      const text = new TextDecoder().decode(bytes);
-      const ctx = renderer.ctx;
-      ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
-      ctx.font = renderer.font;
-      ctx.fillText(text, x, y);
-    },
-    check_input: () => {
-      if (inputEvent) {
-        const evt = inputEvent;
-        inputEvent = null;
-        const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
-        logs.push(`[check_input] returning msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
-        return packed;
-      }
-      if (inputQueue && inputQueue.length > 0) {
-        const id = inputQueue.shift();
-        inputEvent = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
-        const evt = inputEvent; inputEvent = null;
-        const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
-        logs.push(`[check_input] button id=${id} packed=0x${packed.toString(16)}`);
-        return packed;
-      }
-      return 0;
-    },
-    check_input_lparam: () => 0,
-    check_input_hwnd: () => {
-      return 0x10002; // dialog hwnd for button clicks
-    },
-    set_window_class: (hwnd, classPtr) => {
-      if (renderer) {
-        const bytes = new Uint8Array(instance.exports.memory.buffer);
-        let s = '';
-        for (let i = classPtr; bytes[i] && i < classPtr + 256; i++) s += String.fromCharCode(bytes[i]);
-        renderer.setWindowClass(hwnd, s);
-      }
-    },
-    // GDI stubs for test runner
-    gdi_create_pen: (style, width, color) => 0x80001,
-    gdi_create_solid_brush: (color) => 0x80002,
-    gdi_create_compat_dc: (hdc) => 0x50003,
-    gdi_create_compat_bitmap: (hdc, w, h) => 0x80003,
-    gdi_select_object: (hdc, hObj) => 0x30001,
-    gdi_delete_object: (h) => 1,
-    gdi_delete_dc: (hdc) => 1,
-    gdi_rectangle: (hdc, l, t, r, b, hwnd) => 1,
-    gdi_ellipse: (hdc, l, t, r, b, hwnd) => 1,
-    gdi_move_to: (hdc, x, y) => 1,
-    gdi_line_to: (hdc, x, y, hwnd) => 1,
-    gdi_arc: (hdc, l, t, r, b, xs, ys, xe, ye, hwnd) => 1,
-    gdi_bitblt: (dst, dx, dy, w, h, src, sx, sy, rop, hwnd) => 1,
-    gdi_load_bitmap: (resourceId) => {
-      if (!resourceJson || !resourceJson.bitmaps) return 0;
-      const bmp = resourceJson.bitmaps[resourceId];
-      if (!bmp) return 0;
-      return 0x80000 | resourceId; // fake handle
-    },
-    gdi_get_object_w: (h) => {
-      const id = h & 0x7FFFF;
-      const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
-      return bmp ? bmp.w : 0;
-    },
-    gdi_get_object_h: (h) => {
-      const id = h & 0x7FFFF;
-      const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
-      return bmp ? bmp.h : 0;
-    },
-    math_sin: (x) => Math.sin(x),
-    math_cos: (x) => Math.cos(x),
-    math_tan: (x) => Math.tan(x),
-    math_atan2: (y, x) => Math.atan2(y, x),
-  }};
+    }
+  };
+
+  h.create_dialog = (hwnd, dlgId) => {
+    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId}`);
+    if (renderer) return renderer.createDialog(hwnd, dlgId);
+    return hwnd;
+  };
+
+  h.set_window_text = (hwnd, textPtr) => {
+    const text = readStr(textPtr);
+    logs.push(`[SetWindowText] "${text}"`);
+    if (renderer) renderer.setWindowText(hwnd, text);
+  };
+
+  h.set_menu = (hwnd, menuResId) => {
+    logs.push(`[SetMenu] hwnd=0x${hwnd.toString(16)} menu=${menuResId}`);
+    if (renderer) renderer.setMenu(hwnd, menuResId);
+  };
+
+  // --- Override input for test injection ---
+  h.check_input = () => {
+    if (inputEvent) {
+      const evt = inputEvent;
+      inputEvent = null;
+      const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
+      logs.push(`[check_input] returning msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
+      return packed;
+    }
+    if (inputQueue && inputQueue.length > 0) {
+      const id = inputQueue.shift();
+      inputEvent = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
+      const evt = inputEvent; inputEvent = null;
+      const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
+      logs.push(`[check_input] button id=${id} packed=0x${packed.toString(16)}`);
+      return packed;
+    }
+    return 0;
+  };
+  h.check_input_hwnd = () => 0x10002;
+
+  // --- GDI: use resource-based bitmap lookup for test runner ---
+  h.gdi_load_bitmap = (resourceId) => {
+    if (!resourceJson || !resourceJson.bitmaps) return 0;
+    const bmp = resourceJson.bitmaps[resourceId];
+    if (!bmp) return 0;
+    return 0x80000 | resourceId; // fake handle
+  };
+  h.gdi_get_object_w = (handle) => {
+    const id = handle & 0x7FFFF;
+    const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
+    return bmp ? bmp.w : 0;
+  };
+  h.gdi_get_object_h = (handle) => {
+    const id = handle & 0x7FFFF;
+    const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
+    return bmp ? bmp.h : 0;
+  };
+
+  const imports = { host: h };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
   const mem = new Uint8Array(instance.exports.memory.buffer);
@@ -493,7 +447,6 @@ async function main() {
     if (!watchAddr) return false;
     const newVal = instance.exports.get_watch_val();
     if (newVal === watchPrevVal) return false;
-    // If filtering by value, only break when it matches
     if (watchFilterVal !== null && (newVal >>> 0) !== (watchFilterVal >>> 0)) {
       watchPrevVal = newVal;
       return false;
@@ -586,7 +539,6 @@ async function main() {
       disasmAt(instance.exports.get_eip());
       dumpStack();
       if (TRACE_SEH) dumpSEH();
-      // Show WASM stack trace
       const frames = e.stack.split('\n').filter(l => l.includes('wasm-function'));
       if (frames.length) {
         console.log('  WASM stack:');
@@ -601,7 +553,7 @@ async function main() {
       await debugPrompt('Watch');
     }
 
-    // API breakpoint check (might have been set during batch)
+    // API breakpoint check
     if (apiBreakHit) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** API BREAKPOINT: ${apiBreakHit} (batch ${batch})`);
@@ -639,7 +591,6 @@ async function main() {
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
 
-  // --dump: hexdump memory region
   if (DUMP_SPEC) {
     const [addrStr, lenStr] = DUMP_SPEC.split(':');
     const dumpAddr = parseInt(addrStr, 16);
@@ -647,12 +598,10 @@ async function main() {
     hexdump(dumpAddr, dumpLen);
   }
 
-  // SEH dump at end
   if (DUMP_SEH || TRACE_SEH) {
     dumpSEH(true);
   }
 
-  // Output PNG if requested and renderer is available
   if (PNG_OUT && renderer) {
     renderer.repaint();
     const pngBuf = renderer.canvas.toBuffer('image/png');

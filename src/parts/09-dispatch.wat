@@ -2641,10 +2641,9 @@
       (global.set $eax (local.get $arg0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
     (return)
-    ) ;; 271: _splitpath — stub
+    ) ;; 271: _splitpath — soft-stub
       (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     ) ;; 272: _wcsicmp
       (global.set $eax (call $guest_wcsicmp (local.get $arg0) (local.get $arg1)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -2783,10 +2782,9 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
     (return)
-    ) ;; 294: SetWindowTextW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
+    ) ;; 294: SetWindowTextW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
     ) ;; 295: GetWindowTextW — stub, return 0
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -3024,1410 +3022,1077 @@
       (global.set $eax (local.get $arg0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (return)
-    ) ;; 348: FindFirstFileW — stub
-      (global.set $eax (i32.const 0xFFFFFFFF))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 349: GetFileAttributesW — stub
-      (global.set $eax (i32.const 0xFFFFFFFF))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 350: GetShortPathNameW — stub
+    ) ;; 348: FindFirstFileW — soft-stub
       (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 351: CreateDirectoryW — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 349: GetFileAttributesW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 350: GetShortPathNameW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 351: CreateDirectoryW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 352: IsDBCSLeadByte — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 353: GetTempPathW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 354: GetTempFileNameW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 355: lstrcatW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 356: GlobalHandle — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 357: CreatePatternBrush — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 358: GetPaletteEntries — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 359: SelectPalette — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 360: RealizePalette — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 361: CreateRectRgnIndirect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 362: GetObjectW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 363: SetTextAlign — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 364: ExtTextOutW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+    ) ;; 365: PlayMetaFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 366: CreatePalette — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 367: GetNearestColor — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 368: StretchDIBits — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
+    ) ;; 369: OffsetRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 370: UnrealizeObject — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 371: SetBrushOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 372: CreateDCW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 373: PtVisible — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 374: RectVisible — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 375: TextOutW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 376: Escape — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 377: EnumFontFamiliesExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 378: EnumFontFamiliesW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 379: CallNextHookEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 380: UnhookWindowsHookEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 381: SetWindowsHookExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 382: RedrawWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 383: ValidateRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 384: GetWindowDC — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 385: GrayStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
+    ) ;; 386: DrawTextW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 387: TabbedTextOutW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+    ) ;; 388: DestroyIcon — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 389: SystemParametersInfoW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 390: IsWindowVisible — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 391: InflateRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 392: LoadBitmapW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 393: wvsprintfW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 394: DrawFocusRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 395: PtInRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 396: WinHelpW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 397: GetCapture — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 398: RegisterClipboardFormatW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 399: CopyRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 400: IntersectRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 401: UnionRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 402: WindowFromPoint — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 403: IsRectEmpty — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 404: EqualRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 405: ClientToScreen — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 406: SetActiveWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 407: RemoveMenu — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 408: SetFilePointer — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 409: ResumeThread — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 410: SetLastError — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 411: FindNextFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 412: RaiseException — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 413: GetUserDefaultLCID — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 414: FileTimeToSystemTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 415: FileTimeToLocalFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 416: GetCurrentDirectoryW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 417: SetFileAttributesW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 418: GetFullPathNameW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 419: DeleteFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 420: MoveFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 421: SetEndOfFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 422: DuplicateHandle — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 423: LockFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 424: UnlockFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 425: ReadFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 426: CreateFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 427: SetFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 428: LocalFileTimeToFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 429: SystemTimeToFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 430: RegOpenKeyW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 431: RegEnumKeyW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 432: RegSetValueW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 433: RegCreateKeyW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 434: RegSetValueExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 435: RegCreateKeyExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
+    ) ;; 436: RegQueryValueExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 437: GetShortPathNameA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 438: FillRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 439: GetDIBColorTable — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 440: SetDIBColorTable — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 441: ResizePalette — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 442: GetNearestPaletteIndex — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 443: SetPaletteEntries — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 444: SetDIBits — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 445: GetTextExtentPointW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 446: CreateICW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 447: CreateDIBSection — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 448: GetDIBits — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 449: CreateDIBitmap — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 450: StretchBlt — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 48)))
+    ) ;; 451: Polygon — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 452: RoundRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 453: ExtFloodFill — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 454: CreatePolygonRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 455: PolyBezier — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 456: Polyline — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 457: CreateHalftonePalette — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 458: EnableScrollBar — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 459: GetCaretPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 460: GetUpdateRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 461: IsMenu — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 462: WriteClassStg — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 463: WriteFmtUserTypeStg — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 464: StringFromCLSID — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 465: ExtractIconW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 466: ShellAboutW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 467: CommandLineToArgvW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 468: IsBadCodePtr — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 469: ExitThread — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 470: FindNextFileA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 471: GetEnvironmentVariableA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 472: GetVersionExA — fill OSVERSIONINFOA from $winver
+      ;; arg0 = ptr to OSVERSIONINFOA (148 bytes min)
+      ;; winver format: high word = (platformId<<10)|build, low word = (minor<<8)|major
+      (local.set $w0 (call $g2w (local.get $arg0)))
+      ;; dwMajorVersion at +4
+      (i32.store (i32.add (local.get $w0) (i32.const 4))
+        (i32.and (global.get $winver) (i32.const 0xFF)))
+      ;; dwMinorVersion at +8
+      (i32.store (i32.add (local.get $w0) (i32.const 8))
+        (i32.and (i32.shr_u (global.get $winver) (i32.const 8)) (i32.const 0xFF)))
+      ;; dwBuildNumber at +12
+      (i32.store (i32.add (local.get $w0) (i32.const 12))
+        (i32.and (i32.shr_u (global.get $winver) (i32.const 16)) (i32.const 0x3FF)))
+      ;; dwPlatformId at +16
+      (i32.store (i32.add (local.get $w0) (i32.const 16))
+        (i32.shr_u (global.get $winver) (i32.const 26)))
+      ;; szCSDVersion at +20: empty string
+      (i32.store8 (i32.add (local.get $w0) (i32.const 20)) (i32.const 0))
       (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 352: IsDBCSLeadByte — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 353: GetTempPathW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 354: GetTempFileNameW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 355: lstrcatW — stub
-      (global.set $eax (local.get $arg0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 356: GlobalHandle — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 357: CreatePatternBrush — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 358: GetPaletteEntries — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 359: SelectPalette — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 360: RealizePalette — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 361: CreateRectRgnIndirect — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 362: GetObjectW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 363: SetTextAlign — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 364: ExtTextOutW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
-    (return)
-    ) ;; 365: PlayMetaFile — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 366: CreatePalette — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 367: GetNearestColor — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 473: SetConsoleCtrlHandler — no-op, return success
       (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 368: StretchDIBits — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 56))) (return)
-    (return)
-    ) ;; 369: OffsetRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 370: UnrealizeObject — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 371: SetBrushOrgEx — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 474: SetEnvironmentVariableW — no-op, return success
       (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 372: CreateDCW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 373: PtVisible — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 374: RectVisible — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 375: TextOutW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 376: Escape — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 377: EnumFontFamiliesExW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 378: EnumFontFamiliesW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 379: CallNextHookEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 380: UnhookWindowsHookEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 381: SetWindowsHookExW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 382: RedrawWindow — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 383: ValidateRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 384: GetWindowDC — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 385: GrayStringW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
-    (return)
-    ) ;; 386: DrawTextW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 387: TabbedTextOutW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
-    (return)
-    ) ;; 388: DestroyIcon — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 389: SystemParametersInfoW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 390: IsWindowVisible — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 391: InflateRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 392: LoadBitmapW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 393: wvsprintfW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 394: DrawFocusRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 395: PtInRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 396: WinHelpW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 397: GetCapture — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 398: RegisterClipboardFormatW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 399: CopyRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 400: IntersectRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 401: UnionRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 402: WindowFromPoint — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 403: IsRectEmpty — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 404: EqualRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 405: ClientToScreen — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 406: SetActiveWindow — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 407: RemoveMenu — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 408: SetFilePointer — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 409: ResumeThread — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 410: SetLastError — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 411: FindNextFileW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 412: RaiseException — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 413: GetUserDefaultLCID — stub
-      (global.set $eax (i32.const 0x0409))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 414: FileTimeToSystemTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 415: FileTimeToLocalFileTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 416: GetCurrentDirectoryW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 417: SetFileAttributesW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 418: GetFullPathNameW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 419: DeleteFileW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 420: MoveFileW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 421: SetEndOfFile — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 422: DuplicateHandle — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 423: LockFile — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 424: UnlockFile — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 425: ReadFile — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 426: CreateFileW — stub
-      (global.set $eax (i32.const 0xFFFFFFFF))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 427: SetFileTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 428: LocalFileTimeToFileTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 429: SystemTimeToFileTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 430: RegOpenKeyW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 431: RegEnumKeyW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 432: RegSetValueW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 433: RegCreateKeyW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 434: RegSetValueExW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 435: RegCreateKeyExW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
-    (return)
-    ) ;; 436: RegQueryValueExW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 437: GetShortPathNameA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 438: FillRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 439: GetDIBColorTable — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 440: SetDIBColorTable — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 441: ResizePalette — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 442: GetNearestPaletteIndex — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 443: SetPaletteEntries — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 444: SetDIBits — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 445: GetTextExtentPointW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 446: CreateICW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 447: CreateDIBSection — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 448: GetDIBits — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 449: CreateDIBitmap — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 450: StretchBlt — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 48))) (return)
-    (return)
-    ) ;; 451: Polygon — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 452: RoundRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 453: ExtFloodFill — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 454: CreatePolygonRgn — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 455: PolyBezier — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 456: Polyline — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 457: CreateHalftonePalette — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 458: EnableScrollBar — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 459: GetCaretPos — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 460: GetUpdateRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 461: IsMenu — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 462: WriteClassStg — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 463: WriteFmtUserTypeStg — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 464: StringFromCLSID — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 465: ExtractIconW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 466: ShellAboutW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 467: CommandLineToArgvW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 468: IsBadCodePtr — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 469: ExitThread — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 470: FindNextFileA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 471: GetEnvironmentVariableA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 472: GetVersionExA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 473: SetConsoleCtrlHandler — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 474: SetEnvironmentVariableW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 475: CompareStringA — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 475: CompareStringA — return CSTR_EQUAL (2)
       (global.set $eax (i32.const 2))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 476: CompareStringW — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 476: CompareStringW — return CSTR_EQUAL (2)
       (global.set $eax (i32.const 2))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 477: IsValidLocale — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 477: IsValidLocale — return TRUE
       (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 478: EnumSystemLocalesA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 479: GetLocaleInfoW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 480: GetTimeZoneInformation — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 481: SetEnvironmentVariableA — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 478: EnumSystemLocalesA — no-op, return TRUE
       (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 482: Beep — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 479: GetLocaleInfoW — return 0 (failure)
       (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 483: GetDiskFreeSpaceA — stub
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 480: GetTimeZoneInformation — return TIME_ZONE_ID_UNKNOWN (0), zero-fill struct
       (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 481: SetEnvironmentVariableA — no-op, return success
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 482: Beep — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 483: GetDiskFreeSpaceA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 484: GetLogicalDrives — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 485: GetFileAttributesA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 486: GetCurrentDirectoryA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 487: SetCurrentDirectoryA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 488: SetFileAttributesA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 489: GetFullPathNameA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 490: GetDriveTypeA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 491: GetCurrentProcessId — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 492: CreateDirectoryA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 493: RemoveDirectoryA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 494: SetCurrentDirectoryW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 495: RemoveDirectoryW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 496: GetDriveTypeW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 497: MoveFileA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 498: GetExitCodeProcess — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 499: CreateProcessA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
+    ) ;; 500: CreateProcessW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
+    ) ;; 501: HeapValidate — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 502: HeapCompact — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 503: HeapWalk — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 504: ReadConsoleA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 505: SetConsoleMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 506: GetConsoleMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 507: WriteConsoleA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 508: GetFileInformationByHandle — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 509: PeekNamedPipe — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 510: ReadConsoleInputA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 511: PeekConsoleInputA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 512: GetNumberOfConsoleInputEvents — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 513: CreatePipe — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 514: GetSystemTimeAsFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 515: SetLocalTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 516: GetSystemTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 517: FormatMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 518: GetFileSize — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 519: GetFileTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 520: GetStringTypeExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 521: GetThreadLocale — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 522: CreateSemaphoreW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 523: ReleaseSemaphore — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 524: CreateMutexW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 525: ReleaseMutex — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 526: CreateEventW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 527: WaitForMultipleObjects — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 528: GlobalAddAtomW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 529: FindResourceW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 530: GlobalGetAtomNameW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 531: GetProfileIntW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 532: VirtualProtect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 533: FindResourceExW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 534: SizeofResource — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 535: GetProcessVersion — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 536: GlobalFlags — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 537: GetDiskFreeSpaceW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 538: SearchPathW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 539: SetThreadPriority — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 540: SuspendThread — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 541: GetPrivateProfileIntW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 542: GetPrivateProfileStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 543: WritePrivateProfileStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 544: CopyFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 545: GetSystemDirectoryA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 546: GetVolumeInformationW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+    ) ;; 547: OutputDebugStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 548: IsBadStringPtrA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 549: IsBadStringPtrW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 550: GlobalDeleteAtom — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 551: GlobalFindAtomW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 552: CreateMetaFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 553: CopyMetaFileW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 554: DPtoLP — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 555: CombineRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 556: SetRectRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 557: GetMapMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 558: CreateDIBPatternBrushPt — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 559: CreateHatchBrush — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 560: ExtCreatePen — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 561: EnumMetaFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 562: GetObjectType — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 563: PlayMetaFileRecord — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 564: ExtSelectClipRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 565: SelectClipPath — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 566: CreateRectRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 567: GetClipRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 568: PolyBezierTo — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 569: SetColorAdjustment — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 570: PolylineTo — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 571: PolyDraw — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 572: SetArcDirection — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 573: ArcTo — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
+    ) ;; 574: SetMapperFlags — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 575: SetTextCharacterExtra — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 576: SetTextJustification — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 577: OffsetClipRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 578: ExcludeClipRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 579: SelectClipRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 580: OffsetWindowOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 581: SetPolyFillMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 582: StartDocW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 583: CloseMetaFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 584: DeleteMetaFile — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 585: IntersectClipRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 586: GetWindowOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 587: SetWindowOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 588: GetCurrentPositionEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 589: ScaleWindowExtEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 590: ScaleViewportExtEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    ) ;; 591: OffsetViewportOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 592: SetViewportOrgEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 593: GetViewportExtEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 594: GetROP2 — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 595: GetWindowExtEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 596: GetTextAlign — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 597: GetPolyFillMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 598: GetBkMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 599: GetTextColor — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 600: GetStretchBltMode — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 601: GetBkColor — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 602: CreateFontW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
+    ) ;; 603: GetCharWidthW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 604: GetTextExtentPoint32W — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 605: GetClipBox — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 606: GetTextFaceW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 607: MsgWaitForMultipleObjects — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 608: GetWindowPlacement — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 609: RegisterWindowMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 610: GetForegroundWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 611: GetMessagePos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 612: GetMessageTime — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 613: RemovePropW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 614: CallWindowProcW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 615: GetPropW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 616: SetPropW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 617: GetWindowTextLengthW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 618: SetWindowPlacement — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 619: TrackPopupMenu — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+    ) ;; 620: GetMenuItemID — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 621: GetMenuItemCount — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 622: GetTopWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 623: SetScrollPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 624: GetScrollPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 625: SetScrollRange — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 626: GetScrollRange — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 627: ShowScrollBar — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 628: SetScrollInfo — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 629: GetScrollInfo — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 630: ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect)
+      (global.set $eax (call $host_gdi_scroll_window (local.get $arg0) (local.get $arg1) (local.get $arg2)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
-    ) ;; 484: GetLogicalDrives — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 485: GetFileAttributesA — stub
-      (global.set $eax (i32.const 0xFFFFFFFF))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 486: GetCurrentDirectoryA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 487: SetCurrentDirectoryA — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 488: SetFileAttributesA — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 489: GetFullPathNameA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 490: GetDriveTypeA — stub
-      (global.set $eax (i32.const 3))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 491: GetCurrentProcessId — stub
-      (global.set $eax (i32.const 1234))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 492: CreateDirectoryA — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 493: RemoveDirectoryA — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 494: SetCurrentDirectoryW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 495: RemoveDirectoryW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 496: GetDriveTypeW — stub
-      (global.set $eax (i32.const 3))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 497: MoveFileA — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 498: GetExitCodeProcess — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 499: CreateProcessA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 44))) (return)
-    (return)
-    ) ;; 500: CreateProcessW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 44))) (return)
-    (return)
-    ) ;; 501: HeapValidate — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 502: HeapCompact — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 503: HeapWalk — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 504: ReadConsoleA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 505: SetConsoleMode — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 506: GetConsoleMode — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 507: WriteConsoleA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 508: GetFileInformationByHandle — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 509: PeekNamedPipe — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 510: ReadConsoleInputA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 511: PeekConsoleInputA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 512: GetNumberOfConsoleInputEvents — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 513: CreatePipe — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 514: GetSystemTimeAsFileTime — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 515: SetLocalTime — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 516: GetSystemTime — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 517: FormatMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 518: GetFileSize — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 519: GetFileTime — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 520: GetStringTypeExW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 521: GetThreadLocale — stub
-      (global.set $eax (i32.const 0x0409))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 522: CreateSemaphoreW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 523: ReleaseSemaphore — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 524: CreateMutexW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 525: ReleaseMutex — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 526: CreateEventW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 527: WaitForMultipleObjects — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 528: GlobalAddAtomW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 529: FindResourceW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 530: GlobalGetAtomNameW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 531: GetProfileIntW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 532: VirtualProtect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 533: FindResourceExW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 534: SizeofResource — stub
-      (global.set $eax (i32.const 256))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 535: GetProcessVersion — stub
-      (global.set $eax (i32.const 0x00040000))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 536: GlobalFlags — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 537: GetDiskFreeSpaceW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 538: SearchPathW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 539: SetThreadPriority — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 540: SuspendThread — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 541: GetPrivateProfileIntW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 542: GetPrivateProfileStringW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 543: WritePrivateProfileStringW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 544: CopyFileW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 545: GetSystemDirectoryA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 546: GetVolumeInformationW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
-    (return)
-    ) ;; 547: OutputDebugStringW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 548: IsBadStringPtrA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 549: IsBadStringPtrW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 550: GlobalDeleteAtom — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 551: GlobalFindAtomW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 552: CreateMetaFileW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 553: CopyMetaFileW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 554: DPtoLP — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 555: CombineRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 556: SetRectRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 557: GetMapMode — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 558: CreateDIBPatternBrushPt — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 559: CreateHatchBrush — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 560: ExtCreatePen — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 561: EnumMetaFile — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 562: GetObjectType — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 563: PlayMetaFileRecord — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 564: ExtSelectClipRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 565: SelectClipPath — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 566: CreateRectRgn — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 567: GetClipRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 568: PolyBezierTo — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 569: SetColorAdjustment — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 570: PolylineTo — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 571: PolyDraw — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 572: SetArcDirection — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 573: ArcTo — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
-    (return)
-    ) ;; 574: SetMapperFlags — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 575: SetTextCharacterExtra — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 576: SetTextJustification — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 577: OffsetClipRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 578: ExcludeClipRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 579: SelectClipRgn — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 580: OffsetWindowOrgEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 581: SetPolyFillMode — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 582: StartDocW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 583: CloseMetaFile — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 584: DeleteMetaFile — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 585: IntersectClipRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 586: GetWindowOrgEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 587: SetWindowOrgEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 588: GetCurrentPositionEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 589: ScaleWindowExtEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 590: ScaleViewportExtEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-    (return)
-    ) ;; 591: OffsetViewportOrgEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 592: SetViewportOrgEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 593: GetViewportExtEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 594: GetROP2 — stub
-      (global.set $eax (i32.const 13))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 595: GetWindowExtEx — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 596: GetTextAlign — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 597: GetPolyFillMode — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 598: GetBkMode — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 599: GetTextColor — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 600: GetStretchBltMode — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 601: GetBkColor — stub
-      (global.set $eax (i32.const 0x00FFFFFF))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 602: CreateFontW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
-    (return)
-    ) ;; 603: GetCharWidthW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 604: GetTextExtentPoint32W — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 605: GetClipBox — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 606: GetTextFaceW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 607: MsgWaitForMultipleObjects — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 608: GetWindowPlacement — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 609: RegisterWindowMessageW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 610: GetForegroundWindow — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 611: GetMessagePos — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 612: GetMessageTime — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 613: RemovePropW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 614: CallWindowProcW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 615: GetPropW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 616: SetPropW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 617: GetWindowTextLengthW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 618: SetWindowPlacement — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 619: TrackPopupMenu — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 32))) (return)
-    (return)
-    ) ;; 620: GetMenuItemID — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 621: GetMenuItemCount — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 622: GetTopWindow — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 623: SetScrollPos — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 624: GetScrollPos — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 625: SetScrollRange — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 626: GetScrollRange — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 627: ShowScrollBar — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 628: SetScrollInfo — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 629: GetScrollInfo — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 630: ScrollWindow — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 631: EndDeferWindowPos — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 632: BeginDeferWindowPos — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 633: DeferWindowPos — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
-    (return)
-    ) ;; 634: AdjustWindowRectEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 635: DispatchMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 636: PeekMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 637: SendDlgItemMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 638: LoadAcceleratorsW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 639: TranslateAcceleratorW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 640: IsWindowEnabled — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 641: GetDesktopWindow — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 642: GetActiveWindow — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 643: ReuseDDElParam — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 644: UnpackDDElParam — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 645: WaitMessage — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 646: GetWindowThreadProcessId — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 647: GetMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 648: DefFrameProcW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 649: TranslateMDISysAccel — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 650: DrawMenuBar — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 651: DefMDIChildProcW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 652: InvertRect — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 653: IsZoomed — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 654: SetParent — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 655: AppendMenuW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 656: DeleteMenu — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 657: GetDCEx — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 658: LockWindowUpdate — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 659: GetTabbedTextExtentA — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 660: CreateDialogIndirectParamW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 661: GetNextDlgTabItem — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 662: GetAsyncKeyState — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 663: MapDialogRect — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 664: GetDialogBaseUnits — stub
-      (global.set $eax (i32.const 0x000D0006))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 665: GetClassNameW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 666: GetDlgItemInt — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 667: GetDlgItemTextW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 668: SetDlgItemTextW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 669: IsDlgButtonChecked — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 670: ScrollWindowEx — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
-    (return)
-    ) ;; 671: IsDialogMessageW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 672: SetMenuItemBitmaps — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 673: ModifyMenuW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 674: GetMenuState — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 675: GetMenuCheckMarkDimensions — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 676: SetCursorPos — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 677: DestroyCursor — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 678: FindWindowW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 679: GetTabbedTextExtentW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 680: UnregisterClassW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 681: ShowOwnedPopups — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 682: InsertMenuW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 683: GetMenuStringW — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-    (return)
-    ) ;; 684: CopyAcceleratorTableW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 685: InSendMessage — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 686: PostThreadMessageW — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 687: CreateMenu — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 688: WindowFromDC — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 689: CountClipboardFormats — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 690: SetWindowContextHelpId — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-    (return)
-    ) ;; 691: GetNextDlgGroupItem — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 692: ClipCursor — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 693: EnumChildWindows — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 694: InvalidateRgn — stub
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-    (return)
-    ) ;; 695: LoadStringW — stub
-      (global.set $eax (i32.const 0x50001))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-    (return)
-    ) ;; 696: CharUpperW — stub
-      (global.set $eax (local.get $arg0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-    (return)
-    ) ;; 697: ??1type_info@@UAE@XZ — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
-    ) ;; 698: ?terminate@@YAXXZ — stub
-      (global.set $eax (i32.const 0))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-    (return)
+    ) ;; 631: EndDeferWindowPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 632: BeginDeferWindowPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 633: DeferWindowPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+    ) ;; 634: AdjustWindowRectEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 635: DispatchMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 636: PeekMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 637: SendDlgItemMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 638: LoadAcceleratorsW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 639: TranslateAcceleratorW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 640: IsWindowEnabled — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 641: GetDesktopWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 642: GetActiveWindow — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 643: ReuseDDElParam — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 644: UnpackDDElParam — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 645: WaitMessage — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 646: GetWindowThreadProcessId — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 647: GetMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 648: DefFrameProcW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 649: TranslateMDISysAccel — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 650: DrawMenuBar — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 651: DefMDIChildProcW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 652: InvertRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 653: IsZoomed — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 654: SetParent — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 655: AppendMenuW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 656: DeleteMenu — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 657: GetDCEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 658: LockWindowUpdate — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 659: GetTabbedTextExtentA — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 660: CreateDialogIndirectParamW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 661: GetNextDlgTabItem — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 662: GetAsyncKeyState — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 663: MapDialogRect — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 664: GetDialogBaseUnits — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 665: GetClassNameW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 666: GetDlgItemInt — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 667: GetDlgItemTextW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 668: SetDlgItemTextW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 669: IsDlgButtonChecked — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 670: ScrollWindowEx — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+    ) ;; 671: IsDialogMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 672: SetMenuItemBitmaps — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 673: ModifyMenuW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 674: GetMenuState — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 675: GetMenuCheckMarkDimensions — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 676: SetCursorPos — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 677: DestroyCursor — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 678: FindWindowW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 679: GetTabbedTextExtentW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 680: UnregisterClassW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 681: ShowOwnedPopups — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 682: InsertMenuW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 683: GetMenuStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ) ;; 684: CopyAcceleratorTableW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 685: InSendMessage — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 686: PostThreadMessageW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 687: CreateMenu — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 688: WindowFromDC — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 689: CountClipboardFormats — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 690: SetWindowContextHelpId — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ) ;; 691: GetNextDlgGroupItem — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 692: ClipCursor — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 693: EnumChildWindows — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 694: InvalidateRgn — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ) ;; 695: LoadStringW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ) ;; 696: CharUpperW — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ) ;; 697: ??1type_info@@UAE@XZ — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ) ;; 698: ?terminate@@YAXXZ — soft-stub
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
 
     ) ;; fallback
     (call $host_log (local.get $name_ptr) (i32.const 48))
