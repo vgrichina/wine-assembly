@@ -90,13 +90,14 @@ async function main() {
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
 
-  const base = createHostImports({
+  const ctx = {
     getMemory: () => instance.exports.memory.buffer,
     renderer,
     resourceJson,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
-  });
+  };
+  const base = createHostImports(ctx);
   const { readStr } = base;
   const h = base.host;
 
@@ -238,29 +239,31 @@ async function main() {
   };
 
   // --- Override input for test injection ---
+  let lastInputEvent = null;
   h.check_input = () => {
+    let evt = null;
     if (inputEvent) {
-      const evt = inputEvent;
+      evt = inputEvent;
       inputEvent = null;
-      const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
-      logs.push(`[check_input] returning msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
-      return packed;
-    }
-    if (inputQueue && inputQueue.length > 0) {
+    } else if (inputQueue && inputQueue.length > 0) {
       const id = inputQueue.shift();
-      inputEvent = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
-      const evt = inputEvent; inputEvent = null;
-      const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
-      logs.push(`[check_input] button id=${id} packed=0x${packed.toString(16)}`);
-      return packed;
+      evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
+    } else if (renderer) {
+      evt = renderer.checkInput();
     }
-    return 0;
+    if (!evt) return 0;
+    lastInputEvent = evt;
+    const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
+    logs.push(`[check_input] msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
+    return packed;
   };
-  h.check_input_hwnd = () => 0x10002;
+  h.check_input_hwnd = () => (lastInputEvent ? (lastInputEvent.hwnd || 0x10002) : 0x10002);
+  h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
 
   const imports = { host: h };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
+  ctx.exports = instance.exports;
   const mem = new Uint8Array(instance.exports.memory.buffer);
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
@@ -573,9 +576,6 @@ async function main() {
       stepping = true;
       await debugPrompt('API Break');
     }
-
-    // Simulate browser rAF: repaint between batches (matches browser timing)
-    if (renderer) renderer.repaint();
 
     // Flush logs
     while (logs.length) console.log(logs.shift());
