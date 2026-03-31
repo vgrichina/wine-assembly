@@ -74,6 +74,9 @@
   (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32) (result i32)))
   (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
   (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))
+  (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
+  (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
+  (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
 
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
@@ -192,6 +195,7 @@
   (global $wndproc_addr2 (mut i32) (i32.const 0))   ;; WndProc for child/status window
   (global $wndclass_bg_brush (mut i32) (i32.const 0)) ;; hbrBackground from first RegisterClass
   (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
+  (global $window_dc_hwnd (mut i32) (i32.const 0))    ;; hwnd that owns the current window DC (0x50001)
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
@@ -222,8 +226,8 @@
   (global $rsrc_rva (mut i32) (i32.const 0))
 
   ;; Emulated Windows version for GetVersion/GetVersionEx
-  ;; Default: Win98 = 0xC0000A04 (major=4, minor=10, build=0xC000, platform=Win9x)
-  ;; NT 4.0 = 0x05650004, Win2000 = 0x05650005
+  ;; GetVersion format: high word = build (bit 31 set=Win9x, clear=NT), low word = minor<<8|major
+  ;; Win98 = 0xC0000A04, NT 4.0 = 0x05650004, Win2000 = 0x08930005
   (global $winver (mut i32) (i32.const 0xC0000A04))
 
   ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)

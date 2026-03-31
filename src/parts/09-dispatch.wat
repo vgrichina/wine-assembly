@@ -1522,6 +1522,7 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
     ) ;; 85: GetDC
+      (global.set $window_dc_hwnd (local.get $arg0)) ;; track which window owns the DC
       (global.set $eax (i32.const 0x50001)) ;; fake HDC
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
@@ -1964,7 +1965,7 @@
     (return)
     ) ;; 153: Rectangle
       (global.set $eax (call $host_gdi_rectangle
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $main_hwnd)))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
     ) ;; 154: MoveToEx
@@ -1973,12 +1974,12 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
     (return)
     ) ;; 155: LineTo
-      (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2) (global.get $main_hwnd)))
+      (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2) (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
     (return)
     ) ;; 156: Ellipse
       (global.set $eax (call $host_gdi_ellipse
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $main_hwnd)))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
     ) ;; 157: Arc
@@ -1988,7 +1989,7 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-      (global.get $main_hwnd)))
+      (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
     (return)
     ) ;; 158: BitBlt
@@ -1998,14 +1999,18 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-      (global.get $main_hwnd)))
+      (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
     (return)
     ) ;; 159: PatBlt — hdc(arg0), x(arg1), y(arg2), w=[esp+16], h=[esp+20], rop=[esp+24]
-      (call $host_gdi_rectangle (local.get $arg0) (local.get $arg1) (local.get $arg2)
-        (i32.add (local.get $arg1) (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
-        (i32.add (local.get $arg2) (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
-        (global.get $main_hwnd))
+      (local.set $tmp (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; rop
+      ;; Use BitBlt with no source DC for WHITENESS/BLACKNESS/PATCOPY
+      (drop (call $host_gdi_bitblt
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (call $gl32 (i32.add (global.get $esp) (i32.const 16)))
+        (call $gl32 (i32.add (global.get $esp) (i32.const 20)))
+        (i32.const 0) (i32.const 0) (i32.const 0)  ;; no source DC
+        (local.get $tmp) (global.get $window_dc_hwnd)))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
     (return)
@@ -2017,8 +2022,8 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
-    ) ;; 162: GetStockObject
-      (global.set $eax (i32.const 0x30002))
+    ) ;; 162: GetStockObject — index(arg0) → handle 0x30010+index
+      (global.set $eax (i32.add (i32.const 0x30010) (i32.and (local.get $arg0) (i32.const 0x1F))))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
     (return)
     ) ;; 163: GetObjectA
@@ -2077,16 +2082,16 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
-    ) ;; 171: SetBkColor
-      (global.set $eax (i32.const 0x00FFFFFF)) ;; prev color
+    ) ;; 171: SetBkColor(hdc, color) → prev color
+      (global.set $eax (call $host_gdi_set_bk_color (local.get $arg0) (local.get $arg1)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
-    ) ;; 172: SetBkMode
-      (global.set $eax (i32.const 1))
+    ) ;; 172: SetBkMode(hdc, mode) → prev mode
+      (global.set $eax (call $host_gdi_set_bk_mode (local.get $arg0) (local.get $arg1)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
-    ) ;; 173: SetTextColor
-      (global.set $eax (i32.const 0x00000000)) ;; prev color (black)
+    ) ;; 173: SetTextColor(hdc, color) → prev color
+      (global.set $eax (call $host_gdi_set_text_color (local.get $arg0) (local.get $arg1)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
     ) ;; 174: SetMenu
@@ -2494,6 +2499,7 @@
       ;; Fill PAINTSTRUCT minimally
       (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
       (call $gs32 (local.get $arg1) (i32.const 0x50001)) ;; hdc
+      (global.set $window_dc_hwnd (local.get $arg0)) ;; track which window owns the DC
       (global.set $eax (i32.const 0x50001))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
     (return)
@@ -2591,9 +2597,9 @@
       (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
       (then
         (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
-        (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))
-        ;; Store ptr-to-ptr at +32
-        (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)) (global.get $msvcrt_wcmdln_ptr))))
+        (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))))
+      ;; Always ensure ptr-to-ptr at +32 (may have been set by __wgetmainargs without this)
+      (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)) (global.get $msvcrt_wcmdln_ptr))
       (global.set $eax (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
     (return)
@@ -3540,7 +3546,8 @@
     (return)
     ) ;; 472: GetVersionExA — fill OSVERSIONINFOA from $winver
       ;; arg0 = ptr to OSVERSIONINFOA (148 bytes min)
-      ;; winver format: high word = (platformId<<10)|build, low word = (minor<<8)|major
+      ;; winver uses GetVersion format: high word = build (bit 31: set=Win9x, clear=NT)
+      ;; low word = (minor<<8)|major
       (local.set $w0 (call $g2w (local.get $arg0)))
       ;; dwMajorVersion at +4
       (i32.store (i32.add (local.get $w0) (i32.const 4))
@@ -3548,12 +3555,14 @@
       ;; dwMinorVersion at +8
       (i32.store (i32.add (local.get $w0) (i32.const 8))
         (i32.and (i32.shr_u (global.get $winver) (i32.const 8)) (i32.const 0xFF)))
-      ;; dwBuildNumber at +12
+      ;; dwBuildNumber at +12 (bits 16-30, mask off platform bit)
       (i32.store (i32.add (local.get $w0) (i32.const 12))
-        (i32.and (i32.shr_u (global.get $winver) (i32.const 16)) (i32.const 0x3FF)))
-      ;; dwPlatformId at +16
+        (i32.and (i32.shr_u (global.get $winver) (i32.const 16)) (i32.const 0x7FFF)))
+      ;; dwPlatformId at +16: bit 31 set = Win9x (1), clear = NT (2)
       (i32.store (i32.add (local.get $w0) (i32.const 16))
-        (i32.shr_u (global.get $winver) (i32.const 26)))
+        (if (result i32) (i32.and (global.get $winver) (i32.const 0x80000000))
+          (then (i32.const 1))    ;; VER_PLATFORM_WIN32_WINDOWS
+          (else (i32.const 2))))  ;; VER_PLATFORM_WIN32_NT
       ;; szCSDVersion at +20: empty string
       (i32.store8 (i32.add (local.get $w0) (i32.const 20)) (i32.const 0))
       (global.set $eax (i32.const 1))
