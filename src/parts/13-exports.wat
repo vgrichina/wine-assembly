@@ -52,6 +52,11 @@
   (func (export "get_thunk_base") (result i32) (global.get $thunk_guest_base))
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
   (func (export "get_num_thunks") (result i32) (global.get $num_thunks))
+  ;; Update thunk end to match current allocation count
+  (func $update_thunk_end (export "seal_thunks")
+    (global.set $thunk_guest_end
+      (i32.add (global.get $thunk_guest_base)
+        (i32.mul (global.get $num_thunks) (i32.const 8)))))
 
   ;; Flag debugging exports
   (func (export "get_flag_res") (result i32) (global.get $flag_res))

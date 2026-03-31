@@ -506,7 +506,17 @@
     (call $gs32 (global.get $esp) (local.get $op))
     (global.set $eip (local.get $target)))
   (func $th_jmp_r (param $op i32)
-    (global.set $eip (call $get_reg (local.get $op))))
+    (local $target i32) (local $ret_addr i32)
+    (local.set $target (call $get_reg (local.get $op)))
+    ;; Check thunk zone — JMP reg, return addr already on stack from prior CALL
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+      (then
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
+        (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
+        (return)))
+    (global.set $eip (local.get $target)))
   (func $th_push_m32 (param $op i32)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (call $gl32 (call $read_addr))) (call $next))

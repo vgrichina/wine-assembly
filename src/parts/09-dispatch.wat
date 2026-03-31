@@ -4507,8 +4507,15 @@
           (global.set $eax (i32.const 0xFFFFFFFF))))  ;; not our allocation
       (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (return)
-    ) ;; end $api_700 (unused)
-    ) ;; end $api_701 (unused)
+    ) ;; 700: IsProcessorFeaturePresent — return TRUE (1 arg stdcall)
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (return)
+    ) ;; 701: CoRegisterMessageFilter — return S_OK (2 args stdcall)
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (return)
+
     ) ;; fallback
     (call $host_log (local.get $name_ptr) (i32.const 48))
     (global.set $eax (i32.const 0))

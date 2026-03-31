@@ -282,7 +282,8 @@
                   (i32.const 0x4F524400)) ;; "ORD\0" marker
                 (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
                   (i32.const 0xFFFF))))
-            (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))))
+            (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+            (call $update_thunk_end)))
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
         (local.set $iat_ptr (i32.add (local.get $iat_ptr) (i32.const 4)))
         (br $fl)))

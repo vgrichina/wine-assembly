@@ -106,6 +106,7 @@
             (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
               (call $lookup_api_id (i32.add (global.get $GUEST_BASE) (i32.add (local.get $entry) (i32.const 2)))))))
         (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+        (call $update_thunk_end)
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
         (local.set $iat_ptr (i32.add (local.get $iat_ptr) (i32.const 4)))
         (br $fl)))
@@ -121,5 +122,6 @@
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA0000))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+        (call $update_thunk_end)
   )
 

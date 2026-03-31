@@ -4898,5 +4898,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 139033398
+  },
+  {
+    "id": 700,
+    "name": "IsProcessorFeaturePresent",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2057564970
+  },
+  {
+    "id": 701,
+    "name": "CoRegisterMessageFilter",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4079189859
   }
 ]
