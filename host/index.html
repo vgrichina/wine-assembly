@@ -200,7 +200,7 @@ Resource-aware Win98 emulator
       snake:    { exe: '../test/binaries/entertainment-pack/snake.exe' },
       taipei:   { exe: '../test/binaries/entertainment-pack/taipei.exe' },
       tictac:   { exe: '../test/binaries/entertainment-pack/tictac.exe' },
-      mspaint:  { exe: '../test/binaries/entertainment-pack/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'] },
+      mspaint:  { exe: '../test/binaries/nt/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
       ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: '../test/binaries/xp/winmine.exe' },
     };
@@ -296,6 +296,9 @@ Resource-aware Win98 emulator
 
       const ok = await wine.loadExe(app.exe);
       if (ok) {
+        if (app.winver && wine.instance.exports.set_winver) {
+          wine.instance.exports.set_winver(app.winver);
+        }
         if (app.dlls && app.dlls.length) {
           document.getElementById('status').textContent = 'Loading DLLs...';
           await wine.loadDlls(app.dlls);

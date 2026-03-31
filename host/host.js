@@ -78,13 +78,15 @@ class WineAssembly {
     };
     h.exit = (code) => {
       console.log('[ExitProcess] code:', code);
-      self.logToUI('[ExitProcess] code: ' + code);
-      self.logToUI('--- Program exited ---');
-      self.running = false;
-      if (self.renderer) {
-        self.renderer._exited = true;
-        self.renderer.windows = {};
-        self.renderer.repaint();
+      if (!self._inDllInit) {
+        self.logToUI('[ExitProcess] code: ' + code);
+        self.logToUI('--- Program exited ---');
+        self.running = false;
+        if (self.renderer) {
+          self.renderer._exited = true;
+          self.renderer.windows = {};
+          self.renderer.repaint();
+        }
       }
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
@@ -222,21 +224,52 @@ class WineAssembly {
     return entry;
   }
 
-  async loadDlls(dllConfigs) {
+  async loadDlls(dllPaths) {
     if (!this.instance) return;
-    if (typeof loadDlls === 'function') {
-      const exeBytes = new Uint8Array(this.memory.buffer, this.instance.exports.get_staging(), 0x200000);
-      loadDlls(this.instance.exports, this.memory.buffer, exeBytes, dllConfigs, console.log);
+    const _loadDlls = (typeof DllLoader !== 'undefined' && DllLoader.loadDlls) || (typeof loadDlls === 'function' && loadDlls);
+    if (!_loadDlls) return;
+    // dllPaths can be strings (URLs) or {name, bytes} objects
+    const configs = [];
+    for (const item of dllPaths) {
+      if (typeof item === 'string') {
+        const resp = await fetch(item);
+        if (!resp.ok) { console.error('Failed to fetch DLL:', item); continue; }
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        const name = item.split('/').pop();
+        configs.push({ name, bytes });
+      } else {
+        configs.push(item);
+      }
     }
+    const exeBytes = new Uint8Array(this.memory.buffer, this.instance.exports.get_staging(), 0x200000);
+    this._inDllInit = true;
+    _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
+    this._inDllInit = false;
+    this.running = true;
   }
 
-  run(steps = 1000) {
-    if (!this.instance || !this.running) return;
-    try {
-      this.instance.exports.run(steps);
-    } catch (e) {
-      console.error('WASM crash:', e);
-      this.running = false;
-    }
+  run(stepsPerSlice = 10000) {
+    this.running = true;
+    const self = this;
+    const step = () => {
+      if (!self.running) return;
+      try {
+        self.instance.exports.run(stepsPerSlice);
+        if (!self.instance.exports.get_eip()) {
+          self.logToUI('--- Program exited ---');
+          self.running = false;
+          return;
+        }
+      } catch (e) {
+        console.error('WASM crash:', e);
+        self.logToUI('ERROR: ' + e.message);
+        self.running = false;
+        return;
+      }
+      if (self.running) {
+        setTimeout(step, 0);
+      }
+    };
+    step();
   }
 }

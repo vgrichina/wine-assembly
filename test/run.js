@@ -254,6 +254,8 @@ async function main() {
       bytes: fs.readFileSync(p.trim()),
     }));
     loadDlls(instance.exports, instance.exports.memory.buffer, exeBytes, dlls, console.log);
+    // DllMain may call exit() during CRT init — don't let it stop the main loop
+    stopped = false;
   }
 
   const regs = () => {
