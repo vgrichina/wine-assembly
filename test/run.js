@@ -51,6 +51,7 @@ const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
+const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 
 if (!NO_BUILD) autoBuild();
 
@@ -69,6 +70,20 @@ async function main() {
   let lastApiName = null;  // track last API name for return value correlation
   let inputEvent = null;   // pending input event to inject via check_input
   let inputQueue = null;   // button ID sequence to inject
+
+  // Parse --input=batch:msg:wParam[:lParam],... into scheduled events
+  const scheduledInput = [];
+  if (INPUT_SPEC) {
+    for (const spec of INPUT_SPEC.split(',')) {
+      const parts = spec.split(':');
+      const batch = parseInt(parts[0]);
+      const msg = parseInt(parts[1]);
+      const wParam = parseInt(parts[2]) || 0;
+      const lParam = parseInt(parts[3]) || 0;
+      scheduledInput.push({ batch, msg, wParam, lParam });
+    }
+    scheduledInput.sort((a, b) => a.batch - b.batch);
+  }
 
   // Parse resources directly from EXE
   const resourceJson = parseResources(exeBytes);
@@ -513,6 +528,18 @@ async function main() {
   };
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    // Inject scheduled input events at the right batch
+    while (scheduledInput.length && scheduledInput[0].batch <= batch) {
+      const ev = scheduledInput.shift();
+      if (renderer) {
+        renderer.inputQueue.push({ type: 'command', hwnd: 0x10001, msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam });
+        logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
+      } else {
+        inputEvent = { msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam, hwnd: 0x10001 };
+        logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
+      }
+    }
+
     const eipBefore = instance.exports.get_eip();
 
     // Skip check: simulate ret when EIP hits a skip address

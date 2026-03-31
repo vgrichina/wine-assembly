@@ -138,6 +138,7 @@ Standard CRT init functions
 
 ### ABOUTWEP.dll (1)
 AboutWEP — about dialog helper
+Source: [Windows Entertainment Pack on archive.org](https://archive.org/details/windows-entertainment-pack)
 
 ## Resources
 
