@@ -4891,5 +4891,12 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1844953435
+  },
+  {
+    "id": 699,
+    "name": "HeapSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 139033398
   }
 ]
