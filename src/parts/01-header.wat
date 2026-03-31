@@ -7,6 +7,7 @@
   ;; ---- Host imports ----
   (import "host" "log" (func $host_log (param i32 i32)))
   (import "host" "log_i32" (func $host_log_i32 (param i32)))
+  (import "host" "crash_unimplemented" (func $host_crash_unimplemented (param i32 i32 i32 i32)))
   (import "host" "message_box" (func $host_message_box (param i32 i32 i32 i32) (result i32)))
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
@@ -48,6 +49,8 @@
   ;; check_dlg_button(hwnd, ctrl_id, check_state)
   (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
   ;; check_radio_button(hwnd, first_id, last_id, check_id)
+  (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
+  ;; get_screen_size() → (width | (height << 16))
   ;; GDI host imports
   (import "host" "gdi_create_pen" (func $host_gdi_create_pen (param i32 i32 i32) (result i32)))
   (import "host" "gdi_create_solid_brush" (func $host_gdi_create_solid_brush (param i32) (result i32)))
@@ -172,6 +175,7 @@
   (global $msvcrt_wcmdln_ptr (mut i32) (i32.const 0))  ;; wide command line pointer
   ;; Guest-space address of catch-return thunk (set during PE load)
   (global $catch_ret_thunk (mut i32) (i32.const 0))
+  (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table
   (global $initterm_end (mut i32) (i32.const 0))  ;; end of fn ptr table

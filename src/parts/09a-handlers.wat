@@ -988,12 +988,16 @@
 
   ;; 86: GetDeviceCaps
   (func $handle_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $screen i32)
     ;; Return reasonable defaults for common caps
     ;; HORZRES=8, VERTRES=10, LOGPIXELSX=88, LOGPIXELSY=90
+    (if (i32.or (i32.eq (local.get $arg1) (i32.const 8)) (i32.eq (local.get $arg1) (i32.const 10)))
+    (then
+    (local.set $screen (call $host_get_screen_size))
     (if (i32.eq (local.get $arg1) (i32.const 8))
-    (then (global.set $eax (i32.const 640))))  ;; HORZRES
+    (then (global.set $eax (i32.and (local.get $screen) (i32.const 0xFFFF)))))  ;; HORZRES
     (if (i32.eq (local.get $arg1) (i32.const 10))
-    (then (global.set $eax (i32.const 480))))  ;; VERTRES
+    (then (global.set $eax (i32.shr_u (local.get $screen) (i32.const 16)))))))
     (if (i32.eq (local.get $arg1) (i32.const 88))
     (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSX
     (if (i32.eq (local.get $arg1) (i32.const 90))
@@ -5218,11 +5222,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; fallback: unknown API
+  ;; fallback: unknown API — crash with full details
   (func $handle_fallback (param $name_ptr i32)
-    (call $host_log (local.get $name_ptr) (i32.const 48))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (call $host_crash_unimplemented
+      (local.get $name_ptr)
+      (global.get $esp)
+      (global.get $eip)
+      (global.get $ebp))
+    (unreachable)
   )
 
   ;; ============================================================
@@ -5300,6 +5307,36 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     ;; fallback
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; 702: SetRectEmpty — zeroes out RECT
+  (func $handle_SetRectEmpty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Zero out RECT at arg0: left, top, right, bottom = 0
+    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (i32.const 0))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 8)) (i32.const 0))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
+  )
+
+  ;; 703: SetRect — stores left, top, right, bottom into RECT
+  (func $handle_SetRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Store left, top, right, bottom into RECT at arg0
+    (i32.store (call $g2w (local.get $arg0)) (local.get $arg1))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (local.get $arg2))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 8)) (local.get $arg3))
+    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 12)) (local.get $arg4))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) ;; stdcall 5 params
+  )
+
+  ;; 704: RegisterClipboardFormatA — returns unique clipboard format ID
+  (func $handle_RegisterClipboardFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return unique clipboard format ID (starting from 0xC000)
+    (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
+    (global.set $eax (global.get $clipboard_format_counter))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
+  )
 
   (func $dispatch_reg (param $name i32)
     (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 3))))
