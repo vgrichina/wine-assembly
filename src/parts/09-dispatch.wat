@@ -2033,8 +2033,11 @@
             (call $g2w (local.get $arg4))))))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
-    ) ;; 161: TextOutA
-      (global.set $eax (i32.const 1))
+    ) ;; 161: TextOutA — hdc(arg0), x(arg1), y(arg2), lpString(arg3), nCount(arg4)
+      (global.set $eax (call $host_gdi_text_out
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (call $g2w (local.get $arg3)) (local.get $arg4)
+        (global.get $window_dc_hwnd)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
     ) ;; 162: GetStockObject — index(arg0) → handle 0x30010+index

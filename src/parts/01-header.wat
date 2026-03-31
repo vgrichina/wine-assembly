@@ -79,6 +79,8 @@
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
+  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, hwnd) → 1
 
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
