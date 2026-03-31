@@ -51,6 +51,12 @@
   ;; check_radio_button(hwnd, first_id, last_id, check_id)
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
+  (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
+  ;; create_font(height, weight, italic, facePtr) → handle
+  (import "host" "measure_text" (func $host_measure_text (param i32 i32 i32) (result i32)))
+  ;; measure_text(hdc, textPtr, nCount) → pixel width
+  (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))
+  ;; get_text_metrics(hdc) → (height | (aveCharWidth << 16))
   ;; GDI host imports
   (import "host" "gdi_create_pen" (func $host_gdi_create_pen (param i32 i32 i32) (result i32)))
   (import "host" "gdi_create_solid_brush" (func $host_gdi_create_solid_brush (param i32) (result i32)))
@@ -122,7 +128,7 @@
   (global $THREAD_BASE  i32 (i32.const 0x01052000))
   (global $CACHE_INDEX  i32 (i32.const 0x01152000))
   (global $API_HASH_TABLE i32 (i32.const 0x01362000))
-  (global $API_HASH_COUNT i32 (i32.const 702))
+  ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
