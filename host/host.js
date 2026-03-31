@@ -9,38 +9,6 @@ class WineAssembly {
     this.renderer = null;
     this.resourceJson = null;
     this.verbose = false;
-    // GDI state
-    this._nextGdiHandle = 0x80001;
-    this._gdiObjects = {
-      0x30001: { type: 'bitmap', w: 1, h: 1, pixels: new Uint8Array(4) },
-      0x30002: { type: 'brush', color: 0xFFFFFF },
-    };
-    this._dcState = {};    // hdc -> {penColor, penWidth, brushColor, posX, posY}
-  }
-
-  _gdiAlloc(obj) {
-    const h = this._nextGdiHandle++;
-    this._gdiObjects[h] = obj;
-    return h;
-  }
-
-  _getDC(hdc) {
-    if (!this._dcState[hdc]) {
-      this._dcState[hdc] = { penColor: 0x000000, penWidth: 1, brushColor: 0xC0C0C0, posX: 0, posY: 0 };
-    }
-    return this._dcState[hdc];
-  }
-
-  _getClientOrigin(hwnd) {
-    if (!this.renderer) return { x: 0, y: 0 };
-    // Find the window and compute client area origin
-    const win = this.renderer.windows[hwnd];
-    if (!win) return { x: 0, y: 0 };
-    let cy = win.y + 2; // border
-    const hasCaption = !!(win.style & 0x00C00000);
-    if (hasCaption) cy += 20; // titlebar height approx
-    if (win.menu) cy += 20; // menubar height approx
-    return { x: win.x + 3, y: cy + 1 };
   }
 
   readString(ptr) {
@@ -142,199 +110,6 @@ class WineAssembly {
       if (self.renderer) self.renderer.setMenu(hwnd, menuResId);
     };
 
-    // --- Real GDI implementations ---
-    h.gdi_create_pen = (style, width, color) => {
-      return self._gdiAlloc({ type: 'pen', style, width, color: color & 0xFFFFFF });
-    };
-    h.gdi_create_solid_brush = (color) => {
-      return self._gdiAlloc({ type: 'brush', color: color & 0xFFFFFF });
-    };
-    h.gdi_create_compat_dc = (hdcSrc) => {
-      const handle = self._gdiAlloc({ type: 'dc' });
-      self._dcState[handle] = { penColor: 0, penWidth: 1, brushColor: 0xFFFFFF, posX: 0, posY: 0 };
-      return handle;
-    };
-    h.gdi_create_compat_bitmap = (hdc, w, bh) => {
-      w = w | 0; bh = bh | 0;
-      if (w <= 0) w = 1;
-      if (bh <= 0) bh = 1;
-      const pixels = new Uint8Array(w * bh * 4);
-      return self._gdiAlloc({ type: 'bitmap', w, h: bh, pixels });
-    };
-    h.gdi_select_object = (hdc, hObj) => {
-      const obj = self._gdiObjects[hObj];
-      const dc = self._getDC(hdc);
-      let prev = 0x30001;
-      if (obj) {
-        if (obj.type === 'pen') { prev = dc.selectedPen || 0x30001; dc.selectedPen = hObj; dc.penColor = obj.color; dc.penWidth = obj.width || 1; }
-        else if (obj.type === 'brush') { prev = dc.selectedBrush || 0x30001; dc.selectedBrush = hObj; dc.brushColor = obj.color; }
-        else if (obj.type === 'bitmap') { prev = dc.selectedBitmap || 0x30001; dc.selectedBitmap = hObj; }
-      }
-      return prev;
-    };
-    h.gdi_delete_object = (handle) => { delete self._gdiObjects[handle]; return 1; };
-    h.gdi_delete_dc = (hdc) => { delete self._dcState[hdc]; delete self._gdiObjects[hdc]; return 1; };
-    h.gdi_rectangle = (hdc, left, top, right, bottom, hwnd) => {
-      const dc = self._getDC(hdc);
-      const bmpH = dc.selectedBitmap;
-      const bmp = bmpH ? self._gdiObjects[bmpH] : null;
-      if (bmp && bmp.pixels) {
-        const bc = dc.brushColor || 0;
-        const r = bc & 0xFF, g = (bc >> 8) & 0xFF, b = (bc >> 16) & 0xFF;
-        const y0 = Math.max(0, top), y1 = Math.min(bottom, bmp.h);
-        const x0 = Math.max(0, left), x1 = Math.min(right, bmp.w);
-        for (let y = y0; y < y1; y++) {
-          const rowOff = y * bmp.w * 4;
-          for (let x = x0; x < x1; x++) {
-            const i = rowOff + x * 4;
-            bmp.pixels[i] = r; bmp.pixels[i+1] = g; bmp.pixels[i+2] = b; bmp.pixels[i+3] = 255;
-          }
-        }
-        return 1;
-      }
-      if (!self.renderer) return 1;
-      const ctx = self.renderer.ctx;
-      const o = self._getClientOrigin(hwnd);
-      const x = o.x + left, y = o.y + top, w = right - left, bh = bottom - top;
-      const bc = dc.brushColor || 0;
-      ctx.fillStyle = `rgb(${bc & 0xFF},${(bc >> 8) & 0xFF},${(bc >> 16) & 0xFF})`;
-      ctx.fillRect(x, y, w, bh);
-      const pc = dc.penColor || 0;
-      ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
-      ctx.lineWidth = dc.penWidth || 1;
-      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, bh - 1);
-      return 1;
-    };
-    h.gdi_ellipse = (hdc, left, top, right, bottom, hwnd) => {
-      if (!self.renderer) return 1;
-      const ctx = self.renderer.ctx;
-      const o = self._getClientOrigin(hwnd);
-      const dc = self._getDC(hdc);
-      const cx = o.x + (left + right) / 2, cy = o.y + (top + bottom) / 2;
-      const rx = (right - left) / 2, ry = (bottom - top) / 2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, 0, Math.PI * 2);
-      const bc = dc.brushColor;
-      ctx.fillStyle = `rgb(${bc & 0xFF},${(bc >> 8) & 0xFF},${(bc >> 16) & 0xFF})`;
-      ctx.fill();
-      const pc = dc.penColor;
-      ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
-      ctx.lineWidth = dc.penWidth;
-      ctx.stroke();
-      return 1;
-    };
-    h.gdi_move_to = (hdc, x, y) => {
-      const dc = self._getDC(hdc);
-      dc.posX = x; dc.posY = y;
-      return 1;
-    };
-    h.gdi_line_to = (hdc, x, y, hwnd) => {
-      if (!self.renderer) return 1;
-      const ctx = self.renderer.ctx;
-      const o = self._getClientOrigin(hwnd);
-      const dc = self._getDC(hdc);
-      const pc = dc.penColor;
-      ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
-      ctx.lineWidth = dc.penWidth;
-      ctx.beginPath();
-      ctx.moveTo(o.x + dc.posX + 0.5, o.y + dc.posY + 0.5);
-      ctx.lineTo(o.x + x + 0.5, o.y + y + 0.5);
-      ctx.stroke();
-      dc.posX = x; dc.posY = y;
-      return 1;
-    };
-    h.gdi_arc = (hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd, hwnd) => {
-      if (!self.renderer) return 1;
-      const ctx = self.renderer.ctx;
-      const o = self._getClientOrigin(hwnd);
-      const dc = self._getDC(hdc);
-      const cx = o.x + (left + right) / 2, cy = o.y + (top + bottom) / 2;
-      const rx = (right - left) / 2, ry = (bottom - top) / 2;
-      const startAngle = Math.atan2(yStart - (top + bottom) / 2, xStart - (left + right) / 2);
-      const endAngle = Math.atan2(yEnd - (top + bottom) / 2, xEnd - (left + right) / 2);
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, startAngle, endAngle, true);
-      const pc = dc.penColor;
-      ctx.strokeStyle = `rgb(${pc & 0xFF},${(pc >> 8) & 0xFF},${(pc >> 16) & 0xFF})`;
-      ctx.lineWidth = dc.penWidth;
-      ctx.stroke();
-      return 1;
-    };
-    h.gdi_bitblt = (dstDC, dx, dy, w, bh, srcDC, sx, sy, rop, hwnd) => {
-      if (!self.renderer) return 1;
-      const srcState = self._getDC(srcDC);
-      const srcBmpH = srcState.selectedBitmap;
-      const srcBmp = srcBmpH ? self._gdiObjects[srcBmpH] : null;
-      if (!srcBmp || !srcBmp.pixels) return 1;
-      const isWindowDC = (dstDC === 0x50001);
-      if (isWindowDC) {
-        const o = self._getClientOrigin(hwnd);
-        const imgData = self.renderer.ctx.createImageData(w, bh);
-        for (let row = 0; row < bh; row++) {
-          for (let col = 0; col < w; col++) {
-            const srcX = sx + col, srcY = sy + row;
-            if (srcX < 0 || srcX >= srcBmp.w || srcY < 0 || srcY >= srcBmp.h) continue;
-            const si = (srcY * srcBmp.w + srcX) * 4;
-            const di = (row * w + col) * 4;
-            imgData.data[di] = srcBmp.pixels[si];
-            imgData.data[di + 1] = srcBmp.pixels[si + 1];
-            imgData.data[di + 2] = srcBmp.pixels[si + 2];
-            imgData.data[di + 3] = srcBmp.pixels[si + 3];
-          }
-        }
-        self.renderer.ctx.putImageData(imgData, o.x + dx, o.y + dy);
-      } else {
-        const dstState = self._getDC(dstDC);
-        const dstBmpH = dstState.selectedBitmap;
-        const dstBmp = dstBmpH ? self._gdiObjects[dstBmpH] : null;
-        if (!dstBmp || !dstBmp.pixels) return 1;
-        for (let row = 0; row < bh; row++) {
-          for (let col = 0; col < w; col++) {
-            const srcX = sx + col, srcY = sy + row;
-            const dstX = dx + col, dstY = dy + row;
-            if (srcX < 0 || srcX >= srcBmp.w || srcY < 0 || srcY >= srcBmp.h) continue;
-            if (dstX < 0 || dstX >= dstBmp.w || dstY < 0 || dstY >= dstBmp.h) continue;
-            const si = (srcY * srcBmp.w + srcX) * 4;
-            const di = (dstY * dstBmp.w + dstX) * 4;
-            dstBmp.pixels[di] = srcBmp.pixels[si];
-            dstBmp.pixels[di + 1] = srcBmp.pixels[si + 1];
-            dstBmp.pixels[di + 2] = srcBmp.pixels[si + 2];
-            dstBmp.pixels[di + 3] = srcBmp.pixels[si + 3];
-          }
-        }
-      }
-      return 1;
-    };
-    h.gdi_scroll_window = (hwnd, dx, dy) => {
-      if (!self.renderer) return 1;
-      const o = self._getClientOrigin(hwnd);
-      const win = self.renderer.windows[hwnd];
-      if (!win) return 1;
-      const cw = win.w - 6;
-      const ch = win.h - (o.y - win.y) - 2;
-      const ctx = self.renderer.ctx;
-      const imgData = ctx.getImageData(o.x, o.y, cw, ch);
-      ctx.clearRect(o.x, o.y, cw, ch);
-      ctx.putImageData(imgData, o.x + dx, o.y + dy);
-      return 1;
-    };
-    h.gdi_load_bitmap = (resourceId) => {
-      if (!self.resourceJson || !self.resourceJson.bitmaps) return 0;
-      const bmp = self.resourceJson.bitmaps[resourceId];
-      if (!bmp) return 0;
-      return self._gdiAlloc({ type: 'bitmap', w: bmp.w, h: bmp.h, pixels: new Uint8Array(bmp.pixels) });
-    };
-    h.gdi_get_object_w = (hObj) => {
-      const obj = self._gdiObjects[hObj];
-      if (!obj || obj.type !== 'bitmap') return 0;
-      return obj.w;
-    };
-    h.gdi_get_object_h = (hObj) => {
-      const obj = self._gdiObjects[hObj];
-      if (!obj || obj.type !== 'bitmap') return 0;
-      return obj.h;
-    };
-
     // --- Input ---
     h.check_input = () => {
       if (!self.renderer) return 0;
@@ -368,8 +143,6 @@ class WineAssembly {
     const info = {};
     try {
       const mem = new Uint8Array(this.memory.buffer);
-      // Scan guest memory for VS_VERSION_INFO (UTF-16LE) signature
-      // The PE sections are loaded at GUEST_BASE (0x12000) + section RVA
       const needle = 'VS_VERSION_INFO';
       const searchStart = 0x12000;
       const searchEnd = Math.min(searchStart + 0x200000, mem.length);
@@ -379,12 +152,11 @@ class WineAssembly {
         for (let j = 0; j < needle.length; j++) {
           if (mem[p + j * 2] !== needle.charCodeAt(j) || mem[p + j * 2 + 1] !== 0) { match = false; break; }
         }
-        if (match) { viBase = p - 6; break; } // -6 for wLength + wValueLength + wType before string
+        if (match) { viBase = p - 6; break; }
       }
       if (!viBase) return info;
       const dv = new DataView(this.memory.buffer);
       const viSize = dv.getUint16(viBase, true);
-      // Scan for UTF-16LE key-value pairs within the version resource
       const keys = ['CompanyName', 'FileDescription', 'FileVersion', 'LegalCopyright', 'ProductName', 'ProductVersion'];
       for (const key of keys) {
         for (let p = viBase; p < viBase + viSize - key.length * 2; p += 2) {
@@ -436,83 +208,35 @@ class WineAssembly {
       if (this.renderer) {
         this.renderer.loadResources(this.resourceJson);
       }
-      const rm = Object.keys(this.resourceJson.menus).length;
-      const rd = Object.keys(this.resourceJson.dialogs).length;
-      const rs = Object.keys(this.resourceJson.strings).length;
-      const rb = Object.keys(this.resourceJson.bitmaps || {}).length;
-      this.logToUI(`Resources: ${rm} menus, ${rd} dialogs, ${rs} strings, ${rb} bitmaps`);
     }
 
+    // Load EXE into staging buffer
     const staging = this.instance.exports.get_staging();
-    const dest = new Uint8Array(this.memory.buffer, staging, exeBytes.length);
-    dest.set(exeBytes);
+    const mem = new Uint8Array(this.memory.buffer);
+    mem.set(exeBytes, staging);
 
-    const entryPoint = this.instance.exports.load_pe(exeBytes.length);
-    if (entryPoint < 0) {
-      this.logToUI('ERROR: Failed to load PE (code ' + entryPoint + ')');
-      return false;
-    }
+    // Load PE
+    const entry = this.instance.exports.load_pe(exeBytes.length);
+    console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
 
-    this.logToUI('PE loaded. Entry point: 0x' + (entryPoint >>> 0).toString(16));
-    this._exeBytes = exeBytes;
-    return true;
+    return entry;
   }
 
-  async loadDlls(dllUrls) {
-    if (!this.instance || !this._exeBytes) return;
-    const dlls = [];
-    for (const url of dllUrls) {
-      const resp = await fetch(url);
-      const bytes = new Uint8Array(await resp.arrayBuffer());
-      const name = url.split('/').pop();
-      dlls.push({ name, bytes });
-    }
-    if (typeof DllLoader !== 'undefined') {
-      DllLoader.loadDlls(this.instance.exports, this.memory.buffer, this._exeBytes, dlls,
-        msg => this.logToUI(msg));
+  async loadDlls(dllConfigs) {
+    if (!this.instance) return;
+    if (typeof loadDlls === 'function') {
+      const exeBytes = new Uint8Array(this.memory.buffer, this.instance.exports.get_staging(), 0x200000);
+      loadDlls(this.instance.exports, this.memory.buffer, exeBytes, dllConfigs, console.log);
     }
   }
 
-  run(stepsPerSlice = 10000) {
-    this.running = true;
-    const step = () => {
-      if (!this.running) {
-        this.logToUI('--- Execution stopped ---');
-        this.dumpRegs();
-        return;
-      }
-      try {
-        this.instance.exports.run(stepsPerSlice);
-        if (!this.instance.exports.get_eip()) {
-          this.logToUI('--- Program exited ---');
-          this.running = false;
-          if (this.renderer) {
-            this.renderer.ctx.fillStyle = '#008080';
-            this.renderer.ctx.fillRect(0, 0, this.renderer.canvas.width, this.renderer.canvas.height);
-          }
-          return;
-        }
-      } catch (e) {
-        this.logToUI('ERROR: ' + e.message);
-        this.running = false;
-        this.dumpRegs();
-        return;
-      }
-      if (this.running) {
-        setTimeout(step, 0);
-      }
-    };
-    step();
-  }
-
-  dumpRegs() {
-    const e = this.instance.exports;
-    const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
-    this.logToUI(`EIP=${hex(e.get_eip())} ESP=${hex(e.get_esp())}`);
-    this.logToUI(`EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())}`);
-    this.logToUI(`EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`);
+  run(steps = 1000) {
+    if (!this.instance || !this.running) return;
+    try {
+      this.instance.exports.run(steps);
+    } catch (e) {
+      console.error('WASM crash:', e);
+      this.running = false;
+    }
   }
 }
-
-// Expose globally
-window.WineAssembly = WineAssembly;

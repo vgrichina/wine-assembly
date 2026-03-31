@@ -109,13 +109,54 @@ Game update at 0x400ff8:
             0x401410 — get sprite bitmap data
 ```
 
-## Remaining issue
+## Rendering Architecture (discovered)
 
-Test runner (test/run.js) still shows ~1 assertion per 1000 batches at
-batch-size=10000. This may be a timing artifact — the test runner's API
-logging overhead changes tick deltas, possibly causing a sprite to move
-more than expected in a single frame. The dedicated trace tool with no
-logging overhead shows zero assertions over 50k batches.
+SkiFree does NOT blit the backbuffer to screen during WM_PAINT! Its render
+pipeline is:
+
+1. **Timer callback** (`0x4047c0`) → game update (`0x400ff8`) → sprite loop (`0x401060`)
+2. Sprite loop iterates linked list at `[0x40c618]`, calling render functions via **indirect call** (function pointer in sprite struct)
+3. Render function at `0x4016a4` composes sprites using masked BitBlt:
+   - `BitBlt(backbufferDC, ..., spriteDC, ..., SRCPAINT)` (rop=0xCC0020/0x330008)
+   - All BitBlt calls are memory DC → memory DC
+   - Backbuffer DC stored at `[0x40c5ec]` = `0x80062`
+4. **NO BitBlt from backbuffer to screen DC (0x50001)** — none of the 9950 observed BitBlt calls use window DC
+5. WM_PAINT handler (`0x4060ac`) only does: `BeginPaint → FillRect → validation → EndPaint`
+
+### Why sprites don't appear on screen
+
+The indirect render callback at `0x4016a4` is never called — likely because the
+function pointer in the sprite struct is wrong or the sprite loop's render
+dispatch never reaches it. The function creates masked blits with ROP codes
+(SRCCOPY=0xCC0020, NOTSRCCOPY=0x330008) to composite sprites into the backbuffer.
+
+**Root cause hypothesis**: The render function pointer in the sprite struct is
+populated during init at `0x405a41` (GetDC → CreateCompatibleDC/Bitmap chain).
+If any of those GDI calls return unexpected values, the function pointers may
+not be set correctly.
+
+### Key globals
+
+| Address    | Name           | Value    | Purpose |
+|------------|---------------|----------|---------|
+| `0x40c5ec` | backbuffer DC  | 0x80062  | Target for all sprite BitBlt |
+| `0x40c5f0` | backbuffer bmp | 0x1da    | Bitmap handle (not GDI handle?) |
+| `0x40c618` | sprite list    | ptr      | Linked list head |
+| `0x40c67c` | game_active    | 1        | Game running flag |
+
+### BitBlt call sites (3 total, all in 0x4016a4)
+
+- `0x40189d`: SRCCOPY blit (rop=0xCC0020)
+- `0x4018c0`: NOT source blit (rop=0x330008) — mask operation
+- `0x40191e`: mixed rop blit
+
+### Missing: backbuffer → screen transfer
+
+SkiFree must transfer the composed backbuffer to screen somewhere, but we
+haven't found the code path. Possibilities:
+1. Through `0x4016a4` indirect call that we're not reaching
+2. Through a different API (StretchBlt, SetDIBitsToDevice) — both stubbed
+3. Through GetDC → BitBlt in a code path we haven't traced
 
 ## Tools
 

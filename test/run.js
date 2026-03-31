@@ -231,24 +231,6 @@ async function main() {
   };
   h.check_input_hwnd = () => 0x10002;
 
-  // --- GDI: use resource-based bitmap lookup for test runner ---
-  h.gdi_load_bitmap = (resourceId) => {
-    if (!resourceJson || !resourceJson.bitmaps) return 0;
-    const bmp = resourceJson.bitmaps[resourceId];
-    if (!bmp) return 0;
-    return 0x80000 | resourceId; // fake handle
-  };
-  h.gdi_get_object_w = (handle) => {
-    const id = handle & 0x7FFFF;
-    const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
-    return bmp ? bmp.w : 0;
-  };
-  h.gdi_get_object_h = (handle) => {
-    const id = handle & 0x7FFFF;
-    const bmp = resourceJson && resourceJson.bitmaps ? resourceJson.bitmaps[id] : null;
-    return bmp ? bmp.h : 0;
-  };
-
   const imports = { host: h };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);

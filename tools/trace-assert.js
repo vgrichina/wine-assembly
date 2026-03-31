@@ -42,6 +42,18 @@ async function main() {
   h.log = (ptr, len) => { apiCount++; };
   h.log_i32 = () => {};
 
+  // Trace BitBlt calls
+  let bltCount = 0;
+  h.gdi_bitblt = (dstDC, dx, dy, w, bh, srcDC, sx, sy, rop, hwnd) => {
+    bltCount++;
+    if (bltCount <= 30) {
+      const isSrc = srcDC === 0x50001, isDst = dstDC === 0x50001;
+      const mode = (isSrc ? 'Win' : 'Mem') + '→' + (isDst ? 'Win' : 'Mem');
+      console.log(`[BitBlt #${bltCount}] ${mode} dst=0x${dstDC.toString(16)} src=0x${srcDC.toString(16)} (${dx},${dy} ${w}x${bh}) from(${sx},${sy}) rop=0x${(rop>>>0).toString(16)}`);
+    }
+    return 1;
+  };
+
   const imports = { host: h };
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
   const mem = new Uint8Array(instance.exports.memory.buffer);
