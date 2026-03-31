@@ -245,7 +245,7 @@ for (const entry of table) {
 }
 watData += `  )\n`;
 
-const watPath = path.join(__dirname, '..', 'src', 'parts', '01b-api-hashes.wat');
+const watPath = path.join(__dirname, '..', 'src', 'parts', '01b-api-hashes.generated.wat');
 fs.writeFileSync(watPath, watData);
 console.log(`Generated ${watPath}`);
 console.log(`Hash collisions: 0`);

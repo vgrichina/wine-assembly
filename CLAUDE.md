@@ -23,7 +23,7 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 | File | Purpose |
 |------|---------|
 | `01-header.wat` | Module declaration, host imports, memory layout, CPU state globals |
-| `01b-api-hashes.wat` | FNV-1a hash table for Win32 API name→ID lookup |
+| `01b-api-hashes.generated.wat` | **Generated** — FNV-1a hash table for Win32 API name→ID lookup |
 | `02-thread-table.wat` | Threaded code function table (opcode → handler mapping) |
 | `03-registers.wat` | Register access helpers, lazy flag system (flag_op/flag_res/flag_a/flag_b) |
 | `04-cache.wat` | Block cache (decoded x86 → threaded code) |
@@ -32,7 +32,8 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |
-| `09-dispatch.wat` | Win32 API dispatch (thunk calls → API implementations) |
+| `09a-handlers.wat` | Hand-written Win32 API handler functions + sub-dispatchers |
+| `09b-dispatch.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `10-helpers.wat` | String/memory helpers, heap allocator, resource walker |
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
@@ -57,11 +58,11 @@ Key regions:
 - **Lazy flags:** Flags (ZF, SF, CF, OF) are not computed after every instruction. Instead, `flag_op`, `flag_a`, `flag_b`, `flag_res` are stored, and flags are computed on demand by `$get_zf`, `$get_cf`, etc. `flag_sign_shift` is 31 for 32-bit ops, 15 for 16-bit, 7 for 8-bit.
 - **g2w / w2g:** Convert between guest (x86) addresses and WASM linear memory addresses. `g2w(guest) = guest - image_base + GUEST_BASE`.
 - **API thunks:** Imported Win32 functions are replaced with thunk addresses. When EIP enters the thunk zone, `$win32_dispatch` handles the call.
-- **Dispatch handlers:** Each API handler in `09-dispatch.wat` MUST end with `(return)` to prevent fall-through to the next handler. The br_table uses nested blocks — without `(return)`, execution falls through ALL subsequent handlers. Soft-stubs (unimplemented APIs) return 0 with proper stdcall stack cleanup.
+- **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b-dispatch.generated.wat` contains the br_table that calls these. To add a new API: add it to `api_table.json`, write `$handle_{Name}` in `09a-handlers.wat`, run `node tools/gen_dispatch.js`.
 
 ## Tools
 
-- `tools/gen_dispatch.js` — Generates the Win32 API dispatch switch from a spec
+- `tools/gen_dispatch.js` — Generates `09b-dispatch.generated.wat` (br_table + calls) from `api_table.json`
 - `tools/gen_api_table.js` — Generates the API hash table (`01b-api-hashes.wat`)
 - `tools/disasm.js` — x86 disassembler for debugging
 - `tools/hexdump.js` — Memory hexdump utility
