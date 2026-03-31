@@ -48,7 +48,7 @@ async function main() {
     shell_about: () => 0,
     check_dlg_button: () => {}, check_radio_button: () => {},
     gdi_create_pen: () => 1, gdi_create_solid_brush: () => 1,
-    gdi_create_compat_dc: () => 1, gdi_create_compat_bitmap: () => 1,
+    gdi_create_compat_dc: () => 1, gdi_create_compat_bitmap: () => 1, gdi_create_bitmap: () => 1,
     gdi_select_object: () => 0, gdi_delete_object: () => 1, gdi_delete_dc: () => 1,
     gdi_rectangle: () => 1, gdi_ellipse: () => 1,
     gdi_move_to: () => 1, gdi_line_to: () => 1, gdi_arc: () => 1, gdi_bitblt: () => 1,

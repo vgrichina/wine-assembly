@@ -2015,8 +2015,16 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
     (return)
-    ) ;; 160: CreateBitmap
-      (global.set $eax (call $host_gdi_create_compat_bitmap (i32.const 0) (local.get $arg0) (local.get $arg1)))
+    ) ;; 160: CreateBitmap — nWidth(arg0), nHeight(arg1), nPlanes(arg2), nBitCount(arg3), lpBits(arg4)
+      (if (i32.eqz (local.get $arg4))
+        (then
+          ;; NULL lpBits — just create blank bitmap
+          (global.set $eax (call $host_gdi_create_compat_bitmap (i32.const 0) (local.get $arg0) (local.get $arg1))))
+        (else
+          ;; Has pixel data — convert via host
+          (global.set $eax (call $host_gdi_create_bitmap
+            (local.get $arg0) (local.get $arg1) (local.get $arg3)
+            (call $g2w (local.get $arg4))))))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
     (return)
     ) ;; 161: TextOutA

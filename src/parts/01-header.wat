@@ -53,6 +53,8 @@
   (import "host" "gdi_create_solid_brush" (func $host_gdi_create_solid_brush (param i32) (result i32)))
   (import "host" "gdi_create_compat_dc" (func $host_gdi_create_compat_dc (param i32) (result i32)))
   (import "host" "gdi_create_compat_bitmap" (func $host_gdi_create_compat_bitmap (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_create_bitmap" (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
   (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))
   (import "host" "gdi_delete_object" (func $host_gdi_delete_object (param i32) (result i32)))
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
