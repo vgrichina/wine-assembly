@@ -5458,6 +5458,36 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; 735: GetMenuItemRect(hWnd, hMenu, uItem, lprcItem) -> BOOL
+  (func $handle_GetMenuItemRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rect_wasm i32)
+    ;; arg0=hWnd, arg1=hMenu, arg2=uItem, arg3=lprcItem
+    (local.set $rect_wasm (call $g2w (local.get $arg3)))
+    ;; Fill RECT with reasonable defaults per menu item
+    (i32.store (local.get $rect_wasm)
+      (i32.mul (local.get $arg2) (i32.const 100))) ;; left
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 4))
+      (i32.const 0)) ;; top
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 8))
+      (i32.add (i32.mul (local.get $arg2) (i32.const 100)) (i32.const 100))) ;; right
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 12))
+      (i32.const 20)) ;; bottom
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; stdcall 4 params + ret
+  )
+
+  ;; GetLayout(hdc) -> DWORD — return 0 (LTR layout)
+  (func $handle_GetLayout (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param + ret
+  )
+
+  ;; SetLayout(hdc, dwLayout) -> DWORD — return previous layout (0)
+  (func $handle_SetLayout (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall 2 params + ret
+  )
+
   ;; 675: GetMenuCheckMarkDimensions — STUB: unimplemented
   (func $handle_GetMenuCheckMarkDimensions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))

@@ -4726,419 +4726,440 @@
   },
   {
     "id": 675,
+    "name": "GetMenuItemRect",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3785875513
+  },
+  {
+    "id": 676,
+    "name": "GetLayout",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1616003213
+  },
+  {
+    "id": 677,
+    "name": "SetLayout",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1116627433
+  },
+  {
+    "id": 678,
     "name": "GetMenuCheckMarkDimensions",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 4238890860
   },
   {
-    "id": 676,
+    "id": 679,
     "name": "SetCursorPos",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2773612853
   },
   {
-    "id": 677,
+    "id": 680,
     "name": "DestroyCursor",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3599237391
   },
   {
-    "id": 678,
+    "id": 681,
     "name": "FindWindowW",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3763509747
   },
   {
-    "id": 679,
+    "id": 682,
     "name": "GetTabbedTextExtentW",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2459046591
   },
   {
-    "id": 680,
+    "id": 683,
     "name": "UnregisterClassW",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1284711398
   },
   {
-    "id": 681,
+    "id": 684,
     "name": "ShowOwnedPopups",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3185155746
   },
   {
-    "id": 682,
+    "id": 685,
     "name": "InsertMenuW",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3723481864
   },
   {
-    "id": 683,
+    "id": 686,
     "name": "GetMenuStringW",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 653604114
   },
   {
-    "id": 684,
+    "id": 687,
     "name": "CopyAcceleratorTableW",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3649671278
   },
   {
-    "id": 685,
+    "id": 688,
     "name": "InSendMessage",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 2433912995
   },
   {
-    "id": 686,
+    "id": 689,
     "name": "PostThreadMessageW",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2982344771
   },
   {
-    "id": 687,
+    "id": 690,
     "name": "CreateMenu",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 495257682
   },
   {
-    "id": 688,
+    "id": 691,
     "name": "WindowFromDC",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2047886776
   },
   {
-    "id": 689,
+    "id": 692,
     "name": "CountClipboardFormats",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 4151589062
   },
   {
-    "id": 690,
+    "id": 693,
     "name": "SetWindowContextHelpId",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 69345952
   },
   {
-    "id": 691,
+    "id": 694,
     "name": "GetNextDlgGroupItem",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 543000089
   },
   {
-    "id": 692,
+    "id": 695,
     "name": "ClipCursor",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1502546729
   },
   {
-    "id": 693,
+    "id": 696,
     "name": "EnumChildWindows",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1934148987
   },
   {
-    "id": 694,
+    "id": 697,
     "name": "InvalidateRgn",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 472529959
   },
   {
-    "id": 695,
+    "id": 698,
     "name": "LoadStringW",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 407757417
   },
   {
-    "id": 696,
+    "id": 699,
     "name": "CharUpperW",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 673195208
   },
   {
-    "id": 697,
+    "id": 700,
     "name": "??1type_info@@UAE@XZ",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 2225716086
   },
   {
-    "id": 698,
+    "id": 701,
     "name": "?terminate@@YAXXZ",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1844953435
   },
   {
-    "id": 699,
+    "id": 702,
     "name": "HeapSize",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 139033398
   },
   {
-    "id": 700,
+    "id": 703,
     "name": "IsProcessorFeaturePresent",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2057564970
   },
   {
-    "id": 701,
+    "id": 704,
     "name": "CoRegisterMessageFilter",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4079189859
   },
   {
-    "id": 702,
+    "id": 705,
     "name": "SetRectEmpty",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 992934878
   },
   {
-    "id": 703,
+    "id": 706,
     "name": "SetRect",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3197453845
   },
   {
-    "id": 704,
+    "id": 707,
     "name": "RegisterClipboardFormatA",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2607980772
   },
   {
-    "id": 705,
+    "id": 708,
     "name": "SetWindowsHookExA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 4167977329
   },
   {
-    "id": 706,
+    "id": 709,
     "name": "SystemParametersInfoA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3565184439
   },
   {
-    "id": 707,
+    "id": 710,
     "name": "AboutWEP",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3268045966
   },
   {
-    "id": 708,
+    "id": 711,
     "name": "RegSetValueA",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2752104035
   },
   {
-    "id": 709,
+    "id": 712,
     "name": "ExtractIconA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 755230894
   },
   {
-    "id": 710,
+    "id": 713,
     "name": "RegQueryValueA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 567979203
   },
   {
-    "id": 711,
+    "id": 714,
     "name": "LoadImageA",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2831074045
   },
   {
-    "id": 712,
+    "id": 715,
     "name": "LineDDA",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2152398450
   },
   {
-    "id": 713,
+    "id": 716,
     "name": "OpenFile",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2730506447
   },
   {
-    "id": 714,
+    "id": 717,
     "name": "OutputDebugStringA",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3321276645
   },
   {
-    "id": 715,
+    "id": 718,
     "name": "AdjustWindowRect",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1794873872
   },
   {
-    "id": 716,
+    "id": 719,
     "name": "_EH_prolog",
     "nargs": 0,
     "convention": "special",
     "hash": 2459126119
   },
   {
-    "id": 717,
+    "id": 720,
     "name": "GetDCOrgEx",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 854077129
   },
   {
-    "id": 718,
+    "id": 721,
     "name": "CreateICA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3703743972
   },
   {
-    "id": 719,
+    "id": 722,
     "name": "SetDIBitsToDevice",
     "nargs": 12,
     "convention": "stdcall",
     "hash": 2575315803
   },
   {
-    "id": 720,
+    "id": 723,
     "name": "_mbsrchr",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 2689891079
   },
   {
-    "id": 721,
+    "id": 724,
     "name": "_mbsinc",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 1816966222
   },
   {
-    "id": 722,
+    "id": 725,
     "name": "_strdup",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 3269723402
   },
   {
-    "id": 723,
+    "id": 726,
     "name": "_stricmp",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 769605020
   },
   {
-    "id": 724,
+    "id": 727,
     "name": "strlen",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 1488600471
   },
   {
-    "id": 725,
+    "id": 728,
     "name": "strrchr",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1225080325
   },
   {
-    "id": 726,
+    "id": 729,
     "name": "strcmp",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 2637590676
   },
   {
-    "id": 727,
+    "id": 730,
     "name": "strcpy",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 2456435366
   },
   {
-    "id": 728,
+    "id": 731,
     "name": "strncpy",
     "nargs": 3,
     "convention": "cdecl",
     "hash": 2731116216
   },
   {
-    "id": 729,
+    "id": 732,
     "name": "strcat",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 2571171748
   },
   {
-    "id": 730,
+    "id": 733,
     "name": "atoi",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 125062948
   },
   {
-    "id": 731,
+    "id": 734,
     "name": "_ftol",
     "nargs": 0,
     "convention": "cdecl",
     "hash": 3708301863
   },
   {
-    "id": 732,
+    "id": 735,
     "name": "sprintf",
     "nargs": 0,
     "convention": "cdecl",
     "hash": 1893913417
   },
   {
-    "id": 733,
+    "id": 736,
     "name": "realloc",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 3206984517
   },
   {
-    "id": 734,
+    "id": 737,
     "name": "_strlwr",
     "nargs": 1,
     "convention": "cdecl",
