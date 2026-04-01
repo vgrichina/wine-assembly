@@ -316,8 +316,21 @@ async function main() {
     }
   }
   if (dlls.length > 0) {
-    loadDlls(instance.exports, instance.exports.memory.buffer, exeBytes, dlls, console.log);
+    const dllResults = loadDlls(instance.exports, instance.exports.memory.buffer, exeBytes, dlls, console.log);
     stopped = false;
+    // Parse resources from DLLs and store by base address
+    ctx.dllResources = {};
+    if (dllResults) {
+      for (let i = 0; i < dlls.length && i < dllResults.length; i++) {
+        try {
+          const dllRes = parseResources(dlls[i].bytes);
+          if (dllRes && dllRes.bitmaps && Object.keys(dllRes.bitmaps).length > 0) {
+            ctx.dllResources[dllResults[i].loadAddr] = dllRes;
+            console.log(`DLL resources: ${dlls[i].name} has ${Object.keys(dllRes.bitmaps).length} bitmaps`);
+          }
+        } catch (_) {}
+      }
+    }
   }
 
 

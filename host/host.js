@@ -26,6 +26,7 @@ class WineAssembly {
       getMemory: () => self.memory.buffer,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
+      get dllResources() { return self.dllResources; },
       onExit: (code) => {
         self.running = false;
         if (self.renderer) {
@@ -244,8 +245,22 @@ class WineAssembly {
     }
     const exeBytes = new Uint8Array(this.memory.buffer, this.instance.exports.get_staging(), 0x200000);
     this._inDllInit = true;
-    _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
+    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
     this._inDllInit = false;
+    // Parse DLL resources for bitmap loading
+    const _parseResources = (typeof parseResources === 'function') ? parseResources : (typeof ResourceParser !== 'undefined' && ResourceParser.parseResources);
+    if (_parseResources && results) {
+      this.dllResources = this.dllResources || {};
+      for (let i = 0; i < configs.length && i < results.length; i++) {
+        try {
+          const dllRes = _parseResources(configs[i].bytes);
+          if (dllRes && dllRes.bitmaps && Object.keys(dllRes.bitmaps).length > 0) {
+            this.dllResources[results[i].loadAddr] = dllRes;
+            console.log(`DLL resources: ${configs[i].name} has ${Object.keys(dllRes.bitmaps).length} bitmaps`);
+          }
+        } catch (_) {}
+      }
+    }
     this.running = true;
   }
 

@@ -81,10 +81,14 @@
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd)
 
+  (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop, hwnd)
   (import "host" "gdi_scroll_window" (func $host_gdi_scroll_window (param i32 i32 i32) (result i32)))
   ;; gdi_scroll_window(hwnd, dx, dy)
 
-  (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32) (result i32)))
+
+
+  (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32 i32) (result i32)))
   (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
   (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
@@ -92,6 +96,12 @@
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, hwnd) → 1
+  (import "host" "gdi_set_pixel" (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_set_pixel(hdc, x, y, color) → prev color
+  (import "host" "gdi_frame_rect" (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_frame_rect(hdc, left, top, right, bottom, hbrush, hwnd) → 1
+  (import "host" "gdi_get_pixel" (func $host_gdi_get_pixel (param i32 i32 i32) (result i32)))
+  ;; gdi_get_pixel(hdc, x, y) → COLORREF
 
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))

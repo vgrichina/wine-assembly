@@ -4975,5 +4975,54 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 567979203
+  },
+  {
+    "id": 711,
+    "name": "LoadImageA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2831074045
+  },
+  {
+    "id": 712,
+    "name": "LineDDA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2152398450
+  },
+  {
+    "id": 713,
+    "name": "OpenFile",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2730506447
+  },
+  {
+    "id": 714,
+    "name": "OutputDebugStringA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3321276645
+  },
+  {
+    "id": 715,
+    "name": "AdjustWindowRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1794873872
+  },
+  {
+    "id": 716,
+    "name": "_EH_prolog",
+    "nargs": 0,
+    "convention": "special",
+    "hash": 2459126119
+  },
+  {
+    "id": 717,
+    "name": "GetDCOrgEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 854077129
   }
 ]

@@ -309,6 +309,7 @@ Resource-aware Win98 emulator
             'mfc42.dll': '../test/binaries/dlls/mfc42.dll',
             'msvcp60.dll': '../test/binaries/dlls/msvcp60.dll',
             'oleaut32.dll': '../test/binaries/dlls/oleaut32.dll',
+            'cards.dll': '../test/binaries/entertainment-pack/cards.dll',
           };
           const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
           for (const name of required) {
