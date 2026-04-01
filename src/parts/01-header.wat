@@ -67,22 +67,22 @@
   (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))
   (import "host" "gdi_delete_object" (func $host_gdi_delete_object (param i32) (result i32)))
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
-  (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_rectangle(hdc, left, top, right, bottom, hwnd)
-  (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush, hwnd)
-  (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_ellipse(hdc, left, top, right, bottom, hwnd)
+  (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_rectangle(hdc, left, top, right, bottom)
+  (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
+  (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_ellipse(hdc, left, top, right, bottom)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32 i32) (result i32)))
-  ;; gdi_line_to(hdc, x, y, hwnd)
-  (import "host" "gdi_arc" (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd, hwnd)
-  (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop, hwnd)
+  (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
+  ;; gdi_line_to(hdc, x, y)
+  (import "host" "gdi_arc" (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
+  (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop)
 
-  (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop, hwnd)
+  (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)
   (import "host" "gdi_scroll_window" (func $host_gdi_scroll_window (param i32 i32 i32) (result i32)))
   ;; gdi_scroll_window(hwnd, dx, dy)
 
@@ -94,8 +94,8 @@
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
-  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, hwnd) → 1
+  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount) → 1
   (import "host" "gdi_set_pixel" (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
   (import "host" "gdi_frame_rect" (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -249,7 +249,7 @@
   (global $wndproc_addr2 (mut i32) (i32.const 0))   ;; WndProc for child/status window
   (global $wndclass_bg_brush (mut i32) (i32.const 0)) ;; hbrBackground from first RegisterClass
   (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
-  (global $window_dc_hwnd (mut i32) (i32.const 0))    ;; hwnd that owns the current window DC (0x50001)
+  ;; (removed: $window_dc_hwnd — hwnd is now encoded in DC handle)
   (global $capture_hwnd (mut i32) (i32.const 0))      ;; hwnd that has mouse capture (SetCapture/ReleaseCapture)
   (global $cursor_count (mut i32) (i32.const 0))      ;; ShowCursor display count (>=0 = visible)
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant

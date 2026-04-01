@@ -52,6 +52,10 @@
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
     (i32.sub (local.get $v) (global.get $image_base)))
     ;; Store api_id via hash lookup
+    ;; DEBUG: dump hash table entry 0 and entry 310 to verify integrity
+    (call $host_log_i32 (i32.load (global.get $API_HASH_TABLE)))  ;; hash[0]
+    (call $host_log_i32 (i32.load (i32.add (global.get $API_HASH_TABLE) (i32.const 2480))))  ;; hash[310] = OleInitialize
+    (call $host_log_i32 (global.get $API_HASH_COUNT))  ;; count
     (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
     (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
     ;; Compute guest address of this thunk
@@ -803,7 +807,7 @@
     (global.set $msg_phase (i32.const 2))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0x50001)) ;; wParam = hdc
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000))) ;; wParam = hdc
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
@@ -1037,8 +1041,8 @@
 
   ;; 85: GetDC
   (func $handle_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $window_dc_hwnd (local.get $arg0)) ;; track which window owns the DC
-    (global.set $eax (i32.const 0x50001)) ;; fake HDC
+    ;; GetDC(hwnd) → hdc = hwnd + 0x40000; GetDC(NULL) → 0x40000
+    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -1368,8 +1372,7 @@
       (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))   ;; top
       (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))   ;; right
       (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))  ;; bottom
-      (local.get $arg2)                        ;; hBrush
-      (global.get $window_dc_hwnd)))
+      (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -1642,7 +1645,7 @@
   ;; 153: Rectangle
   (func $handle_Rectangle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_rectangle
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $window_dc_hwnd)))
+    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
@@ -1654,14 +1657,14 @@
 
   ;; 155: LineTo(hdc, x, y) — delegate to host GDI
   (func $handle_LineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2) (global.get $window_dc_hwnd)))
+    (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 156: Ellipse
   (func $handle_Ellipse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_ellipse
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (global.get $window_dc_hwnd)))
+    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
@@ -1672,8 +1675,7 @@
     (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
     (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
     (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-    (global.get $window_dc_hwnd)))
+    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
   )
 
@@ -1684,8 +1686,7 @@
     (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
     (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
     (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-    (global.get $window_dc_hwnd)))
+    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
   )
 
@@ -1699,7 +1700,7 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 16)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 20)))
       (i32.const 0) (i32.const 0) (i32.const 0)  ;; no source DC
-      (local.get $tmp) (global.get $window_dc_hwnd)))
+      (local.get $tmp)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
@@ -1722,8 +1723,7 @@
   (func $handle_TextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $arg3)) (local.get $arg4)
-      (global.get $window_dc_hwnd)))
+      (call $g2w (local.get $arg3)) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
@@ -2373,7 +2373,7 @@
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
-    (call $gs32 (local.get $arg1) (i32.const 0x50001)) ;; hdc
+    (call $gs32 (local.get $arg1) (i32.add (local.get $arg0) (i32.const 0x40000))) ;; hdc = hwnd + 0x40000
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1)) ;; fErase = TRUE
     ;; rcPaint = {0, 0, clientW, clientH}
     ;; left(+8) and top(+12) already 0 from zero_memory
@@ -2381,8 +2381,7 @@
       (i32.sub (global.get $main_win_cx) (i32.const 6)))   ;; right = outer - borders
     (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
       (i32.sub (global.get $main_win_cy) (i32.const 45)))  ;; bottom = outer - chrome
-    (global.set $window_dc_hwnd (local.get $arg0)) ;; track which window owns the DC
-    (global.set $eax (i32.const 0x50001))
+    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -3450,8 +3449,7 @@
   ;; 384: GetWindowDC — STUB: unimplemented
   (func $handle_GetWindowDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetWindowDC(hwnd) → HDC. Like GetDC but includes non-client area. 1 arg stdcall
-    (global.set $window_dc_hwnd (local.get $arg0))
-    (global.set $eax (i32.const 0x50001))  ;; same fake HDC as GetDC
+    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))  ;; hdc = hwnd + 0x40000
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3513,9 +3511,24 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 395: PtInRect — STUB: unimplemented
+  ;; 395: PtInRect(lprc, pt.x, pt.y) -> BOOL — 3 args stdcall
   (func $handle_PtInRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $rect_w i32)
+    (local.set $rect_w (call $g2w (local.get $arg0)))
+    ;; Check: left <= x < right && top <= y < bottom
+    (if (i32.and
+      (i32.and
+        (i32.le_s (i32.load (local.get $rect_w)) (local.get $arg1))                          ;; left <= x
+        (i32.lt_s (local.get $arg1) (i32.load (i32.add (local.get $rect_w) (i32.const 8))))   ;; x < right
+      )
+      (i32.and
+        (i32.le_s (i32.load (i32.add (local.get $rect_w) (i32.const 4))) (local.get $arg2))   ;; top <= y
+        (i32.lt_s (local.get $arg2) (i32.load (i32.add (local.get $rect_w) (i32.const 12))))  ;; y < bottom
+      )
+    )
+    (then (global.set $eax (i32.const 1)))
+    (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; stdcall 3 params + ret
   )
 
   ;; 396: WinHelpW — return 1, 4 args stdcall
@@ -3945,7 +3958,6 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36)))   ;; wSrc
       (call $gl32 (i32.add (global.get $esp) (i32.const 40)))   ;; hSrc
       (call $gl32 (i32.add (global.get $esp) (i32.const 44)))   ;; dwRop
-      (global.get $window_dc_hwnd)
     ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 48)))  ;; stdcall, 11 args
   )
@@ -5254,7 +5266,7 @@
     (global.set $msg_phase (i32.const 2))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0x50001))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
