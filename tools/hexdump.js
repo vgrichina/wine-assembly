@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // Hex dump bytes from a PE at a given virtual address
-// Usage: node tools/hexdump.js <exe> <VA> [count=32]
+// Usage: node tools/hexdump.js <exe> <VA> [count=32] [--base=0xLOADADDR]
+// --base: runtime load address (auto-computes file offset from runtime VA)
 // Example: node tools/hexdump.js test/binaries/notepad.exe 0x4010cc 64
+// Example: node tools/hexdump.js test/binaries/dlls/mfc42.dll --base=0x01055000 0x010F7064 48
 
 const fs = require('fs');
-const file = process.argv[2];
-const va = parseInt(process.argv[3], 16);
-const count = parseInt(process.argv[4] || '32');
+const args = process.argv.slice(2);
+const file = args.find(a => !a.startsWith('--') && isNaN(parseInt(a, 16)) || a.includes('.'));
+const baseArg = args.find(a => a.startsWith('--base='));
+const nums = args.filter(a => !a.startsWith('--') && a !== file);
+const va = parseInt(nums[0], 16);
+const count = parseInt(nums[1] || '32');
 
 if (!file || isNaN(va)) {
-  console.error('Usage: node tools/hexdump.js <exe> <VA> [count=32]');
+  console.error('Usage: node tools/hexdump.js <exe> <VA> [count=32] [--base=0xLOADADDR]');
   process.exit(1);
 }
 
@@ -21,7 +26,8 @@ const numSect = dv.getUint16(peOff + 6, true);
 const optSize = dv.getUint16(peOff + 4 + 16, true);
 const imageBase = dv.getUint32(peOff + 4 + 20 + 28, true);
 const sectOff = peOff + 4 + 20 + optSize;
-const rva = va - imageBase;
+const loadBase = baseArg ? parseInt(baseArg.slice(7), 16) : imageBase;
+const rva = va - loadBase;
 
 for (let i = 0; i < numSect; i++) {
   const so = sectOff + i * 40;
