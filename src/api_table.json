@@ -5038,5 +5038,110 @@
     "nargs": 12,
     "convention": "stdcall",
     "hash": 2575315803
+  },
+  {
+    "id": 720,
+    "name": "_mbsrchr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 2689891079
+  },
+  {
+    "id": 721,
+    "name": "_mbsinc",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1816966222
+  },
+  {
+    "id": 722,
+    "name": "_strdup",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3269723402
+  },
+  {
+    "id": 723,
+    "name": "_stricmp",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 769605020
+  },
+  {
+    "id": 724,
+    "name": "strlen",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1488600471
+  },
+  {
+    "id": 725,
+    "name": "strrchr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1225080325
+  },
+  {
+    "id": 726,
+    "name": "strcmp",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 2637590676
+  },
+  {
+    "id": 727,
+    "name": "strcpy",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 2456435366
+  },
+  {
+    "id": 728,
+    "name": "strncpy",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2731116216
+  },
+  {
+    "id": 729,
+    "name": "strcat",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 2571171748
+  },
+  {
+    "id": 730,
+    "name": "atoi",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 125062948
+  },
+  {
+    "id": 731,
+    "name": "_ftol",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3708301863
+  },
+  {
+    "id": 732,
+    "name": "sprintf",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 1893913417
+  },
+  {
+    "id": 733,
+    "name": "realloc",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3206984517
+  },
+  {
+    "id": 734,
+    "name": "_strlwr",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 259409366
   }
 ]

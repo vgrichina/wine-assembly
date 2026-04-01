@@ -41,17 +41,9 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (local.get $i))
   (func $memcpy (param $dst i32) (param $src i32) (param $len i32)
-    (local $i i32)
-    (block $d (loop $l
-      (br_if $d (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $dst) (local.get $i)) (i32.load8_u (i32.add (local.get $src) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+    (if (local.get $len) (then (memory.copy (local.get $dst) (local.get $src) (local.get $len)))))
   (func $zero_memory (param $ptr i32) (param $len i32)
-    (local $i i32)
-    (block $d (loop $l
-      (br_if $d (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $ptr) (local.get $i)) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l))))
+    (if (local.get $len) (then (memory.fill (local.get $ptr) (i32.const 0) (local.get $len)))))
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
   ;; Falls back to bump allocation when no free block fits.
