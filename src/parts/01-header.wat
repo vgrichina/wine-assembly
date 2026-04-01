@@ -69,6 +69,8 @@
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
   (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_rectangle(hdc, left, top, right, bottom, hwnd)
+  (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush, hwnd)
   (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ellipse(hdc, left, top, right, bottom, hwnd)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
@@ -113,8 +115,9 @@
   ;; 0x01052000  1MB     Thread cache
   ;; 0x01152000  64KB    Block cache index (4096 slots × 16 bytes)
   ;; 0x01162000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x01362000  8KB     API dispatch hash table
-  ;; 0x01364000  ...     Free
+  ;; 0x01362000  16KB    API dispatch hash table (up to 2048 entries)
+  ;; 0x01366000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x01366200  ...     Free
 
   ;; Memory region bases
   (global $PE_STAGING   i32 (i32.const 0x01162000))
@@ -189,7 +192,7 @@
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x01363000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (i32.const 0x01366000))  ;; 32 bytes x 16 DLLs = 512 bytes (after 16KB hash table)
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))

@@ -1306,12 +1306,13 @@
 
   ;; 116: FillRect(hdc, lprc, hbr) — delegate to host GDI
   (func $handle_FillRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Read RECT from arg1: left, top, right, bottom
-    (global.set $eax (call $host_gdi_rectangle (local.get $arg0)
+    ;; FillRect(hDC, lpRect, hBrush) — arg0=hDC, arg1=lpRect, arg2=hBrush
+    (global.set $eax (call $host_gdi_fill_rect (local.get $arg0)
       (call $gl32 (local.get $arg1))           ;; left
       (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))   ;; top
       (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))   ;; right
       (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))  ;; bottom
+      (local.get $arg2)                        ;; hBrush
       (global.get $window_dc_hwnd)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -3916,9 +3917,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 514: GetSystemTimeAsFileTime — STUB: unimplemented
+  ;; 514: GetSystemTimeAsFileTime(lpFileTime) — writes 8-byte FILETIME
+  ;; Returns a fixed timestamp (~2000-01-01) since we don't have real time
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    ;; FILETIME for ~2000-01-01 00:00:00 UTC = 0x01BF53EB256D4000
+    (i32.store (local.get $wa) (i32.const 0x256D4000))       ;; dwLowDateTime
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x01BF53EB))  ;; dwHighDateTime
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 515: SetLocalTime — STUB: unimplemented
