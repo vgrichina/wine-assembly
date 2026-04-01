@@ -10,37 +10,24 @@
 - MSVCRT IAT patching works (EXE's CRT calls go to real msvcrt.dll code)
 - Real msvcrt _initterm iterates init function table and calls entries
 - SEH chain (fs:[0]) saved/restored on DllMain trap recovery
-- EXE reaches batch 1 (previously crashed at batch 0)
+- CRT functions fixed to cdecl (free, calloc, srand, wcsncpy, memset, memcpy)
+- memset/memcpy use wasm memory.fill/memory.copy intrinsics
+- 15 new CRT functions: malloc, _strdup, _stricmp, strlen, strrchr, strcmp,
+  strcpy, strncpy, strcat, atoi, _ftol, realloc, _strlwr, _mbsrchr, _mbsinc
+- EXE reaches batch 3 (was batch 0 at start of session)
 
-### Current Blocker: `memset`/`memcpy` use stdcall instead of cdecl
+### Current Blocker: `OleInitialize` thunk dispatch failure
 
-MFC42 DllMain gets stuck in an infinite loop at EIP=0x105500d (PE header bytes).
-Root cause traced via block-by-block execution:
+MFC42 DllMain traps on memory OOB (recovered). EXE CRT startup completes.
+At batch 3, MFC's AfxOleInit calls `OleInitialize` via mfc42's IAT thunk
+for ole32.dll. The handler exists (id=310) and dispatch is wired, but the
+thunk's `api_id` doesn't resolve correctly.
 
-1. MFC42 DllMain calls `memset` at 0x0105befc via thunk (IAT → 0x2001e90)
-2. `$handle_memset` does `esp += 16` (stdcall: pops ret + 3 args)
-3. But `memset` is **cdecl** — caller expects to clean up the 3 args itself
-4. The extra 12 bytes popped corrupts the stack frame
-5. After returning, MFC42 code reads wrong return address from stack
-6. Eventually `ret 0x8` at 0x0105bf22 pops 0x01055000 (hModule/DLL base)
-7. EIP enters the DOS header and loops on garbage bytes
-
-**Fix:** Change these 6 handlers from stdcall to cdecl (`esp += 4`):
-
-| Handler        | Current  | Correct |
-|----------------|----------|---------|
-| `handle_free`     | esp += 8  | esp += 4 |
-| `handle_calloc`   | esp += 12 | esp += 4 |
-| `handle_srand`    | esp += 8  | esp += 4 |
-| `handle_wcsncpy`  | esp += 16 | esp += 4 |
-| `handle_memset`   | esp += 16 | esp += 4 |
-| `handle_memcpy`   | esp += 16 | esp += 4 |
-
-Already correct: `toupper`, `memmove`, `rand`, `exit` (esp += 4).
-
-Also: replace `$zero_memory` loop and `$memcpy` loop in 10-helpers.wat
-with wasm `memory.fill` / `memory.copy` intrinsics. And fix `handle_memset`
-to use `memory.fill` for non-zero fill byte (currently only zeros).
+Hypothesis: `process_dll_imports` in 08b-dll-loader.wat creates thunks for
+mfc42's ole32.dll imports, but `lookup_api_id` returns wrong ID for the
+import name as stored in mfc42's hint/name table. Possibly the name RVA
+points to the wrong location after DLL relocation, or the hint bytes
+before the name are confusing the hash.
 
 ### Fixes Made This Session
 
@@ -107,6 +94,10 @@ to use `memory.fill` for non-zero fill byte (currently only zeros).
 
 9. **SAHF/LAHF, GetSystemTimeAsFileTime, DLL_TABLE relocation, FillRect,
    auto-detect DLLs** — committed in f94d8ba and a5b9efb.
+
+10. **cdecl fix + CRT batch** (4b9d546) — Fixed 6 handlers stdcall→cdecl.
+    memset/memcpy now use memory.fill/memory.copy. Added 15 CRT functions.
+    MSPaint batch 0 → batch 3.
 
 ### Previous Fixes (from earlier sessions)
 
