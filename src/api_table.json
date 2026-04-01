@@ -4954,5 +4954,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3268045966
+  },
+  {
+    "id": 708,
+    "name": "RegSetValueA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2752104035
+  },
+  {
+    "id": 709,
+    "name": "ExtractIconA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 755230894
+  },
+  {
+    "id": 710,
+    "name": "RegQueryValueA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 567979203
   }
 ]

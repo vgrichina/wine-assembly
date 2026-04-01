@@ -1236,9 +1236,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 106: SetCursor — STUB: unimplemented
+  ;; 106: SetCursor(hCursor) — 1 arg stdcall, return previous cursor (fake)
   (func $handle_SetCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 107: SetFocus — STUB: unimplemented
@@ -2690,9 +2691,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 311: CoTaskMemFree — no-op — STUB: unimplemented
+  ;; 311: CoTaskMemFree(pv) — 1 arg stdcall, free via heap_free
   (func $handle_CoTaskMemFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg0)
+      (then (call $heap_free (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 312: SaveDC — STUB: unimplemented
@@ -3126,9 +3129,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 388: DestroyIcon — STUB: unimplemented
+  ;; 388: DestroyIcon(hIcon) — 1 arg stdcall, return TRUE
   (func $handle_DestroyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 389: SystemParametersInfoW — return TRUE, 4 args stdcall
@@ -3353,9 +3357,22 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 432: RegSetValueW — STUB: unimplemented
+  ;; 432: RegSetValueW — 5 args stdcall, return ERROR_SUCCESS
   (func $handle_RegSetValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; RegSetValueA — 5 args stdcall, return ERROR_SUCCESS
+  (func $handle_RegSetValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; RegQueryValueA(hKey, lpSubKey, lpData, lpcbData) — 4 args stdcall
+  (func $handle_RegQueryValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 433: RegCreateKeyW — STUB: unimplemented
@@ -3378,9 +3395,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 437: GetShortPathNameA — STUB: unimplemented
+  ;; 437: GetShortPathNameA(lpszLong, lpszShort, cchBuffer) — 3 args stdcall
+  ;; Copy long path to short path buffer, return length
   (func $handle_GetShortPathNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $len i32)
+    (local.set $len (call $strlen (call $g2w (local.get $arg0))))
+    (if (i32.and (local.get $arg1) (i32.gt_u (local.get $arg2) (local.get $len)))
+      (then (call $memcpy (call $g2w (local.get $arg1)) (call $g2w (local.get $arg0)) (i32.add (local.get $len) (i32.const 1)))))
+    (global.set $eax (local.get $len))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 438: FillRgn — STUB: unimplemented
@@ -3513,14 +3536,102 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 464: StringFromCLSID — STUB: unimplemented
+  ;; 464: StringFromCLSID(rclsid, lplpsz) — 2 args stdcall
+  ;; Allocate wide string "{00000000-0000-0000-0000-000000000000}" and write GUID
   (func $handle_StringFromCLSID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $buf i32) (local $dst i32) (local $src i32)
+    (local $d1 i32) (local $d2 i32) (local $d3 i32) (local $i i32) (local $b i32) (local $nib i32)
+    ;; Allocate 78 bytes (39 wchars) from heap
+    (local.set $buf (call $heap_alloc (i32.const 78)))
+    (local.set $dst (call $g2w (local.get $buf)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    ;; Write '{' then hex digits with dashes then '}'
+    ;; Simplified: write "{00000000-0000-0000-0000-000000000000}\0"
+    ;; Read actual GUID bytes and format
+    (i32.store16 (local.get $dst) (i32.const 0x7B)) ;; '{'
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    ;; Data1: 4 bytes, big-endian hex
+    (local.set $d1 (i32.load (local.get $src)))
+    (local.set $i (i32.const 28))
+    (block $hd1 (loop $ld1
+      (br_if $hd1 (i32.lt_s (local.get $i) (i32.const 0)))
+      (local.set $nib (i32.and (i32.shr_u (local.get $d1) (local.get $i)) (i32.const 0xF)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 4)))
+      (br $ld1)))
+    (i32.store16 (local.get $dst) (i32.const 0x2D)) ;; '-'
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    ;; Data2: 2 bytes
+    (local.set $d2 (i32.load16_u (i32.add (local.get $src) (i32.const 4))))
+    (local.set $i (i32.const 12))
+    (block $hd2 (loop $ld2
+      (br_if $hd2 (i32.lt_s (local.get $i) (i32.const 0)))
+      (local.set $nib (i32.and (i32.shr_u (local.get $d2) (local.get $i)) (i32.const 0xF)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 4)))
+      (br $ld2)))
+    (i32.store16 (local.get $dst) (i32.const 0x2D))
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    ;; Data3: 2 bytes
+    (local.set $d3 (i32.load16_u (i32.add (local.get $src) (i32.const 6))))
+    (local.set $i (i32.const 12))
+    (block $hd3 (loop $ld3
+      (br_if $hd3 (i32.lt_s (local.get $i) (i32.const 0)))
+      (local.set $nib (i32.and (i32.shr_u (local.get $d3) (local.get $i)) (i32.const 0xF)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 4)))
+      (br $ld3)))
+    (i32.store16 (local.get $dst) (i32.const 0x2D))
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    ;; Data4[0..1]: 2 bytes
+    (local.set $i (i32.const 0))
+    (block $hd4a (loop $ld4a
+      (br_if $hd4a (i32.ge_u (local.get $i) (i32.const 2)))
+      (local.set $b (i32.load8_u (i32.add (local.get $src) (i32.add (i32.const 8) (local.get $i)))))
+      (local.set $nib (i32.shr_u (local.get $b) (i32.const 4)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $nib (i32.and (local.get $b) (i32.const 0xF)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ld4a)))
+    (i32.store16 (local.get $dst) (i32.const 0x2D))
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    ;; Data4[2..7]: 6 bytes
+    (local.set $i (i32.const 2))
+    (block $hd4b (loop $ld4b
+      (br_if $hd4b (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $b (i32.load8_u (i32.add (local.get $src) (i32.add (i32.const 8) (local.get $i)))))
+      (local.set $nib (i32.shr_u (local.get $b) (i32.const 4)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $nib (i32.and (local.get $b) (i32.const 0xF)))
+      (i32.store16 (local.get $dst) (i32.add (local.get $nib) (select (i32.const 48) (i32.const 55) (i32.lt_u (local.get $nib) (i32.const 10)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ld4b)))
+    (i32.store16 (local.get $dst) (i32.const 0x7D)) ;; '}'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0)) ;; null
+    ;; Write pointer to *lplpsz
+    (call $gs32 (local.get $arg1) (local.get $buf))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 465: ExtractIconW — STUB: unimplemented
+  ;; 465: ExtractIconW — 3 args stdcall, return fake icon handle
   (func $handle_ExtractIconW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0x0000FACE))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; ExtractIconA — 3 args stdcall, return fake icon handle
+  (func $handle_ExtractIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x0000FACE))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 466: ShellAboutW — STUB: unimplemented

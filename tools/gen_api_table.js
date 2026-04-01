@@ -244,6 +244,7 @@ for (const entry of table) {
   watData += `    "${hHex}${iHex}"  ;; ${entry.id}: ${entry.name}\n`;
 }
 watData += `  )\n`;
+watData += `  (global $API_HASH_COUNT i32 (i32.const ${table.length}))\n`;
 
 const watPath = path.join(__dirname, '..', 'src', 'parts', '01b-api-hashes.generated.wat');
 fs.writeFileSync(watPath, watData);

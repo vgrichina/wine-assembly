@@ -2,17 +2,26 @@
 // x86-32 disassembler for PE files
 // Usage: node tools/disasm.js <exe> <VA> [count=20]
 //   node tools/disasm.js <exe> <VA> <endVA>   (if endVA > 0x1000, disasm range)
+//   node tools/disasm.js <exe> --base=0xLOADADDR <runtimeVA> [count=20]
+//     --base remaps: runtimeVA is translated to file VA via (runtimeVA - loadAddr + imageBase)
 
 const fs = require('fs');
-const file = process.argv[2];
-const startVA = parseInt(process.argv[3], 16);
-let maxInsns = parseInt(process.argv[4] || '20');
+const args = process.argv.slice(2);
+let loadBase = null;
+const filtered = args.filter(a => {
+  const m = a.match(/^--base=(?:0x)?([0-9a-fA-F]+)$/);
+  if (m) { loadBase = parseInt(m[1], 16); return false; }
+  return true;
+});
+const file = filtered[0];
+let startVA = parseInt(filtered[1], 16);
+let maxInsns = parseInt(filtered[2] || '20');
 let endVA = 0;
 if (maxInsns > 0x1000) { endVA = maxInsns; maxInsns = 100000; }
 
 if (!file || isNaN(startVA)) {
   console.error('Usage: node tools/disasm.js <exe> <VA> [count=20]');
-  console.error('       node tools/disasm.js <exe> <startVA> <endVA>');
+  console.error('       node tools/disasm.js <exe> --base=0xLOADADDR <runtimeVA> [count=20]');
   process.exit(1);
 }
 
@@ -70,6 +79,12 @@ function rvaToFileOff(rva) {
     if (rva >= sva && rva < sva + svs) return rva - sva + rawOff;
   }
   return -1;
+}
+
+// Remap runtime address to file VA: runtimeVA - loadBase + imageBase
+if (loadBase !== null) {
+  if (endVA) endVA = endVA - loadBase + imageBase;
+  startVA = startVA - loadBase + imageBase;
 }
 
 const rva0 = startVA - imageBase;
@@ -133,8 +148,9 @@ function readImm(sz) {
 function szName(sz) { return sz === 8 ? 'byte' : sz === 16 ? 'word' : 'dword'; }
 
 for (let n = 0; n < maxInsns; n++) {
-  const va = startVA + (pos - baseFileOff);
-  if (endVA && va >= endVA) break;
+  const fileVA = startVA + (pos - baseFileOff);
+  const va = loadBase !== null ? fileVA - imageBase + loadBase : fileVA;
+  if (endVA && fileVA >= endVA) break;
   const startPos = pos;
   let insn = '??';
 

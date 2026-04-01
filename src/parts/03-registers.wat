@@ -165,9 +165,9 @@
     (if (i32.eq (local.get $cc) (i32.const 0x7)) (then (return (i32.and (i32.eqz (call $get_cf)) (i32.eqz (call $get_zf))))))
     (if (i32.eq (local.get $cc) (i32.const 0x8)) (then (return (call $get_sf))))
     (if (i32.eq (local.get $cc) (i32.const 0x9)) (then (return (i32.eqz (call $get_sf)))))
-    ;; 0xA=P (parity) — stub as 0
-    (if (i32.eq (local.get $cc) (i32.const 0xA)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $cc) (i32.const 0xB)) (then (return (i32.const 1))))
+    ;; 0xA=P (parity) — STUB: unimplemented
+    (if (i32.eq (local.get $cc) (i32.const 0xA)) (then (call $crash_unimplemented (i32.const 0)) (unreachable)))
+    (if (i32.eq (local.get $cc) (i32.const 0xB)) (then (call $crash_unimplemented (i32.const 0)) (unreachable)))
     ;; 0xC=L: SF!=OF
     (if (i32.eq (local.get $cc) (i32.const 0xC)) (then (return (i32.ne (call $get_sf) (call $get_of)))))
     ;; 0xD=GE: SF==OF

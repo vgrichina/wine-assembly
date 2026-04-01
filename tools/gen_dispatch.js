@@ -64,7 +64,7 @@ for (let id = 0; id < N; id++) {
 
 // Fallback
 out.push('    ) ;; fallback');
-out.push('    (call $handle_fallback (local.get $name_ptr))');
+out.push('    (call $handle_fallback (local.get $name_ptr) (local.get $api_id))');
 out.push('  )');
 
 // ── Validate paren balance ──────────────────────────────────────────
