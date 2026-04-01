@@ -107,6 +107,26 @@
   (import "host" "gdi_set_dib_to_device" (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
 
+  ;; Registry host imports — backed by localStorage
+  (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
+  ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0
+  (import "host" "reg_create_key" (func $host_reg_create_key (param i32 i32 i32 i32) (result i32)))
+  ;; reg_create_key(hKey, subKeyWA, phkResultGA, isWide) → ERROR_SUCCESS(0) or error
+  (import "host" "reg_query_value" (func $host_reg_query_value (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; reg_query_value(hKey, nameWA, typeGA, dataGA, cbDataGA, isWide) → error code
+  (import "host" "reg_set_value" (func $host_reg_set_value (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; reg_set_value(hKey, nameWA, type, dataGA, cbData, isWide) → error code
+  (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
+  ;; reg_close_key(hKey) → 0
+
+  ;; INI file host imports — backed by localStorage
+  (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; ini_get_string(appNameWA, keyNameWA, defaultWA, bufGA, bufSize, fileNameWA, isWide) → chars written
+  (import "host" "ini_get_int" (func $host_ini_get_int (param i32 i32 i32 i32 i32) (result i32)))
+  ;; ini_get_int(appNameWA, keyNameWA, nDefault, fileNameWA, isWide) → int value
+  (import "host" "ini_write_string" (func $host_ini_write_string (param i32 i32 i32 i32 i32) (result i32)))
+  ;; ini_write_string(appNameWA, keyNameWA, valueWA, fileNameWA, isWide) → BOOL
+
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
   (import "host" "math_cos" (func $host_math_cos (param f64) (result f64)))
@@ -115,6 +135,9 @@
 
   ;; ---- Memory: 512 pages = 32MB initial ----
   (memory (export "memory") 512)
+
+  ;; String constants at WASM offset 0x100
+  (data (i32.const 0x100) "win.ini\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -229,6 +252,7 @@
   (global $window_dc_hwnd (mut i32) (i32.const 0))    ;; hwnd that owns the current window DC (0x50001)
   (global $capture_hwnd (mut i32) (i32.const 0))      ;; hwnd that has mouse capture (SetCapture/ReleaseCapture)
   (global $cursor_count (mut i32) (i32.const 0))      ;; ShowCursor display count (>=0 = visible)
+  (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA

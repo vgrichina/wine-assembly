@@ -88,31 +88,31 @@
 
   ;; 9: GetProfileStringA(appName, keyName, default, retBuf, nSize) → chars copied
   (func $handle_GetProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32) (local $len i32) (local $ch i32)
+    ;; GetProfileStringA(appName, keyName, default, retBuf, nSize) — 5 args stdcall
+    ;; Same as GetPrivateProfileStringA with fileName="win.ini"
     (local $wa_esp i32) (local $nSize i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
     (local.set $nSize (i32.load (i32.add (local.get $wa_esp) (i32.const 20))))
-    ;; Copy default (arg2) to retBuf (arg3)
-    (local.set $src (call $g2w (local.get $arg2)))
-    (local.set $dst (call $g2w (local.get $arg3)))
-    (local.set $len (i32.const 0))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $len) (i32.sub (local.get $nSize) (i32.const 1))))
-      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $len))))
-      (i32.store8 (i32.add (local.get $dst) (local.get $len)) (local.get $ch))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $len (i32.add (local.get $len) (i32.const 1)))
-      (br $copy)
-    ))
-    (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
-    (global.set $eax (local.get $len))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+    (global.set $eax (call $host_ini_get_string
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)
+      (local.get $nSize)
+      (global.get $win_ini_name_ptr)  ;; WASM ptr to "win.ini\0"
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 10: GetProfileIntA(appName, keyName, nDefault) → nDefault
+  ;; 10: GetProfileIntA(appName, keyName, nDefault) — 3 args stdcall
   (func $handle_GetProfileIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg2))  ;; return nDefault
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+    (global.set $eax (call $host_ini_get_int
+      (call $g2w (local.get $arg0))
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (global.get $win_ini_name_ptr)
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 11: GetLocaleInfoA(Locale, LCType, lpLCData, cchData) — return 0 (not available)
@@ -234,8 +234,14 @@
 
   ;; 32: WriteProfileStringA(appName, keyName, lpString) — stub, pretend success
   (func $handle_WriteProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+    ;; WriteProfileStringA(appName, keyName, string) — 3 args stdcall, writes to win.ini
+    (global.set $eax (call $host_ini_write_string
+      (call $g2w (local.get $arg0))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (global.get $win_ini_name_ptr)
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 33: HeapCreate — STUB: unimplemented
@@ -1957,15 +1963,25 @@
   ;; 191: GetPrivateProfileIntA(lpAppName, lpKeyName, nDefault, lpFileName)
   ;; No INI file support — return nDefault (arg2)
   (func $handle_GetPrivateProfileIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg2))
+    ;; GetPrivateProfileIntA(appName, keyName, nDefault, fileName) — 4 args stdcall
+    (global.set $eax (call $host_ini_get_int
+      (call $g2w (local.get $arg0))
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 192: WritePrivateProfileStringA(appName, keyName, string, fileName) → BOOL
-  ;; 4 args stdcall. No filesystem — silently succeed
+  ;; 192: WritePrivateProfileStringA(appName, keyName, string, fileName) — 4 args stdcall
   (func $handle_WritePrivateProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+    (global.set $eax (call $host_ini_write_string
+      (call $g2w (local.get $arg0))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (call $g2w (local.get $arg3))
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 193: ShellExecuteA — STUB: unimplemented
@@ -2188,24 +2204,50 @@
     (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
   )
 
-  ;; 223: RegCloseKey
+  ;; 223: RegCloseKey(hKey) — 1 arg stdcall
   (func $handle_RegCloseKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_reg (local.get $name_ptr))
+    (global.set $eax (call $host_reg_close_key (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 224: RegCreateKeyA
+  ;; 224: RegCreateKeyA(hKey, lpSubKey, phkResult) — 3 args stdcall
   (func $handle_RegCreateKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_reg (local.get $name_ptr))
+    (global.set $eax (call $host_reg_create_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 225: RegQueryValueExA
+  ;; 225: RegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) — 6 args stdcall
   (func $handle_RegQueryValueExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_reg (local.get $name_ptr))
+    (local $wa_esp i32) (local $lpData i32) (local $lpcbData i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $lpData (local.get $arg4))
+    (local.set $lpcbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_reg_query_value
+      (local.get $arg0)                                          ;; hKey
+      (if (result i32) (local.get $arg1)                         ;; lpValueName
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg3)                                          ;; lpType (guest addr)
+      (local.get $lpData)                                        ;; lpData (guest addr)
+      (local.get $lpcbData)                                      ;; lpcbData (guest addr)
+      (i32.const 0)))                                            ;; isWide=0
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 226: RegSetValueExA
+  ;; 226: RegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData) — 6 args stdcall
   (func $handle_RegSetValueExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_reg (local.get $name_ptr))
+    (local $wa_esp i32) (local $cbData i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $cbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_reg_set_value
+      (local.get $arg0)                                          ;; hKey
+      (if (result i32) (local.get $arg1)                         ;; lpValueName
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg3)                                          ;; dwType
+      (local.get $arg4)                                          ;; lpData (guest addr)
+      (local.get $cbData)                                        ;; cbData
+      (i32.const 0)))                                            ;; isWide=0
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 227: LocalAlloc
@@ -2270,12 +2312,26 @@
 
   ;; 239: RegOpenKeyA
   (func $handle_RegOpenKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_reg (local.get $name_ptr))
+    ;; RegOpenKeyA(hKey, lpSubKey, phkResult) — 3 args stdcall
+    (local $hResult i32)
+    (local.set $hResult (call $host_reg_open_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (i32.const 0)))
+    (if (local.get $hResult)
+      (then (call $gs32 (local.get $arg2) (local.get $hResult))
+             (global.set $eax (i32.const 0)))  ;; ERROR_SUCCESS
+      (else (global.set $eax (i32.const 2))))  ;; ERROR_FILE_NOT_FOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 240: RegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult) — 5 args stdcall
   (func $handle_RegOpenKeyExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 2))
+    (local $hResult i32)
+    (local.set $hResult (call $host_reg_open_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (i32.const 0)))
+    (if (local.get $hResult)
+      (then (call $gs32 (local.get $arg4) (local.get $hResult))
+             (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 2))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -2415,37 +2471,19 @@
 
   ;; 256: GetPrivateProfileStringA — STUB: unimplemented
   (func $handle_GetPrivateProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetPrivateProfileStringA(appName, keyName, default, retBuf, nSize, fileName)
-    ;; 6 args stdcall. Copy default string to retBuf, return length.
-    ;; Same logic as GetProfileStringA but with extra fileName arg (arg4=nSize, [esp+24]=fileName)
-    (local $src i32) (local $dst i32) (local $len i32) (local $ch i32)
-    (local $wa_esp i32) (local $nSize i32) (local $fileName i32)
+    ;; GetPrivateProfileStringA(appName, keyName, default, retBuf, nSize, fileName) — 6 args stdcall
+    (local $wa_esp i32) (local $fileName i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $nSize (local.get $arg4))
     (local.set $fileName (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    ;; If keyName (arg1) is NULL, enumerate section keys — return empty string
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (if (i32.and (i32.ne (local.get $arg3) (i32.const 0)) (i32.gt_u (local.get $nSize) (i32.const 0)))
-          (then (i32.store8 (call $g2w (local.get $arg3)) (i32.const 0))))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-        (return)))
-    ;; Copy default (arg2) to retBuf (arg3)
-    (local.set $src (call $g2w (local.get $arg2)))
-    (local.set $dst (call $g2w (local.get $arg3)))
-    (local.set $len (i32.const 0))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $len) (i32.sub (local.get $nSize) (i32.const 1))))
-      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $len))))
-      (i32.store8 (i32.add (local.get $dst) (local.get $len)) (local.get $ch))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $len (i32.add (local.get $len) (i32.const 1)))
-      (br $copy)
-    ))
-    (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
-    (global.set $eax (local.get $len))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+    (global.set $eax (call $host_ini_get_string
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)         ;; retBuf (guest addr — host will g2w)
+      (local.get $arg4)         ;; nSize
+      (call $g2w (local.get $fileName))
+      (i32.const 0)))           ;; isWide=0
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 257: __wgetmainargs
@@ -2698,9 +2736,97 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 286: CreateWindowExW — delegate to existing CreateWindowEx logic — STUB: unimplemented
+  ;; 286: CreateWindowExW — delegate to existing CreateWindowEx logic
   (func $handle_CreateWindowExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32) (local $v i32) (local $i i32)
+    ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
+    ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
+    (if (i32.eqz (global.get $wndproc_addr))
+    (then
+    (local.set $i (global.get $GUEST_BASE))
+    (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
+    (block $found (loop $scan
+    (br_if $found (i32.ge_u (local.get $i) (local.get $v)))
+    (if (i32.and
+    (i32.eq (i32.load8_u (local.get $i)) (i32.const 0xC7))
+    (i32.and
+    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 1))) (i32.const 0x44))
+    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 2))) (i32.const 0x24))))
+    (then
+    (if (i32.eq (i32.load (i32.add (local.get $i) (i32.const 4))) (local.get $arg1))
+    (then
+    (if (i32.and
+    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 8))) (i32.const 0xC7))
+    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 7))) (i32.const 0x44)))
+    (then
+    (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
+    (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (then
+    (global.set $wndproc_addr (local.get $tmp))
+    (br $found)))))))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $scan)))))
+    ;; Set second wndproc for subsequent windows
+    (if (i32.and (global.get $wndproc_addr) (i32.eqz (global.get $wndproc_addr2)))
+    (then
+    (if (global.get $main_hwnd)  ;; not the first window
+    (then
+    ;; Scan for second WndProc using same pattern
+    (local.set $i (global.get $GUEST_BASE))
+    (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
+    (block $found2 (loop $scan2
+    (br_if $found2 (i32.ge_u (local.get $i) (local.get $v)))
+    (if (i32.and
+    (i32.eq (i32.load8_u (local.get $i)) (i32.const 0xC7))
+    (i32.and
+    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 1))) (i32.const 0x44))
+    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 2))) (i32.const 0x24))))
+    (then
+    (if (i32.eq (i32.load (i32.add (local.get $i) (i32.const 4))) (local.get $arg1))
+    (then
+    (if (i32.and
+    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 8))) (i32.const 0xC7))
+    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 7))) (i32.const 0x44)))
+    (then
+    (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
+    (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (then
+    (global.set $wndproc_addr2 (local.get $tmp))
+    (br $found2)))))))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $scan2)))))))
+    ;; Allocate HWND; first top-level window becomes main_hwnd
+    (if (i32.eqz (global.get $main_hwnd))
+    (then (global.set $main_hwnd (global.get $next_hwnd))))
+    ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
+    (drop (call $host_create_window
+    (global.get $next_hwnd)                                    ;; hwnd
+    (local.get $arg3)                                           ;; style
+    (local.get $arg4)                                           ;; x
+    (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
+    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
+    (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
+    (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
+    (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
+    ))
+    ;; Pass className to host so it knows the window type (e.g. "Edit")
+    (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
+    ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
+    (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
+    (then
+    (global.set $pending_wm_create (i32.const 1))
+    ;; Store window outer dimensions; compute client area (subtract borders+titlebar+menu)
+    (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    ;; Client = outer - borders(6) - caption(19) - menu(20) approximately
+    (global.set $pending_wm_size (i32.or
+    (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
+    (i32.shl (i32.sub (global.get $main_win_cy) (i32.const 45)) (i32.const 16))))))
+    (global.set $eax (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
   )
 
   ;; 287: RegisterClassW — STUB: unimplemented, return 1
@@ -2723,9 +2849,19 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 289: DefWindowProcW — delegate to existing DefWindowProc — STUB: unimplemented
+  ;; 289: DefWindowProcW — same as DefWindowProcA
   (func $handle_DefWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0010))
+    (then
+    (global.set $quit_flag (i32.const 1))))
+    ;; WM_ERASEBKGND (0x14): fill client area with background brush
+    (if (i32.eq (local.get $arg1) (i32.const 0x0014))
+    (then
+    (global.set $eax (call $host_erase_background (local.get $arg0) (global.get $wndclass_bg_brush)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 290: LoadCursorW — return fake handle — STUB: unimplemented
@@ -2751,9 +2887,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 293: MessageBoxW — STUB: unimplemented, return 1 (IDOK)
+  ;; 293: MessageBoxW — return IDOK (1), 4 args stdcall
   (func $handle_MessageBoxW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 294: SetWindowTextW — STUB: unimplemented
@@ -2766,14 +2903,27 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 296: SendMessageW — STUB: unimplemented, return 0
+  ;; 296: SendMessageW — return 0, 4 args stdcall
   (func $handle_SendMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 297: PostMessageW — STUB: unimplemented, return 1
+  ;; 297: PostMessageW — same as PostMessageA
   (func $handle_PostMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32)
+    ;; Queue if room (max 8 messages, 16 bytes each, at WASM addr 0x400)
+    (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+    (then
+    (local.set $tmp (i32.add (i32.const 0x400)
+    (i32.mul (global.get $post_queue_count) (i32.const 16))))
+    (i32.store (local.get $tmp) (local.get $arg0))
+    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1))
+    (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2))
+    (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3))
+    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 298: SetErrorMode — return 0, 1 arg stdcall
@@ -2948,9 +3098,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 325: wsprintfW — wide sprintf STUB: unimplemented (return 0)
+  ;; 325: wsprintfW — wide sprintf, return 0 chars written (cdecl, caller cleans up)
   (func $handle_wsprintfW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
   )
 
   ;; 326: TlsAlloc — return next TLS index
@@ -3366,9 +3516,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 396: WinHelpW — STUB: unimplemented
+  ;; 396: WinHelpW — return 1, 4 args stdcall
   (func $handle_WinHelpW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 397: GetCapture — STUB: unimplemented
@@ -3578,7 +3729,15 @@
 
   ;; 430: RegOpenKeyW — STUB: unimplemented
   (func $handle_RegOpenKeyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; RegOpenKeyW(hKey, lpSubKey, phkResult) — 3 args stdcall
+    (local $hResult i32)
+    (local.set $hResult (call $host_reg_open_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (i32.const 1)))
+    (if (local.get $hResult)
+      (then (call $gs32 (local.get $arg2) (local.get $hResult))
+             (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 431: RegEnumKeyW — STUB: unimplemented
@@ -3606,46 +3765,59 @@
 
   ;; 433: RegCreateKeyW — STUB: unimplemented
   (func $handle_RegCreateKeyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; RegCreateKeyW(hKey, lpSubKey, phkResult) → LONG. 3 args stdcall
-    ;; Write fake handle to phkResult, return ERROR_SUCCESS
-    (if (i32.ne (local.get $arg2) (i32.const 0))
-      (then (call $gs32 (local.get $arg2) (i32.const 0xBEEF0002))))
-    (global.set $eax (i32.const 0))
+    ;; RegCreateKeyW(hKey, lpSubKey, phkResult) — 3 args stdcall
+    (global.set $eax (call $host_reg_create_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 434: RegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData) → LONG
-  ;; 6 args stdcall. No-op, return ERROR_SUCCESS
+  ;; 434: RegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData) — 6 args stdcall
   (func $handle_RegSetValueExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+    (local $wa_esp i32) (local $cbData i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $cbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_reg_set_value
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg3)
+      (local.get $arg4)
+      (local.get $cbData)
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 435: RegCreateKeyExW — STUB: unimplemented
   (func $handle_RegCreateKeyExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; RegCreateKeyExW(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition)
-    ;; 9 args stdcall. Return ERROR_SUCCESS (0), write fake handle to phkResult, set disposition to REG_CREATED_NEW_KEY
+    ;; RegCreateKeyExW(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttrs, phkResult, lpdwDisposition)
+    ;; 9 args stdcall
     (local $wa_esp i32) (local $phkResult i32) (local $lpdwDisposition i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
-    ;; phkResult = arg at [esp+32] (8th arg, 0-indexed from ret addr)
     (local.set $phkResult (i32.load (i32.add (local.get $wa_esp) (i32.const 32))))
-    ;; lpdwDisposition = arg at [esp+36] (9th arg)
     (local.set $lpdwDisposition (i32.load (i32.add (local.get $wa_esp) (i32.const 36))))
-    ;; Write fake registry handle
-    (if (i32.ne (local.get $phkResult) (i32.const 0))
-      (then (call $gs32 (local.get $phkResult) (i32.const 0xBEEF0001))))
-    ;; Write disposition = REG_CREATED_NEW_KEY (1)
+    (global.set $eax (call $host_reg_create_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult) (i32.const 1)))
+    ;; Set disposition = REG_CREATED_NEW_KEY (1) if requested
     (if (i32.ne (local.get $lpdwDisposition) (i32.const 0))
       (then (call $gs32 (local.get $lpdwDisposition) (i32.const 1))))
-    (global.set $eax (i32.const 0))  ;; ERROR_SUCCESS
-    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; stdcall, 9 args
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 
-  ;; 436: RegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) → LONG
-  ;; 6 args stdcall. Return ERROR_FILE_NOT_FOUND (2) — key not found in our fake registry
+  ;; 436: RegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) — 6 args stdcall
   (func $handle_RegQueryValueExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 2))  ;; ERROR_FILE_NOT_FOUND
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+    (local $wa_esp i32) (local $lpData i32) (local $lpcbData i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $lpData (local.get $arg4))
+    (local.set $lpcbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_reg_query_value
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg3)
+      (local.get $lpData)
+      (local.get $lpcbData)
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 437: GetShortPathNameA(lpszLong, lpszShort, cchBuffer) — 3 args stdcall
@@ -3939,9 +4111,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 466: ShellAboutW — STUB: unimplemented
+  ;; 466: ShellAboutW — return 1, 4 args stdcall
   (func $handle_ShellAboutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 467: CommandLineToArgvW — STUB: unimplemented
@@ -4307,9 +4480,13 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 529: FindResourceW — STUB: unimplemented
+  ;; 529: FindResourceW — same as FindResourceA (resource IDs are integer MAKEINTRESOURCE values)
   (func $handle_FindResourceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.eqz (global.get $rsrc_rva))
+    (then (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (global.set $eax (call $find_resource (local.get $arg2) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 530: GlobalGetAtomNameW — STUB: unimplemented
@@ -4370,46 +4547,42 @@
 
   ;; 541: GetPrivateProfileIntW — STUB: unimplemented
   (func $handle_GetPrivateProfileIntW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetPrivateProfileIntW(appName, keyName, nDefault, fileName) → int. 4 args stdcall
-    ;; Return nDefault (arg2) since we have no INI files
-    (global.set $eax (local.get $arg2))
+    ;; GetPrivateProfileIntW(appName, keyName, nDefault, fileName) — 4 args stdcall
+    (global.set $eax (call $host_ini_get_int
+      (call $g2w (local.get $arg0))
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 542: GetPrivateProfileStringW — STUB: unimplemented
   (func $handle_GetPrivateProfileStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetPrivateProfileStringW(appName, keyName, default, retBuf, nSize, fileName) → len
-    ;; 6 args stdcall. Copy default (UTF-16) to retBuf. arg4=nSize, [esp+24]=fileName
-    (local $src i32) (local $dst i32) (local $len i32) (local $ch i32) (local $nSize i32)
-    (local.set $nSize (local.get $arg4))
-    ;; If keyName (arg1) is NULL, return empty
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (if (i32.and (i32.ne (local.get $arg3) (i32.const 0)) (i32.gt_u (local.get $nSize) (i32.const 0)))
-          (then (i32.store16 (call $g2w (local.get $arg3)) (i32.const 0))))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-        (return)))
-    ;; Copy default (arg2) UTF-16 to retBuf (arg3)
-    (local.set $src (call $g2w (local.get $arg2)))
-    (local.set $dst (call $g2w (local.get $arg3)))
-    (local.set $len (i32.const 0))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $len) (i32.sub (local.get $nSize) (i32.const 1))))
-      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.shl (local.get $len) (i32.const 1)))))
-      (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $len) (i32.const 1))) (local.get $ch))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $len (i32.add (local.get $len) (i32.const 1)))
-      (br $copy)
-    ))
-    (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0))
-    (global.set $eax (local.get $len))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+    ;; GetPrivateProfileStringW(appName, keyName, default, retBuf, nSize, fileName) — 6 args stdcall
+    (local $wa_esp i32) (local $fileName i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $fileName (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_ini_get_string
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)
+      (local.get $arg4)
+      (call $g2w (local.get $fileName))
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 543: WritePrivateProfileStringW — STUB: unimplemented
+  ;; 543: WritePrivateProfileStringW(appName, keyName, string, fileName) — 4 args stdcall
   (func $handle_WritePrivateProfileStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_ini_write_string
+      (call $g2w (local.get $arg0))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (call $g2w (local.get $arg3))
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 544: CopyFileW — STUB: unimplemented
@@ -4876,14 +5049,85 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 635: DispatchMessageW — STUB: unimplemented
+  ;; 635: DispatchMessageW — same as DispatchMessageA
   (func $handle_DispatchMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32)
+    ;; Skip WM_NULL — idle message, don't dispatch to WndProc
+    (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (then (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; WM_TIMER with callback (lParam != 0): call callback(hwnd, WM_TIMER, timerID, tickcount)
+    (if (i32.and (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
+    (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 0)))
+    (then
+    (local.set $tmp (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $tick_count))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x0113))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $tmp))
+    (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+    (global.set $steps (i32.const 0))
+    (return)))
+    ;; If we have a WndProc, call it with the message
+    (if (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))
+    (then
+    (local.set $tmp (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $tmp))
+    (if (i32.eq (call $gl32 (local.get $arg0)) (global.get $main_hwnd))
+    (then (global.set $eip (global.get $wndproc_addr)))
+    (else (if (global.get $wndproc_addr2)
+    (then (global.set $eip (global.get $wndproc_addr2)))
+    (else (global.set $eip (global.get $wndproc_addr))))))
+    (global.set $steps (i32.const 0))
+    (return)))
+    ;; No WndProc: just return 0
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 636: PeekMessageW — STUB: unimplemented
+  ;; 636: PeekMessageW — same as PeekMessageA
   (func $handle_PeekMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Check posted message queue
+    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+      (then
+        ;; Dequeue into lpMsg
+        (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.load (i32.const 0x408)))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.load (i32.const 0x40C)))
+        ;; If PM_REMOVE (arg4 & 1), shift queue
+        (if (i32.and (local.get $arg4) (i32.const 1))
+          (then
+            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+          )
+        )
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)
+      )
+    )
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 637: SendDlgItemMessageW — STUB: unimplemented
@@ -4891,14 +5135,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 638: LoadAcceleratorsW — STUB: unimplemented
+  ;; 638: LoadAcceleratorsW — same as A: set haccel and return fake handle
   (func $handle_LoadAcceleratorsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $haccel (i32.const 0x60001))
+    (global.set $eax (i32.const 0x60001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 639: TranslateAcceleratorW — STUB: unimplemented
+  ;; 639: TranslateAcceleratorW — return 0, 3 args stdcall
   (func $handle_TranslateAcceleratorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 640: IsWindowEnabled — STUB: unimplemented
@@ -4938,9 +5185,130 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 647: GetMessageW — STUB: unimplemented
+  ;; 647: GetMessageW — same as GetMessageA
   (func $handle_GetMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
+    (local.set $msg_ptr (local.get $arg0))
+    ;; If quit flag set, return 0 (WM_QUIT)
+    (if (global.get $quit_flag)
+    (then
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver pending WM_CREATE before anything else
+    (if (global.get $pending_wm_create)
+    (then
+    (global.set $pending_wm_create (i32.const 0))
+    (call $gs32 (i32.const 0x400100) (i32.const 0))
+    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))
+    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver pending WM_SIZE after WM_CREATE
+    (if (global.get $pending_wm_size)
+    (then
+    (local.set $packed (global.get $pending_wm_size))
+    (global.set $pending_wm_size (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Drain posted message queue first
+    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+    (then
+    (local.set $tmp (i32.const 0x400))
+    (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12))))
+    (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+    (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+    (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Phase 0: send WM_ACTIVATE first
+    (if (i32.eqz (global.get $msg_phase))
+    (then
+    (global.set $msg_phase (i32.const 1))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0006))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $main_hwnd))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Phase 1: send WM_ERASEBKGND
+    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    (then
+    (global.set $msg_phase (i32.const 2))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0x50001))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Phase 2: send WM_PAINT
+    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    (then
+    (global.set $msg_phase (i32.const 3))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Poll for input events from the host
+    (local.set $packed (call $host_check_input))
+    (if (i32.ne (local.get $packed) (i32.const 0))
+    (then
+    (local.set $tmp (call $host_check_input_hwnd))
+    (if (i32.eqz (local.get $tmp))
+    (then (local.set $tmp (global.get $main_hwnd))))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
+    (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
+    (i32.shr_u (local.get $packed) (i32.const 16)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+    (call $host_check_input_lparam))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; No input — deliver WM_PAINT if pending
+    (if (global.get $paint_pending)
+    (then
+    (global.set $paint_pending (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; No paint — deliver WM_TIMER if timer is active
+    (if (global.get $timer_id)
+    (then
+    (call $gs32 (local.get $msg_ptr) (global.get $timer_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $timer_id))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $timer_callback))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; No timer — return WM_NULL
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 648: DefFrameProcW — STUB: unimplemented
@@ -5044,14 +5412,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 667: GetDlgItemTextW — STUB: unimplemented
+  ;; 667: GetDlgItemTextW — write null terminator (UTF-16) and return 0, 4 args stdcall
   (func $handle_GetDlgItemTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.gt_u (local.get $arg3) (i32.const 0))
+    (then (i32.store16 (call $g2w (local.get $arg2)) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 668: SetDlgItemTextW — STUB: unimplemented
+  ;; 668: SetDlgItemTextW — return 1, 3 args stdcall
   (func $handle_SetDlgItemTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 669: IsDlgButtonChecked — STUB: unimplemented
