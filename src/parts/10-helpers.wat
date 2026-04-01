@@ -241,6 +241,30 @@
     (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (i32.const 0))
     (local.get $i))
 
+  (func $crash_unimplemented (param $name_ptr i32)
+    (call $host_crash_unimplemented (local.get $name_ptr) (global.get $esp) (global.get $eip) (global.get $ebp))
+    (unreachable))
+
+  ;; Find DLL by name (WASM ptr to ASCII name), return guest load_addr or 0
+  (func $find_dll_by_name (param $name_wa i32) (result i32)
+    (local $i i32) (local $tbl_ptr i32) (local $la i32) (local $exp_rva i32)
+    (local $exp_name_rva i32) (local $exp_name_wa i32)
+    (local.set $i (i32.const 0))
+    (block $notfound (loop $search
+      (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $la (i32.load (local.get $tbl_ptr)))
+      (local.set $exp_rva (i32.load (i32.add (local.get $tbl_ptr) (i32.const 8))))
+      (if (i32.ne (local.get $exp_rva) (i32.const 0))
+        (then
+          (local.set $exp_name_rva (i32.load (i32.add (call $g2w (i32.add (local.get $la) (local.get $exp_rva))) (i32.const 12))))
+          (local.set $exp_name_wa (call $g2w (i32.add (local.get $la) (local.get $exp_name_rva))))
+          (if (call $dll_name_match (local.get $name_wa) (local.get $exp_name_wa))
+            (then (return (local.get $la))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $search)))
+    (i32.const 0))
+
   ;; Wide case-insensitive compare
   (func $guest_wcsicmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)

@@ -346,29 +346,96 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 46: GetStringTypeW — STUB: unimplemented
+  ;; 46: GetStringTypeW(dwInfoType, lpSrcStr, cchSrc, lpCharType) — classify chars
+  ;; CT_CTYPE1=1: C1_UPPER=1 C1_LOWER=2 C1_DIGIT=4 C1_SPACE=8 C1_PUNCT=16 C1_CNTRL=32 C1_ALPHA=256
   (func $handle_GetStringTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $i i32) (local $ch i32) (local $ct i32) (local $out i32) (local $src i32) (local $count i32)
+    ;; arg0=dwInfoType, arg1=lpSrcStr, arg2=cchSrc, arg3=lpCharType
+    (local.set $src (call $g2w (local.get $arg1)))
+    (local.set $out (call $g2w (local.get $arg3)))
+    (local.set $count (local.get $arg2))
+    (local.set $i (i32.const 0))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
+      (local.set $ct (i32.const 0))
+      ;; Control chars 0-31
+      (if (i32.le_u (local.get $ch) (i32.const 31))
+        (then (local.set $ct (i32.const 0x20))))
+      ;; Space/tab/newline
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
+            (i32.or (i32.eq (local.get $ch) (i32.const 9))
+              (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x08)))))
+      ;; Digits 0-9
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x04)))))
+      ;; Uppercase A-Z
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
+      ;; Lowercase a-z
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
+      ;; Punctuation 33-47, 58-64, 91-96, 123-126
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 33)) (i32.le_u (local.get $ch) (i32.const 47)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 58)) (i32.le_u (local.get $ch) (i32.const 64)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+      (i32.store16 (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2))) (local.get $ct))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 47: LCMapStringA — STUB: unimplemented
+  ;; 47: LCMapStringA(Locale, dwMapFlags, lpSrcStr, cchSrc, lpDestStr, cchDest)
+  ;; Identity mapping: if dest is NULL return required size, else copy src→dest
   (func $handle_LCMapStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $cchDest i32)
+    (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (i32.and (local.get $arg4) (local.get $cchDest))
+    (then
+      ;; Copy src to dest (identity)
+      (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2)) (local.get $arg3))))
+    ;; Return source length
+    (global.set $eax (local.get $arg3))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 48: LCMapStringW — STUB: unimplemented
+  ;; 48: LCMapStringW — wide version, same identity mapping (2 bytes per char)
   (func $handle_LCMapStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $cchDest i32)
+    (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (i32.and (local.get $arg4) (local.get $cchDest))
+    (then
+      (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2))
+        (i32.mul (local.get $arg3) (i32.const 2)))))
+    (global.set $eax (local.get $arg3))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 49: GetStdHandle — STUB: unimplemented
+  ;; 49: GetStdHandle(nStdHandle) — return fake handles for stdin/stdout/stderr
   (func $handle_GetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; STD_INPUT_HANDLE=-10 → 1, STD_OUTPUT_HANDLE=-11 → 2, STD_ERROR_HANDLE=-12 → 3
+    ;; GUI apps don't use these but CRT init checks them
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF6)) ;; -10
+        (then (i32.const 1))
+        (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF5)) ;; -11
+          (then (i32.const 2))
+          (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF4)) ;; -12
+            (then (i32.const 3))
+            (else (i32.const 0xFFFFFFFF))))))))  ;; INVALID_HANDLE_VALUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 50: GetFileType — STUB: unimplemented
+  ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console handles, FILE_TYPE_UNKNOWN=0 otherwise
   (func $handle_GetFileType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32) (i32.le_u (local.get $arg0) (i32.const 3))
+        (then (i32.const 2))   ;; FILE_TYPE_CHAR (console)
+        (else (i32.const 0)))) ;; FILE_TYPE_UNKNOWN
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 51: WriteFile
@@ -380,9 +447,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 52: SetHandleCount — STUB: unimplemented
+  ;; 52: SetHandleCount(uNumber) — no-op on Win32, return the count
   (func $handle_SetHandleCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 53: GetEnvironmentStrings
@@ -412,9 +480,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 56: GetCurrentProcess — STUB: unimplemented
+  ;; 56: GetCurrentProcess — return pseudo-handle -1 (0xFFFFFFFF)
   (func $handle_GetCurrentProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0xFFFFFFFF))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 57: TerminateProcess
@@ -828,14 +897,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 76: TranslateAcceleratorA — STUB: unimplemented
+  ;; 76: TranslateAcceleratorA(hwnd, hAccel, lpMsg) — return 0 (no accel match)
+  ;; TODO: implement real accelerator table lookup
   (func $handle_TranslateAcceleratorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 77: TranslateMessage — STUB: unimplemented
+  ;; 77: TranslateMessage(lpMsg) — translates virtual-key messages to char messages
+  ;; We handle keyboard input in the renderer, so this is a no-op that returns success
   (func $handle_TranslateMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 78: DefWindowProcA
@@ -943,9 +1016,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 87: GetMenu — STUB: unimplemented
+  ;; 87: GetMenu(hwnd) — return fake menu handle (resource ID based)
   (func $handle_GetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Return non-zero handle if window has a menu (we use 0x80001 as fake hmenu)
+    (global.set $eax (i32.const 0x80001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 88: GetSubMenu — STUB: unimplemented
@@ -1123,9 +1198,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 100: ReleaseDC — STUB: unimplemented
+  ;; 100: ReleaseDC(hwnd, hdc) — release window DC, return 1
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 101: SetWindowLongA — STUB: unimplemented
@@ -1170,14 +1246,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 108: LoadCursorA — STUB: unimplemented
+  ;; 108: LoadCursorA(hInstance, lpCursorName) — return fake cursor handle
   (func $handle_LoadCursorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0x60002)) ;; fake HCURSOR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 109: LoadIconA — STUB: unimplemented
+  ;; 109: LoadIconA(hInstance, lpIconName) — return fake icon handle
   (func $handle_LoadIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0x60001)) ;; fake HICON
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 110: LoadStringA
@@ -1242,9 +1320,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 119: OpenIcon — STUB: unimplemented
+  ;; 119: OpenIcon(hwnd) — restores a minimized window; return nonzero
   (func $handle_OpenIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
@@ -1259,9 +1338,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 122: CheckMenuItem — STUB: unimplemented
+  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) — return previous state
+  ;; TODO: track menu check state in renderer
   (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0)) ;; MF_UNCHECKED (previous state)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 123: CheckRadioButton
@@ -1301,9 +1382,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 128: IsIconic — STUB: unimplemented
+  ;; 128: IsIconic(hwnd) — is window minimized? No, return 0
   (func $handle_IsIconic (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 129: ChildWindowFromPoint — STUB: unimplemented
@@ -1335,9 +1417,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 134: GetSysColorBrush — STUB: unimplemented
+  ;; 134: GetSysColorBrush(nIndex) — 1 arg stdcall
   (func $handle_GetSysColorBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $color i32)
+    (if (i32.eq (local.get $arg0) (i32.const 5))
+      (then (local.set $color (i32.const 0x00FFFFFF)))
+      (else (if (i32.eq (local.get $arg0) (i32.const 15))
+        (then (local.set $color (i32.const 0x00C0C0C0)))
+        (else (local.set $color (i32.const 0x00C0C0C0))))))
+    (global.set $eax (call $host_gdi_create_solid_brush (local.get $color)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 135: GetSysColor
@@ -1357,9 +1446,14 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 137: LoadMenuA — STUB: unimplemented
+  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
+  ;; Return menu resource ID as handle (host renderer resolves by ID)
   (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
+    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+      (then (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
+      (else (global.set $eax (i32.const 0x00BE0001))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 138: TrackPopupMenuEx — STUB: unimplemented
@@ -1397,39 +1491,46 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 145: SelectObject — STUB: unimplemented
+  ;; 145: SelectObject(hdc, hObject) — delegate to host GDI
   (func $handle_SelectObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_select_object (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 146: DeleteObject — STUB: unimplemented
+  ;; 146: DeleteObject(hObject) — delegate to host GDI
   (func $handle_DeleteObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_delete_object (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 147: DeleteDC — STUB: unimplemented
+  ;; 147: DeleteDC(hdc) — delegate to host GDI
   (func $handle_DeleteDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 148: CreatePen — STUB: unimplemented
+  ;; 148: CreatePen(style, width, color) — delegate to host GDI
   (func $handle_CreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_create_pen (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 149: CreateSolidBrush — STUB: unimplemented
+  ;; 149: CreateSolidBrush(color) — delegate to host GDI
   (func $handle_CreateSolidBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_create_solid_brush (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 150: CreateCompatibleDC — STUB: unimplemented
+  ;; 150: CreateCompatibleDC(hdc) — delegate to host GDI
   (func $handle_CreateCompatibleDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_create_compat_dc (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 151: CreateCompatibleBitmap — STUB: unimplemented
+  ;; 151: CreateCompatibleBitmap(hdc, w, h) — delegate to host GDI
   (func $handle_CreateCompatibleBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_create_compat_bitmap (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 152: GetViewportOrgEx
@@ -1450,14 +1551,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 154: MoveToEx — STUB: unimplemented
+  ;; 154: MoveToEx(hdc, x, y, lpPoint) — delegate to host GDI
   (func $handle_MoveToEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_move_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 155: LineTo — STUB: unimplemented
+  ;; 155: LineTo(hdc, x, y) — delegate to host GDI
   (func $handle_LineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2) (global.get $window_dc_hwnd)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 156: Ellipse
@@ -1529,9 +1632,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 162: GetStockObject — index(arg0) → handle 0x30010+index — STUB: unimplemented
+  ;; 162: GetStockObject(index) → stock object handle (0x30010 + index)
   (func $handle_GetStockObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.add (i32.const 0x30010) (i32.and (local.get $arg0) (i32.const 0x1F))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 163: GetObjectA
@@ -1688,9 +1792,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 181: EndPaint — STUB: unimplemented
+  ;; 181: EndPaint(hwnd, lpPaintStruct) — return TRUE
   (func $handle_EndPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 182: EndDoc — STUB: unimplemented
@@ -1732,9 +1837,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 189: FindWindowA — STUB: unimplemented
+  ;; 189: FindWindowA(lpClassName, lpWindowName) — return NULL (no existing window found)
   (func $handle_FindWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 190: BringWindowToTop — STUB: unimplemented
@@ -1742,9 +1848,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 191: GetPrivateProfileIntA — STUB: unimplemented
+  ;; 191: GetPrivateProfileIntA(lpAppName, lpKeyName, nDefault, lpFileName)
+  ;; No INI file support — return nDefault (arg2)
   (func $handle_GetPrivateProfileIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 192: WritePrivateProfileStringA — STUB: unimplemented
@@ -1757,9 +1865,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 194: ShellAboutA — STUB: unimplemented
+  ;; 194: ShellAboutA(hwnd, szApp, szOtherStuff, hIcon) — show About dialog
   (func $handle_ShellAboutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_shell_about (local.get $arg0) (call $g2w (local.get $arg1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 195: SHGetSpecialFolderPathA — STUB: unimplemented
@@ -2054,9 +2163,10 @@
     (call $dispatch_reg (local.get $name_ptr))
   )
 
-  ;; 240: RegOpenKeyExA — STUB: unimplemented
+  ;; 240: RegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult) — 5 args stdcall
   (func $handle_RegOpenKeyExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 241: RegisterClassExA
@@ -2154,14 +2264,16 @@
     (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
   )
 
-  ;; 251: FreeEnvironmentStringsA — STUB: unimplemented
+  ;; 251: FreeEnvironmentStringsA — no-op (we don't really alloc env strings)
   (func $handle_FreeEnvironmentStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 252: FreeEnvironmentStringsW — STUB: unimplemented
+  ;; 252: FreeEnvironmentStringsW — no-op (we don't really alloc env strings)
   (func $handle_FreeEnvironmentStringsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 253: GetVersion — return winver, 0 args
@@ -2512,9 +2624,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 299: GetCurrentThreadId — STUB: unimplemented
+  ;; 299: GetCurrentThreadId — single-threaded, always return 1
   (func $handle_GetCurrentThreadId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 300: LoadLibraryW — STUB: unimplemented, return fake handle
@@ -2571,9 +2684,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 310: OleInitialize — return S_OK (0) — STUB: unimplemented
+  ;; 310: OleInitialize(pvReserved) — 1 arg stdcall, return S_OK
   (func $handle_OleInitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 311: CoTaskMemFree — no-op — STUB: unimplemented
@@ -2691,9 +2805,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 329: TlsFree(index) — no-op, return 1 — STUB: unimplemented
+  ;; 329: TlsFree(index) — return TRUE
   (func $handle_TlsFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 330: InitializeCriticalSection(ptr) — no-op (single-threaded) — STUB: unimplemented
@@ -2716,9 +2831,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 334: GetCurrentThread — return pseudo-handle -2 — STUB: unimplemented
+  ;; 334: GetCurrentThread — 0 args, return pseudo-handle 0xFFFFFFFE (-2)
   (func $handle_GetCurrentThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0xFFFFFFFE))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 335: GetProcessHeap — return fake heap handle — STUB: unimplemented
@@ -2784,9 +2900,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 345: SetUnhandledExceptionFilter — return 0 (no previous filter) — STUB: unimplemented
+  ;; 345: SetUnhandledExceptionFilter(lpFilter) — store filter, return previous (0)
   (func $handle_SetUnhandledExceptionFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 346: IsDebuggerPresent — return 0 — STUB: unimplemented
@@ -2846,9 +2963,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 357: CreatePatternBrush — STUB: unimplemented
+  ;; 357: CreatePatternBrush(hBitmap) — 1 arg stdcall
   (func $handle_CreatePatternBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_create_solid_brush (i32.const 0x00C0C0C0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 358: GetPaletteEntries — STUB: unimplemented
@@ -3013,9 +3131,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 389: SystemParametersInfoW — STUB: unimplemented
+  ;; 389: SystemParametersInfoW — return TRUE, 4 args stdcall
   (func $handle_SystemParametersInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; SystemParametersInfoA — return TRUE, 4 args stdcall
+  (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 390: IsWindowVisible — STUB: unimplemented
@@ -3546,9 +3671,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 491: GetCurrentProcessId — STUB: unimplemented
+  ;; 491: GetCurrentProcessId — return fake PID
   (func $handle_GetCurrentProcessId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1000))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 492: CreateDirectoryA — STUB: unimplemented
@@ -3766,9 +3892,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 535: GetProcessVersion — STUB: unimplemented
+  ;; 535: GetProcessVersion — 1 arg stdcall, return winver
   (func $handle_GetProcessVersion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (global.get $winver))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 536: GlobalFlags — STUB: unimplemented
@@ -3816,9 +3943,18 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 545: GetSystemDirectoryA — STUB: unimplemented
+  ;; 545: GetSystemDirectoryA(lpBuffer, uSize) — 2 args stdcall
   (func $handle_GetSystemDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $dst i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    ;; Write "C:\WINDOWS\SYSTEM" (18 chars including null)
+    (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
+    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
+    (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x535c5357))   ;; WS\S
+    (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
+    (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
+    (global.set $eax (i32.const 17))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 546: GetVolumeInformationW — STUB: unimplemented
@@ -4612,9 +4748,13 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 701: CoRegisterMessageFilter — return S_OK (2 args stdcall) — STUB: unimplemented
+  ;; 701: CoRegisterMessageFilter(lpMsgFilter, lplpMsgFilter) — 2 args stdcall
   (func $handle_CoRegisterMessageFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Write NULL to *lplpMsgFilter if non-null
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; fallback: unknown API — crash with full details
@@ -4753,3 +4893,10 @@
     (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; RegSetValueExA(6)
       (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 707: AboutWEP(hwnd, hInstance, szCaption, nUnused)
+  ;; Entertainment Pack about dialog — delegate to ShellAboutA
+  (func $handle_AboutWEP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_shell_about (local.get $arg0) (call $g2w (local.get $arg2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )

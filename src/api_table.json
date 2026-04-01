@@ -4912,5 +4912,47 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4079189859
+  },
+  {
+    "id": 702,
+    "name": "SetRectEmpty",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 992934878
+  },
+  {
+    "id": 703,
+    "name": "SetRect",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3197453845
+  },
+  {
+    "id": 704,
+    "name": "RegisterClipboardFormatA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2607980772
+  },
+  {
+    "id": 705,
+    "name": "SetWindowsHookExA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4167977329
+  },
+  {
+    "id": 706,
+    "name": "SystemParametersInfoA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3565184439
+  },
+  {
+    "id": 707,
+    "name": "AboutWEP",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3268045966
   }
 ]

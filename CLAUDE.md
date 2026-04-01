@@ -15,8 +15,8 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 ## Run
 
 - **Browser:** Open `host/index.html`, select an app, click Launch
-- **CLI:** `bash tools/run.sh [options] path/to/exe` — headless execution with tracing/debugging flags (-v verbose, -t trace, -a trace-api, -B addr breakpoint, -W addr watchpoint)
-- **PNG render:** `tools/run.sh -p output.png path/to/exe`
+- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
 
 ## Source Parts (concatenation order)
 
@@ -59,6 +59,7 @@ Key regions:
 - **g2w / w2g:** Convert between guest (x86) addresses and WASM linear memory addresses. `g2w(guest) = guest - image_base + GUEST_BASE`.
 - **API thunks:** Imported Win32 functions are replaced with thunk addresses. When EIP enters the thunk zone, `$win32_dispatch` handles the call.
 - **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b-dispatch.generated.wat` contains the br_table that calls these. To add a new API: add it to `api_table.json`, write `$handle_{Name}` in `09a-handlers.wat`, run `node tools/gen_dispatch.js`.
+- **Fail-fast stubs:** Unimplemented API handlers call `$crash_unimplemented` which traps with `unreachable`. Do NOT replace these with silent stubs that return 0 — silent stubs hide bugs and make them much harder to debug. When an app hits an unimplemented API, the crash log tells you exactly what to implement next. Implement the real behavior or leave the crash.
 
 ## Tools
 
