@@ -186,7 +186,7 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=7');
+    const resp = await fetch('../build/wine-assembly.wasm?v=8');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
     const result = await WebAssembly.instantiate(bytes, imports);
@@ -203,6 +203,7 @@ class WineAssembly {
 
     const resp = await fetch(url);
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
+    this._exeBytes = exeBytes;
 
     // Parse PE resources directly from EXE bytes
     if (typeof parseResources === 'function') {

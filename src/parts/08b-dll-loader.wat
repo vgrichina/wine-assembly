@@ -1,7 +1,7 @@
   ;; ============================================================
   ;; DLL LOADER — Load PE DLLs into guest address space
   ;; ============================================================
-  ;; DLL_TABLE layout at 0x1363000: 32 bytes per DLL, max 16 DLLs = 512 bytes
+  ;; DLL_TABLE layout at 0x1366000: 32 bytes per DLL, max 16 DLLs = 512 bytes
   ;; +0:  load_addr (guest)
   ;; +4:  size_of_image
   ;; +8:  export_dir_rva

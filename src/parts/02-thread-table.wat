@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 212 funcref)
+  (table $handlers 214 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -262,5 +262,8 @@
     $th_movsx_r_r8         ;; 209: movsx r32, reg8 (op=dst<<4|src_byte_reg)
     $th_mov_r16_r16        ;; 210: mov r16, r16 (op=dst<<4|src)
     $th_setcc_mem          ;; 211: SETcc [addr] (op=cc, addr in next word)
+    ;; -- SAHF / LAHF --
+    $th_sahf               ;; 212: SAHF — load flags from AH
+    $th_lahf               ;; 213: LAHF — store flags to AH
   )
 

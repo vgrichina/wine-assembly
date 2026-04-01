@@ -3,7 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
-const { loadDlls } = require('../lib/dll-loader');
+const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 let createCanvas, Win98Renderer;
 try {
   createCanvas = require('canvas').createCanvas;
@@ -291,15 +291,32 @@ async function main() {
     if (v) { instance.exports.set_winver(v); console.log('Windows version: ' + hex(v)); }
   }
 
-  // Load DLLs if specified: --dlls=path1,path2,...
+  // Load DLLs: explicit --dlls=path1,path2,... or auto-detect from EXE imports
   const dllArg = getArg('dlls', null);
+  const dllDir = path.join(path.dirname(EXE_PATH), 'dlls');
+  let dlls;
   if (dllArg) {
-    const dlls = dllArg.split(',').map(p => ({
-      name: require('path').basename(p.trim()),
+    dlls = dllArg.split(',').map(p => ({
+      name: path.basename(p.trim()),
       bytes: fs.readFileSync(p.trim()),
     }));
+  } else {
+    // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
+    const required = detectRequiredDlls(exeBytes);
+    const dllSearchDirs = [dllDir, path.join(__dirname, 'binaries', 'dlls')];
+    dlls = [];
+    for (const name of required) {
+      for (const dir of dllSearchDirs) {
+        const p = path.join(dir, name);
+        if (fs.existsSync(p)) {
+          dlls.push({ name, bytes: fs.readFileSync(p) });
+          break;
+        }
+      }
+    }
+  }
+  if (dlls.length > 0) {
     loadDlls(instance.exports, instance.exports.memory.buffer, exeBytes, dlls, console.log);
-    // DllMain may call exit() during CRT init — don't let it stop the main loop
     stopped = false;
   }
 

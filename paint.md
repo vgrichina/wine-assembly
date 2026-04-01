@@ -1,28 +1,40 @@
 # MSPaint Debugging Notes
 
-## Current Status (2026-03-31)
+## Current Status (2026-04-01)
 
 ### Working
 
-- msvcrt.dll DllMain called (crashes on missing APIs, trapped and recovered)
-- mfc42.dll (ANSI) DllMain returns EAX=1 ← **NEW** (was failing before hash count fix)
+- msvcrt.dll DllMain returns cleanly (EAX=1) ← **fixed** by SAHF/LAHF + GetSystemTimeAsFileTime + DLL_TABLE relocation
+- mfc42.dll (ANSI) DllMain crashes on `_EH_prolog` (trapped and recovered)
 - MFC42 IAT patching works — EXE's MFC42.DLL imports patched to loaded mfc42.dll
 - MSVCRT IAT patching works (EXE's CRT calls go to real msvcrt.dll code)
 - Real msvcrt _initterm iterates init function table and calls entries
 - API_HASH_COUNT now auto-generated — can't go stale
 - Fallback handler crashes with full diagnostics instead of silent stack corruption
 
-### Current Blocker: GetClassInfoA not in api_table
+### Current Blocker: `_EH_prolog` not implemented
 
-Both DllMains complete. CRT startup and MFC app init progress to batch 12.
-Execution now reaches MFC window class registration (AfxWinMain path) and
-crashes on `GetClassInfoA` which is not in the api_table (only W version exists).
+`_EH_prolog` is an MSVCRT export used by MFC42's structured exception handling
+setup. It's called during both MFC42 DllMain and the main EXE's CRT startup
+(via MFC42 code). Without it, MFC42 DllMain crashes (trapped/recovered), and
+then the EXE itself crashes at batch 0 when it enters MFC42 code.
 
-**Next:** Add GetClassInfoA to api_table, implement handler, continue.
+The crash happens at EIP=0x0105607d (inside mfc42.dll), which is a `jmp` thunk
+for `_EH_prolog`. The call chain: entry 0x0102f350 → CRT init → MFC42 ordinals
+→ `_EH_prolog`.
 
-**Status:** msvcrt DllMain runs (doesn't return cleanly but is trapped). mfc42 DllMain
-returns EAX=1. CRT _initterm completes. MFC AfxWinMain begins — OLE init, registry
-writes, icon loading, cursor setup all working. Now hitting window management APIs.
+`_EH_prolog` is a special function — it's not a normal stdcall API. It sets up
+an SEH frame using a custom calling convention:
+- On entry: EAX = exception handler address, return addr on stack
+- It pushes EBP, sets up the SEH chain via FS:[0], and adjusts EBP/ESP
+
+**Next:** Implement `_EH_prolog` as a special handler (not a regular Win32 API
+dispatch). It manipulates the stack and FS segment directly. See Wine source or
+MSVC CRT source for the exact register/stack protocol.
+
+**Note:** GetClassInfoA (previously listed as blocker) is now in api_table and
+dispatch. The regression to `_EH_prolog` is because the loaded mfc42.dll binary
+changed — the current ANSI mfc42.dll exercises this codepath during DllMain.
 
 ### Fixes Made This Session
 
@@ -78,6 +90,23 @@ writes, icon loading, cursor setup all working. Now hitting window management AP
 6. **Helper: $find_dll_by_name** — searches DLL_TABLE by export directory name,
    returns guest load_addr or 0. Used by GetModuleHandleA.
 
+### Uncommitted Fixes (2026-04-01)
+
+7. **SAHF/LAHF instructions** — Decoder opcodes 0x9E/0x9F, handlers 212/213.
+   SAHF loads SF/ZF/CF from AH into lazy flag system; LAHF stores flags to AH.
+   Required by msvcrt DllMain (FPU control word checks use SAHF).
+
+8. **GetSystemTimeAsFileTime** — Was a crash stub, now writes a fixed FILETIME
+   (~2000-01-01) to the output pointer. 1 arg stdcall. Required by msvcrt init.
+
+9. **DLL_TABLE relocated** — Moved from 0x1363000 to 0x1366000 to avoid overlap
+   with expanded 16KB API hash table (up to 2048 entries).
+
+10. **FillRect uses gdi_fill_rect** — New host import `gdi_fill_rect` takes hBrush
+    parameter separately (previously reused gdi_rectangle which used DC brush).
+
+11. **Handler table expanded** — 212→214 entries for SAHF/LAHF.
+
 ### Previous Fixes (from earlier sessions)
 
 - __p__wcmdln NULL fix
@@ -127,7 +156,7 @@ IMM32.dll    — input method (thunked)
 7. `_initterm(0x0103b0b8, 0x0103b0bc)` — C++ init (empty table)
 8. `__getmainargs` — sets up argc/argv
 9. `_initterm(0x0103b000, 0x0103b0b4)` — C init (45 functions)
-   ← crashes on LCMapStringW during init, needs implementation
+   ← previously crashed on LCMapStringW (now implemented)
 10. GetStartupInfoA
 11. GetModuleHandleA(NULL)
 12. Parse command line
@@ -136,6 +165,6 @@ IMM32.dll    — input method (thunked)
 ### Memory Layout
 
 - MSPaint image_base: 0x01000000
-- msvcrt.dll loaded at: 0x01055000
-- mfc42.dll loaded at: 0x01099000
-- Thunk zone: 0x02012000 - 0x02052000
+- mfc42.dll loaded at: 0x01055000
+- msvcrt.dll loaded at: 0x01142000
+- Thunk zone: 0x02000000+ (900 thunks at start, 1554 after DLL loading)

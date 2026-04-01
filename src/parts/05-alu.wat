@@ -1608,3 +1608,32 @@
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $v))
     (call $next))
 
+  ;; Handler 212: SAHF — load SF, ZF, CF from AH into flags (OF preserved)
+  (func $th_sahf (param $op i32)
+    (local $ah i32)
+    (local $saved_of i32)
+    (local.set $saved_of (call $get_of))
+    (local.set $ah (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xFF)))
+    (global.set $flag_op (i32.const 8))
+    (global.set $flag_sign_shift (i32.const 31))
+    (global.set $flag_a (i32.and (local.get $ah) (i32.const 1)))  ;; CF = bit 0
+    (global.set $flag_b (local.get $saved_of))  ;; OF preserved
+    (if (i32.and (local.get $ah) (i32.const 0x40))  ;; ZF = bit 6
+      (then (global.set $flag_res (i32.const 0)))
+      (else (if (i32.and (local.get $ah) (i32.const 0x80))  ;; SF = bit 7
+        (then (global.set $flag_res (i32.const 0x80000000)))
+        (else (global.set $flag_res (i32.const 1))))))
+    (call $next))
+
+  ;; Handler 213: LAHF — load AH from flags (SF, ZF, 0, AF, 0, PF, 1, CF)
+  (func $th_lahf (param $op i32)
+    (local $ah i32)
+    (local.set $ah (i32.const 0x02))  ;; bit 1 always set
+    (local.set $ah (i32.or (local.get $ah) (call $get_cf)))  ;; CF = bit 0
+    (local.set $ah (i32.or (local.get $ah) (i32.shl (call $get_zf) (i32.const 6))))  ;; ZF = bit 6
+    (local.set $ah (i32.or (local.get $ah) (i32.shl (call $get_sf) (i32.const 7))))  ;; SF = bit 7
+    (global.set $eax (i32.or
+      (i32.and (global.get $eax) (i32.const 0xFFFF00FF))
+      (i32.shl (local.get $ah) (i32.const 8))))
+    (call $next))
+

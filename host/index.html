@@ -181,17 +181,17 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/resources.js?v=7"></script>
-  <script src="../lib/renderer.js?v=7"></script>
-  <script src="../lib/dll-loader.js?v=7"></script>
-  <script src="../lib/host-imports.js?v=7"></script>
-  <script src="host.js?v=7"></script>
+  <script src="../lib/resources.js?v=8"></script>
+  <script src="../lib/renderer.js?v=8"></script>
+  <script src="../lib/dll-loader.js?v=8"></script>
+  <script src="../lib/host-imports.js?v=8"></script>
+  <script src="host.js?v=8"></script>
   <script>
     let wine = null;
 
     const apps = {
       notepad:  { exe: '../test/binaries/notepad.exe' },
-      calc:     { exe: '../test/binaries/calc.exe' },
+      calc:     { exe: '../test/binaries/calc.exe', dlls: ['../test/binaries/dlls/msvcrt.dll'] },
       freecell: { exe: '../test/binaries/entertainment-pack/freecell.exe' },
       sol:      { exe: '../test/binaries/entertainment-pack/sol.exe' },
       cruel:    { exe: '../test/binaries/entertainment-pack/cruel.exe' },
@@ -299,9 +299,27 @@ Resource-aware Win98 emulator
         if (app.winver && wine.instance.exports.set_winver) {
           wine.instance.exports.set_winver(app.winver);
         }
-        if (app.dlls && app.dlls.length) {
+        // Auto-detect required DLLs from EXE imports, merge with explicit config
+        const dllsToLoad = app.dlls ? [...app.dlls] : [];
+        if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
+          const required = DllLoader.detectRequiredDlls(wine._exeBytes);
+          const availableDlls = {
+            'msvcrt.dll': '../test/binaries/dlls/msvcrt.dll',
+            'mfc42u.dll': '../test/binaries/dlls/mfc42u.dll',
+            'mfc42.dll': '../test/binaries/dlls/mfc42.dll',
+            'msvcp60.dll': '../test/binaries/dlls/msvcp60.dll',
+            'oleaut32.dll': '../test/binaries/dlls/oleaut32.dll',
+          };
+          const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
+          for (const name of required) {
+            if (availableDlls[name] && !alreadyListed.has(name)) {
+              dllsToLoad.push(availableDlls[name]);
+            }
+          }
+        }
+        if (dllsToLoad.length) {
           document.getElementById('status').textContent = 'Loading DLLs...';
-          await wine.loadDlls(app.dlls);
+          await wine.loadDlls(dllsToLoad);
         }
         document.getElementById('status').textContent = 'Running ' + sel + '.exe';
         wine.run();
