@@ -95,9 +95,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 11: GetLocaleInfoA — STUB: unimplemented
+  ;; 11: GetLocaleInfoA(Locale, LCType, lpLCData, cchData) — return 0 (not available)
   (func $handle_GetLocaleInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 12: LoadLibraryA
@@ -546,9 +547,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 65: sndPlaySoundA — STUB: unimplemented
+  ;; 65: sndPlaySoundA(pszSound, fuSound) — no-op (no audio support)
   (func $handle_sndPlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
@@ -952,9 +954,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 81: SendMessageA — STUB: unimplemented
+  ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — dispatch to WndProc
+  ;; TODO: full WndProc dispatch via x86 call. For now return 0.
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 82: SendDlgItemMessageA — STUB: unimplemented
@@ -1242,9 +1246,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 107: SetFocus — STUB: unimplemented
+  ;; 107: SetFocus(hwnd) — return previous focus hwnd (0 = none)
   (func $handle_SetFocus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 108: LoadCursorA(hInstance, lpCursorName) — return fake cursor handle
@@ -1299,9 +1304,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 116: FillRect — STUB: unimplemented
+  ;; 116: FillRect(hdc, lprc, hbr) — delegate to host GDI
   (func $handle_FillRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Read RECT from arg1: left, top, right, bottom
+    (global.set $eax (call $host_gdi_rectangle (local.get $arg0)
+      (call $gl32 (local.get $arg1))           ;; left
+      (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))   ;; top
+      (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))   ;; right
+      (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))  ;; bottom
+      (global.get $window_dc_hwnd)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 117: FrameRect — STUB: unimplemented
@@ -1404,9 +1416,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 132: WinHelpA — STUB: unimplemented
+  ;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — no-op (no help system)
   (func $handle_WinHelpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 133: IsChild
@@ -1824,9 +1837,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 187: KillTimer — STUB: unimplemented
+  ;; 187: KillTimer(hwnd, nIDEvent) — clear the timer
   (func $handle_KillTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $timer_id (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 188: SetTimer
@@ -1872,14 +1887,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 195: SHGetSpecialFolderPathA — STUB: unimplemented
+  ;; 195: SHGetSpecialFolderPathA(hwnd, pszPath, csidl, fCreate) — return FALSE (no filesystem)
   (func $handle_SHGetSpecialFolderPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 196: DragAcceptFiles — STUB: unimplemented
+  ;; 196: DragAcceptFiles(hwnd, fAccept) — no-op (no drag-drop support)
   (func $handle_DragAcceptFiles (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 197: DragQueryFileA — STUB: unimplemented
@@ -1974,14 +1990,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 210: _initterm — STUB: unimplemented
+  ;; 210: _initterm(start, end) — CRT init table walker, skip for now
   (func $handle__initterm (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 211: _controlfp — STUB: unimplemented
+  ;; 211: _controlfp(new, mask) — return default FPU control word
   (func $handle__controlfp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0x9001F))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 212: _strrev
@@ -2360,14 +2377,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 260: __set_app_type — STUB: unimplemented
+  ;; 260: __set_app_type(type) — sets GUI vs console, no-op for us
   (func $handle___set_app_type (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 261: __setusermatherr — STUB: unimplemented
+  ;; 261: __setusermatherr(handler) — set math error handler, no-op
   (func $handle___setusermatherr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 262: _adjust_fdiv
