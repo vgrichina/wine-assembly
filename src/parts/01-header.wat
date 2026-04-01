@@ -158,7 +158,7 @@
   ;; ============================================================
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
-  ;; 0x00002000  ...     (unused — staging moved below)
+  ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00012000  14MB    Guest address space (PE sections + DLLs)
   ;; 0x00E12000  1MB     Guest stack (ESP starts at top)
   ;; 0x00F12000  1MB     Guest heap
@@ -166,7 +166,7 @@
   ;; 0x01052000  1MB     Thread cache
   ;; 0x01152000  64KB    Block cache index (4096 slots × 16 bytes)
   ;; 0x01162000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x01362000  16KB    API dispatch hash table (up to 2048 entries)
+  ;; 0x01362000  16KB    (was API hash table — moved to 0x2000 to avoid guest write corruption)
   ;; 0x01366000  512B    DLL table (16 DLLs × 32 bytes)
   ;; 0x01366200  ...     Free
 
@@ -181,7 +181,7 @@
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (i32.const 0x01052000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x01152000))
-  (global $API_HASH_TABLE i32 (i32.const 0x01362000))
+  (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)

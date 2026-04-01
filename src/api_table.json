@@ -5164,5 +5164,19 @@
     "nargs": 1,
     "convention": "cdecl",
     "hash": 259409366
+  },
+  {
+    "id": 738,
+    "name": "RegCreateKeyExA",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 4142734160
+  },
+  {
+    "id": 739,
+    "name": "_mbschr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 319891893
   }
 ]

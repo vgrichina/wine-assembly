@@ -1788,8 +1788,9 @@
   (func $handle_CreateBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg4))
       (then
-        ;; NULL lpBits — just create blank bitmap
-        (global.set $eax (call $host_gdi_create_compat_bitmap (i32.const 0) (local.get $arg0) (local.get $arg1))))
+        ;; NULL lpBits — create blank bitmap, pass bpp so host can mark monochrome
+        (global.set $eax (call $host_gdi_create_bitmap
+          (local.get $arg0) (local.get $arg1) (local.get $arg3) (i32.const 0))))
       (else
         ;; Has pixel data — convert via host
         (global.set $eax (call $host_gdi_create_bitmap
@@ -2751,15 +2752,6 @@
 
   ;; 278: memset(dest, ch, count) — cdecl
   (func $handle_memset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DEBUG: detect writes to hash table region
-    (if (i32.and
-      (i32.ge_u (call $g2w (local.get $arg0)) (i32.const 0x01360000))
-      (i32.lt_u (call $g2w (local.get $arg0)) (i32.const 0x01370000)))
-      (then
-        (call $host_log_i32 (i32.const 0xDEAD0001))
-        (call $host_log_i32 (local.get $arg0))
-        (call $host_log_i32 (local.get $arg2))
-        (call $host_log_i32 (global.get $eip))))
     (if (local.get $arg2)
       (then (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
@@ -3922,6 +3914,19 @@
     (global.set $eax (call $host_reg_create_key
       (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult) (i32.const 1)))
     ;; Set disposition = REG_CREATED_NEW_KEY (1) if requested
+    (if (i32.ne (local.get $lpdwDisposition) (i32.const 0))
+      (then (call $gs32 (local.get $lpdwDisposition) (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
+  )
+
+  ;; RegCreateKeyExA — same as ExW, 9 args stdcall
+  (func $handle_RegCreateKeyExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa_esp i32) (local $phkResult i32) (local $lpdwDisposition i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $phkResult (i32.load (i32.add (local.get $wa_esp) (i32.const 32))))
+    (local.set $lpdwDisposition (i32.load (i32.add (local.get $wa_esp) (i32.const 36))))
+    (global.set $eax (call $host_reg_create_key
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult) (i32.const 0)))
     (if (i32.ne (local.get $lpdwDisposition) (i32.const 0))
       (then (call $gs32 (local.get $lpdwDisposition) (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
@@ -5818,6 +5823,24 @@
     (global.set $ebp (i32.add (global.get $esp) (i32.const 12)))
     ;; Set EIP to return address
     (global.set $eip (local.get $ret_addr))
+  )
+
+  ;; _mbschr(str, ch) — cdecl, find first occurrence of byte in string
+  (func $handle__mbschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32) (local $ch i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $ch (i32.and (local.get $arg1) (i32.const 0xFF)))
+    (block $d (loop $l
+      (if (i32.eq (i32.load8_u (local.get $wa)) (local.get $ch))
+        (then
+          (global.set $eax (i32.add (i32.sub (local.get $wa) (i32.const 0x12000)) (global.get $image_base)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+          (return)))
+      (br_if $d (i32.eqz (i32.load8_u (local.get $wa))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $l)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 720: _mbsrchr(str, ch) — cdecl, find last occurrence of byte in string

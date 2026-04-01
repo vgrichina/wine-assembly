@@ -44,13 +44,13 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at its preferred `image_base` (typically `0x400000`) which maps to `GUEST_BASE + (image_base - image_base)` via `g2w` (guest-to-WASM address translation).
 
 Key regions:
+- `0x00004000` — API hash table (8KB, API_HASH_TABLE — below GUEST_BASE, safe from guest writes)
 - `0x00012000` — Guest memory (GUEST_BASE, maps guest addresses)
 - `0x00E12000` — Guest stack (grows down)
 - `0x01012000` — API thunk zone (256KB, THUNK_BASE)
 - `0x01052000` — Threaded code cache (1MB, THREAD_BASE)
 - `0x01152000` — Block cache index (CACHE_INDEX)
 - `0x01162000` — PE staging buffer (2MB, PE_STAGING)
-- `0x01362000` — API hash table (8KB, API_HASH_TABLE)
 
 ## Key Concepts
 
