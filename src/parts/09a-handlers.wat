@@ -206,34 +206,55 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 26: CloseHandle — STUB: unimplemented
+  ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 27: CreateEventA — STUB: unimplemented
+  ;; 27: CreateEventA(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (call $host_log_i32 (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 28: CreateThread — STUB: unimplemented
+  ;; 28: CreateThread(lpAttr, dwStackSize, lpStartAddr, lpParam, dwFlags, lpThreadId) — 6 args stdcall
   (func $handle_CreateThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $lpThreadId i32)
+    (local.set $lpThreadId (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax (call $host_create_thread (local.get $arg2) (local.get $arg3) (local.get $arg1)))
+    (if (local.get $lpThreadId)
+      (then (call $gs32 (local.get $lpThreadId) (global.get $eax))))
+    (call $host_log_i32 (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 29: WaitForSingleObject — STUB: unimplemented
+  ;; 29: WaitForSingleObject(hHandle, dwMilliseconds) — 2 args stdcall
   (func $handle_WaitForSingleObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $result i32)
+    (local.set $result (call $host_wait_single (local.get $arg0) (local.get $arg1)))
+    (if (i32.eq (local.get $result) (i32.const 0xFFFF))
+      (then
+        (global.set $yield_reason (i32.const 1))
+        (global.set $wait_handle (local.get $arg0))
+        (global.set $steps (i32.const 0))
+        (return)))
+    (global.set $eax (local.get $result))
+    (call $host_log_i32 (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 30: ResetEvent — STUB: unimplemented
+  ;; 30: ResetEvent(hEvent) — 1 arg stdcall
   (func $handle_ResetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_reset_event (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 31: SetEvent — STUB: unimplemented
+  ;; 31: SetEvent(hEvent) — 1 arg stdcall
   (func $handle_SetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_set_event (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 32: WriteProfileStringA(appName, keyName, lpString) — stub, pretend success
@@ -4141,9 +4162,12 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 469: ExitThread — STUB: unimplemented
+  ;; 469: ExitThread(dwExitCode) — 1 arg, no return
   (func $handle_ExitThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $host_exit_thread (local.get $arg0))
+    (global.set $yield_reason (i32.const 2))
+    (global.set $eip (i32.const 0))
+    (global.set $steps (i32.const 0))
   )
 
   ;; 470: FindNextFileA — STUB: unimplemented
@@ -4479,9 +4503,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 526: CreateEventW — STUB: unimplemented
+  ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (call $host_log_i32 (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 527: WaitForMultipleObjects — STUB: unimplemented

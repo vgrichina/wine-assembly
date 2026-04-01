@@ -106,7 +106,7 @@ async function main() {
   if (TRACE_GDI) traceCategories.add('gdi');
 
   const ctx = {
-    getMemory: () => instance.exports.memory.buffer,
+    getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
     resourceJson,
     onExit: (code) => { stopped = true; },
@@ -118,7 +118,7 @@ async function main() {
 
   // --- Override logging ---
   h.log = (ptr, len) => {
-    const b = new Uint8Array(instance.exports.memory.buffer, ptr, Math.min(len, 256));
+    const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
     let t = '';
     for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
     apiCount++;
@@ -132,7 +132,7 @@ async function main() {
       const e = instance.exports;
       const esp = e.get_esp();
       const imageBase = e.get_image_base();
-      const dv = new DataView(instance.exports.memory.buffer);
+      const dv = new DataView(memory.buffer);
       const g2w = addr => addr - imageBase + 0x12000;
       let argStr = '';
       try {
@@ -147,7 +147,7 @@ async function main() {
       const matchedApi = STRING_APIS.find(api => t.includes(api));
       if (matchedApi) {
         try {
-          const mem = new Uint8Array(instance.exports.memory.buffer);
+          const mem = new Uint8Array(memory.buffer);
           const strPtr = dv.getUint32(g2w(esp + 4), true);
           const strVal = readStr(g2w(strPtr), 64);
           if (strVal) strInfo = ` str="${strVal}"`;
@@ -275,11 +275,65 @@ async function main() {
   h.check_input_hwnd = () => (lastInputEvent ? (lastInputEvent.hwnd || 0x10002) : 0x10002);
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
 
+  // Create shared memory externally (WASM module imports it)
+  const memory = new WebAssembly.Memory({ initial: 512 });
+  ctx._memory = memory;
+  h.memory = memory;
+
+  // ThreadManager setup (lazy — created after instance)
+  const { ThreadManager } = require('../lib/thread-manager');
+  let threadManager = null;
+
+  // Wire thread/event imports to ThreadManager
+  h.create_thread = (startAddr, param, stackSize) => threadManager.createThread(startAddr, param, stackSize);
+  h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
+  h.create_event = (manualReset, initialState) => threadManager.createEvent(manualReset, initialState);
+  h.set_event = (handle) => threadManager.setEvent(handle);
+  h.reset_event = (handle) => threadManager.resetEvent(handle);
+  h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
+
   const imports = { host: h };
 
-  const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
+  const wasmModule = await WebAssembly.compile(wasmBytes);
+  const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
-  const mem = new Uint8Array(instance.exports.memory.buffer);
+
+  // Create ThreadManager now that we have the main instance
+  const makeWorkerImports = (tid) => {
+    const workerCtx = {
+      getMemory: () => memory.buffer,
+      renderer,
+      resourceJson,
+      onExit: () => {},
+      trace: traceCategories,
+    };
+    const workerBase = createHostImports(workerCtx);
+    const wh = workerBase.host;
+    wh.memory = memory;
+    // Wire thread/event to same ThreadManager
+    wh.create_thread = h.create_thread;
+    wh.exit_thread = h.exit_thread;
+    wh.create_event = h.create_event;
+    wh.set_event = h.set_event;
+    wh.reset_event = h.reset_event;
+    wh.wait_single = h.wait_single;
+    // Worker logging
+    wh.log = (ptr, len) => {
+      const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
+      let t = '';
+      for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
+      if (TRACE_API) logs.push(`[API T${tid}] ${t}`);
+    };
+    wh.log_i32 = (val) => {
+      if (TRACE_API) logs.push(`  => ${hex(val)}`);
+    };
+    wh.exit = () => {};
+    return { host: wh };
+  };
+
+  threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports);
+
+  const mem = new Uint8Array(memory.buffer);
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
@@ -316,7 +370,7 @@ async function main() {
     }
   }
   if (dlls.length > 0) {
-    const dllResults = loadDlls(instance.exports, instance.exports.memory.buffer, exeBytes, dlls, console.log);
+    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log);
     stopped = false;
     // Parse resources from DLLs and store by base address
     ctx.dllResources = {};
@@ -347,7 +401,7 @@ async function main() {
   const dumpStack = (label, count = 14) => {
     try {
       const esp = instance.exports.get_esp();
-      const dv = new DataView(instance.exports.memory.buffer);
+      const dv = new DataView(memory.buffer);
       console.log(`  ${label || 'Stack'} around ESP=${hex(esp)}:`);
       for (let i = -2; i < count; i++) {
         const addr = esp + i * 4;
@@ -362,7 +416,7 @@ async function main() {
 
   const disasmAt = (eip, count = 16) => {
     try {
-      const dv = new DataView(instance.exports.memory.buffer);
+      const dv = new DataView(memory.buffer);
       let bytes = '';
       for (let i = 0; i < count; i++) {
         bytes += dv.getUint8(g2w(eip + i)).toString(16).padStart(2, '0') + ' ';
@@ -377,7 +431,7 @@ async function main() {
     try {
       const fsBase = instance.exports.get_fs_base();
       const imageBase = instance.exports.get_image_base();
-      const dv = new DataView(instance.exports.memory.buffer);
+      const dv = new DataView(memory.buffer);
       let ptr = dv.getUint32(g2w(fsBase), true);
 
       if (detailed) {
@@ -469,7 +523,7 @@ async function main() {
   };
 
   const hexdump = (guestAddr, len) => {
-    const dv = new DataView(instance.exports.memory.buffer);
+    const dv = new DataView(memory.buffer);
     console.log(`Hexdump ${hex(guestAddr)} (${len} bytes):`);
     for (let off = 0; off < len; off += 16) {
       let hexPart = '', ascPart = '';
@@ -574,7 +628,7 @@ async function main() {
 
     // Skip check: simulate ret when EIP hits a skip address
     if (skipAddrs.length && skipAddrs.includes(eipBefore)) {
-      const dv = new DataView(instance.exports.memory.buffer);
+      const dv = new DataView(memory.buffer);
       const retAddr = dv.getUint32(g2w(instance.exports.get_esp()), true);
       console.log(`[skip] ${hex(eipBefore)} -> ret to ${hex(retAddr)}`);
       instance.exports.set_eip(retAddr);
@@ -617,6 +671,18 @@ async function main() {
         frames.slice(0, 8).forEach(f => console.log('    ' + f.trim()));
       }
       process.exit(1);
+    }
+
+    // Thread management: spawn pending threads, run worker slices
+    if (threadManager._pendingThreads.length) {
+      await threadManager.spawnPending();
+    }
+    if (threadManager.hasActiveThreads()) {
+      threadManager.runSlice(BATCH_SIZE);
+    }
+    // Check if main thread is waiting on an event
+    if (threadManager.checkMainYield()) {
+      // Main thread still waiting — don't advance EIP check
     }
 
     // Watchpoint check
@@ -673,7 +739,7 @@ async function main() {
   // Dump sprite list if requested
   if (args.includes('--dump-sprites')) {
     const { dumpSprites } = require('../tools/dump_sprites');
-    dumpSprites(new Uint8Array(instance.exports.memory.buffer));
+    dumpSprites(new Uint8Array(memory.buffer));
   }
 
   if (DUMP_SEH || TRACE_SEH) {

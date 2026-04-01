@@ -8,6 +8,8 @@ class WineAssembly {
     this.running = false;
     this.renderer = null;
     this.resourceJson = null;
+    this.threadManager = null;
+    this._wasmModule = null;
     this.verbose = false;
   }
 
@@ -131,6 +133,17 @@ class WineAssembly {
       return self._lastInputEvent ? (self._lastInputEvent.hwnd | 0) : 0;
     };
 
+    // Wire thread/event imports to ThreadManager
+    h.create_thread = (s, p, sz) => self.threadManager ? self.threadManager.createThread(s, p, sz) : 0;
+    h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
+    h.create_event = (m, i) => self.threadManager ? self.threadManager.createEvent(m, i) : 0;
+    h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
+    h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
+    h.wait_single = (handle, t) => self.threadManager ? self.threadManager.waitSingle(handle, t) : 0;
+
+    // Memory is set later in init()
+    h.memory = null;
+
     return { host: h };
   }
 
@@ -187,12 +200,29 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=9');
+    const resp = await fetch('../build/wine-assembly.wasm?v=10');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
+
+    // Create shared memory externally
+    this.memory = new WebAssembly.Memory({ initial: 512 });
+    imports.host.memory = this.memory;
+
     const result = await WebAssembly.instantiate(bytes, imports);
     this.instance = result.instance;
-    this.memory = this.instance.exports.memory;
+    this._wasmModule = result.module;
+
+    // Create ThreadManager
+    const self = this;
+    const makeWorkerImports = (tid) => {
+      const wi = self.getImports();
+      wi.host.memory = self.memory;
+      wi.host.log = () => {};
+      wi.host.log_i32 = () => {};
+      wi.host.exit = () => {};
+      return wi;
+    };
+    this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports);
 
     if (canvas) {
       this.renderer = new Win98Renderer(canvas);
@@ -267,14 +297,28 @@ class WineAssembly {
   run(stepsPerSlice = 500000) {
     this.running = true;
     const self = this;
-    const step = () => {
+    const step = async () => {
       if (!self.running) return;
       try {
-        self.instance.exports.run(stepsPerSlice);
-        if (!self.instance.exports.get_eip()) {
+        // Check if main thread is waiting
+        if (self.threadManager && self.threadManager.checkMainYield()) {
+          // Main still waiting — just run worker threads
+        } else {
+          self.instance.exports.run(stepsPerSlice);
+        }
+        if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
           self.running = false;
           return;
+        }
+        // Spawn and run worker threads
+        if (self.threadManager) {
+          if (self.threadManager._pendingThreads.length) {
+            await self.threadManager.spawnPending();
+          }
+          if (self.threadManager.hasActiveThreads()) {
+            self.threadManager.runSlice(Math.min(stepsPerSlice, 10000));
+          }
         }
       } catch (e) {
         console.error('WASM crash:', e);

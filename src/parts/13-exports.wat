@@ -66,6 +66,33 @@
   (func (export "get_flag_sign_shift") (result i32) (global.get $flag_sign_shift))
 
   (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
+  (func (export "set_heap_ptr") (param i32) (global.set $heap_ptr (local.get 0)))
+
+  ;; Thread init — called by host after creating worker instance
+  (func (export "init_thread") (param $tid i32)
+      (param $img_base i32) (param $code_s i32) (param $code_e i32)
+      (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
+    (global.set $THREAD_BASE (i32.add (i32.const 0x01052000)
+      (i32.mul (local.get $tid) (i32.const 0x80000))))
+    (global.set $CACHE_INDEX (i32.add (i32.const 0x01152000)
+      (i32.mul (local.get $tid) (i32.const 0x8000))))
+    (global.set $thread_alloc (global.get $THREAD_BASE))
+    (global.set $image_base (local.get $img_base))
+    (global.set $code_start (local.get $code_s))
+    (global.set $code_end (local.get $code_e))
+    (global.set $thunk_guest_base (local.get $thunk_gs))
+    (global.set $thunk_guest_end (local.get $thunk_ge))
+    (global.set $num_thunks (local.get $num_th))
+  )
+
+  ;; Yield state exports
+  (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
+  (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
+  (func (export "clear_yield") (global.set $yield_reason (i32.const 0)))
+
+  ;; PE metadata exports (needed to init worker threads)
+  (func (export "get_code_start") (result i32) (global.get $code_start))
+  (func (export "get_code_end") (result i32) (global.get $code_end))
   (func (export "get_main_win_cx") (result i32) (global.get $main_win_cx))
   (func (export "get_main_win_cy") (result i32) (global.get $main_win_cy))
 

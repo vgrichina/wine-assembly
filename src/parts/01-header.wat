@@ -133,8 +133,17 @@
   (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
   (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
 
-  ;; ---- Memory: 512 pages = 32MB initial ----
-  (memory (export "memory") 512)
+  ;; Thread/event host imports
+  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32) (result i32)))
+  (import "host" "exit_thread" (func $host_exit_thread (param i32)))
+  (import "host" "create_event" (func $host_create_event (param i32 i32) (result i32)))
+  (import "host" "set_event" (func $host_set_event (param i32) (result i32)))
+  (import "host" "reset_event" (func $host_reset_event (param i32) (result i32)))
+  (import "host" "wait_single" (func $host_wait_single (param i32 i32) (result i32)))
+
+  ;; ---- Memory: imported from host, 512 pages = 32MB initial ----
+  (import "host" "memory" (memory 512))
+  (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
   (data (i32.const 0x100) "win.ini\00")
@@ -165,8 +174,8 @@
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  i32 (i32.const 0x01052000))
-  (global $CACHE_INDEX  i32 (i32.const 0x01152000))
+  (global $THREAD_BASE  (mut i32) (i32.const 0x01052000))
+  (global $CACHE_INDEX  (mut i32) (i32.const 0x01152000))
   (global $API_HASH_TABLE i32 (i32.const 0x01362000))
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
@@ -269,6 +278,9 @@
   (global $timer_id     (mut i32) (i32.const 0))    ;; Active timer ID (0 = none)
   (global $timer_hwnd   (mut i32) (i32.const 0))    ;; Timer window handle
   (global $timer_callback (mut i32) (i32.const 0))  ;; Timer callback address (0 = WM_TIMER to window)
+  ;; Thread yield state (for multi-instance threading)
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited
+  (global $wait_handle  (mut i32) (i32.const 0))
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
