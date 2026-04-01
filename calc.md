@@ -2,100 +2,89 @@
 
 ## Current Status (2026-04-01)
 
+### Root Cause Found: Bignum init loop count bug
+**`[0x1013ebc]` = 42** (decimal precision) is being used as the outer loop count in the power-of-10 table computation at `0x010074c4`. Each outer iteration does 30 inner squarings. With 42+1=43 outer iterations × 30 = **1,290 squarings**, the numbers grow to astronomical size (2^1290 digits). This should be ~2-5 iterations based on exponent digit count in base 2^31.
+
+**Likely cause**: The power function at `0x01007465` receives the wrong parameter — the decimal precision (42) instead of the exponent's digit count in base 2^31 (~2). The conversion function at `0x01007af5` converts values to base 2^31, but the outer loop counter at `0x01007499` reads `[0x1013ebc]` directly (the raw precision) instead of the converted digit count.
+
+**Next step**: Trace the exact arguments passed to `0x01007465` and verify the conversion at `0x01007af5` produces the right digit count. The bug is likely upstream — either in how the precision is passed or in how the exponent is represented.
+
 ### Fixed This Session
-- **MSVCRT.dll not loading** — calc.exe imports MSVCRT.dll but neither CLI nor web host loaded it. Added auto-DLL detection to both `test/run.js` and `host/index.html` using `detectRequiredDlls()`.
-- **DLL_TABLE/hash table overlap** — DLL_TABLE at 0x1363000 overlapped API hash table entries 512+ (hash table ends at 0x1363638). Corrupted hash lookups caused `GetSystemTimeAsFileTime` and other APIs to hit `crash_unimplemented` even though handlers existed. Moved DLL_TABLE to 0x1366000 with 16KB reserved for hash table (up to 2048 APIs).
-- **SAHF/LAHF not implemented** — Opcode 0x9E (SAHF) used in MSVCRT's FPU comparison idiom (`fcompp; fnstsw ax; sahf; jbe`) caused infinite loop at EIP=0x1042c53. Added decoder entries and handlers (opcodes 212/213).
-- **GetSystemTimeAsFileTime unimplemented** — MSVCRT DllMain needs this for CRT init. Returns fixed timestamp (~2000-01-01).
-- **DllMain now completes** — Returns EAX=0x1 (success). CRT globals patched correctly.
+- **MSVCRT.dll not loading** — auto-DLL detection added to CLI and web host
+- **DLL_TABLE/hash table overlap** — moved DLL_TABLE to 0x1366000 (16KB hash table space)
+- **SAHF/LAHF not implemented** — added decoder + handlers (opcodes 212/213)
+- **GetSystemTimeAsFileTime** — implemented (was crash stub)
+- **DllMain now completes** — returns EAX=0x1 (success)
+- **x86 op test suite** — 33 tests for MUL, SHRD, ADC, INC/DEC CF preservation, SAHF/LAHF
 
 ### Previously Fixed
-- **imul r,[mem] clobbered dst** — 0F AF decoded as load+square instead of multiply. Calc bignum init now completes in ~1M blocks (was stuck at 100M+).
-- **INC/DEC cleared CF** — added saved_cf; bignum adc chains now preserve carry across inc counters.
-- **ADC/SBB carry overflow** — b+cf_in wrap (0xFFFFFFFF+1) now forces CF=1.
-- **MUL/IMUL missing flags** — CF=OF set when upper half non-zero (flag_op=6).
-- **Button clicks not working** — Resource parser key mismatch, GetMessageA hwnd routing, IsChild/SendMessage fixes.
-- **Arithmetic operations** — `_strrev`, `strchr` implemented; ADC/SBB carry flag threading fixed.
+- imul r,[mem], INC/DEC CF, ADC/SBB carry, MUL flags, button clicks, arithmetic ops
 
-### Open Issues
-1. **Bignum init very slow** — CRT init completes but calc's power-of-10 precomputation (O(n² × log P)) runs ~100M+ x86 instructions. With stepsPerSlice=500K in browser, takes 30-60+ seconds. Heap grows ~5KB per 1M instructions, may OOB before completing.
-2. **Re-add heap free-list** — reverted to bump allocator; bignum init allocs+frees heavily and will OOM on long runs without free-list.
-3. **Web stepsPerSlice increased** — bumped from 10K to 500K to help calc init survive.
+## Key Memory Addresses
 
-## Overview
-Win98 calc.exe (image_base=0x01000000, entry=0x010119e0). Requires MSVCRT.dll (auto-loaded from `test/binaries/dlls/`). DllMain and CRT init now complete. Gets stuck in bignum power-of-10 precomputation — computationally expensive but NOT an infinite loop.
+| Address | Name | Value | Notes |
+|---------|------|-------|-------|
+| 0x1013ebc | nPrecision | 42 | Decimal precision (should be ~32+10 guard) |
+| 0x1013eb8 | ? | 0 | Checked at 0x10074c4 |
+| 0x1013eb0 | nDigitsBase | ? | Set at 0x1008200, derived from precision |
 
-## Execution Phases
+## Execution Flow
 
-### Phase 1: DLL Init
+### DLL + CRT Init → OK
+MSVCRT.dll loads, DllMain returns 1, CRT globals patched.
+
+### Power-of-10 Table Init → STUCK
 ```
-load_dll(msvcrt.dll) → patchExeImports → DllMain
-  DllMain calls: GetSystemTimeAsFileTime, QueryPerformanceCounter, GetCurrentProcessId,
-  GetCurrentThreadId, GetTickCount, GetEnvironmentStringsW, WideCharToMultiByte, etc.
-  DllMain returns 1 (success)
-  Post-patch: __p__wcmdln, __p__acmdln, __p__wenviron, __p__environ, __p___winitenv, __p___initenv
-```
-
-### Phase 2: CRT Init (blocks 0–100, EIP ~0x010119e0–0x01001650)
-```
-__set_app_type → __p__fmode → __p__commode → _controlfp → _initterm
-→ __getmainargs → _initterm → GetStartupInfoA → GetModuleHandleA
-→ _EH_prolog → GetCommandLineA → CharNextA x7
-```
-Standard MSVC runtime startup. Parses command line, sets up CRT globals.
-
-### Phase 3: Window Class Registration (blocks ~100)
-```
-LoadIconA → LoadCursorA → GetSysColorBrush → RegisterClassExA
-```
-Registers the "CalcMsgPumpWnd" window class.
-
-### Phase 4: Hidden Helper Window (block ~400)
-```
-CreateWindowExA("CalcMsgPumpWnd", CW_USEDEFAULT)
-```
-Creates the message pump helper window (hwnd=0x10001).
-
-### Phase 5: Bignum Library Init — SLOW (blocks 500+)
-**Address range: 0x01010B00–0x01011700 (bignum math library)**
-
-The power-of-10 precomputation loop runs at 0x01011564–0x0101167B. Inner multiply is O(n²), outer loop computes successive powers via squaring. Each iteration allocates new arrays via `LocalAlloc` → `HeapAlloc` and frees old ones via `LocalFree`.
-
-Heap growth rate: ~5KB per 1M emulated instructions. Guest heap starts at 0xF12000, guest stack at 0x1E00000 — ~15MB available. May need 200-500M instructions to complete.
-
-### Phase 6: Main Window Creation (reached after bignum init)
-```
-CreateWindowExA("SciCalc", "Calculator", ...) → CreateDialog → ShowWindow
-→ LoadMenuA → SetMenu → GetMessageA → DispatchMessageA (message loop)
+0x010081d9: [0x1013ebc] = 42 (precision)
+0x01007465: Power function called with bignum exponent + base
+0x01007499: edi = [0x1013ebc] + 1 = 43 (OUTER LOOP COUNT)
+0x010074c4: for each dword in exponent (43 times):
+0x010074d4:   for each bit (30 times): square the accumulator
+            Total: 1290 squarings → numbers grow to 2^1290 base-2^31 digits
+            → OOB crash after ~180M emulated instructions
 ```
 
-## Options to Speed Up
+### The Power-of-10 Conversion Loop (0x01007af5)
+```c
+// Converts value to base b, stores digits
+int convert(int value, int base) {
+    int digits = 0;
+    while (value != 0) {
+        digit[digits++] = value % base;
+        value /= base;
+    }
+    return digits;
+}
+```
+For value=0x80000000, base=0x80000000: produces 2 digits (0, 1).
 
-1. **Increase stepsPerSlice** — done (10K → 500K), helps but still slow
-2. **Skip bignum init** — detect init function and return early (UI works, math shows "0")
-3. **Native bignum** — replace hot multiply loop with WASM intrinsic
-4. **Patch calc.exe** — NOP out the precompute loop in binary
-5. **Block caching** — JIT cache helps since same basic blocks repeat
+### The Power Function (0x01007465)
+```c
+void power(bignum *base_num, bignum *result, int precision) {
+    bignum x = convert(0, precision);       // zero
+    bignum y = convert(0x80000000, precision); // the base in digits
+    int n = [0x1013ebc] + 1;  // BUG: should be digit count of exponent, not precision
+    for (int i = 0; i < n; i++) {
+        int mask = 0x40000000;
+        while (mask) {
+            result = result * result;  // square
+            if (exponent_digit[i] & mask)
+                result |= sign_bit;
+            mask >>= 1;
+        }
+    }
+}
+```
 
 ## Address-to-Function Map
-
 ```
-0x010119E0  WinMain (entry point)
-0x01001620  LoadStringTable (loads 80 strings)
-0x01008200  InitCalcApp (creates helper window, starts bignum init)
-0x01007AF5  InitPrecisionTable (bignum library setup)
-0x01007B20  ComputePowerTable (iterative squaring loop)
-0x01011564  BigNum_Multiply_Inner (core loop, shrd+mul+adc)
-0x0101147E  BigNum_Power (recursive power computation)
-0x01011506  BigNum_Multiply (core multiply, O(n*m))
-0x01010B08  BigNum_Create (alloc + init struct)
-0x01010C00  BigNum_Add
-0x01010C40  BigNum_Sub
-0x01010C70  BigNum_ShiftRight
-0x0100EEE5  BigNum_Divide (uses _CxxThrowException on div-by-zero)
-0x010078E2  BigNum_ToString (_strrev + formatting)
-0x01007349  LocalFree wrapper (called after each multiply)
-0x01007F42  BigNum_Cleanup
-0x01009549  BigNum_Compare
-0x0100592A  SciCalc WndProc (dialog message handler)
+0x010119E0  WinMain
+0x01008180  InitPrecision (sets [0x1013ebc]=42, [0x1013eb8]=0, [0x1013eb0])
+0x01007465  BigNum_Power (outer=43 iterations, inner=30 bit-scan)
+0x01007AF5  ConvertToBase (value → base-N digit array)
+0x01011506  BigNum_Multiply (O(n×m) schoolbook)
+0x01011564  BigNum_Multiply_Inner (shrd+mul+adc loop)
+0x01010B08  BigNum_Create
+0x01007349  LocalFree wrapper
+0x0100592A  SciCalc WndProc
 ```
