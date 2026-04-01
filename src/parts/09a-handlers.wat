@@ -695,13 +695,24 @@
     (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
     (then
     (global.set $pending_wm_create (i32.const 1))
-    ;; Store window outer dimensions; compute client area (subtract borders+titlebar+menu)
+    ;; Store window outer dimensions
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    ;; Client = outer - borders(6) - caption(19) - menu(20) approximately
+    ;; Non-client height: borders(3+3) + caption(19) = 25, plus menu(20) if present
+    (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
+      (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
+    ;; Client = outer - borders(6w) - nc_height
     (global.set $pending_wm_size (i32.or
     (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-    (i32.shl (i32.sub (global.get $main_win_cy) (i32.const 45)) (i32.const 16))))))
+    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16)))))
+    (else
+    ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
+    (global.set $pending_child_create (global.get $next_hwnd))
+    (global.set $pending_child_size (i32.or
+      (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
+      (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
+    (global.set $child_paint_hwnd (global.get $next_hwnd))
+    ))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -783,6 +794,28 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100)) ;; lParam = &CREATESTRUCT
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
+    (if (global.get $pending_child_create)
+    (then
+    (local.set $tmp (global.get $pending_child_create))
+    (global.set $pending_child_create (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver child WM_SIZE after child WM_CREATE
+    (if (global.get $pending_child_size)
+    (then
+    (local.set $packed (global.get $pending_child_size))
+    (global.set $pending_child_size (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver pending WM_SIZE after WM_CREATE
@@ -868,6 +901,16 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver WM_PAINT to child window if pending
+    (if (global.get $child_paint_hwnd)
+    (then
+    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $child_paint_hwnd (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No paint — deliver WM_TIMER if timer is active
@@ -1216,11 +1259,15 @@
 
   ;; 91: GetClientRect
   (func $handle_GetClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Fill RECT with client area (use window dims minus frame)
+    (local $cs i32)
+    ;; Fill RECT with client area — query host for per-window client size
+    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
     (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.sub (global.get $main_win_cx) (i32.const 6))) ;; right = cx - frame
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.sub (global.get $main_win_cy) (i32.const 45)));; bottom = cy - caption - frame
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
+      (i32.and (local.get $cs) (i32.const 0xFFFF)))     ;; right = clientW
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
+      (i32.shr_u (local.get $cs) (i32.const 16)))       ;; bottom = clientH
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -1379,7 +1426,11 @@
 
   ;; 115: InvalidateRect
   (func $handle_InvalidateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $paint_pending (i32.const 1))
+    ;; Route paint to main or child window
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+    (then (global.set $paint_pending (i32.const 1)))
+    (else (if (i32.ne (local.get $arg0) (i32.const 0))
+    (then (global.set $child_paint_hwnd (local.get $arg0))))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -1594,9 +1645,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
-  ;; 142: DrawTextA(hdc, lpString, nCount, lpRect, uFormat) — stub, return height=16
+  ;; 142: DrawTextA(hdc, lpString, nCount, lpRect, uFormat)
   (func $handle_DrawTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 16))
+    (global.set $eax (call $host_gdi_draw_text
+      (local.get $arg0)
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (local.get $arg4)
+      (i32.const 0) ;; isWide = 0
+    ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
@@ -1860,7 +1918,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 172: SetBkMode(hdc, mode) → prev mode — STUB: unimplemented
+  ;; 172: SetBkMode(hdc, mode) → prev mode
   (func $handle_SetBkMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetBkMode(hdc, mode) → previous mode. mode: 1=TRANSPARENT, 2=OPAQUE
     (global.set $eax (call $host_gdi_set_bk_mode (local.get $arg0) (local.get $arg1)))
@@ -2392,16 +2450,18 @@
 
   ;; 243: BeginPaint
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32)
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (call $gs32 (local.get $arg1) (i32.add (local.get $arg0) (i32.const 0x40000))) ;; hdc = hwnd + 0x40000
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1)) ;; fErase = TRUE
-    ;; rcPaint = {0, 0, clientW, clientH}
+    ;; rcPaint = {0, 0, clientW, clientH} — query host for per-window client size
     ;; left(+8) and top(+12) already 0 from zero_memory
+    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
     (call $gs32 (i32.add (local.get $arg1) (i32.const 16))
-      (i32.sub (global.get $main_win_cx) (i32.const 6)))   ;; right = outer - borders
+      (i32.and (local.get $cs) (i32.const 0xFFFF)))        ;; right = clientW
     (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
-      (i32.sub (global.get $main_win_cy) (i32.const 45)))  ;; bottom = outer - chrome
+      (i32.shr_u (local.get $cs) (i32.const 16)))          ;; bottom = clientH
     (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -2691,6 +2751,15 @@
 
   ;; 278: memset(dest, ch, count) — cdecl
   (func $handle_memset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; DEBUG: detect writes to hash table region
+    (if (i32.and
+      (i32.ge_u (call $g2w (local.get $arg0)) (i32.const 0x01360000))
+      (i32.lt_u (call $g2w (local.get $arg0)) (i32.const 0x01370000)))
+      (then
+        (call $host_log_i32 (i32.const 0xDEAD0001))
+        (call $host_log_i32 (local.get $arg0))
+        (call $host_log_i32 (local.get $arg2))
+        (call $host_log_i32 (global.get $eip))))
     (if (local.get $arg2)
       (then (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
@@ -2839,13 +2908,24 @@
     (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
     (then
     (global.set $pending_wm_create (i32.const 1))
-    ;; Store window outer dimensions; compute client area (subtract borders+titlebar+menu)
+    ;; Store window outer dimensions
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    ;; Client = outer - borders(6) - caption(19) - menu(20) approximately
+    ;; Non-client height: borders(3+3) + caption(19) = 25, plus menu(20) if present
+    (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
+      (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
+    ;; Client = outer - borders(6w) - nc_height
     (global.set $pending_wm_size (i32.or
     (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-    (i32.shl (i32.sub (global.get $main_win_cy) (i32.const 45)) (i32.const 16))))))
+    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16)))))
+    (else
+    ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
+    (global.set $pending_child_create (global.get $next_hwnd))
+    (global.set $pending_child_size (i32.or
+      (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
+      (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
+    (global.set $child_paint_hwnd (global.get $next_hwnd))
+    ))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -3479,9 +3559,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 386: DrawTextW — STUB: unimplemented
+  ;; 386: DrawTextW
   (func $handle_DrawTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_draw_text
+      (local.get $arg0)
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (local.get $arg4)
+      (i32.const 1) ;; isWide = 1
+    ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; 387: TabbedTextOutW — STUB: unimplemented
@@ -5249,6 +5337,28 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
+    (if (global.get $pending_child_create)
+    (then
+    (local.set $tmp (global.get $pending_child_create))
+    (global.set $pending_child_create (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver child WM_SIZE after child WM_CREATE
+    (if (global.get $pending_child_size)
+    (then
+    (local.set $packed (global.get $pending_child_size))
+    (global.set $pending_child_size (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver pending WM_SIZE after WM_CREATE

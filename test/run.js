@@ -94,7 +94,9 @@ async function main() {
   // Set up renderer if node-canvas is available
   let renderer = null;
   if (createCanvas && Win98Renderer) {
-    const canvas = createCanvas(640, 480);
+    const screenArg = args.find(a => a.startsWith('--screen='));
+    const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
+    const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
     renderer.loadResources(resourceJson);
   }
@@ -387,6 +389,14 @@ async function main() {
     }
   }
 
+
+  // DEBUG: check hash table integrity after DLL loading
+  {
+    const dv = new DataView(instance.exports.memory.buffer);
+    const h0 = dv.getUint32(0x01362000, true);
+    const h310 = dv.getUint32(0x01362000 + 310 * 8, true);
+    console.log(`Hash table check: [0]=0x${h0.toString(16)} [310]=0x${h310.toString(16)} ${h0 === 0x0e80fd3a ? 'OK' : 'CORRUPTED'}`);
+  }
 
   const regs = () => {
     const e = instance.exports;

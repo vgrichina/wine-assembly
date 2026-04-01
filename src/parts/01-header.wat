@@ -96,6 +96,8 @@
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount) → 1
+  (import "host" "gdi_draw_text" (func $host_gdi_draw_text (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_draw_text(hdc, textWA, nCount, rectWA, uFormat, isWide) → height
   (import "host" "gdi_set_pixel" (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
   (import "host" "gdi_frame_rect" (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -126,6 +128,9 @@
   ;; ini_get_int(appNameWA, keyNameWA, nDefault, fileNameWA, isWide) → int value
   (import "host" "ini_write_string" (func $host_ini_write_string (param i32 i32 i32 i32 i32) (result i32)))
   ;; ini_write_string(appNameWA, keyNameWA, valueWA, fileNameWA, isWide) → BOOL
+
+  (import "host" "get_window_client_size" (func $host_get_window_client_size (param i32) (result i32)))
+  ;; get_window_client_size(hwnd) → (clientW | (clientH << 16))
 
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
@@ -268,6 +273,7 @@
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
   (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
   (global $main_win_cy       (mut i32) (i32.const 0)) ;; main window height
+  (global $main_nc_height    (mut i32) (i32.const 25)) ;; non-client height: 25 (no menu) or 45 (with menu)
   ;; Posted message queue: up to 8 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
   ;; Stored at fixed WASM address 0x400 (well below guest memory)
   (global $post_queue_count (mut i32) (i32.const 0))
@@ -275,6 +281,9 @@
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent
+  (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
+  (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
+  (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
   (global $timer_id     (mut i32) (i32.const 0))    ;; Active timer ID (0 = none)
   (global $timer_hwnd   (mut i32) (i32.const 0))    ;; Timer window handle
   (global $timer_callback (mut i32) (i32.const 0))  ;; Timer callback address (0 = WM_TIMER to window)
