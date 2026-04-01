@@ -935,6 +935,7 @@
   ;; 74: PeekMessageA(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg)
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $packed i32) (local $msg i32) (local $tmp i32)
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
@@ -955,6 +956,32 @@
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
         (return)
+      )
+    )
+    ;; Poll host for input events
+    (local.set $packed (call $host_check_input))
+    (if (i32.ne (local.get $packed) (i32.const 0))
+      (then
+        (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+        ;; Check message filter range (0,0 = accept all)
+        (if (i32.or (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+              (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
+                       (i32.le_u (local.get $msg) (local.get $arg3))))
+          (then
+            (local.set $tmp (call $host_check_input_hwnd))
+            (if (i32.eqz (local.get $tmp))
+              (then (local.set $tmp (global.get $main_hwnd))))
+            (call $gs32 (local.get $arg0) (local.get $tmp))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $msg))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
+              (i32.shr_u (local.get $packed) (i32.const 16)))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+              (call $host_check_input_lparam))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)
+          )
+        )
       )
     )
     (global.set $eax (i32.const 0))  ;; no message
@@ -5247,6 +5274,7 @@
 
   ;; 636: PeekMessageW — same as PeekMessageA
   (func $handle_PeekMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $packed i32) (local $msg i32) (local $tmp i32)
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
@@ -5267,6 +5295,32 @@
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)
+      )
+    )
+    ;; Poll host for input events
+    (local.set $packed (call $host_check_input))
+    (if (i32.ne (local.get $packed) (i32.const 0))
+      (then
+        (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+        ;; Check message filter range (0,0 = accept all)
+        (if (i32.or (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+              (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
+                       (i32.le_u (local.get $msg) (local.get $arg3))))
+          (then
+            (local.set $tmp (call $host_check_input_hwnd))
+            (if (i32.eqz (local.get $tmp))
+              (then (local.set $tmp (global.get $main_hwnd))))
+            (call $gs32 (local.get $arg0) (local.get $tmp))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $msg))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
+              (i32.shr_u (local.get $packed) (i32.const 16)))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+              (call $host_check_input_lparam))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)
+          )
+        )
       )
     )
     (global.set $eax (i32.const 0))

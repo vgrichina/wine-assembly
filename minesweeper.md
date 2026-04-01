@@ -84,14 +84,41 @@ This is the most interesting early code path. Minesweeper computes its window si
 | 0x1005B2C | Computed client width |
 | 0x1005B20 | Computed client height |
 
+## Click Handler Flow (0x0100140C)
+
+After WM_LBUTTONDOWN, the click handler:
+1. `PtInRect` — checks if click is on smiley button
+2. `SetCapture` — captures mouse
+3. Enters tight `PeekMessageW` loop at `0x0100148C` filtering for `WM_MOUSEFIRST(0x200)..0x20D`, waiting for `WM_LBUTTONUP` or `WM_MOUSEMOVE`
+4. On WM_LBUTTONUP: `ReleaseCapture`, proceeds to reveal logic
+
+## Mine Placement Function (0x010036C7)
+
+Loop places 10 mines (beginner):
+- Calls rand wrapper at `0x01003940` (msvcrt `rand()` + `cdq; idiv` for modulo)
+- `test byte [ecx+esi+0x1005340], 0x80` — check if cell already has mine
+- `or byte [eax], 0x80` — place mine
+- `dec [0x1005330]` — decrement mine counter
+- Loop until counter reaches 0
+
+## Cell Drawing Function (0x01002646)
+
+```
+movsx edx, byte [edx+eax+0x1005340]  ; read cell value (SIB addressing)
+and edx, 0x1f                         ; mask to sprite index 0-31
+push [0x1005a20+edx*4]                ; dcArray[index] = source DC handle
+; ... BitBlt to window DC
+```
+
+DC handle array at `0x1005a20`: 16 entries (0x80002..0x80020), one per sprite (empty, 1-8, mine, flag, etc.)
+
 ## Status
 
 - **Current:** PASS — window created, smiley face renders correctly inside window
 - **Rendering:** `--png` output shows proper window with title bar, Game/Help menu, mine grid, smiley button
 - **Known issues:**
-  - Mine counter (left 7-segment display) missing/misaligned in browser — may be clipped or positioned off-screen
-  - Numbers on clicked cells not visible in browser (works in `--png` render)
-  - Likely related to SetDIBitsToDevice coordinate handling with new per-window DC scheme
+  - Grid state (`0x1005340`) never changes from `0x40` (hidden) despite reveal counter decrementing — mine placement and/or reveal byte writes not persisting. Likely an emulation bug in `or byte [mem], imm8` or `and byte [mem], imm8` in the mine placement/reveal functions. All cells render as empty (sprite 0) because `0x40 & 0x1F = 0`.
+  - SetROP2 is stubbed (always R2_COPYPEN) — white highlight lines on the 3D border draw gray instead of white
 
 ## Progress Log
 
@@ -99,3 +126,4 @@ This is the most interesting early code path. Minesweeper computes its window si
 - GetLayout/SetLayout: Added stubs returning 0 (LTR layout). Unblocked the GDI drawing path.
 - Window sizing function fully understood — measures menu items to detect wrapping, computes grid-based window size, accounts for window chrome via GetSystemMetrics.
 - Multi-window DC support: DC handle now encodes hwnd (hdc = hwnd + 0x40000). Smiley face fixed from drawing at (0,0). Removed $window_dc_hwnd global.
+- **PeekMessageA/W**: Fixed to poll `$host_check_input` for input events (was only checking posted queue). Root cause of click not working — Minesweeper's click handler uses a `PeekMessageW` loop to wait for WM_LBUTTONUP, which previously spun forever.
