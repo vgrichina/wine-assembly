@@ -1,56 +1,43 @@
 # Code Review Report: Wine-Assembly x86 Emulator
 
 ## 1. Summary
+This report details the current state of the Wine-Assembly x86 emulator, focusing on API gaps, misimplementations, and the identification of "silent" stubs. A critical finding is that many Win32 APIs are implemented as minimal return-0/1 stubs, which hides implementation gaps and makes debugging guest applications difficult.
 
-This report provides an updated review of the Wine-Assembly x86 emulator. Recent progress includes a sophisticated **Win32 SEH (Structured Exception Handling)** implementation, a functional **Free-List Heap Allocator**, and expanded GDI/GUI support.
+## 2. API Gaps & Silent Stubs (src/parts/09a-handlers.wat)
+A systemic review of the API handlers identified over 100 functions that fail silently.
 
-However, a deep-dive into the instruction decoder, ALU flag logic, FPU state, and PE loaders has confirmed several critical bugs and implementation gaps that must be addressed to ensure compatibility with real-world Windows 98 binaries.
+### 2.1 Critical Unicode (W) Variants
+Most Unicode variants are currently non-functional stubs. Applications attempting to use NT-style Unicode APIs will fail immediately or behave unpredictably:
+*   **Windowing:** `RegisterClassW`, `RegisterClassExW`, `CreateWindowExW`, `SetWindowTextW`, `GetWindowTextW`.
+*   **Messaging:** `SendMessageW`, `PostMessageW`.
+*   **Resources/Libraries:** `LoadLibraryW`, `LoadCursorW`, `LoadIconW`, `LoadMenuW`.
+*   **String/Utility:** `wsprintfW`, `wvsprintfW`, `lstrcatW`.
 
-## 2. Review of Recent Progress & Bug Fixes
+### 2.2 System & Environment Stubs
+Several core system APIs return hardcoded "success" or "empty" values without performing any action:
+*   **Time:** `GetLocalTime` (returns zeroed structure), `GetTimeFormatA`, `GetDateFormatA`.
+*   **Profile/Registry:** `GetProfileStringA`, `GetProfileIntA`, `WriteProfileStringA`.
+*   **Locales:** `GetLocaleInfoA`, `GetUserDefaultLCID`, `GetACP`, `GetOEMCP`.
+*   **Filesystem (Wide):** `FindFirstFileW`, `GetFileAttributesW`, `GetCurrentDirectoryW`, `DeleteFileW`.
+*   **Critical Sections:** `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection` (implemented as no-ops).
 
-*   **Fixed: `POPFD` / `$load_eflags` Correctness:** Robust "raw mode" (`flag_op=8`) restoration of flags.
-*   **Fixed: `CMPXCHG r,r` and `XADD r,r` Encoding:** Register-form operands are now correctly handled via `0x80` tagging.
-*   **New: Free-List Heap Allocator:** `heap_alloc` and `heap_free` now implement a proper free-list with block splitting, replacing the previous bump-allocator and preventing memory exhaustion.
-*   **New: Win32 SEH Support:** Full SEH chain walking, `__except_handler3` scopetable emulation, and "catch-return" thunks for C++ exceptions.
+### 2.3 Misimplementations
+*   **`MultiByteToWideChar` / `WideCharToMultiByte`**: Currently performs a direct 1:1 byte copy. It does not respect code pages or handle multi-byte sequences correctly.
+*   **`GetProcAddress`**: Leaks guest heap memory by creating a new thunk on every call, even for the same function. It also lacks support for ordinal lookups.
+*   **`GetModuleHandleA`**: Hardcoded to return the `image_base`, which breaks for applications expecting to load or query multiple DLLs.
 
-## 3. Confirmed Critical Bugs
+## 3. Host Import Gaps (lib/host-imports.js)
+*   **`read_file`**: Currently a hardcoded stub returning 0. File I/O is not yet bridged to the host filesystem.
+*   **GDI Text**: `gdi_text_out` uses a fixed 13px monospace font regardless of the font selected into the DC.
+*   **Window Styles**: Many `dwExStyle` and `dwStyle` flags are ignored in `create_window`.
 
-### Decoder & Addressing (`07-decoder.wat` / `10-helpers.wat`)
-*   **Broken `0x8F` (POP [mem]):** The decoder incorrectly captures the static `ESP` value at decode time rather than using the dynamic `ESP` at runtime, causing stack corruption.
-*   **`SETcc [mem]` Register Clobbering:** When `SETcc` is used with a memory operand, the handler incorrectly calls `set_reg8`, treating the memory address as a register index and clobbering CPU registers instead of writing to memory.
-*   **Segment Handling Gap:** Segment overrides for `GS`, `ES`, `DS`, `SS`, and `CS` are entirely ignored. Only `FS` (used for the TIB) is implemented in `$seg_adj`.
-*   **XCHG Parity:** `0x86` (XCHG r/m8, reg8) incorrectly invokes 32-bit handlers, corrupting the upper 24 bits of registers.
+## 4. Policy: Transition to "Crash on Run"
+To improve debuggability, the project is moving away from silent stubs.
+*   **Mechanism**: All stubs should invoke `(call $crash_unimplemented (local.get $name_ptr))`.
+*   **Host Behavior**: The host implementation in `host-imports.js` logs the EIP, ESP, and the name of the missing API, then halts execution.
+*   **Exception**: Minimal functional stubs like `GetLastError` (returning a global error code) and `GetModuleHandleA` (returning the main base) should be retained until full implementations are ready, as they are often required for basic application startup.
 
-### ALU Logic & Flags (`05-alu.wat`)
-*   **`ADC`/`SBB` Result Corruption:** The lazy flag logic for `ADC` and `SBB` sets `flag_res` to a sentinel (0) if a carry occurs during intermediate operations. This destroys the actual result's `ZF` and `SF` for all subsequent instructions.
-*   **`BT` Flag Preservation:** Bit Test instructions clobber the `ZF` and `SF` flags. While Intel defines these as undefined, Windows code frequently expects them to be preserved across `BT` calls.
-*   **Parity Flag Stub:** The Parity Flag (PF) is hardcoded to return 0, which can break legacy code or packers relying on parity-based checks.
-
-### PE & DLL Loader (`08-pe-loader.wat` / `08b-dll-loader.wat`)
-*   **BSS Initialization Bug:** Neither loader zeroes out the BSS portion of sections (where `VirtualSize > RawSize`). Stale data from the staging buffer or heap is left in "allocated" guest memory.
-*   **Section Mapping Gap:** The DLL loader ignores sections where `RawSize = 0`, even if they have a non-zero `VirtualSize`, effectively failing to allocate space for pure BSS segments.
-
-## 4. Advanced System Risks (Deep Insights)
-
-### FPU Implementation Status (`06-fpu.wat`)
-*   **`FPREM` Stub:** Non-functional; only sets the "result ready" bit in the Status Word without performing the operation.
-*   **Missing Transcendentals & State:** Several instructions like `FYL2X` (logarithms), `F2XM1` (exponentials), `FSAVE`, and `FRSTOR` are missing.
-*   **Stack Integrity:** No overflow/underflow checks on the FPU stack (ST0-ST7); `fpu_top` wraps silently without setting Stack Fault (SF) bits.
-
-### Win32 API Fidelity (`09-dispatch.wat` / `11-seh.wat`)
-*   **`GetProcAddress` Limitations:** Fails for ordinal-based lookups (common in `shell32.dll`) and leaks thunk memory by creating a new entry on every call for the same function.
-*   **Fragile `WndProc` Detection:** `CreateWindowExA` relies on scanning guest code for specific MSVC-style `WNDCLASSA` move patterns to find the window procedure, which is highly compiler-dependent.
-*   **Encoding Simplicity:** `MultiByteToWideChar` is a simple 1:1 byte copy; it lacks support for actual code pages or UTF-8.
-
-## 5. Recommendations
-
-1.  **Immediate Fixes:**
-    *   Correct the `SETcc` memory handler to write to memory instead of clobbering registers.
-    *   Fix the `ADC/SBB` flag logic to preserve the actual result in `flag_res` regardless of intermediate carries.
-    *   Implement BSS zeroing in both the PE and DLL loaders.
-2.  **ISA/Decoder Refactoring:**
-    *   Update `$seg_adj` to support all segment registers.
-    *   Ensure all multi-word handlers (like `BT [mem]`) use a unified `read_addr` helper to support SIB addressing sentinels.
-3.  **API Improvement:**
-    *   Add ordinal support to `GetProcAddress` and implement a cache to prevent thunk memory leaks.
-    *   Implement a proper `RtlUnwind` API for guest code.
+## 5. Confirmed Critical CPU Bugs
+*   **Decoder:** `0x8F` (POP [mem]) uses stale ESP; `SETcc` clobbers registers when targeting memory.
+*   **ALU:** `ADC`/`SBB` destroys `flag_res` on carry, corrupting subsequent flag checks.
+*   **PE Loader:** Fails to zero the BSS area, leading to non-deterministic behavior in global variables.
