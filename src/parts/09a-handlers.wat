@@ -1305,8 +1305,10 @@
   )
 
   ;; 96: GetDlgItem — STUB: unimplemented
+  ;; GetDlgItem(hDlg, nIDDlgItem) — 2 args stdcall, return NULL
   (func $handle_GetDlgItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 97: GetCursorPos
@@ -3066,9 +3068,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 306: GetClassInfoW — STUB: unimplemented, return 0
+  ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
+  (func $handle_GetClassInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 306: GetClassInfoW(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
   (func $handle_GetClassInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 307: SetWindowLongW — STUB: unimplemented, return 0 (previous value)
@@ -5117,9 +5126,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 622: GetTopWindow — STUB: unimplemented
+  ;; 622: GetTopWindow(hWnd) — 1 arg stdcall, return NULL
   (func $handle_GetTopWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 623: SetScrollPos — STUB: unimplemented
@@ -5293,9 +5303,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 642: GetActiveWindow — STUB: unimplemented
+  ;; 642: GetActiveWindow — return NULL (no active window), 0 args
   (func $handle_GetActiveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 643: ReuseDDElParam — STUB: unimplemented
