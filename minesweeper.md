@@ -86,11 +86,16 @@ This is the most interesting early code path. Minesweeper computes its window si
 
 ## Status
 
-- **Current:** PASS — window created, renders correctly (9x9 grid, menu bar, counter/timer area)
-- **Rendering:** `--png` output shows proper window with title bar, Game/Help menu, mine grid
+- **Current:** PASS — window created, smiley face renders correctly inside window
+- **Rendering:** `--png` output shows proper window with title bar, Game/Help menu, mine grid, smiley button
+- **Known issues:**
+  - Mine counter (left 7-segment display) missing/misaligned in browser — may be clipped or positioned off-screen
+  - Numbers on clicked cells not visible in browser (works in `--png` render)
+  - Likely related to SetDIBitsToDevice coordinate handling with new per-window DC scheme
 
 ## Progress Log
 
 - GetMenuItemRect: Added handler with RECT fill (items spaced 100px horizontally, top=0, bottom=20). Fixed missing `esp += 20` stdcall cleanup that caused EIP=0x14 crash.
 - GetLayout/SetLayout: Added stubs returning 0 (LTR layout). Unblocked the GDI drawing path.
 - Window sizing function fully understood — measures menu items to detect wrapping, computes grid-based window size, accounts for window chrome via GetSystemMetrics.
+- Multi-window DC support: DC handle now encodes hwnd (hdc = hwnd + 0x40000). Smiley face fixed from drawing at (0,0). Removed $window_dc_hwnd global.

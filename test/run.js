@@ -670,6 +670,12 @@ async function main() {
     hexdump(dumpAddr, dumpLen);
   }
 
+  // Dump sprite list if requested
+  if (args.includes('--dump-sprites')) {
+    const { dumpSprites } = require('../tools/dump_sprites');
+    dumpSprites(new Uint8Array(instance.exports.memory.buffer));
+  }
+
   if (DUMP_SEH || TRACE_SEH) {
     dumpSEH(true);
   }

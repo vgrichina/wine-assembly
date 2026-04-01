@@ -19,15 +19,42 @@
 ### Current Blocker: `OleInitialize` thunk dispatch failure
 
 MFC42 DllMain traps on memory OOB (recovered). EXE CRT startup completes.
-At batch 3, MFC's AfxOleInit calls `OleInitialize` via mfc42's IAT thunk
-for ole32.dll. The handler exists (id=310) and dispatch is wired, but the
-thunk's `api_id` doesn't resolve correctly.
+At batch 3, MFC's AfxOleInit calls `OleInitialize` — crashes as UNIMPLEMENTED
+despite handler existing (api_id=310).
 
-Hypothesis: `process_dll_imports` in 08b-dll-loader.wat creates thunks for
-mfc42's ole32.dll imports, but `lookup_api_id` returns wrong ID for the
-import name as stored in mfc42's hint/name table. Possibly the name RVA
-points to the wrong location after DLL relocation, or the hint bytes
-before the name are confusing the hash.
+**Key finding:** mfc42.dll does NOT statically import ole32.dll. Its only
+imports are MSVCRT, KERNEL32, GDI32, USER32 (verified with `tools/pe-imports.js`).
+MFC loads OLE dynamically via internal delay-load pattern:
+
+1. `call 0x10560ab` — MFC's AfxLoadSystemLibrary, loads DLL handle into struct
+2. `call 0x105689d` — resolver: calls LoadLibraryA + GetProcAddress, caches result
+3. `0x01059e69` — fast path: `push [esp+4]; call [cache_slot]; ret 4`
+
+**Confirmed call sequence** (with --trace-api after adding $host_log to dispatch):
+- API #458: `LoadLibraryA("OLE32.DLL")` → returns image_base (fallback, not loaded)
+- API #460: `GetProcAddress(0x01000000, "OleInitialize")` → creates thunk idx 1554
+- API #461: `OleInitialize(0)` → hits fallback, api_id=0xFFFF
+
+**Root cause narrowed:** `$handle_GetProcAddress` copies "OleInitialize" to heap,
+calls `$hash_api_name` → returns `0x130baf5f` (CORRECT, matches hash table entry
+for api_id 310). But `$lookup_api_id` returns 0xFFFF despite the hash matching.
+
+**Hypothesis: API_HASH_COUNT / hash table mismatch.** `gen_api_table.js` last ran
+with 736 APIs, but `gen_dispatch.js` shows 738. If the hash table data segment has
+fewer entries than expected, or `API_HASH_COUNT` doesn't match the actual table
+size, the linear scan could terminate before reaching OleInitialize's entry.
+Need to verify `API_HASH_COUNT` global matches the actual number of entries in the
+data segment, and that both generators were run from the same api_table.json.
+
+**Next step:** Re-run `node tools/gen_api_table.js` to sync hash table with
+current api_table.json, rebuild, and test again.
+
+### Tools added this session
+
+- `tools/pe-imports.js` — list PE import descriptors and entries
+- `tools/hexdump.js` — added `--base=0xLOADADDR` flag for relocated DLLs
+- Added `$host_log` call to `$win32_dispatch` (via gen_dispatch.js) — enables
+  `--trace-api` and `--break-api` for all API calls (was completely broken before)
 
 ### Fixes Made This Session
 

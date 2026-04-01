@@ -187,7 +187,7 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=8');
+    const resp = await fetch('../build/wine-assembly.wasm?v=9');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
     const result = await WebAssembly.instantiate(bytes, imports);
