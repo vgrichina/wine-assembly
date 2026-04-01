@@ -3933,9 +3933,20 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 516: GetSystemTime — STUB: unimplemented
+  ;; 516: GetSystemTime(lpSystemTime) — fills SYSTEMTIME struct
+  ;; Returns fixed time 2000-01-01 00:00:00.000 (Saturday)
   (func $handle_GetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (i32.store16 (local.get $wa) (i32.const 2000))                          ;; wYear
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))     ;; wMonth
+    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))     ;; wDayOfWeek (Saturday)
+    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))     ;; wDay
+    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))     ;; wHour
+    (i32.store16 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))    ;; wMinute
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0))    ;; wSecond
+    (i32.store16 (i32.add (local.get $wa) (i32.const 14)) (i32.const 0))    ;; wMilliseconds
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 517: FormatMessageW — STUB: unimplemented

@@ -303,7 +303,7 @@ async function main() {
   } else {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
     const required = detectRequiredDlls(exeBytes);
-    const dllSearchDirs = [dllDir, path.join(__dirname, 'binaries', 'dlls')];
+    const dllSearchDirs = [dllDir, path.dirname(EXE_PATH), path.join(__dirname, 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {
       for (const dir of dllSearchDirs) {

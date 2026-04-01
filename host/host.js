@@ -249,7 +249,7 @@ class WineAssembly {
     this.running = true;
   }
 
-  run(stepsPerSlice = 10000) {
+  run(stepsPerSlice = 500000) {
     this.running = true;
     const self = this;
     const step = () => {
