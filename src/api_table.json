@@ -5024,5 +5024,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 854077129
+  },
+  {
+    "id": 718,
+    "name": "CreateICA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3703743972
+  },
+  {
+    "id": 719,
+    "name": "SetDIBitsToDevice",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 2575315803
   }
 ]

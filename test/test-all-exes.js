@@ -1,0 +1,141 @@
+#!/usr/bin/env node
+// Automated smoke tests for all EXE binaries
+// Runs each EXE with limited batches, checks for crashes vs clean exit
+
+const { execSync, spawnSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+const ROOT = path.join(__dirname, '..');
+const RUN_JS = path.join(__dirname, 'run.js');
+
+// All test binaries with their expected behavior
+const TEST_CASES = [
+  { exe: 'test/binaries/notepad.exe', name: 'Notepad' },
+  { exe: 'test/binaries/calc.exe', name: 'Calculator' },
+  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree' },
+  { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell' },
+  { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire' },
+  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)' },
+  { exe: 'test/binaries/nt/mspaint.exe', name: 'MSPaint (NT)' },
+  { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel' },
+  { exe: 'test/binaries/entertainment-pack/golf.exe', name: 'Golf' },
+  { exe: 'test/binaries/entertainment-pack/pegged.exe', name: 'Pegged' },
+  { exe: 'test/binaries/entertainment-pack/snake.exe', name: 'Rattler Race' },
+  { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei' },
+  { exe: 'test/binaries/entertainment-pack/tictac.exe', name: 'TicTacToe' },
+  { exe: 'test/binaries/xp/winmine.exe', name: 'Minesweeper (XP)' },
+];
+
+const MAX_BATCHES = 100;
+const BATCH_SIZE = 1000;
+
+function runExe(testCase) {
+  const exePath = path.join(ROOT, testCase.exe);
+  if (!fs.existsSync(exePath)) {
+    return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
+  }
+
+  const args = [
+    RUN_JS,
+    `--exe=${exePath}`,
+    `--max-batches=${MAX_BATCHES}`,
+    `--batch-size=${BATCH_SIZE}`,
+    '--no-build',
+    '--trace-api',
+  ];
+
+  const result = spawnSync('node', args, {
+    cwd: ROOT,
+    timeout: 30000,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_OPTIONS: '' },
+  });
+
+  const output = (result.stdout || '') + (result.stderr || '');
+  const lines = output.split('\n');
+
+  // Check for crash_unimplemented (missing API)
+  const unimplMatch = output.match(/crash_unimplemented|unreachable|RuntimeError/);
+  const missingApi = output.match(/\[API[^\]]*\]\s*(\S+)\s*\(/g);
+  let lastApi = null;
+  if (missingApi && missingApi.length > 0) {
+    // Get the last API call before crash
+    lastApi = missingApi[missingApi.length - 1].replace(/\[API[^\]]*\]\s*/, '').replace(/\(.*/, '');
+  }
+
+  // Find all unique API calls
+  const apiCalls = new Set();
+  const apiPattern = /\[API[^\]]*\]\s*(\S+)\(/g;
+  let m;
+  while ((m = apiPattern.exec(output)) !== null) {
+    apiCalls.add(m[1]);
+  }
+
+  // Check for window creation (sign of successful init)
+  const hasWindow = output.includes('[CreateWindow]');
+  const hasShowWindow = output.includes('[ShowWindow]');
+  const hasWmClose = output.includes('WM_CLOSE') || output.includes('0x10');
+  const exitClean = output.includes('[Exit]');
+
+  if (result.status !== 0 || unimplMatch) {
+    // Find the specific unimplemented API
+    const crashLines = lines.filter(l => /unreachable|unimplemented|RuntimeError/.test(l));
+    // Last API before crash is likely the unimplemented one
+    const apiLines = lines.filter(l => /\[API/.test(l));
+    const crashApi = apiLines.length > 0 ? apiLines[apiLines.length - 1].trim() : '';
+
+    return {
+      name: testCase.name,
+      status: 'CRASH',
+      reason: crashApi || (crashLines[0] || 'unknown crash').trim(),
+      apiCount: apiCalls.size,
+      hasWindow,
+    };
+  }
+
+  // Reached max batches without crash = likely working
+  return {
+    name: testCase.name,
+    status: hasWindow ? 'OK' : 'WARN',
+    reason: hasWindow ? `${apiCalls.size} APIs, window created` : `${apiCalls.size} APIs, no window`,
+    apiCount: apiCalls.size,
+    hasWindow,
+    hasShowWindow,
+  };
+}
+
+// Build first
+console.log('Building WASM...');
+execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
+console.log('');
+
+// Run all tests
+console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
+
+const results = [];
+for (const tc of TEST_CASES) {
+  process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
+  const r = runExe(tc);
+  results.push(r);
+
+  const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
+  console.log(`${icon}  ${r.reason}`);
+}
+
+// Summary
+console.log('\n=== Summary ===');
+const pass = results.filter(r => r.status === 'OK').length;
+const fail = results.filter(r => r.status === 'CRASH').length;
+const warn = results.filter(r => r.status === 'WARN').length;
+const skip = results.filter(r => r.status === 'SKIP').length;
+console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
+
+if (fail > 0) {
+  console.log('\nCrashed EXEs (need API implementations):');
+  for (const r of results.filter(r => r.status === 'CRASH')) {
+    console.log(`  ${r.name}: ${r.reason}`);
+  }
+}
+
+process.exit(fail > 0 ? 1 : 0);

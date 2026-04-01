@@ -243,7 +243,7 @@ class WineAssembly {
         configs.push(item);
       }
     }
-    const exeBytes = new Uint8Array(this.memory.buffer, this.instance.exports.get_staging(), 0x200000);
+    const exeBytes = this._exeBytes;
     this._inDllInit = true;
     const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
     this._inDllInit = false;
