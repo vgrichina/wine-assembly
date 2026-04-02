@@ -271,27 +271,30 @@
     ;; Get directory offset; skip 9-byte internal file header to reach B+tree
     (local.set $dir_off (i32.load offset=4 (global.get $help_file_wa)))
     (local.set $dir_wa (i32.add (global.get $help_file_wa) (i32.add (local.get $dir_off) (i32.const 9))))
-    ;; B+tree header: magic(u16), flags(u16), page_size(u16), ...
+    ;; B+tree header: magic(u16), flags(u16), pageSize(u16), format(NUL-term), ...
     (local.set $dir_magic (i32.load16_u (local.get $dir_wa)))
     (if (i32.ne (local.get $dir_magic) (i32.const 0x293B))
       (then (return)))
     (local.set $page_size (i32.load16_u offset=4 (local.get $dir_wa)))
-    ;; Number of levels: offset 8 = nLevels(u16)
-    ;; Total entries: offset 10 = totalEntries(u16)
-    ;; Number of pages: offset 12 = nPages(u16)
-    (local.set $num_pages (i32.load16_u offset=12 (local.get $dir_wa)))
-    ;; First leaf page starts after the header (16 bytes + nPages * 4 for unused page list)
-    ;; Actually the B+tree structure varies. For small files (nLevels=1), pages follow header directly.
-    ;; Header is 16 bytes, then pages follow
-    (local.set $page_wa (i32.add (local.get $dir_wa) (i32.const 16)))
+    ;; Skip B+tree header: magic(2)+flags(2)+pageSize(2)+format(NUL-term)+14 bytes
+    ;; Scan past format string starting at +6
+    (local.set $entry_wa (i32.add (local.get $dir_wa) (i32.const 6)))
+    (block $fmt_end (loop $fmt_scan
+      (br_if $fmt_end (i32.eqz (i32.load8_u (local.get $entry_wa))))
+      (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1)))
+      (br $fmt_scan)))
+    (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1))) ;; skip NUL
+    ;; After format: first(2)+last(2)+unused(2)+totalPages(2)+nLevels(2)+totalEntries(4)=14
+    (local.set $num_pages (i32.load16_u offset=6 (local.get $entry_wa))) ;; totalPages at +6
+    (if (i32.eqz (local.get $num_pages)) (then (local.set $num_pages (i32.const 1))))
+    (local.set $page_wa (i32.add (local.get $entry_wa) (i32.const 14))) ;; first page
     ;; Scan leaf pages for |SYSTEM and |TOPIC entries
     (local.set $i (i32.const 0))
     (block $pages_done (loop $page_loop
       (br_if $pages_done (i32.ge_u (local.get $i) (local.get $num_pages)))
-      ;; Leaf page: unused(u16), entries(u16), then entry data
-      ;; Skip unused bytes at start
-      (local.set $num_entries (i32.load16_u offset=4 (local.get $page_wa)))
-      (local.set $entry_wa (i32.add (local.get $page_wa) (i32.const 6)))
+      ;; Leaf page: unused(u16), nEntries(u16), prevPage(i16), nextPage(i16)
+      (local.set $num_entries (i32.load16_u offset=2 (local.get $page_wa)))
+      (local.set $entry_wa (i32.add (local.get $page_wa) (i32.const 8)))
       ;; Walk entries: each is NUL-terminated filename + u32 offset
       (block $entries_done
         (loop $entry_loop
@@ -306,20 +309,18 @@
           ;; Read file offset (u32)
           (local.set $file_off (i32.load (local.get $entry_wa)))
           (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 4)))
-          ;; Check for |SYSTEM
+          ;; Check for |SYSTEM (starts with '|S')
           (if (i32.and
-                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))  ;; '|'
-                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x53))) ;; 'S'
+                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))
+                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x53)))
             (then
-              ;; Parse |SYSTEM to extract title
               (local.set $sys_wa (i32.add (global.get $help_file_wa) (local.get $file_off)))
               (call $hlp_parse_system (local.get $sys_wa))))
-          ;; Check for |TOPIC
+          ;; Check for |TOPIC (starts with '|T')
           (if (i32.and
-                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))  ;; '|'
-                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x54))) ;; 'T'
+                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))
+                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x54)))
             (then
-              ;; Found |TOPIC - extract raw text from topic blocks
               (local.set $topic_wa (i32.add (global.get $help_file_wa) (local.get $file_off)))
               (call $hlp_parse_topic (local.get $topic_wa))))
           (local.set $num_entries (i32.sub (local.get $num_entries) (i32.const 1)))
