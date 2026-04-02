@@ -29,6 +29,18 @@ class WineAssembly {
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
+      readFile: (name) => {
+        // Try fetching HLP files from binaries directory
+        const baseName = name.replace(/^.*[\\\/]/, '');
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', 'binaries/' + baseName, false); // sync XHR
+          xhr.responseType = 'arraybuffer';
+          xhr.send();
+          if (xhr.status === 200) return new Uint8Array(xhr.response);
+        } catch (_) {}
+        return null;
+      },
       onExit: (code) => {
         self.running = false;
         if (self.renderer) {
@@ -205,7 +217,7 @@ class WineAssembly {
     const imports = this.getImports();
 
     // Create shared memory externally
-    this.memory = new WebAssembly.Memory({ initial: 512 });
+    this.memory = new WebAssembly.Memory({ initial: 1024 });
     imports.host.memory = this.memory;
 
     const result = await WebAssembly.instantiate(bytes, imports);

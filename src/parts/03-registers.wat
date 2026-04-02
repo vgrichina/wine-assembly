@@ -61,7 +61,7 @@
     (local $wa i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x2000000))) ;; 32MB
+                (i32.ge_u (local.get $wa) (i32.const 0x2200000))) ;; 34MB
       (then
         (call $host_log_i32 (local.get $ga))
         (call $host_log_i32 (local.get $wa))

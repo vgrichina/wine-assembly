@@ -113,6 +113,18 @@ async function main() {
     resourceJson,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
+    readFile: (name) => {
+      // Try to find file relative to exe directory
+      const exeDir = path.dirname(EXE_PATH);
+      const candidates = [
+        path.join(exeDir, name),
+        path.join(exeDir, path.basename(name)),
+      ];
+      for (const p of candidates) {
+        try { return new Uint8Array(fs.readFileSync(p)); } catch (_) {}
+      }
+      return null;
+    },
   };
   const base = createHostImports(ctx);
   const { readStr } = base;
@@ -278,7 +290,7 @@ async function main() {
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: 512 });
+  const memory = new WebAssembly.Memory({ initial: 1024 });
   ctx._memory = memory;
   h.memory = memory;
 
@@ -390,13 +402,6 @@ async function main() {
   }
 
 
-  // DEBUG: check hash table integrity after DLL loading
-  {
-    const dv = new DataView(instance.exports.memory.buffer);
-    const h0 = dv.getUint32(0x01362000, true);
-    const h310 = dv.getUint32(0x01362000 + 310 * 8, true);
-    console.log(`Hash table check: [0]=0x${h0.toString(16)} [310]=0x${h310.toString(16)} ${h0 === 0x0e80fd3a ? 'OK' : 'CORRUPTED'}`);
-  }
 
   const regs = () => {
     const e = instance.exports;
@@ -695,7 +700,7 @@ async function main() {
       // Main thread still waiting — don't advance EIP check
     }
 
-    // Watchpoint check
+// Watchpoint check
     if (checkWatchpoint(batch)) {
       stepping = true;
       await debugPrompt('Watch');

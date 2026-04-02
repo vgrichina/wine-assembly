@@ -5185,5 +5185,152 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1256767168
+  },
+  {
+    "id": 741,
+    "name": "QueryPerformanceCounter",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 667285121
+  },
+  {
+    "id": 742,
+    "name": "QueryPerformanceFrequency",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4258482679
+  },
+  {
+    "id": 743,
+    "name": "SetClassLongA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1726579686
+  },
+  {
+    "id": 744,
+    "name": "RtlZeroMemory",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1086849060
+  },
+  {
+    "id": 745,
+    "name": "time",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1564253156
+  },
+  {
+    "id": 746,
+    "name": "atol",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 74730091
+  },
+  {
+    "id": 747,
+    "name": "cdtInit",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2327388264
+  },
+  {
+    "id": 748,
+    "name": "cdtDraw",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 84900876
+  },
+  {
+    "id": 749,
+    "name": "cdtDrawExt",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 1244391591
+  },
+  {
+    "id": 750,
+    "name": "cdtTerm",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 4174683112
+  },
+  {
+    "id": 751,
+    "name": "__GetMainArgs",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 48540957
+  },
+  {
+    "id": 752,
+    "name": "SetWindowsHookW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2825231808
+  },
+  {
+    "id": 753,
+    "name": "RegisterPenApp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1515124230
+  },
+  {
+    "id": 754,
+    "name": "FormatMessageA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1064674696
+  },
+  {
+    "id": 755,
+    "name": "RegOpenKeyExW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4227238086
+  },
+  {
+    "id": 756,
+    "name": "GetShellWindow",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1850599891
+  },
+  {
+    "id": 757,
+    "name": "waveOutGetNumDevs",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1805192248
+  },
+  {
+    "id": 758,
+    "name": "SHGetSpecialFolderLocation",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3571900346
+  },
+  {
+    "id": 759,
+    "name": "CoInitialize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1610915629
+  },
+  {
+    "id": 760,
+    "name": "CoUninitialize",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2700281406
+  },
+  {
+    "id": 761,
+    "name": "OleUninitialize",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1583922372
   }
 ]

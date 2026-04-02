@@ -72,9 +72,9 @@
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
-    (global.set $THREAD_BASE (i32.add (i32.const 0x01052000)
+    (global.set $THREAD_BASE (i32.add (i32.const 0x01D52000)
       (i32.mul (local.get $tid) (i32.const 0x80000))))
-    (global.set $CACHE_INDEX (i32.add (i32.const 0x01152000)
+    (global.set $CACHE_INDEX (i32.add (i32.const 0x01E52000)
       (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     (global.set $image_base (local.get $img_base))
@@ -157,4 +157,5 @@
 
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
+  (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
 )

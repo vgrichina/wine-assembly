@@ -3,7 +3,16 @@
 ## Current Status (2026-04-01)
 
 ### Summary
-Calc.exe boots through DLL init, CRT init, window creation, and enters its bignum library initialization. It gets stuck in the bignum init — after 120M emulated x86 instructions (~60 seconds in Node.js) it's still computing. Previously calc.exe worked and started fast, so something may still be wrong despite all tested instructions being correct.
+Calc.exe boots through DLL init, CRT init, window creation, and enters its bignum library initialization. The Newton iteration loop at `0x0100ced9` does NOT converge — numbers grow without bound (digit counts reaching 122+), consuming 256MB+ before OOM. The convergence check at `0x0100cf4b` is never reached because a single BigNum_Power call takes hundreds of millions of instructions.
+
+### Key findings (2026-04-01 session 2)
+- **BigNum_Multiply is CORRECT** — `test/test-bignum-mul.js` passes all 17 tests including 5×5 digit, max-value carry propagation, and sign handling
+- **SHRD is correct** — unit tested `SHRD EAX, EDX, 31` with multiple values, all pass
+- **The Newton loop never reaches its convergence check** — the intermediate BigNum_Power call produces numbers so large that a single multiply call runs for millions of steps, growing the heap unboundedly
+- **Digit counts observed**: 6→25→92→122 (sampled from [ebp-0xc] during multiply inner loop). For 42-digit precision these should max at ~10
+- **This is NOT a threading issue** — calc.exe never calls CreateThread/WaitForSingleObject
+- **The bug is upstream of multiply** — the Newton iteration logic at `0x0100ced9` feeds wrong/growing inputs to BigNum_Power, likely due to a bug in an instruction used in the convergence computation or the number construction between iterations
+- **Gemini report flagged**: ADC/SBB flag_res corruption, POP [mem] stale ESP, SETcc memory clobber — these need investigation as potential root causes
 
 ### What calc.exe is computing at startup
 Win98 calc.exe uses an arbitrary-precision math library (base 2^31 digits, schoolbook O(n²) multiply). At startup it initializes precision tables:
@@ -11,31 +20,27 @@ Win98 calc.exe uses an arbitrary-precision math library (base 2^31 digits, schoo
 1. **Set precision** = 42 decimal digits (32 displayed + 1 + 9 guard digits)
    - `[0x1013ebc]` = 33 (set at `0x010081d9`) then += 9 (at `0x01008556`)
    - `[0x1013eb0]` = 9 (base-2^31 digits per decimal group)
-2. **Newton iteration loop** at `0x0100ced9` — appears to compute reciprocal or log tables
-   - Each iteration: calls `BigNum_Power` (`0x0101147e`) → `BigNum_Multiply` (`0x01011506`)
-   - Loop exits when `effective_digits × 9 > 42` (check at `0x0100cf4b-0x0100cf52`)
-   - Should converge in ~5-6 Newton iterations (quadratic convergence)
-3. **Power-of-10 table** at `0x010074c4` — computes 10^N via binary exponentiation
-   - Outer loop: iterates over exponent dwords (count = min(precision+1, digit_count))
-   - Inner loop: scans 30 bits per dword, squaring accumulator each time
+2. **Newton iteration loop** at `0x0100ced9` — computes reciprocal or log tables
+   - Each iteration: calls `0x100b1f6` (BigNum_Square?) → `BigNum_Power` (`0x0101147e`) → `BigNum_Multiply` (`0x01011506`)
+   - Loop exits when `effective_digits × 9 > 42` (check at `0x0100cf4b-0x0100cf52`) OR `fInitialized != 0`
+   - Neither condition ever triggers — numbers grow instead of converging
 
-### The speed problem
-After 120M emulated steps (~60 seconds), EIP is still in the multiply inner loop (`0x01011564-0x0101162b`). The multiply digit counts grow each iteration (observed: 1→9→35→65 digits at batches 2/50/100/150 with 100K steps/batch).
+### Crash analysis
+- **Crash at 185.5M steps**: prevEip=`0x01010cf6` → eip=`0x7efef499` (wild)
+- `0x01010cf0` is `call 0x100d0d4` (5-byte E8 instruction), return address should be `0x01010cf5`
+- `0x01010cf5` is `85 C0` (test eax,eax), `0x01010cf7` is `75 11` (jnz)
+- But prevEip=`0x01010cf6` — ONE BYTE INTO the `test` instruction!
+- This means EIP arrived at `0x01010cf6` somehow (wrong return address, stack corruption, or decoder bug producing wrong block-end EIP)
+- The first Newton loop WORKS (converges in ~10 iterations, ~100K steps)
+- There are TWO Newton loops with identical structure but different function call targets
+- The crash happens 185M steps in, during the SECOND phase (power-of-10 table building)
+- Digit counts grow to 289+ (expected max ~10 for 42-digit precision)
 
-**Open question: Why does it take >120M instructions for only 42 digits?**
-- 42 decimal digits ≈ 5 dwords in base 2^31
-- Newton iteration should need ~5-6 iterations
-- Each multiply of 5×5 digit numbers = 25 inner iterations × ~50 instructions = ~1250 instructions
-- Expected total: ~50K-500K instructions for the entire init
-- **Actual: >120M instructions — that's 240x-2400x more than expected**
-
-### Doubts and open questions
-1. **Calc previously worked and started fast** — after fixing the imul bug, calc completed bignum init in ~1M blocks and the UI appeared. What changed? The main difference this session was adding MSVCRT.dll loading. Could MSVCRT's CRT init be triggering a different (longer) code path?
-2. **Why are digit counts growing to 65+?** — If computing 10^42, the number has ~5 digits in base 2^31. The power-by-squaring needs ~6 levels. Digit counts should max at ~10. Yet we see 65 digits at batch 150 — this implies numbers with ~2000 bits. What is being computed that requires 2000-bit intermediates?
-3. **The power function's loop count** — At `0x01007499`, EDI = min(`[0x1013ebc]+1`, `[esi+4]`). If the exponent bignum's digit count is small (2), EDI should be 2, not 43. But we haven't confirmed the actual digit count of the exponent struct at that point.
-4. **Is there a second, different code path?** — The stack trace showed the multiply being called from `0x0100cf14` → `0x0101147e` → `0x0101147e` (BigNum_Power), NOT from the power-of-10 table builder at `0x010074c4`. The Newton loop at `0x0100ced9` might be a completely different, more expensive computation (e.g., computing ln(10) or π to 42 digits).
-5. **Could an instruction bug cause wrong convergence?** — All 33 tested ops pass unit tests (MUL, SHRD, SHLD, ADC, ADD+ADC, INC/DEC CF preservation, SAHF/LAHF). But the test suite only tests individual instructions, not complex interactions. A subtle flag issue in a rarely-hit path could cause Newton iteration to converge slowly or not at all.
-6. **The `imul eax, [ebx]` at `0x01011542`** — This computes the "sign" product when entering BigNum_Multiply. If `imul r32, [mem]` has a subtle bug for some operand combinations (e.g., sign extension), it could corrupt the sign field and cause incorrect convergence checks.
+### Next steps to investigate
+1. **Why does EIP land at 0x01010cf6 instead of 0x01010cf5?** — Check if the `call` at `0x01010cf0` pushes the wrong return address, or if the stack gets corrupted during the called function
+2. **Check `0x100d0d4` function** — it uses `rep movsd/movsb`, `call`s, and `rep movsb` again. If REP MOVS clobbers something or the direction flag is wrong, stack corruption could result
+3. **Check REP MOVSD/MOVSB implementation** — if the direction flag (DF) is wrong or ESI/EDI aren't updated correctly, memory corruption could cause the return address to be overwritten
+4. **Test with --trace at batch ~1854** — use `--batch-size=100000` to narrow down the exact crash point
 
 ### What's known to work
 - DllMain completes (EAX=1)

@@ -25,6 +25,42 @@ const TEST_CASES = [
   { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei' },
   { exe: 'test/binaries/entertainment-pack/tictac.exe', name: 'TicTacToe' },
   { exe: 'test/binaries/xp/winmine.exe', name: 'Minesweeper (XP)' },
+  // Entertainment Pack additions
+  { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi' },
+  { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper (WEP)' },
+  // Win98 accessories
+  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad' },
+  { exe: 'test/binaries/win98-apps/write.exe', name: 'Write' },
+  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player' },
+  { exe: 'test/binaries/win98-apps/mplayer.exe', name: 'Media Player' },
+  { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
+  { exe: 'test/binaries/win98-apps/fontview.exe', name: 'Font Viewer' },
+  { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging' },
+  { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview' },
+  { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal' },
+  { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control' },
+  { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
+  { exe: 'test/binaries/win98-apps/explorer.exe', name: 'Explorer (98)' },
+  { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
+  { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
+  { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)' },
+  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour' },
+  { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor' },
+  { exe: 'test/binaries/win98-apps/rsrcmtr.exe', name: 'Resource Meter' },
+  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config' },
+  { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup' },
+  { exe: 'test/binaries/win98-apps/notepad98.exe', name: 'Notepad (98)' },
+  { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)' },
+  { exe: 'test/binaries/win98-apps/telnet.exe', name: 'Telnet' },
+  // XP apps
+  { exe: 'test/binaries/xp/claass.exe', name: 'Calculator (XP)' },
+  { exe: 'test/binaries/xp/sndrec32.exe', name: 'Sound Recorder (XP)' },
+  { exe: 'test/binaries/xp/xp_eos.exe', name: 'XP End of Life' },
+  // Pinball
+  { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball' },
+  // Installers (NSIS etc.)
+  { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer' },
+  { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
 ];
 
 const MAX_BATCHES = 100;

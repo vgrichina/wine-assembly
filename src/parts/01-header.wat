@@ -121,6 +121,10 @@
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
 
+  ;; Audio host imports
+  (import "host" "message_beep" (func $host_message_beep (param i32)))
+  ;; message_beep(uType) — play system sound (0=default, 0x10=error, 0x30=warning, 0x40=info)
+
   ;; INI file host imports — backed by localStorage
   (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; ini_get_string(appNameWA, keyNameWA, defaultWA, bufGA, bufSize, fileNameWA, isWide) → chars written
@@ -146,41 +150,42 @@
   (import "host" "reset_event" (func $host_reset_event (param i32) (result i32)))
   (import "host" "wait_single" (func $host_wait_single (param i32 i32) (result i32)))
 
-  ;; ---- Memory: imported from host, 512 pages = 32MB initial ----
-  (import "host" "memory" (memory 512))
+  ;; ---- Memory: imported from host, 1024 pages = 64MB initial ----
+  (import "host" "memory" (memory 1024))
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
-  (data (i32.const 0x100) "win.ini\00")
+  (data (i32.const 0x100) "win.ini\00Help\00")
 
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
+  ;; 0x00002000  256B    Window table (32 entries × 8 bytes: hwnd, wndproc)
+  ;; 0x00002100  192B    Class table (16 entries × 12 bytes: name_hash, wndproc, atom)
   ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
-  ;; 0x00012000  14MB    Guest address space (PE sections + DLLs)
-  ;; 0x00E12000  1MB     Guest stack (ESP starts at top)
-  ;; 0x00F12000  1MB     Guest heap
-  ;; 0x01012000  256KB   IAT thunk zone
-  ;; 0x01052000  1MB     Thread cache
-  ;; 0x01152000  64KB    Block cache index (4096 slots × 16 bytes)
-  ;; 0x01162000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x01362000  16KB    (was API hash table — moved to 0x2000 to avoid guest write corruption)
-  ;; 0x01366000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x01366200  ...     Free
+  ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
+  ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
+  ;; 0x01D12000  1MB     Guest heap
+  ;; 0x01E12000  256KB   IAT thunk zone
+  ;; 0x01E52000  1MB     Thread cache
+  ;; 0x01F52000  64KB    Block cache index (4096 slots × 16 bytes)
+  ;; 0x01F62000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x02162000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x02162200  ...     Free
 
   ;; Memory region bases
-  (global $PE_STAGING   i32 (i32.const 0x01162000))
+  (global $PE_STAGING   i32 (i32.const 0x01F62000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
-  (global $GUEST_STACK  i32 (i32.const 0x00E12000))
-  (global $THUNK_BASE   i32 (i32.const 0x01012000))
-  (global $THUNK_END    i32 (i32.const 0x01052000))
+  (global $GUEST_STACK  i32 (i32.const 0x01C12000))
+  (global $THUNK_BASE   i32 (i32.const 0x01E12000))
+  (global $THUNK_END    i32 (i32.const 0x01E52000))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  (mut i32) (i32.const 0x01052000))
-  (global $CACHE_INDEX  (mut i32) (i32.const 0x01152000))
+  (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
+  (global $CACHE_INDEX  (mut i32) (i32.const 0x01F52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
@@ -189,7 +194,7 @@
   (global $code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x01052000))
+  (global $thread_alloc (mut i32) (i32.const 0x01E52000))
 
   ;; ============================================================
   ;; CPU STATE
@@ -225,7 +230,7 @@
   (global $num_thunks   (mut i32) (i32.const 0))
 
   ;; Heap
-  (global $heap_ptr (mut i32) (i32.const 0x00F12000))
+  (global $heap_ptr (mut i32) (i32.const 0x01D12000))  ;; heap region: 0x01D12000-0x01E12000 (1MB)
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
   ;; MSVCRT static data pointers (allocated on first use from heap)
@@ -243,13 +248,15 @@
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x01366000))  ;; 32 bytes x 16 DLLs = 512 bytes (after 16KB hash table)
+  (global $DLL_TABLE i32 (i32.const 0x02162000))  ;; 32 bytes x 16 DLLs = 512 bytes
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))
   ;; TLS: simple fixed-size TLS (64 slots), allocated in heap on first use
   (global $tls_slots (mut i32) (i32.const 0))  ;; guest ptr to 64 x i32 = 256 bytes
   (global $tls_next_index (mut i32) (i32.const 0))
+  ;; Performance counter (monotonic, incremented per query)
+  (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
   ;; Current segment prefix during decoding (set before decode_modrm)
@@ -293,6 +300,16 @@
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
+  (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
+
+  ;; Help system state
+  (global $help_hwnd      (mut i32) (i32.const 0))  ;; Help window handle (0 = not open)
+  (global $help_file_wa   (mut i32) (i32.const 0))  ;; WASM ptr to loaded HLP data
+  (global $help_file_len  (mut i32) (i32.const 0))  ;; Length of HLP data
+  (global $help_topic_wa  (mut i32) (i32.const 0))  ;; WASM ptr to current topic text
+  (global $help_topic_len (mut i32) (i32.const 0))  ;; Length of current topic text
+  (global $help_title_wa  (mut i32) (i32.const 0))  ;; WASM ptr to help title string
+  (global $help_title_len (mut i32) (i32.const 0))  ;; Length of help title
 
   ;; Watchpoint: break when [watch_addr] changes (0=disabled)
   (global $watch_addr (mut i32) (i32.const 0))
