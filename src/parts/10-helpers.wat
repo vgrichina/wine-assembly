@@ -2,6 +2,11 @@
   ;; HELPER FUNCTIONS
   ;; ============================================================
 
+  ;; Write up to 4 bytes from packed little-endian integer to WASM buffer
+  ;; $write_str(buf_wa, packed) — writes non-zero bytes of packed to buf
+  (func $write_str (param $buf i32) (param $packed i32)
+    (i32.store (local.get $buf) (local.get $packed)))
+
   ;; FNV-1a hash over null-terminated string at WASM address
   (func $hash_api_name (param $ptr i32) (result i32)
     (local $h i32) (local $ch i32)

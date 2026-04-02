@@ -721,7 +721,7 @@
     (local.set $info (call $read_thread_word))
     (local.set $stype (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 7)))
     (local.set $count (i32.and (local.get $info) (i32.const 0xFF)))
-    (if (i32.eqz (local.get $count)) (then (local.set $count (i32.and (global.get $ecx) (i32.const 31)))))
+    (if (i32.eq (local.get $count) (i32.const 0xFF)) (then (local.set $count (i32.and (global.get $ecx) (i32.const 31)))))
     (local.set $val (call $gl32 (local.get $addr)))
     (call $gs32 (local.get $addr) (call $do_shift32 (local.get $stype) (local.get $val) (local.get $count)))
     (call $next))

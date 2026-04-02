@@ -3,6 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
+const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 let createCanvas, Win98Renderer;
 try {
@@ -48,6 +49,7 @@ const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only br
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
+const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
@@ -119,6 +121,7 @@ async function main() {
       const candidates = [
         path.join(exeDir, name),
         path.join(exeDir, path.basename(name)),
+        path.join(__dirname, 'binaries', 'help', path.basename(name)),
       ];
       for (const p of candidates) {
         try { return new Uint8Array(fs.readFileSync(p)); } catch (_) {}
@@ -773,7 +776,7 @@ async function main() {
     while (logs.length) console.log(logs.shift());
 
     const eip = instance.exports.get_eip();
-    if (VERBOSE) {
+if (VERBOSE) {
       console.log(`[${batch}] ${regs()}`);
     } else if (eip !== prevEip || apiCount !== prevApiCount) {
       if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
@@ -782,7 +785,7 @@ async function main() {
       stuckCount = 0;
     } else {
       stuckCount++;
-      if (stuckCount > 10) {
+      if (stuckCount > STUCK_AFTER) {
         console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
         dumpStack();
         break;
