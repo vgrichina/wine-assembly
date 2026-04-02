@@ -114,10 +114,9 @@ DC handle array at `0x1005a20`: 16 entries (0x80002..0x80020), one per sprite (e
 
 ## Status
 
-- **Current:** PASS — window created, smiley face renders correctly inside window
+- **Current:** PASS — window created, grid renders correctly, clicking reveals cells with correct neighbor counts
 - **Rendering:** `--png` output shows proper window with title bar, Game/Help menu, mine grid, smiley button
 - **Known issues:**
-  - Grid state (`0x1005340`) never changes from `0x40` (hidden) despite reveal counter decrementing — mine placement and/or reveal byte writes not persisting. Likely an emulation bug in `or byte [mem], imm8` or `and byte [mem], imm8` in the mine placement/reveal functions. All cells render as empty (sprite 0) because `0x40 & 0x1F = 0`.
   - SetROP2 is stubbed (always R2_COPYPEN) — white highlight lines on the 3D border draw gray instead of white
 
 ## Progress Log
@@ -127,3 +126,4 @@ DC handle array at `0x1005a20`: 16 entries (0x80002..0x80020), one per sprite (e
 - Window sizing function fully understood — measures menu items to detect wrapping, computes grid-based window size, accounts for window chrome via GetSystemMetrics.
 - Multi-window DC support: DC handle now encodes hwnd (hdc = hwnd + 0x40000). Smiley face fixed from drawing at (0,0). Removed $window_dc_hwnd global.
 - **PeekMessageA/W**: Fixed to poll `$host_check_input` for input events (was only checking posted queue). Root cause of click not working — Minesweeper's click handler uses a `PeekMessageW` loop to wait for WM_LBUTTONUP, which previously spun forever.
+- **SIB test byte fix**: `$th_test_m8_i8` (handler 124) used `$read_thread_word` instead of `$read_addr` to get the memory address. For SIB addressing (e.g. `test byte [edx+esi], 0x80` in the neighbor-count function at `0x01002F68`), the address was read as the raw sentinel `0xEADEAD` instead of the computed `$ea_temp`. This made the mine-check always read 0 from garbage memory, so neighbor counts were always 0 and the flood-fill reveal cleared the entire grid. Fixed by using `$read_addr` which checks for the sentinel.

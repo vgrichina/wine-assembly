@@ -534,7 +534,7 @@
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
     (call $set_reg (local.get $op) (local.get $v)) (call $next))
   (func $th_test_m8_i8 (param $op i32)
-    (call $set_flags_logic (i32.and (call $gl8 (call $read_thread_word)) (local.get $op))) (call $next))
+    (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (local.get $op))) (call $next))
 
   ;; 125: jmp [mem] — for jmp through IAT or vtable
   ;; operand=ignored, mem_addr in next thread word
