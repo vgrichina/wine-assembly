@@ -408,6 +408,16 @@ async function main() {
 
 
 
+  // Pre-populate EXE in virtual filesystem so CreateFileA on itself works
+  // GetModuleFileNameA returns "C:\app.exe" — inject EXE bytes at that path
+  if (ctx.vfs) {
+    const exeData = new Uint8Array(exeBytes);
+    ctx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
+    // Also register under the real basename in case something uses it differently
+    const exeName = path.basename(EXE_PATH).toLowerCase();
+    ctx.vfs.files.set('c:\\' + exeName, { data: exeData, attrs: 0x20 });
+  }
+
   const regs = () => {
     const e = instance.exports;
     return `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;

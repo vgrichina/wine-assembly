@@ -135,24 +135,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 13: DeleteFileA — STUB: unimplemented
+  ;; 13: DeleteFileA(lpFileName) — 1 arg stdcall
   (func $handle_DeleteFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 14: CreateFileA — STUB: unimplemented
+  ;; 14: CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecAttr, dwCreation, dwFlags, hTemplate) — 7 args
   (func $handle_CreateFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa_esp i32) (local $creation i32) (local $flags i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $creation (local.get $arg4))
+    (local.set $flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_fs_create_file
+      (call $g2w (local.get $arg0))  ;; pathWA
+      (local.get $arg1)               ;; access
+      (local.get $creation)            ;; creation disposition
+      (local.get $flags)               ;; flags and attributes
+      (i32.const 0)))                  ;; isWide=0
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; 7 args + ret
   )
 
-  ;; 15: FindFirstFileA — STUB: unimplemented
+  ;; 15: FindFirstFileA(lpFileName, lpFindFileData) — 2 args stdcall
   (func $handle_FindFirstFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_fs_find_first_file
+      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 16: FindClose — STUB: unimplemented
+  ;; 16: FindClose(hFindFile) — 1 arg stdcall
   (func $handle_FindClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_fs_find_close (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 17: MulDiv
@@ -208,6 +222,7 @@
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_fs_close_handle (local.get $arg0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -491,13 +506,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 51: WriteFile
+  ;; 51: WriteFile(hFile, lpBuffer, nBytesToWrite, lpBytesWritten, lpOverlapped) — 5 args
   (func $handle_WriteFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Write number of bytes written to arg2 (lpNumberOfBytesWritten)
-    (if (local.get $arg2)
-    (then (call $gs32 (local.get $arg2) (local.get $arg1))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
+    ;; Console handles (stdout=1,stderr=2) — just report bytes written
+    (if (i32.le_u (local.get $arg0) (i32.const 3))
+      (then
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $arg2))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; File handles — delegate to virtual FS
+    (global.set $eax (call $host_fs_write_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 52: SetHandleCount(uNumber) — no-op on Win32, return the count
@@ -691,36 +711,50 @@
     ))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
-    ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
+    ;; Register hwnd→wndproc in window table (look up from class table by className)
+    (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
+    (if (local.get $tmp)
+      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp))))
+    ;; Store parent hwnd (hWndParent = [esp+36])
+    (call $wnd_set_parent (global.get $next_hwnd)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    ;; Main window: send WM_CREATE synchronously (like real Win98)
     (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
     (then
-    (global.set $pending_wm_create (i32.const 1))
-    ;; Store window outer dimensions
+    ;; Store window outer dimensions for WM_SIZE delivery later
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    ;; Non-client height: borders(3+3) + caption(19) = 25, plus menu(20) if present
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
       (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
-    ;; Client = outer - borders(6w) - nc_height
     (global.set $pending_wm_size (i32.or
-    (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
-    ;; Pre-populate client rect + viewport center so game code that runs between
-    ;; CreateWindowExA and WM_CREATE sees correct values. In real Win98, WM_CREATE
-    ;; is sent synchronously during CreateWindowExA, but we defer it via GetMessageA.
-    (local.set $tmp (i32.sub (global.get $main_win_cx) (i32.const 6)))    ;; clientW
-    (call $gs32 (i32.const 0x40c6b0) (i32.const 0))                       ;; rect.left
-    (call $gs32 (i32.const 0x40c6b4) (i32.const 0))                       ;; rect.top
-    (call $gs32 (i32.const 0x40c6b8) (local.get $tmp))                    ;; rect.right = clientW
-    (call $gs32 (i32.const 0x40c6bc)
-      (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)))    ;; rect.bottom = clientH
-    ;; centerY = clientH / 3 (16-bit store)
-    (i32.store16 (call $g2w (i32.const 0x40c5fc))
-      (i32.div_s (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 3)))
-    ;; centerX = clientW / 2 (16-bit store)
-    (i32.store16 (call $g2w (i32.const 0x40c704))
-      (i32.shr_u (local.get $tmp) (i32.const 1)))
-    )
+      (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
+      (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
+    ;; Save state for continuation thunk
+    (global.set $createwnd_saved_hwnd (global.get $next_hwnd))
+    (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
+    ;; Clean CreateWindowExA frame (ret + 12 args = 52 bytes stdcall)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
+    ;; Build CREATESTRUCT at scratch address 0x400100
+    (call $gs32 (i32.const 0x400100) (i32.const 0))                 ;; lpCreateParams
+    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))     ;; cy (+16)
+    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))     ;; cx (+20)
+    ;; Push WndProc args right-to-left: lParam, wParam, uMsg, hwnd
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x400100))             ;; lParam = &CREATESTRUCT
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                    ;; wParam = 0
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x0001))               ;; WM_CREATE
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $next_hwnd))          ;; hwnd
+    ;; Push continuation thunk as return address
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+    ;; Jump to WndProc — interpreter will run it, then hit continuation thunk
+    (global.set $eip (global.get $wndproc_addr))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $steps (i32.const 0))
+    (return))
     (else
     ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
     (global.set $pending_child_create (global.get $next_hwnd))
@@ -729,13 +763,6 @@
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
     (global.set $child_paint_hwnd (global.get $next_hwnd))
     ))
-    ;; Register hwnd→wndproc in window table (look up from class table by className)
-    (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
-    (if (local.get $tmp)
-      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp))))
-    ;; Store parent hwnd (hWndParent = [esp+36])
-    (call $wnd_set_parent (global.get $next_hwnd)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -805,22 +832,7 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))     ;; lParam
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver pending WM_CREATE before anything else
-    ;; Build CREATESTRUCT at guest address 0x40C800 (scratch area) for lParam
-    ;; Layout: lpCreateParams(0), hInstance(4), hMenu(8), hwndParent(12),
-    ;;         cy(16), cx(20), y(24), x(28), style(32), lpszName(36), lpszClass(40), dwExStyle(44)
-    (if (global.get $pending_wm_create)
-    (then
-    (global.set $pending_wm_create (i32.const 0))
-    (call $gs32 (i32.const 0x400100) (i32.const 0))                 ;; lpCreateParams
-    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))    ;; cy (+16)
-    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))    ;; cx (+20)
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100)) ;; lParam = &CREATESTRUCT
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Main WM_CREATE is now sent synchronously during CreateWindowExA (not deferred)
     ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
     (if (global.get $pending_child_create)
     (then
@@ -3443,7 +3455,9 @@
 
   ;; 337: FlushFileBuffers — return 1 — STUB: unimplemented
   (func $handle_FlushFileBuffers (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FlushFileBuffers(hFile) — 1 arg, return TRUE (no-op for virtual FS)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 338: IsValidCodePage — return 1 (valid) — STUB: unimplemented
@@ -3516,22 +3530,34 @@
 
   ;; 348: FindFirstFileW — STUB: unimplemented
   (func $handle_FindFirstFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FindFirstFileW(lpFileName, lpFindFileData) — 2 args
+    (global.set $eax (call $host_fs_find_first_file
+      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 349: GetFileAttributesW — STUB: unimplemented
   (func $handle_GetFileAttributesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetFileAttributesW(lpFileName) — 1 arg
+    (global.set $eax (call $host_fs_get_file_attributes
+      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 350: GetShortPathNameW — STUB: unimplemented
   (func $handle_GetShortPathNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetShortPathNameW(lpszLongPath, lpszShortPath, cchBuffer) — 3 args
+    (global.set $eax (call $host_fs_get_short_path_name
+      (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 351: CreateDirectoryW — STUB: unimplemented
   (func $handle_CreateDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CreateDirectoryW(lpPathName, lpSecurityAttributes) — 2 args
+    (global.set $eax (call $host_fs_create_directory
+      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 352: IsDBCSLeadByte(ch) — return FALSE (no DBCS in Western locale)
@@ -3542,12 +3568,18 @@
 
   ;; 353: GetTempPathW — STUB: unimplemented
   (func $handle_GetTempPathW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetTempPathW(nBufferLength, lpBuffer) — 2 args
+    (global.set $eax (call $host_fs_get_temp_path
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 354: GetTempFileNameW — STUB: unimplemented
   (func $handle_GetTempFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetTempFileNameW(lpPathName, lpPrefixString, uUnique, lpTempFileName) — 4 args
+    (global.set $eax (call $host_fs_get_temp_file_name
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 355: lstrcatW(dst, src) — concatenate wide strings, return dst
@@ -3926,7 +3958,10 @@
 
   ;; 408: SetFilePointer — STUB: unimplemented
   (func $handle_SetFilePointer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetFilePointer(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod) — 4 args
+    (global.set $eax (call $host_fs_set_file_pointer
+      (local.get $arg0) (local.get $arg1) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 409: ResumeThread — STUB: unimplemented
@@ -3941,7 +3976,10 @@
 
   ;; 411: FindNextFileW — STUB: unimplemented
   (func $handle_FindNextFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FindNextFileW(hFindFile, lpFindFileData) — 2 args
+    (global.set $eax (call $host_fs_find_next_file
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 412: RaiseException — STUB: unimplemented
@@ -3968,32 +4006,49 @@
 
   ;; 416: GetCurrentDirectoryW — STUB: unimplemented
   (func $handle_GetCurrentDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetCurrentDirectoryW(nBufferLength, lpBuffer) — 2 args
+    (global.set $eax (call $host_fs_get_current_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 417: SetFileAttributesW — STUB: unimplemented
   (func $handle_SetFileAttributesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetFileAttributesW(lpFileName, dwFileAttributes) — 2 args
+    (global.set $eax (call $host_fs_set_file_attributes
+      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 418: GetFullPathNameW — STUB: unimplemented
   (func $handle_GetFullPathNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetFullPathNameW(lpFileName, nBufferLength, lpBuffer, lpFilePart) — 4 args
+    (global.set $eax (call $host_fs_get_full_path_name
+      (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 419: DeleteFileW — STUB: unimplemented
   (func $handle_DeleteFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; DeleteFileW(lpFileName) — 1 arg
+    (global.set $eax (call $host_fs_delete_file
+      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 420: MoveFileW — STUB: unimplemented
   (func $handle_MoveFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; MoveFileW(lpExistingFileName, lpNewFileName) — 2 args
+    (global.set $eax (call $host_fs_move_file
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 421: SetEndOfFile — STUB: unimplemented
   (func $handle_SetEndOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetEndOfFile(hFile) — 1 arg, return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 422: DuplicateHandle — STUB: unimplemented
@@ -4013,12 +4068,23 @@
 
   ;; 425: ReadFile — STUB: unimplemented
   (func $handle_ReadFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; ReadFile(hFile, lpBuffer, nToRead, lpBytesRead, lpOverlapped) — 5 args
+    (global.set $eax (call $host_fs_read_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 426: CreateFileW — STUB: unimplemented
   (func $handle_CreateFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CreateFileW — 7 args, same as CreateFileA but wide
+    (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32)
+    (local.set $wa_esp_w (call $g2w (global.get $esp)))
+    (local.set $creation_w (local.get $arg4))
+    (local.set $flags_w (i32.load (i32.add (local.get $wa_esp_w) (i32.const 24))))
+    (global.set $eax (call $host_fs_create_file
+      (call $g2w (local.get $arg0)) (local.get $arg1)
+      (local.get $creation_w) (local.get $flags_w) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
   ;; 427: SetFileTime — STUB: unimplemented
@@ -4470,7 +4536,10 @@
 
   ;; 470: FindNextFileA — STUB: unimplemented
   (func $handle_FindNextFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FindNextFileA(hFindFile, lpFindFileData) — 2 args
+    (global.set $eax (call $host_fs_find_next_file
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 471: GetEnvironmentVariableA — return 0 (not found), 3 args stdcall
@@ -4581,27 +4650,42 @@
 
   ;; 485: GetFileAttributesA — STUB: unimplemented
   (func $handle_GetFileAttributesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetFileAttributesA(lpFileName) — 1 arg
+    (global.set $eax (call $host_fs_get_file_attributes
+      (call $g2w (local.get $arg0)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 486: GetCurrentDirectoryA — STUB: unimplemented
   (func $handle_GetCurrentDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetCurrentDirectoryA(nBufferLength, lpBuffer) — 2 args
+    (global.set $eax (call $host_fs_get_current_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 487: SetCurrentDirectoryA — STUB: unimplemented
   (func $handle_SetCurrentDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetCurrentDirectoryA(lpPathName) — 1 arg
+    (global.set $eax (call $host_fs_set_current_directory
+      (call $g2w (local.get $arg0)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 488: SetFileAttributesA — STUB: unimplemented
   (func $handle_SetFileAttributesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetFileAttributesA(lpFileName, dwFileAttributes) — 2 args
+    (global.set $eax (call $host_fs_set_file_attributes
+      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 489: GetFullPathNameA — STUB: unimplemented
   (func $handle_GetFullPathNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetFullPathNameA(lpFileName, nBufferLength, lpBuffer, lpFilePart) — 4 args
+    (global.set $eax (call $host_fs_get_full_path_name
+      (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 490: GetDriveTypeA(lpRootPathName) — return DRIVE_FIXED (3)
@@ -4618,22 +4702,34 @@
 
   ;; 492: CreateDirectoryA — STUB: unimplemented
   (func $handle_CreateDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CreateDirectoryA(lpPathName, lpSecurityAttributes) — 2 args
+    (global.set $eax (call $host_fs_create_directory
+      (call $g2w (local.get $arg0)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 493: RemoveDirectoryA — STUB: unimplemented
   (func $handle_RemoveDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; RemoveDirectoryA(lpPathName) — 1 arg
+    (global.set $eax (call $host_fs_remove_directory
+      (call $g2w (local.get $arg0)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 494: SetCurrentDirectoryW — STUB: unimplemented
   (func $handle_SetCurrentDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetCurrentDirectoryW(lpPathName) — 1 arg
+    (global.set $eax (call $host_fs_set_current_directory
+      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 495: RemoveDirectoryW — STUB: unimplemented
   (func $handle_RemoveDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; RemoveDirectoryW(lpPathName) — 1 arg
+    (global.set $eax (call $host_fs_remove_directory
+      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 496: GetDriveTypeW — STUB: unimplemented
@@ -4643,7 +4739,10 @@
 
   ;; 497: MoveFileA — STUB: unimplemented
   (func $handle_MoveFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; MoveFileA(lpExistingFileName, lpNewFileName) — 2 args
+    (global.set $eax (call $host_fs_move_file
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 498: GetExitCodeProcess — STUB: unimplemented
@@ -4765,7 +4864,10 @@
 
   ;; 518: GetFileSize — STUB: unimplemented
   (func $handle_GetFileSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetFileSize(hFile, lpFileSizeHigh) — 2 args
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (call $host_fs_get_file_size (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 519: GetFileTime — STUB: unimplemented
@@ -4927,7 +5029,10 @@
 
   ;; 544: CopyFileW — STUB: unimplemented
   (func $handle_CopyFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CopyFileW(lpExistingFileName, lpNewFileName, bFailIfExists) — 3 args
+    (global.set $eax (call $host_fs_copy_file
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 545: GetSystemDirectoryA(lpBuffer, uSize) — 2 args stdcall
@@ -7055,5 +7160,66 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
     (local.get $result))
+
+  ;; 773: GetTempPathA(nBufferLength, lpBuffer) — 2 args stdcall
+  (func $handle_GetTempPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_get_temp_path
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 774: CopyFileA(lpExistingFileName, lpNewFileName, bFailIfExists) — 3 args
+  (func $handle_CopyFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_copy_file
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 775: MoveFileExA(lpExistingFileName, lpNewFileName, dwFlags) — 3 args
+  (func $handle_MoveFileExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (global.set $eax (call $host_fs_move_file
+        (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 0))))
+      (else
+        ;; lpNewFileName==NULL means delete on reboot — just delete now
+        (global.set $eax (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 776: GetTempFileNameA(lpPathName, lpPrefixString, uUnique, lpTempFileName) — 4 args
+  (func $handle_GetTempFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_get_temp_file_name
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 777: CreateFileMappingA(hFile, lpAttr, flProtect, dwMaxHi, dwMaxLo, lpName) — 6 args
+  (func $handle_CreateFileMappingA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_create_file_mapping
+      (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args
+  )
+
+  ;; 778: MapViewOfFile(hMapping, dwAccess, dwOffsetHi, dwOffsetLo, dwSize) — 5 args
+  (func $handle_MapViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_map_view_of_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
+  )
+
+  ;; 779: UnmapViewOfFile(lpBaseAddress) — 1 arg
+  (func $handle_UnmapViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_unmap_view (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg
+  )
+
+  ;; 782: MoveFileExW(lpExistingFileName, lpNewFileName, dwFlags) — 3 args
+  (func $handle_MoveFileExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (global.set $eax (call $host_fs_move_file
+        (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 1))))
+      (else (global.set $eax (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement

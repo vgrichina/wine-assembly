@@ -142,6 +142,39 @@
   (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
   (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
 
+  ;; Filesystem host imports — backed by virtual FS
+  (import "host" "fs_create_file" (func $host_fs_create_file (param i32 i32 i32 i32 i32) (result i32)))
+  ;; fs_create_file(pathWA, access, creation, flagsAttrs, isWide) → handle
+  (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
+  ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
+  (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
+  ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
+  (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
+  (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
+  (import "host" "fs_get_file_size" (func $host_fs_get_file_size (param i32) (result i32)))
+  (import "host" "fs_get_file_attributes" (func $host_fs_get_file_attributes (param i32 i32) (result i32)))
+  (import "host" "fs_set_file_attributes" (func $host_fs_set_file_attributes (param i32 i32 i32) (result i32)))
+  (import "host" "fs_delete_file" (func $host_fs_delete_file (param i32 i32) (result i32)))
+  (import "host" "fs_create_directory" (func $host_fs_create_directory (param i32 i32) (result i32)))
+  (import "host" "fs_remove_directory" (func $host_fs_remove_directory (param i32 i32) (result i32)))
+  (import "host" "fs_move_file" (func $host_fs_move_file (param i32 i32 i32) (result i32)))
+  (import "host" "fs_copy_file" (func $host_fs_copy_file (param i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_find_first_file" (func $host_fs_find_first_file (param i32 i32 i32) (result i32)))
+  (import "host" "fs_find_next_file" (func $host_fs_find_next_file (param i32 i32 i32) (result i32)))
+  (import "host" "fs_find_close" (func $host_fs_find_close (param i32) (result i32)))
+  (import "host" "fs_get_temp_path" (func $host_fs_get_temp_path (param i32 i32 i32) (result i32)))
+  (import "host" "fs_get_temp_file_name" (func $host_fs_get_temp_file_name (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_get_current_directory" (func $host_fs_get_current_directory (param i32 i32 i32) (result i32)))
+  (import "host" "fs_set_current_directory" (func $host_fs_set_current_directory (param i32 i32) (result i32)))
+  (import "host" "fs_get_full_path_name" (func $host_fs_get_full_path_name (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_get_short_path_name" (func $host_fs_get_short_path_name (param i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_create_file_mapping" (func $host_fs_create_file_mapping (param i32 i32 i32 i32) (result i32)))
+  ;; fs_create_file_mapping(hFile, protect, sizeHi, sizeLo) → mapping handle
+  (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file (param i32 i32 i32 i32 i32) (result i32)))
+  ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
+  (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
+  ;; fs_unmap_view(baseAddr) → BOOL
+
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
   ;; com_create_instance(rclsidWA, pUnkOuterGA, dwClsContext, riidWA, ppvGA) → HRESULT
@@ -248,6 +281,10 @@
   (global $msvcrt_wcmdln_ptr (mut i32) (i32.const 0))  ;; wide command line pointer
   ;; Guest-space address of catch-return thunk (set during PE load)
   (global $catch_ret_thunk (mut i32) (i32.const 0))
+  ;; Synchronous WM_CREATE: continuation thunk + saved state
+  (global $createwnd_ret_thunk (mut i32) (i32.const 0))
+  (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
+  (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table

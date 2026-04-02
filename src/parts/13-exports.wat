@@ -23,6 +23,14 @@
       ;; EIP breakpoint
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
         (then (br $halt)))
+      ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
+      ;; dispatch the thunk directly instead of trying to decode it as x86
+      (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
+                   (i32.lt_u (global.get $eip) (global.get $thunk_guest_end)))
+        (then
+          (call $win32_dispatch (i32.div_u
+            (i32.sub (global.get $eip) (global.get $thunk_guest_base)) (i32.const 8)))
+          (br $main)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))

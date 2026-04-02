@@ -5409,5 +5409,61 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2574286267
+  },
+  {
+    "id": 773,
+    "name": "GetTempPathA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1599721457
+  },
+  {
+    "id": 774,
+    "name": "CopyFileA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1885947561
+  },
+  {
+    "id": 775,
+    "name": "MoveFileExA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3440821586
+  },
+  {
+    "id": 776,
+    "name": "GetTempFileNameA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2979793135
+  },
+  {
+    "id": 777,
+    "name": "CreateFileMappingA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 364004890
+  },
+  {
+    "id": 778,
+    "name": "MapViewOfFile",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1023754315
+  },
+  {
+    "id": 779,
+    "name": "UnmapViewOfFile",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3435030406
+  },
+  {
+    "id": 780,
+    "name": "MoveFileExW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3608597776
   }
 ]
