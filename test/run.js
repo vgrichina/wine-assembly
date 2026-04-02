@@ -444,16 +444,15 @@ async function main() {
     } catch (_) {}
   };
 
+  const { disasmAt: _disasm } = require('../tools/disasm');
   const disasmAt = (eip, count = 16) => {
     try {
-      const dv = new DataView(memory.buffer);
-      let bytes = '';
-      for (let i = 0; i < count; i++) {
-        bytes += dv.getUint8(g2w(eip + i)).toString(16).padStart(2, '0') + ' ';
-      }
-      console.log(`  Bytes at ${hex(eip)}: ${bytes.trim()}`);
+      const wa = g2w(eip);
+      const buf = new Uint8Array(memory.buffer, wa, Math.min(count * 15, memory.buffer.byteLength - wa));
+      const lines = _disasm(buf, 0, eip, count);
+      lines.forEach(l => console.log('  ' + l));
     } catch (_) {
-      console.log(`  Cannot read bytes at ${hex(eip)}`);
+      console.log(`  Cannot disasm at ${hex(eip)}`);
     }
   };
 
@@ -566,7 +565,7 @@ async function main() {
     }
   };
 
-  let prevEip = 0, stuckCount = 0;
+  let prevEip = 0, stuckCount = 0, prevApiCount = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -776,9 +775,10 @@ async function main() {
     const eip = instance.exports.get_eip();
     if (VERBOSE) {
       console.log(`[${batch}] ${regs()}`);
-    } else if (eip !== prevEip) {
-      console.log(`[${batch}] ${regs()}`);
+    } else if (eip !== prevEip || apiCount !== prevApiCount) {
+      if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
       prevEip = eip;
+      prevApiCount = apiCount;
       stuckCount = 0;
     } else {
       stuckCount++;
