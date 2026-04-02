@@ -3,4 +3,15 @@ node_modules/
 .DS_Store
 *.exe
 *.png
-build/
+*.dll
+*.DLL
+*.wav
+*.WAV
+*.mid
+*.MID
+*.DAT
+*.bmp
+test/binaries/pinball/
+test/binaries/dlls/
+!test/binaries/dlls/SOURCES.md
+!test/binaries/SOURCES.md
