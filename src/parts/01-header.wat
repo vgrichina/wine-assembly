@@ -142,6 +142,10 @@
   (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
   (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
 
+  ;; COM host imports
+  (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
+  ;; com_create_instance(rclsidWA, pUnkOuterGA, dwClsContext, riidWA, ppvGA) → HRESULT
+
   ;; Thread/event host imports
   (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))

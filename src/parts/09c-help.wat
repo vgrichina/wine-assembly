@@ -7,6 +7,9 @@
   ;;
   ;; Class table at WASM 0x2100: maps class_name_hash → wndproc (max 16 entries)
   ;; Each entry: [name_hash:i32, wndproc:i32, extra_bytes:i32] = 12 bytes, total 192 bytes
+  ;;
+  ;; Parent table at WASM 0x2200: maps slot index → parent hwnd (max 32 entries)
+  ;; Each entry: [parent_hwnd:i32] = 4 bytes, total 128 bytes
 
   ;; ---- Window table helpers ----
 
@@ -190,10 +193,10 @@
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
         (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))  ;; white
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000))) ;; black
-        ;; Fill client area white
+        ;; Fill client area white (stock WHITE_BRUSH = 0x30010)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0) (i32.const 400) (i32.const 300)
-          (i32.const 0)))  ;; hbrush 0 = use bk color
+          (i32.const 0x30010)))
         ;; Draw help text
         (if (global.get $help_topic_wa)
           (then
@@ -400,6 +403,8 @@
     ;; Register in window table as WAT-native (wndproc = 0xFFFF0001)
     (call $wnd_table_set (local.get $hwnd) (i32.const 0xFFFF0001))
     (global.set $help_hwnd (local.get $hwnd))
+    ;; Trigger immediate paint so content shows right away
+    (drop (call $help_wndproc (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
   )
 
   ;; Destroy help window and clean up

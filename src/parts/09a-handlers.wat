@@ -3217,13 +3217,15 @@
   )
 
   ;; 307: SetWindowLongW — STUB: unimplemented, return 0 (previous value)
+  ;; SetWindowLongW — same as A for non-string indices
   (func $handle_SetWindowLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_SetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 308: GetWindowLongW — STUB: unimplemented, return 0
+  ;; GetWindowLongW — same as A for non-string indices
   (func $handle_GetWindowLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_GetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 309: InitCommonControlsEx — return 1 (success) — STUB: unimplemented
@@ -3464,8 +3466,10 @@
   )
 
   ;; 344: IsBadWritePtr — return 0 (valid) — STUB: unimplemented
+  ;; IsBadWritePtr(lp, ucb) — return 0 (memory is always valid in our flat address space)
   (func $handle_IsBadWritePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))  ;; 0 = pointer is valid
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 345: SetUnhandledExceptionFilter(lpFilter) — store filter, return previous (0)
@@ -3522,9 +3526,25 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 355: lstrcatW — STUB: unimplemented
+  ;; 355: lstrcatW(dst, src) — concatenate wide strings, return dst
   (func $handle_lstrcatW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $dst i32) (local $src i32)
+    ;; Find end of dst (wide NUL = 0x0000)
+    (local.set $dst (local.get $arg0))
+    (block $end (loop $scan
+      (br_if $end (i32.eqz (call $gl16 (local.get $dst))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (br $scan)))
+    ;; Copy src to end of dst (including NUL)
+    (local.set $src (local.get $arg1))
+    (block $done (loop $copy
+      (call $gs16 (local.get $dst) (call $gl16 (local.get $src)))
+      (br_if $done (i32.eqz (call $gl16 (local.get $src))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $src (i32.add (local.get $src) (i32.const 2)))
+      (br $copy)))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 356: GlobalHandle — STUB: unimplemented

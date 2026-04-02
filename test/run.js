@@ -371,9 +371,13 @@ async function main() {
   } else {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
     const required = detectRequiredDlls(exeBytes);
+    // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
+    const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
+      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll']);
     const dllSearchDirs = [dllDir, path.dirname(EXE_PATH), path.join(__dirname, 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {
+      if (!LOADABLE_DLLS.has(name.toLowerCase())) continue;
       for (const dir of dllSearchDirs) {
         const p = path.join(dir, name);
         if (fs.existsSync(p)) {
