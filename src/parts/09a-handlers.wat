@@ -5,6 +5,118 @@
   ;; and adjust $esp for stdcall cleanup before returning.
   ;; ============================================================
 
+  ;; ---- Timer table helpers ----
+  ;; Timer table at 0x2300: 16 entries × 20 bytes
+  ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
+  ;; id=0 means slot is empty
+
+  ;; $timer_set(hwnd, id, interval_ms, callback) — add or update a timer
+  (func $timer_set (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
+    (local $i i32)
+    (local $addr i32)
+    (local $free_slot i32)
+    (local.set $free_slot (i32.const -1))
+    (local.set $i (i32.const 0))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
+        (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
+        ;; Check if this slot matches (same hwnd + id) — update in place
+        (if (i32.and
+              (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+              (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
+          (then
+            (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
+            (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
+            (i32.store (i32.add (local.get $addr) (i32.const 16)) (local.get $callback))
+            (return)
+          )
+        )
+        ;; Track first free slot
+        (if (i32.and
+              (i32.eq (local.get $free_slot) (i32.const -1))
+              (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 4)))))
+          (then (local.set $free_slot (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Not found — insert into free slot
+    (if (i32.ge_s (local.get $free_slot) (i32.const 0))
+      (then
+        (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $free_slot) (global.get $TIMER_ENTRY_SIZE))))
+        (i32.store (local.get $addr) (local.get $hwnd))
+        (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $id))
+        (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
+        (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
+        (i32.store (i32.add (local.get $addr) (i32.const 16)) (local.get $callback))
+        (global.set $timer_count (i32.add (global.get $timer_count) (i32.const 1)))
+      )
+    )
+  )
+
+  ;; $timer_kill(hwnd, id) — remove a timer, return 1 if found
+  (func $timer_kill (param $hwnd i32) (param $id i32) (result i32)
+    (local $i i32)
+    (local $addr i32)
+    (local.set $i (i32.const 0))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
+        (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
+        (if (i32.and
+              (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+              (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
+          (then
+            ;; Clear the slot (set id=0)
+            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
+            (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
+            (return (i32.const 1))
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.const 0)
+  )
+
+  ;; $timer_check_due(msg_ptr) — scan timer table, fill MSG with first due timer, return 1 if found
+  (func $timer_check_due (param $msg_ptr i32) (result i32)
+    (local $i i32)
+    (local $addr i32)
+    (local $elapsed i32)
+    ;; Advance tick_count so timers can fire even if app doesn't call GetTickCount
+    (global.set $tick_count (i32.add (global.get $tick_count) (i32.const 16)))
+    (local.set $i (i32.const 0))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
+        (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
+        ;; Skip empty slots
+        (if (i32.load (i32.add (local.get $addr) (i32.const 4)))
+          (then
+            (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
+            (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))
+              (then
+                ;; Timer is due — update last_tick and fill MSG
+                (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
+                (call $gs32 (local.get $msg_ptr) (i32.load (local.get $addr)))                          ;; hwnd
+                (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
+                (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
+                (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $addr) (i32.const 16)))) ;; lParam=callback
+                (return (i32.const 1))
+              )
+            )
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.const 0)
+  )
+
   ;; 0: ExitProcess
   (func $handle_ExitProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -732,13 +844,45 @@
     ;; Save state for continuation thunk
     (global.set $createwnd_saved_hwnd (global.get $next_hwnd))
     (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
+    ;; Build CREATESTRUCT at scratch address 0x400100 (BEFORE cleaning frame —
+    ;; need stack args at esp+24..esp+48 which are destroyed by cleanup)
+    ;; CREATESTRUCT: lpCreateParams(+0), hInstance(+4), hMenu(+8), hwndParent(+12),
+    ;;   cy(+16), cx(+20), y(+24), x(+28), style(+32), lpszName(+36), lpszClass(+40), dwExStyle(+44)
+    (call $gs32 (i32.const 0x400100) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
+    (call $gs32 (i32.const 0x400104) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
+    (call $gs32 (i32.const 0x400108) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
+    (call $gs32 (i32.const 0x40010c) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
+    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))                               ;; cy
+    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))                               ;; cx
+    (call $gs32 (i32.const 0x400118) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
+    (call $gs32 (i32.const 0x40011c) (local.get $arg4))                                       ;; x
+    (call $gs32 (i32.const 0x400120) (local.get $arg3))                                       ;; style
+    (call $gs32 (i32.const 0x400124) (local.get $arg2))                                       ;; lpszName
+    (call $gs32 (i32.const 0x400128) (local.get $arg1))                                       ;; lpszClass
+    (call $gs32 (i32.const 0x40012c) (local.get $arg0))                                       ;; dwExStyle
     ;; Clean CreateWindowExA frame (ret + 12 args = 52 bytes stdcall)
     (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
-    ;; Build CREATESTRUCT at scratch address 0x400100
-    (call $gs32 (i32.const 0x400100) (i32.const 0))                 ;; lpCreateParams
-    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))     ;; cy (+16)
-    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))     ;; cx (+20)
-    ;; Push WndProc args right-to-left: lParam, wParam, uMsg, hwnd
+    ;; If CBT hook is installed, call it first; it will chain to WM_CREATE via thunk
+    (if (global.get $cbt_hook_proc)
+    (then
+    ;; Build CBT_CREATEWND at 0x400140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
+    (call $gs32 (i32.const 0x400140) (i32.const 0x400100))  ;; lpcs
+    (call $gs32 (i32.const 0x400144) (i32.const 0))         ;; hwndInsertAfter = HWND_TOP
+    ;; Push hook args (stdcall, 12 bytes): lParam, wParam, nCode
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x400140))     ;; lParam = &CBT_CREATEWND
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $next_hwnd))  ;; wParam = hwnd
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 3))            ;; nCode = HCBT_CREATEWND
+    ;; Push CBT hook continuation thunk as return address
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $cbt_hook_ret_thunk))
+    ;; Jump to CBT hook proc
+    (global.set $eip (global.get $cbt_hook_proc))
+    )
+    (else
+    ;; No CBT hook — dispatch WM_CREATE directly
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0x400100))             ;; lParam = &CREATESTRUCT
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -750,8 +894,9 @@
     ;; Push continuation thunk as return address
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
-    ;; Jump to WndProc — interpreter will run it, then hit continuation thunk
+    ;; Jump to WndProc
     (global.set $eip (global.get $wndproc_addr))
+    ))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $steps (i32.const 0))
     (return))
@@ -950,17 +1095,13 @@
     (global.set $child_paint_hwnd (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No paint — deliver WM_TIMER if timer is active
-    (if (global.get $timer_id)
+    ;; No paint — deliver WM_TIMER if any timer is due
+    (if (call $timer_check_due (local.get $msg_ptr))
     (then
-    (call $gs32 (local.get $msg_ptr) (global.get $timer_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113)) ;; WM_TIMER
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $timer_id)) ;; wParam=timerID
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $timer_callback)) ;; lParam=callback
     (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer — return WM_NULL
+    ;; No timer due — return WM_NULL
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))  ;; WM_NULL
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
@@ -2262,16 +2403,13 @@
 
   ;; 187: KillTimer(hwnd, nIDEvent) — clear the timer
   (func $handle_KillTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $timer_id (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $timer_kill (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 188: SetTimer
   (func $handle_SetTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $timer_id (local.get $arg1))
-    (global.set $timer_hwnd (local.get $arg0))
-    (global.set $timer_callback (local.get $arg3))
+    (call $timer_set (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     (global.set $eax (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -3821,9 +3959,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 379: CallNextHookEx — STUB: unimplemented
+  ;; 379: CallNextHookEx — no next hook in chain, return 0
   (func $handle_CallNextHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CallNextHookEx(hhk, nCode, wParam, lParam) — 4 args stdcall
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 380: UnhookWindowsHookEx — STUB: unimplemented
@@ -3839,6 +3979,10 @@
 
   ;; SetWindowsHookExA — return fake handle, 4 args stdcall
   (func $handle_SetWindowsHookExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; SetWindowsHookExA(idHook, lpfn, hMod, dwThreadId)
+    ;; Save CBT hook proc (WH_CBT = 5) for CreateWindowExA to call
+    (if (i32.eq (local.get $arg0) (i32.const 5))
+      (then (global.set $cbt_hook_proc (local.get $arg1))))
     (global.set $eax (i32.const 0xBEEF))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -5008,9 +5152,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 528: GlobalAddAtomW — STUB: unimplemented
+  ;; 528: GlobalAddAtomW(lpString) — return unique atom, 1 arg stdcall
   (func $handle_GlobalAddAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (global.get $next_atom))
+    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 529: FindResourceW — same as FindResourceA (resource IDs are integer MAKEINTRESOURCE values)
@@ -5160,9 +5306,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 550: GlobalDeleteAtom — STUB: unimplemented
+  ;; 550: GlobalDeleteAtom(nAtom) — no-op, return 0 (success)
   (func $handle_GlobalDeleteAtom (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 551: GlobalFindAtomW — STUB: unimplemented
@@ -5893,17 +6040,13 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No paint — deliver WM_TIMER if timer is active
-    (if (global.get $timer_id)
+    ;; No paint — deliver WM_TIMER if any timer is due
+    (if (call $timer_check_due (local.get $msg_ptr))
     (then
-    (call $gs32 (local.get $msg_ptr) (global.get $timer_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $timer_id))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $timer_callback))
     (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer — return WM_NULL
+    ;; No timer due — return WM_NULL
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
@@ -7367,6 +7510,113 @@
         (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 1))))
       (else (global.set $eax (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 784: ThunkConnect32 — Win9x 16/32-bit thunking, no-op in pure 32-bit
+  (func $handle_ThunkConnect32 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
+  ;; 785: MapVirtualKeyA — translate between vkeys, scan codes, and characters
+  (func $handle_MapVirtualKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $uCode i32)
+    (local $uMapType i32)
+    (local $result i32)
+    ;; arg0=uCode, arg1=uMapType (stdcall, 2 args)
+    (local.set $uCode (local.get $arg0))
+    (local.set $uMapType (local.get $arg1))
+    (local.set $result (i32.const 0))
+    (block $done
+      ;; Type 0: vkey -> scan code
+      (if (i32.eqz (local.get $uMapType))
+        (then
+          (block $vk0_done
+            ;; Letters A-Z: vkeys 0x41-0x5A -> scancodes 0x1E-0x39 (approximate)
+            (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x41)) (i32.le_u (local.get $uCode) (i32.const 0x5A)))
+              (then
+                ;; Simple mapping: A=0x1E, B=0x30, C=0x2E, etc. Use offset table concept
+                ;; For simplicity, return scancode = uCode (non-zero signals "exists")
+                (local.set $result (i32.sub (local.get $uCode) (i32.const 0x20)))
+                (br $vk0_done)
+              )
+            )
+            ;; Numbers 0-9: vkeys 0x30-0x39 -> scancodes 0x0B,0x02-0x0A
+            (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x30)) (i32.le_u (local.get $uCode) (i32.const 0x39)))
+              (then
+                (if (i32.eq (local.get $uCode) (i32.const 0x30))
+                  (then (local.set $result (i32.const 0x0B)))
+                  (else (local.set $result (i32.sub (local.get $uCode) (i32.const 0x2E))))
+                )
+                (br $vk0_done)
+              )
+            )
+            ;; Space=0x39, Enter=0x1C, Escape=0x01, Tab=0x0F
+            (if (i32.eq (local.get $uCode) (i32.const 0x20)) (then (local.set $result (i32.const 0x39)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x0D)) (then (local.set $result (i32.const 0x1C)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x1B)) (then (local.set $result (i32.const 0x01)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x09)) (then (local.set $result (i32.const 0x0F)) (br $vk0_done)))
+            ;; Shift=0x2A, Ctrl=0x1D, Alt=0x38
+            (if (i32.eq (local.get $uCode) (i32.const 0x10)) (then (local.set $result (i32.const 0x2A)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x11)) (then (local.set $result (i32.const 0x1D)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x12)) (then (local.set $result (i32.const 0x38)) (br $vk0_done)))
+            ;; Arrow keys: Left=0x4B, Up=0x48, Right=0x4D, Down=0x50
+            (if (i32.eq (local.get $uCode) (i32.const 0x25)) (then (local.set $result (i32.const 0x4B)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x26)) (then (local.set $result (i32.const 0x48)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x27)) (then (local.set $result (i32.const 0x4D)) (br $vk0_done)))
+            (if (i32.eq (local.get $uCode) (i32.const 0x28)) (then (local.set $result (i32.const 0x50)) (br $vk0_done)))
+            ;; F1-F12: vkeys 0x70-0x7B -> scancodes 0x3B-0x46,0x57,0x58
+            (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x70)) (i32.le_u (local.get $uCode) (i32.const 0x7B)))
+              (then
+                (if (i32.le_u (local.get $uCode) (i32.const 0x79))
+                  (then (local.set $result (i32.add (i32.const 0x3B) (i32.sub (local.get $uCode) (i32.const 0x70)))))
+                  (else (local.set $result (i32.add (i32.const 0x57) (i32.sub (local.get $uCode) (i32.const 0x7A)))))
+                )
+                (br $vk0_done)
+              )
+            )
+          )
+          (br $done)
+        )
+      )
+      ;; Type 1: scan code -> vkey (reverse of type 0) — return 0 for simplicity
+      ;; Type 2: vkey -> unshifted char
+      (if (i32.eq (local.get $uMapType) (i32.const 2))
+        (then
+          ;; Letters: return lowercase ASCII
+          (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x41)) (i32.le_u (local.get $uCode) (i32.const 0x5A)))
+            (then (local.set $result (i32.add (local.get $uCode) (i32.const 0x20))))
+          )
+          ;; Numbers: return ASCII digit
+          (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x30)) (i32.le_u (local.get $uCode) (i32.const 0x39)))
+            (then (local.set $result (local.get $uCode)))
+          )
+          (if (i32.eq (local.get $uCode) (i32.const 0x20)) (then (local.set $result (i32.const 0x20))))
+          (br $done)
+        )
+      )
+      ;; Type 3: scan code -> vkey (with left/right) — return 0
+    )
+    (global.set $eax (local.get $result))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 786: DisableThreadLibraryCalls(hModule) — no-op, return TRUE
+  (func $handle_DisableThreadLibraryCalls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 787: ReinitializeCriticalSection(ptr) — no-op (single-threaded)
+  (func $handle_ReinitializeCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 788: GlobalAddAtomA(lpString) — return unique atom
+  (func $handle_GlobalAddAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $next_atom))
+    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement

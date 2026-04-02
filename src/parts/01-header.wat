@@ -205,6 +205,7 @@
   ;; 0x00002000  256B    Window table (32 entries × 8 bytes: hwnd, wndproc)
   ;; 0x00002100  192B    Class table (16 entries × 12 bytes: name_hash, wndproc, atom)
   ;; 0x00002200  128B    Window userdata table (32 entries × 4 bytes: GWL_USERDATA)
+  ;; 0x00002300  320B    Timer table (16 entries × 20 bytes: hwnd, id, interval, last_tick, callback)
   ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
@@ -283,6 +284,7 @@
   (global $catch_ret_thunk (mut i32) (i32.const 0))
   ;; Synchronous WM_CREATE: continuation thunk + saved state
   (global $createwnd_ret_thunk (mut i32) (i32.const 0))
+  (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
@@ -316,11 +318,13 @@
   (global $wndclass_bg_brush (mut i32) (i32.const 0)) ;; hbrBackground from first RegisterClass
   (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
   ;; (removed: $window_dc_hwnd — hwnd is now encoded in DC handle)
+  (global $cbt_hook_proc (mut i32) (i32.const 0))     ;; CBT hook proc address (from SetWindowsHookExA WH_CBT)
   (global $capture_hwnd (mut i32) (i32.const 0))      ;; hwnd that has mouse capture (SetCapture/ReleaseCapture)
   (global $cursor_count (mut i32) (i32.const 0))      ;; ShowCursor display count (>=0 = visible)
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
+  (global $next_atom    (mut i32) (i32.const 0xC000))  ;; Atom allocator (0xC000+)
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
   (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
@@ -336,9 +340,13 @@
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
-  (global $timer_id     (mut i32) (i32.const 0))    ;; Active timer ID (0 = none)
-  (global $timer_hwnd   (mut i32) (i32.const 0))    ;; Timer window handle
-  (global $timer_callback (mut i32) (i32.const 0))  ;; Timer callback address (0 = WM_TIMER to window)
+  ;; Timer table at 0x2300: 16 entries × 20 bytes each
+  ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
+  ;; Entry with id=0 is unused
+  (global $TIMER_TABLE  i32 (i32.const 0x00002300))
+  (global $TIMER_MAX    i32 (i32.const 16))
+  (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
+  (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   ;; Thread yield state (for multi-instance threading)
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll
   (global $wait_handle  (mut i32) (i32.const 0))

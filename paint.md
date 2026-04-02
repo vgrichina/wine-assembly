@@ -28,23 +28,70 @@
   (was 0 → 3 → 9 → 10 → 103 → 1229 → 806 → 91K)
 - PNG render works — shows solid teal window background
 
-### Current Status: Window renders but no UI elements
+### Current Status: Window renders but no UI elements — two fixes applied, root cause found
 
-MSPaint creates main window, enters MFC message loop (91K API calls in 100
-batches). WM_CREATE/WM_PAINT are delivered via PeekMessageA phase system.
-Window renders as solid teal background — no toolbar, statusbar, canvas, or
-menu visible. MFC's WndProc (thunk at 0x02e026e0) receives messages but
-doesn't create child windows or draw UI during WM_CREATE processing.
+MSPaint creates main window, enters MFC message loop. Window renders as solid
+teal background — no toolbar, statusbar, canvas, or menu visible.
 
-The `DefWindowProcA` calls after CreateWindowExA have scrambled args —
-suggests MFC routes messages through its own internal dispatch (CWnd vtable)
-rather than standard TranslateMessage/DispatchMessage. Neither
-`TranslateMessage` nor `DispatchMessageA` is ever called by MFC.
+#### Fix 1: Complete CREATESTRUCT (applied, uncommitted)
 
-**Next steps:** Investigate why MFC's WM_CREATE handler doesn't create child
-windows (toolbar/statusbar). May need more APIs (e.g. `CreateToolbarEx`,
-`CreateStatusWindowA`) or MFC's internal window creation may be failing
-silently.
+The synchronous WM_CREATE dispatch built a CREATESTRUCT at 0x400100 with only
+3 of 12 fields. Now fills all 12 fields from CreateWindowExA stack args BEFORE
+cleaning the frame (since cleanup destroys the stack args).
+
+#### Fix 2: CBT hook dispatch (applied, uncommitted)
+
+MFC installs a WH_CBT(5) hook via SetWindowsHookExA (API #1260, hookproc at
+0x0105678f) BEFORE calling CreateWindowExA. The hook's HCBT_CREATEWND handler
+associates the CWnd* C++ object with the hwnd and calls SetWindowLongA to
+subclass the window with MFC's AfxWndProc.
+
+Previously SetWindowsHookExA was a no-op stub → hook never fired → CWnd never
+associated → MFC's WndProc couldn't find the CWnd for hwnd → forwarded
+WM_CREATE straight to DefWindowProcA without processing.
+
+**Changes made:**
+- New global `$cbt_hook_proc` — stores CBT hook proc address
+- SetWindowsHookExA now saves hook proc when idHook==WH_CBT(5)
+- CreateWindowExA calls CBT hook with HCBT_CREATEWND before WM_CREATE
+- New continuation thunk (0xCACA0002) chains CBT hook → WM_CREATE dispatch
+- CBT_CREATEWND struct at 0x400140 = { &CREATESTRUCT, HWND_TOP }
+- CallNextHookEx implemented (returns 0, no next hook in chain)
+
+**Trace with fix:** CBT hook now executes (API #1262-1273), allocates CWnd
+data (malloc), calls GetParent, and calls SetWindowLongA(hwnd, GWL_WNDPROC).
+
+#### Remaining blocker: m_pfnAfxWndProc is NULL
+
+MFC's CBT hook calls SetWindowLongA(0x10001, GWL_WNDPROC(-4), **0x00000000**)
+— the new WndProc is NULL. The hook reads m_pfnAfxWndProc from the MFC module
+state struct at offset +0x103c. This field is never initialized.
+
+**Root cause:** m_pfnAfxWndProc is set by a C++ static init function at
+0x0105c8ef in mfc42.dll. This function lives in the `.rdata` CRT init table
+at RVA 0xc6440 (guest addr 0x0111b440). However, mfc42's DllMain only calls
+`_initterm(0x0111d000, 0x0111d100)` which covers the `.data` section init
+table (RVA 0xc8000-0xc8100). The `.rdata` init table containing our function
+pointer is in a DIFFERENT range and is NEVER iterated.
+
+The `.rdata` init table is likely iterated by an earlier `_initterm` call
+during msvcrt's `_CRT_INIT` or `__DllMainCRTStartup` — but our DllMain
+calling convention may be skipping this. The function at 0x0105c8ef:
+```asm
+push 0x01           ;; flag
+push 0x421          ;; size?
+push 0x5f4788f7     ;; AfxWndProc address (pre-reloc, relocated at runtime)
+push 0x01           ;; flag
+mov ecx, 0x5f4cde60 ;; module state (pre-reloc)
+call 0x105c908      ;; sets [ecx+0x103c] = AfxWndProc
+```
+
+**Next steps:**
+1. Investigate why mfc42's `.rdata` CRT init table isn't being called — likely
+   needs a second `_initterm` call covering the .rdata range, or our DllMain
+   invocation skips part of the CRT startup sequence
+2. Alternative: manually set m_pfnAfxWndProc by finding the AfxWndProc export
+   in mfc42 and writing it to the module state struct after DLL loading
 
 ### Key fix: PeekMessageA pending message delivery (2026-04-02)
 

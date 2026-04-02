@@ -5486,5 +5486,40 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1166529155
+  },
+  {
+    "id": 784,
+    "name": "ThunkConnect32",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3937614622
+  },
+  {
+    "id": 785,
+    "name": "MapVirtualKeyA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3318652042
+  },
+  {
+    "id": 786,
+    "name": "DisableThreadLibraryCalls",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 29727875
+  },
+  {
+    "id": 787,
+    "name": "ReinitializeCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2106531494
+  },
+  {
+    "id": 788,
+    "name": "GlobalAddAtomA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1849296691
   }
 ]
