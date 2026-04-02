@@ -973,6 +973,74 @@
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
+    ;; Deliver pending child WM_CREATE
+    (if (global.get $pending_child_create)
+    (then
+    (local.set $tmp (global.get $pending_child_create))
+    (if (i32.and (local.get $arg4) (i32.const 1)) ;; PM_REMOVE
+      (then (global.set $pending_child_create (i32.const 0))))
+    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Deliver pending child WM_SIZE
+    (if (global.get $pending_child_size)
+    (then
+    (local.set $packed (global.get $pending_child_size))
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (global.set $pending_child_size (i32.const 0))))
+    (call $gs32 (local.get $arg0) (global.get $child_paint_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $packed))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Deliver pending WM_SIZE for main window
+    (if (global.get $pending_wm_size)
+    (then
+    (local.set $packed (global.get $pending_wm_size))
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (global.set $pending_wm_size (i32.const 0))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $packed))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Phase-based initial message delivery (same as GetMessageA)
+    ;; Only deliver if main window exists
+    ;; Phase 0: WM_ACTIVATE
+    (if (i32.and (i32.eqz (global.get $msg_phase)) (global.get $main_hwnd))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 1))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0006)) ;; WM_ACTIVATE
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (global.get $main_hwnd))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Phase 1: WM_ERASEBKGND
+    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 2))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000)))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Phase 2: WM_PAINT
+    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 3))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
@@ -1021,6 +1089,29 @@
         )
       )
     )
+    ;; WM_PAINT if pending (lowest priority)
+    (if (global.get $paint_pending)
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (global.set $paint_pending (i32.const 0))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Child paint pending
+    (if (global.get $child_paint_hwnd)
+    (then
+    (local.set $tmp (global.get $child_paint_hwnd))
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (global.set $child_paint_hwnd (i32.const 0))))
+    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
@@ -6215,6 +6306,62 @@
       (then (global.set $eax (i32.add (i32.sub (local.get $last) (i32.const 0x12000)) (global.get $image_base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 781: _mbsnbcmp(s1, s2, n) — cdecl, compare n bytes (ASCII memcmp)
+  (func $handle__mbsnbcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa1 i32) (local $wa2 i32) (local $n i32) (local $b1 i32) (local $b2 i32)
+    (local.set $wa1 (call $g2w (local.get $arg0)))
+    (local.set $wa2 (call $g2w (local.get $arg1)))
+    (local.set $n (local.get $arg2))
+    (block $done (loop $cmp
+      (br_if $done (i32.eqz (local.get $n)))
+      (local.set $b1 (i32.load8_u (local.get $wa1)))
+      (local.set $b2 (i32.load8_u (local.get $wa2)))
+      (if (i32.ne (local.get $b1) (local.get $b2))
+        (then
+          (global.set $eax (i32.sub (local.get $b1) (local.get $b2)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+          (return)))
+      (local.set $wa1 (i32.add (local.get $wa1) (i32.const 1)))
+      (local.set $wa2 (i32.add (local.get $wa2) (i32.const 1)))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br $cmp)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 782: GetVolumeInformationA — 8 args stdcall, return TRUE with fake data
+  (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa_esp i32)
+    ;; lpVolumeNameBuffer = arg1, nVolumeNameSize = arg2
+    ;; If lpVolumeNameBuffer non-null, write empty string
+    (if (local.get $arg1)
+      (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
+    ;; lpVolumeSerialNumber = arg3 — write fake serial
+    (if (local.get $arg3)
+      (then (call $gs32 (local.get $arg3) (i32.const 0x12345678))))
+    ;; lpMaximumComponentLength = arg4 — write 255
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 255))))
+    ;; lpFileSystemFlags = [esp+24]
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 24)))
+      (then (call $gs32 (i32.load (i32.add (local.get $wa_esp) (i32.const 24))) (i32.const 0x00000003)))) ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
+    ;; lpFileSystemNameBuffer = [esp+28], nFileSystemNameSize = [esp+32]
+    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))
+      (then
+        ;; Write "FAT" as filesystem name
+        (i32.store (call $g2w (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))) (i32.const 0x00544146))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; stdcall 8 args
+  )
+
+  ;; 783: SHGetFileInfoA(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — 5 args stdcall
+  ;; Return 0 (failure) — no shell file info available
+  (func $handle_SHGetFileInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 721: _mbsinc(ptr) — cdecl, advance to next MBCS character (ASCII: ptr+1)

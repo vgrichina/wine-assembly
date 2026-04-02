@@ -1,9 +1,14 @@
 # Calc.exe Execution Analysis
 
-## Current Status (2026-04-01)
+## Current Status (2026-04-02)
 
 ### Summary
-Calc.exe boots through DLL init, CRT init, window creation, and enters its bignum library initialization. The Newton iteration loop at `0x0100ced9` does NOT converge — numbers grow without bound (digit counts reaching 122+), consuming 256MB+ before OOM. The convergence check at `0x0100cf4b` is never reached because a single BigNum_Power call takes hundreds of millions of instructions.
+Calc.exe now crashes on `GetSubMenu` at batch 1 (EIP=0x01001e2f) before
+reaching the bignum initialization. This is a regression from upstream changes
+(not this session) — `GetSubMenu` is an unimplemented crash stub. Calc uses
+`GetMessageA` for its message pump (not `PeekMessageA`).
+
+Previous blocker: Newton iteration loop at `0x0100ced9` does NOT converge — numbers grow without bound (digit counts reaching 122+), consuming 256MB+ before OOM. The convergence check at `0x0100cf4b` is never reached because a single BigNum_Power call takes hundreds of millions of instructions.
 
 ### Key findings (2026-04-01 session 2)
 - **BigNum_Multiply is CORRECT** — `test/test-bignum-mul.js` passes all 17 tests including 5×5 digit, max-value carry propagation, and sign handling

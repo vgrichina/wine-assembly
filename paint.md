@@ -18,22 +18,49 @@
 - mfc42.dll DllMain now recognized as successful (was misdetected as crash)
 - RegSetValueA/W restored to no-op stubs (registry writes during file
   association setup are harmless)
-- EXE reaches 1229 API calls in MFC window creation (was 0 → 3 → 9 → 10 → 103 → 1229)
+- PeekMessageA now delivers pending WM_CREATE/WM_SIZE (MFC uses Peek not Get)
+- `_mbsnbcmp` implemented (multibyte n-byte compare, ASCII memcmp)
+- `GetVolumeInformationA` implemented (fake FAT volume info)
+- `SHGetFileInfoA` implemented (returns 0 = no shell info)
+- PeekMessageA now delivers phase messages (WM_ACTIVATE, WM_ERASEBKGND, WM_PAINT)
+  and checks `paint_pending` / `child_paint_hwnd` — same as GetMessageA
+- EXE reaches 91K+ API calls, creates window, renders teal background
+  (was 0 → 3 → 9 → 10 → 103 → 1229 → 806 → 91K)
+- PNG render works — shows solid teal window background
 
-### Current Blocker: EIP=0x86 crash after GetParent (API #1239)
+### Current Status: Window renders but no UI elements
 
-`GetParent` implemented (parent table at WASM 0x2280, stored during
-`CreateWindowExA`/`CreateWindowExW`). MSPaint now reaches 1239 API calls
-(was 1229). After `GetParent(0x10001)` returns 0xf0, execution falls into
-EIP=0x86 — an indirect call through a bad pointer (likely MFC vtable dispatch
-using the parent handle as an object pointer).
+MSPaint creates main window, enters MFC message loop (91K API calls in 100
+batches). WM_CREATE/WM_PAINT are delivered via PeekMessageA phase system.
+Window renders as solid teal background — no toolbar, statusbar, canvas, or
+menu visible. MFC's WndProc (thunk at 0x02e026e0) receives messages but
+doesn't create child windows or draw UI during WM_CREATE processing.
 
-The 0xf0 return is suspicious — top-level window should return 0 (no parent).
-Either the parent table slot has stale data, or the window's slot index changed
-between `wnd_set_parent` and `wnd_get_parent`. Needs investigation.
+The `DefWindowProcA` calls after CreateWindowExA have scrambled args —
+suggests MFC routes messages through its own internal dispatch (CWnd vtable)
+rather than standard TranslateMessage/DispatchMessage. Neither
+`TranslateMessage` nor `DispatchMessageA` is ever called by MFC.
 
-**Also fixed:** `SendMessageA` was implemented (externally, not in this session)
-— notepad now runs cleanly (146 API calls, no crashes).
+**Next steps:** Investigate why MFC's WM_CREATE handler doesn't create child
+windows (toolbar/statusbar). May need more APIs (e.g. `CreateToolbarEx`,
+`CreateStatusWindowA`) or MFC's internal window creation may be failing
+silently.
+
+### Key fix: PeekMessageA pending message delivery (2026-04-02)
+
+MFC's message pump uses `PeekMessageA`, not `GetMessageA`. But only
+`GetMessageA` checked `pending_wm_create`/`pending_wm_size` flags. This meant
+MFC's main window never received WM_CREATE or WM_SIZE — it sat in an idle
+loop calling `DefWindowProcA(0,0,0,0)` ~1000×/batch. Fixed by adding the same
+pending message checks to `PeekMessageA` (with PM_REMOVE flag handling).
+
+### Previous: GetParent returned garbage — partially resolved
+
+`GetParent(0x10001)` returned 0xf0 instead of 0 for top-level window.
+Root cause unclear — parent table slot may have stale data. After the
+PeekMessageA fix, execution takes a different path and this may no longer
+be hit. The GetParent implementation is correct; the data flow needs
+verification if this resurfaces.
 
 WASM low-memory window tables:
 ```

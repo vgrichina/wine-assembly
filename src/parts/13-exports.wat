@@ -20,6 +20,11 @@
             (then
               (global.set $watch_val (call $gl32 (global.get $watch_addr)))
               (br $halt)))))
+      ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
+      (if (global.get $yield_flag)
+        (then
+          (global.set $yield_flag (i32.const 0))
+          (br $halt)))
       ;; EIP breakpoint
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
         (then (br $halt)))

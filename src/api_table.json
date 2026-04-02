@@ -5465,5 +5465,26 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3608597776
+  },
+  {
+    "id": 781,
+    "name": "_mbsnbcmp",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 3467035370
+  },
+  {
+    "id": 782,
+    "name": "GetVolumeInformationA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3336373344
+  },
+  {
+    "id": 783,
+    "name": "SHGetFileInfoA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1166529155
   }
 ]
