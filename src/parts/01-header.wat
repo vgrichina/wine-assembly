@@ -12,6 +12,7 @@
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
+  (import "host" "get_ticks" (func $host_get_ticks (result i32)))
   ;; GUI host imports — call into JS canvas renderer
   (import "host" "create_window" (func $host_create_window (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd

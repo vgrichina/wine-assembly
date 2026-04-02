@@ -86,8 +86,8 @@
     (local $i i32)
     (local $addr i32)
     (local $elapsed i32)
-    ;; Advance tick_count so timers can fire even if app doesn't call GetTickCount
-    (global.set $tick_count (i32.add (global.get $tick_count) (i32.const 16)))
+    ;; Update tick_count from host real time
+    (global.set $tick_count (call $host_get_ticks))
     (local.set $i (i32.const 0))
     (block $break
       (loop $loop
@@ -678,7 +678,7 @@
 
   ;; 58: GetTickCount
   (func $handle_GetTickCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $tick_count (i32.add (global.get $tick_count) (i32.const 16)))
+    (global.set $tick_count (call $host_get_ticks))
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
