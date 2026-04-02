@@ -15,6 +15,13 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0000))
       (then (global.set $eip (global.get $eax)) (return)))
 
+    ;; CreateWindowEx continuation thunk — WndProc(WM_CREATE) returned
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))
+      (then
+        (global.set $eax (global.get $createwnd_saved_hwnd))
+        (global.set $eip (global.get $createwnd_saved_ret))
+        (return)))
+
     (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
 
     ;; Log API name for tracing
