@@ -306,6 +306,83 @@ class WineAssembly {
     this.running = true;
   }
 
+  async handleComDllLoad() {
+    const exports = this.instance.exports;
+    // Read pending DLL name from COM yield state
+    const dllNameWA = exports.get_com_dll_name ? exports.get_com_dll_name() : 0;
+    if (!dllNameWA) {
+      console.error('COM yield but no pending DLL name');
+      exports.clear_yield();
+      return;
+    }
+    const mem = new Uint8Array(this.memory.buffer);
+    let dllName = '';
+    for (let i = 0; i < 260; i++) {
+      const ch = mem[dllNameWA + i];
+      if (!ch) break;
+      dllName += String.fromCharCode(ch);
+    }
+    // Extract just the filename
+    const fileName = dllName.split('\\').pop().toLowerCase();
+    console.log(`[COM] Loading DLL: ${fileName}`);
+
+    try {
+      // Try to fetch the DLL
+      const paths = [`dlls/${fileName}`, `../test/binaries/dlls/${fileName}`];
+      let dllBytes = null;
+      for (const p of paths) {
+        try {
+          const resp = await fetch(p);
+          if (resp.ok) {
+            dllBytes = new Uint8Array(await resp.arrayBuffer());
+            console.log(`[COM] Fetched ${p} (${dllBytes.length} bytes)`);
+            break;
+          }
+        } catch (_) {}
+      }
+      if (!dllBytes) {
+        console.error(`[COM] Failed to fetch DLL: ${fileName}`);
+        // Clear yield and let CoCreateInstance fail with REGDB_E_CLASSNOTREG
+        exports.clear_yield();
+        // Set EAX to error, advance ESP past the 5 stdcall args
+        exports.set_eax(0x80040154);
+        exports.set_esp(exports.get_esp() + 24);
+        return;
+      }
+
+      // Load the DLL using existing infrastructure
+      const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
+      if (_loadDll) {
+        const result = _loadDll(exports, this.memory.buffer, dllBytes);
+        console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
+        // Patch EXE imports if we have EXE bytes
+        if (this._exeBytes) {
+          const _patchExeImports = (typeof DllLoader !== 'undefined' && DllLoader.patchExeImports) || null;
+          if (_patchExeImports) {
+            _patchExeImports(exports, this.memory.buffer, this._exeBytes, console.log);
+          }
+        }
+        // Call DllMain if entry point exists
+        if (result.dllMain) {
+          const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
+          if (_callDllMain) {
+            _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
+          }
+        }
+      }
+
+      // Clear yield — run() will re-enter CoCreateInstance handler
+      // which will retry and find the DLL now loaded
+      exports.clear_yield();
+      // Don't advance ESP — the handler will be re-invoked by the dispatch
+    } catch (e) {
+      console.error('[COM] DLL load error:', e);
+      exports.clear_yield();
+      exports.set_eax(0x80004005); // E_FAIL
+      exports.set_esp(exports.get_esp() + 24);
+    }
+  }
+
   run(stepsPerSlice = 500000) {
     this.running = true;
     const self = this;
@@ -321,6 +398,13 @@ class WineAssembly {
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
           self.running = false;
+          return;
+        }
+        // Handle COM DLL loading yield
+        const yieldReason = self.instance.exports.get_yield_reason();
+        if (yieldReason === 3) {
+          await self.handleComDllLoad();
+          if (self.running) { setTimeout(step, 0); }
           return;
         }
         // Spawn and run worker threads

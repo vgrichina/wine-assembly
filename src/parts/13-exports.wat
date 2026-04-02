@@ -89,6 +89,7 @@
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
   (func (export "clear_yield") (global.set $yield_reason (i32.const 0)))
+  (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
 
   ;; PE metadata exports (needed to init worker threads)
   (func (export "get_code_start") (result i32) (global.get $code_start))

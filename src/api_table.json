@@ -5381,5 +5381,33 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1016210409
+  },
+  {
+    "id": 769,
+    "name": "CoCreateInstance",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2716892748
+  },
+  {
+    "id": 770,
+    "name": "CoTaskMemAlloc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1911361856
+  },
+  {
+    "id": 771,
+    "name": "StringFromGUID2",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 940956213
+  },
+  {
+    "id": 772,
+    "name": "CLSIDFromString",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2574286267
   }
 ]

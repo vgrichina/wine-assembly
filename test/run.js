@@ -305,6 +305,7 @@ async function main() {
   h.set_event = (handle) => threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
   h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
+  h.com_create_instance = (rclsid, pUnkOuter, dwClsCtx, riid, ppv) => 0x80004002; // E_NOINTERFACE
 
   const imports = { host: h };
 
@@ -690,6 +691,46 @@ async function main() {
         frames.slice(0, 8).forEach(f => console.log('    ' + f.trim()));
       }
       process.exit(1);
+    }
+
+    // Handle COM DLL loading yield (synchronous in Node.js)
+    if (instance.exports.get_yield_reason() === 3) {
+      const dllNameWA = instance.exports.get_com_dll_name();
+      if (dllNameWA) {
+        const mem8 = new Uint8Array(memory.buffer);
+        let dllPathStr = '';
+        for (let i = 0; i < 260; i++) {
+          const ch = mem8[dllNameWA + i];
+          if (!ch) break;
+          dllPathStr += String.fromCharCode(ch);
+        }
+        const fileName = dllPathStr.split('\\').pop().toLowerCase();
+        console.log(`[COM] Loading DLL: ${fileName}`);
+        // Try to find the DLL file
+        const searchPaths = [
+          path.join(__dirname, 'binaries/dlls', fileName),
+          path.join(path.dirname(EXE_PATH), fileName),
+        ];
+        let loaded = false;
+        for (const sp of searchPaths) {
+          if (fs.existsSync(sp)) {
+            const dllBytes = new Uint8Array(fs.readFileSync(sp));
+            const { loadDll: ld, patchExeImports: pe, callDllMain: cdm } = require('../lib/dll-loader');
+            const result = ld(instance.exports, memory.buffer, dllBytes);
+            console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
+            pe(instance.exports, memory.buffer, new Uint8Array(fs.readFileSync(EXE_PATH)), console.log);
+            if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
+            loaded = true;
+            break;
+          }
+        }
+        if (!loaded) {
+          console.log(`[COM] DLL not found: ${fileName}`);
+          instance.exports.set_eax(0x80040154); // REGDB_E_CLASSNOTREG
+          instance.exports.set_esp(instance.exports.get_esp() + 24);
+        }
+      }
+      instance.exports.clear_yield();
     }
 
     // Thread management: spawn pending threads, run worker slices

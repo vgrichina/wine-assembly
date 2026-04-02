@@ -145,6 +145,9 @@
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
   ;; com_create_instance(rclsidWA, pUnkOuterGA, dwClsContext, riidWA, ppvGA) → HRESULT
+  ;; Returns 0=S_OK, 0x800401F0=CO_E_DLLNOTFOUND (need async load), other=error
+  (import "host" "com_get_pending_dll" (func $host_com_get_pending_dll (result i32)))
+  ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
 
   ;; Thread/event host imports
   (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32) (result i32)))
@@ -300,8 +303,15 @@
   (global $timer_hwnd   (mut i32) (i32.const 0))    ;; Timer window handle
   (global $timer_callback (mut i32) (i32.const 0))  ;; Timer callback address (0 = WM_TIMER to window)
   ;; Thread yield state (for multi-instance threading)
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll
   (global $wait_handle  (mut i32) (i32.const 0))
+  ;; COM yield state — saved when yielding for async DLL fetch
+  (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
+  (global $com_iid_ptr   (mut i32) (i32.const 0))   ;; guest addr of IID
+  (global $com_ppv_ptr   (mut i32) (i32.const 0))   ;; guest addr of ppv output
+  (global $com_unk_outer (mut i32) (i32.const 0))   ;; pUnkOuter
+  (global $com_cls_ctx   (mut i32) (i32.const 0))   ;; dwClsContext
+  (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle

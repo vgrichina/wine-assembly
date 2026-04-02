@@ -6847,4 +6847,189 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 770: CommandLineToArgvW — already handled above as crash stub replacement
+  ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
+  (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (local.set $hr (call $host_com_create_instance
+      (call $g2w (local.get $arg0))   ;; rclsid → WASM addr
+      (local.get $arg1)               ;; pUnkOuter (guest addr, usually NULL)
+      (local.get $arg2)               ;; dwClsContext
+      (call $g2w (local.get $arg3))   ;; riid → WASM addr
+      (local.get $arg4)))             ;; ppv (guest addr)
+    ;; Check if we need async DLL load (host returns 0x800401F0 = CO_E_DLLNOTFOUND)
+    (if (i32.eq (local.get $hr) (i32.const 0x800401F0))
+      (then
+        ;; Save COM state for resume after DLL fetch
+        (global.set $com_clsid_ptr (local.get $arg0))
+        (global.set $com_iid_ptr (local.get $arg3))
+        (global.set $com_ppv_ptr (local.get $arg4))
+        (global.set $com_unk_outer (local.get $arg1))
+        (global.set $com_cls_ctx (local.get $arg2))
+        (global.set $com_dll_name (call $host_com_get_pending_dll))
+        ;; Yield to JS for async DLL fetch — DON'T advance ESP yet
+        ;; JS will load DLL, then re-call com_create_instance
+        (global.set $yield_reason (i32.const 3))
+        (global.set $steps (i32.const 0))
+        (return)))
+    ;; Synchronous success or error
+    (global.set $eax (local.get $hr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; 770: CoTaskMemAlloc(cb) — 1 arg stdcall, allocate from heap
+  (func $handle_CoTaskMemAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $heap_alloc (local.get $arg0)))
+    (if (global.get $eax)
+      (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; 771: StringFromGUID2(rguid, lpsz, cchMax) — 3 args stdcall
+  ;; Formats GUID as "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" into wide buffer
+  (func $handle_StringFromGUID2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32) (local $i i32)
+    (local $d1 i32) (local $d2 i32) (local $d3 i32)
+    ;; Need 39 chars: "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\0"
+    (if (i32.lt_u (local.get $arg2) (i32.const 39))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    ;; Read GUID fields: Data1(4) Data2(2) Data3(2) Data4(8)
+    (local.set $d1 (i32.load (local.get $src)))
+    (local.set $d2 (i32.load16_u (i32.add (local.get $src) (i32.const 4))))
+    (local.set $d3 (i32.load16_u (i32.add (local.get $src) (i32.const 6))))
+    ;; Write '{' as wide char
+    (i32.store16 (local.get $dst) (i32.const 0x7B))
+    ;; Format Data1 (8 hex digits)
+    (call $guid_hex32 (i32.add (local.get $dst) (i32.const 2)) (local.get $d1) (i32.const 8))
+    ;; '-'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 18)) (i32.const 0x2D))
+    ;; Format Data2 (4 hex digits)
+    (call $guid_hex32 (i32.add (local.get $dst) (i32.const 20)) (local.get $d2) (i32.const 4))
+    ;; '-'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 28)) (i32.const 0x2D))
+    ;; Format Data3 (4 hex digits)
+    (call $guid_hex32 (i32.add (local.get $dst) (i32.const 30)) (local.get $d3) (i32.const 4))
+    ;; '-'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 38)) (i32.const 0x2D))
+    ;; Format Data4[0..1] (4 hex digits)
+    (call $guid_hex8 (i32.add (local.get $dst) (i32.const 40)) (i32.load8_u (i32.add (local.get $src) (i32.const 8))))
+    (call $guid_hex8 (i32.add (local.get $dst) (i32.const 44)) (i32.load8_u (i32.add (local.get $src) (i32.const 9))))
+    ;; '-'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 48)) (i32.const 0x2D))
+    ;; Format Data4[2..7] (12 hex digits)
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 6)))
+      (call $guid_hex8
+        (i32.add (local.get $dst) (i32.add (i32.const 50) (i32.mul (local.get $i) (i32.const 4))))
+        (i32.load8_u (i32.add (local.get $src) (i32.add (i32.const 10) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    ;; '}'
+    (i32.store16 (i32.add (local.get $dst) (i32.const 74)) (i32.const 0x7D))
+    ;; null terminator
+    (i32.store16 (i32.add (local.get $dst) (i32.const 76)) (i32.const 0))
+    (global.set $eax (i32.const 39))  ;; chars written including NUL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
+  ;; Helper: write N hex digits (wide) for a 32-bit value, big-endian order
+  (func $guid_hex32 (param $dst i32) (param $val i32) (param $ndigits i32)
+    (local $i i32) (local $shift i32) (local $nibble i32)
+    (local.set $shift (i32.mul (i32.sub (local.get $ndigits) (i32.const 1)) (i32.const 4)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $ndigits)))
+      (local.set $nibble (i32.and (i32.shr_u (local.get $val) (local.get $shift)) (i32.const 0xF)))
+      (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 2)))
+        (if (result i32) (i32.le_u (local.get $nibble) (i32.const 9))
+          (then (i32.add (local.get $nibble) (i32.const 0x30)))
+          (else (i32.add (local.get $nibble) (i32.const 0x57)))))  ;; 'a' - 10
+      (local.set $shift (i32.sub (local.get $shift) (i32.const 4)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  ;; Helper: write 2 hex digits (wide) for a byte
+  (func $guid_hex8 (param $dst i32) (param $byte i32)
+    (call $guid_hex32 (local.get $dst) (local.get $byte) (i32.const 2)))
+
+  ;; 772: CLSIDFromString(lpsz, pclsid) — 2 args stdcall
+  ;; Parse "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" from wide string into 16-byte GUID
+  (func $handle_CLSIDFromString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32) (local $pos i32)
+    (local $d1 i32) (local $d2 i32) (local $d3 i32) (local $i i32) (local $b i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0x80004003))  ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    ;; Skip optional '{'
+    (local.set $pos (local.get $src))
+    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x7B))
+      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
+    ;; Parse Data1 (8 hex digits)
+    (local.set $d1 (call $parse_hex_wide (local.get $pos) (i32.const 8)))
+    (i32.store (local.get $dst) (local.get $d1))
+    (local.set $pos (i32.add (local.get $pos) (i32.const 16)))  ;; 8 chars * 2 bytes
+    ;; Skip '-'
+    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
+      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
+    ;; Parse Data2 (4 hex digits)
+    (local.set $d2 (call $parse_hex_wide (local.get $pos) (i32.const 4)))
+    (i32.store16 (i32.add (local.get $dst) (i32.const 4)) (local.get $d2))
+    (local.set $pos (i32.add (local.get $pos) (i32.const 8)))
+    ;; Skip '-'
+    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
+      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
+    ;; Parse Data3 (4 hex digits)
+    (local.set $d3 (call $parse_hex_wide (local.get $pos) (i32.const 4)))
+    (i32.store16 (i32.add (local.get $dst) (i32.const 6)) (local.get $d3))
+    (local.set $pos (i32.add (local.get $pos) (i32.const 8)))
+    ;; Skip '-'
+    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
+      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
+    ;; Parse Data4[0..1] (4 hex digits = 2 bytes)
+    (i32.store8 (i32.add (local.get $dst) (i32.const 8))
+      (call $parse_hex_wide (local.get $pos) (i32.const 2)))
+    (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
+    (i32.store8 (i32.add (local.get $dst) (i32.const 9))
+      (call $parse_hex_wide (local.get $pos) (i32.const 2)))
+    (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
+    ;; Skip '-'
+    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
+      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
+    ;; Parse Data4[2..7] (12 hex digits = 6 bytes)
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 6)))
+      (i32.store8 (i32.add (local.get $dst) (i32.add (i32.const 10) (local.get $i)))
+        (call $parse_hex_wide (local.get $pos) (i32.const 2)))
+      (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; Helper: parse N hex digits from wide string at WASM addr, return integer value
+  (func $parse_hex_wide (param $src i32) (param $ndigits i32) (result i32)
+    (local $result i32) (local $i i32) (local $ch i32) (local $digit i32)
+    (local.set $result (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $ndigits)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
+      (local.set $digit
+        (if (result i32) (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
+          (then (i32.sub (local.get $ch) (i32.const 0x30)))
+          (else (if (result i32) (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x46)))
+            (then (i32.sub (local.get $ch) (i32.const 0x37)))  ;; 'A'-10
+            (else (i32.sub (local.get $ch) (i32.const 0x57)))))))  ;; 'a'-10
+      (local.set $result (i32.or (i32.shl (local.get $result) (i32.const 4)) (local.get $digit)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (local.get $result))
+
+  ;; CommandLineToArgvW — already handled above as crash stub replacement
