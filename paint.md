@@ -1,6 +1,6 @@
 # MSPaint Debugging Notes
 
-## Current Status (2026-04-01)
+## Current Status (2026-04-02)
 
 ### Working
 
@@ -14,12 +14,73 @@
 - memset/memcpy use wasm memory.fill/memory.copy intrinsics
 - 15 new CRT functions: malloc, _strdup, _stricmp, strlen, strrchr, strcmp,
   strcpy, strncpy, strcat, atoi, _ftol, realloc, _strlwr, _mbsrchr, _mbsinc
-- EXE reaches batch 3 (was batch 0 at start of session)
+- Memory layout expanded to 64MB (1024 pages) for larger DLL address space
+- EXE reaches batch 11 with 103 API calls (was batch 0 → 3 → 9 → 10 → 11)
 
-### Current Blocker: `GetClassInfoA` (batch 9)
+### Current Blocker: mfc42 DllMain crash → EIP stuck at PE header (batch 11)
 
-MSPaint now reaches batch 9 (was batch 3). OleInitialize, RegCreateKeyExA,
-_mbschr all resolved. Crash on `GetClassInfoA` — needs implementation.
+mfc42.dll's DllMain traps with `memory access out of bounds` during init.
+msvcrt.dll's DllMain succeeds (EAX=1). CRT startup proceeds normally through
+103 API calls (`__set_app_type`, `__p__fmode`, `__p__commode`, `_controlfp`).
+Then execution reaches EIP=0x01055004 — which is offset +4 in the mfc42.dll
+PE header (not code). The emulator detects "STUCK" after batch 11.
+
+**Root cause:** mfc42's DllMain crashes during initialization (likely `rep stosd`
+with wild pointer, same class of bug as the previous hash table corruption).
+MFC is left uninitialized. After CRT init completes, `AfxWinMain` (MFC42
+ordinal 1576) is called but jumps to the PE header instead of real MFC code.
+
+The previous batch 10 use-after-free blocker (caused by `GetDlgItem` returning
+NULL) is no longer reachable — execution never gets that far because MFC itself
+fails to initialize.
+
+**Next step:** Debug mfc42 DllMain trap — either the expanded memory layout
+introduced a new wild pointer target, or the DllMain needs APIs that are now
+crash stubs (`GetDlgItem`, `GetTopWindow` were converted from silent return-0
+to `$crash_unimplemented`). Check if mfc42's DllMain calls any of the newly
+converted stubs.
+
+### Previous Blocker: use-after-free in MFC window management (batch 10) — SUPERSEDED
+
+At batch 10 (with old 32MB layout), crash on vtable call through freed memory.
+Root cause was `GetDlgItem` returning NULL, causing MFC to destroy frame object
+while still in use. This is no longer the active blocker — mfc42 DllMain now
+fails before reaching this point. The underlying issue (no window handle
+tracking for `GetDlgItem`/`GetTopWindow`) remains unresolved but is not the
+immediate problem.
+
+### Silent stubs converted to crash-on-unimplemented (2026-04-02)
+
+Converted 14 silent return-0 stubs that violated the fail-fast rule. These hid
+bugs by pretending to succeed without doing real work.
+
+**Wave 1 (safe — not hit by notepad/calc/skifree):**
+`wsprintfW`, `FindWindowA`, `GetDlgItem`, `GetTopWindow`, `GetActiveWindow`,
+`EnableMenuItem`, `CheckMenuItem`, `RegSetValueA`, `RegSetValueW`
+
+**Wave 2 (notepad-affecting — breaks notepad until implemented):**
+`SendMessageA`, `SetFocus`, `SHGetSpecialFolderPathA`, `IsIconic`, `WinHelpA`
+Notepad now crashes on `SendMessageA` at startup.
+
+**Sub-dispatcher fallbacks:** `dispatch_local`, `dispatch_global`, `dispatch_lstr`,
+`dispatch_reg` — unmatched API names now crash instead of silently returning 0.
+
+**Left as-is (legitimate minimal implementations):** `SetCursor`, `OleInitialize`,
+`RegQueryValueA`, `SetUnhandledExceptionFilter`, `LoadCursorA`, `LoadIconA`,
+critical sections, thread IDs, code pages, `SetWindowsHookExA/W`,
+`GetLayout`/`SetLayout`.
+
+**Impact on MSPaint:** `GetDlgItem` and `GetTopWindow` (previously returning NULL)
+now crash. This makes the batch 10 use-after-free blocker explicit — the app will
+crash on `GetDlgItem` instead of silently getting NULL and corrupting memory later.
+
+### Memory layout expanded to 64MB (2026-04-02)
+
+Memory expanded from 512 pages (32MB) to 1024 pages (64MB) to accommodate
+larger DLL address spaces. Guest address space grew from 14MB to 28MB.
+Both `test/run.js` and `host/host.js` updated to match. All region bases
+shifted: stack at 0x01C12000, thunk zone at 0x01D12000, thread cache at
+0x01D52000, DLL table at 0x02066000. Changes are uncommitted.
 
 ### OleInitialize Root Cause (RESOLVED)
 
@@ -37,6 +98,27 @@ Updated `$API_HASH_TABLE` global, `gen_api_table.js`, and CLAUDE.md memory map.
 
 - RegCreateKeyExA — 9 args stdcall, delegates to host_reg_create_key
 - _mbschr — find first byte occurrence in multibyte string (cdecl)
+- GetClassInfoA — return FALSE (class not found), 3 args stdcall
+- GetActiveWindow — return NULL, 0 args
+- GetDlgItem — return NULL, 2 args stdcall
+- GetTopWindow — return NULL, 1 arg stdcall
+
+### Tools added/improved this session
+
+- `tools/pe-imports.js` — list PE import descriptors and entries (`--dll=name`, `--all`)
+- `tools/pe-sections.js` — show PE section layout with `--base=0xLOADADDR`
+- `tools/hexdump.js` — added `--base=0xLOADADDR` for relocated DLL analysis
+- `tools/check-hash-table.js` — verify API hash table integrity (WAT vs JSON)
+- `gen_dispatch.js` — now emits `$host_log` call, enabling `--trace-api` / `--break-api`
+  (was completely broken before — no API calls were logged through thunk dispatch)
+
+### Key debugging insight: hash table corruption
+
+mfc42's DllMain runs `rep stosd` with uninitialized EDI (wild pointer → guest
+0x02350000). `$gs32` converts via `g2w` to WASM 0x01362000 which was the hash
+table. The entire 6KB hash table was zeroed. All runtime `$lookup_api_id` calls
+returned 0xFFFF. Fix: relocate hash table to WASM 0x4000 (below GUEST_BASE,
+unreachable by any `g2w` of a valid guest address).
 
 ### Fixes Made This Session
 
@@ -163,9 +245,12 @@ IMM32.dll    — input method (thunked)
 12. Parse command line
 13. Call AfxWinMain (MFC42 ordinal 1576) via 0x1032b91
 
-### Memory Layout
+### Memory Layout (64MB, updated 2026-04-02)
 
 - MSPaint image_base: 0x01000000
 - mfc42.dll loaded at: 0x01055000
 - msvcrt.dll loaded at: 0x01142000
-- Thunk zone: 0x02000000+ (900 thunks at start, 1554 after DLL loading)
+- Guest stack: 0x02C00000 (ESP starts at top of 1MB region at 0x01C12000 WASM)
+- Thunk zone: 0x02D00000+ (1554 thunks after DLL loading)
+- WASM regions: guest 0x00012000 (28MB), stack 0x01C12000, heap 0x01D12000,
+  thunks 0x01D12000, thread cache 0x01D52000, DLL table 0x02066000
