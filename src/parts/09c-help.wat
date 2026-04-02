@@ -65,6 +65,41 @@
       (br $scan)))
   )
 
+  ;; Find window table slot index for hwnd; returns -1 if not found
+  (func $wnd_table_find (param $hwnd i32) (result i32)
+    (local $i i32) (local $ptr i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1)
+  )
+
+  ;; Get per-window userdata (GWL_USERDATA table at 0x2200)
+  (func $wnd_get_userdata (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.const 0x2200) (i32.shl (local.get $idx) (i32.const 2))))
+  )
+
+  ;; Set per-window userdata; returns old value
+  (func $wnd_set_userdata (param $hwnd i32) (param $value i32) (result i32)
+    (local $idx i32) (local $ptr i32) (local $old i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (i32.const 0x2200) (i32.shl (local.get $idx) (i32.const 2))))
+    (local.set $old (i32.load (local.get $ptr)))
+    (i32.store (local.get $ptr) (local.get $value))
+    (local.get $old)
+  )
+
   ;; ---- Class table helpers ----
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
@@ -145,24 +180,33 @@
 
   ;; Help window WndProc (WAT-native, called directly — not via x86)
   (func $help_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    ;; WM_PAINT (0x000F)
+    (local $hdc i32)
+    ;; WM_PAINT (0x000F): draw help text using GDI (window-relative)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
-        ;; Draw help text if we have a topic loaded
+        ;; hdc = hwnd + 0x40000 (same encoding as BeginPaint)
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Set white background
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
+        (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))  ;; white
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000))) ;; black
+        ;; Fill client area white
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 400) (i32.const 300)
+          (i32.const 0)))  ;; hbrush 0 = use bk color
+        ;; Draw help text
         (if (global.get $help_topic_wa)
           (then
-            (call $host_draw_text
-              (i32.const 10) (i32.const 10)
+            (drop (call $host_gdi_text_out (local.get $hdc)
+              (i32.const 8) (i32.const 8)
               (global.get $help_topic_wa)
-              (global.get $help_topic_len)
-              (i32.const 0x000000)))  ;; black text
+              (global.get $help_topic_len))))
           (else
             ;; No topic: draw placeholder
-            (call $host_draw_text
-              (i32.const 10) (i32.const 10)
+            (drop (call $host_gdi_text_out (local.get $hdc)
+              (i32.const 8) (i32.const 8)
               (i32.const 0x108)  ;; WASM addr of "Help" string
-              (i32.const 4)
-              (i32.const 0x000000))))
+              (i32.const 4)))))
         (return (i32.const 0))))
     ;; WM_CLOSE (0x0010)
     (if (i32.eq (local.get $msg) (i32.const 0x0010))

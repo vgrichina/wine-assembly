@@ -164,6 +164,7 @@
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
   ;; 0x00002000  256B    Window table (32 entries × 8 bytes: hwnd, wndproc)
   ;; 0x00002100  192B    Class table (16 entries × 12 bytes: name_hash, wndproc, atom)
+  ;; 0x00002200  128B    Window userdata table (32 entries × 4 bytes: GWL_USERDATA)
   ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)

@@ -1425,11 +1425,26 @@
 
   ;; 101: SetWindowLongA — STUB: unimplemented
   (func $handle_SetWindowLongA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetWindowLongA(hWnd, nIndex, dwNewLong) — return old value (0)
-    ;; nIndex: GWL_WNDPROC=-4, GWL_STYLE=-16, GWL_EXSTYLE=-20, GWL_USERDATA=-21
-    ;; TODO: actually store per-window data; for now return 0 as previous value
+    ;; SetWindowLongA(hWnd, nIndex, dwNewLong) — nIndex is signed
+    ;; GWL_WNDPROC=-4, GWL_USERDATA=-21, GWL_STYLE=-16, GWL_EXSTYLE=-20, GWL_ID=-12
+    ;; Also positive indices for dialog extra bytes (DWLP_USER etc.)
+    (if (i32.eq (local.get $arg1) (i32.const -21))  ;; GWL_USERDATA
+      (then
+        (global.set $eax (call $wnd_set_userdata (local.get $arg0) (local.get $arg2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -4))   ;; GWL_WNDPROC — subclass
+      (then
+        (global.set $eax (call $wnd_table_get (local.get $arg0)))  ;; return old wndproc
+        (call $wnd_table_set (local.get $arg0) (local.get $arg2)) ;; set new wndproc
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; For other indices (style, exstyle, positive offsets), store in userdata for now
+    (if (i32.ge_s (local.get $arg1) (i32.const 0))  ;; positive offset = dialog extra bytes
+      (then
+        (global.set $eax (call $wnd_set_userdata (local.get $arg0) (local.get $arg2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; Default: return 0 for unhandled indices
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 102: SetWindowTextA
@@ -2176,7 +2191,10 @@
 
   ;; 193: ShellExecuteA — STUB: unimplemented
   (func $handle_ShellExecuteA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd)
+    ;; Return >32 for success (we can't actually launch anything)
+    (global.set $eax (i32.const 33))  ;; SE_ERR_NOASSOC would be 31, 33 = success
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
   ;; 194: ShellAboutA(hwnd, szApp, szOtherStuff, hIcon) — show About dialog
@@ -3889,7 +3907,9 @@
 
   ;; 413: GetUserDefaultLCID — STUB: unimplemented
   (func $handle_GetUserDefaultLCID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Return 0x0409 = English (US)
+    (global.set $eax (i32.const 0x0409))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
   ;; 414: FileTimeToSystemTime — STUB: unimplemented
@@ -3990,14 +4010,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 432: RegSetValueW — 5 args stdcall, return ERROR_SUCCESS
+  ;; 432: RegSetValueW — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
   (func $handle_RegSetValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; RegSetValueA — 5 args stdcall, return ERROR_SUCCESS
+  ;; RegSetValueA — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
   (func $handle_RegSetValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; RegQueryValueA(hKey, lpSubKey, lpData, lpcbData) — 4 args stdcall
@@ -4374,7 +4396,19 @@
 
   ;; 467: CommandLineToArgvW — STUB: unimplemented
   (func $handle_CommandLineToArgvW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CommandLineToArgvW(lpCmdLine, pNumArgs) — parse wide string command line
+    ;; Allocate: argv array (1 pointer) + wide string "app\0" (8 bytes)
+    (local $buf i32)
+    (local.set $buf (call $heap_alloc (i32.const 32)))
+    ;; argv[0] = pointer to wide string at buf+8
+    (i32.store (call $g2w (local.get $buf)) (i32.add (local.get $buf) (i32.const 8)))
+    ;; Write L"app\0" at buf+8 (wide: 'a'=0x0061, 'p'=0x0070, 'p'=0x0070, '\0'=0)
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0x00700061))   ;; "ap"
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0x00000070))  ;; "p\0"
+    ;; *pNumArgs = 1
+    (i32.store (call $g2w (local.get $arg1)) (i32.const 1))
+    (global.set $eax (local.get $buf))  ;; return pointer to argv array
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 468: IsBadCodePtr — STUB: unimplemented
@@ -6700,3 +6734,97 @@
   (func $handle_OleUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
+
+  ;; 762: GetWindowLongA(hWnd, nIndex)
+  (func $handle_GetWindowLongA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg1) (i32.const -21))  ;; GWL_USERDATA
+      (then
+        (global.set $eax (call $wnd_get_userdata (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -4))   ;; GWL_WNDPROC
+      (then
+        (global.set $eax (call $wnd_table_get (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -6))   ;; GWL_HINSTANCE
+      (then
+        (global.set $eax (global.get $image_base))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (if (i32.ge_s (local.get $arg1) (i32.const 0))  ;; positive = dialog extra bytes
+      (then
+        (global.set $eax (call $wnd_get_userdata (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; 763: waveOutMessage(hwo, uMsg, dw1, dw2) — return MMSYSERR_NOERROR
+  (func $handle_waveOutMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+  )
+
+  ;; 764: GetUserDefaultLCID — already implemented at ID 413, this is a duplicate entry
+  ;; (handled by dispatch to same function)
+
+  ;; 765: wcsrchr(str, ch) — find last occurrence of wide char
+  (func $handle_wcsrchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32) (local $last i32) (local $ch i32)
+    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local.set $last (i32.const 0))
+    (block $done (loop $scan
+      (local.set $ch (i32.load16_u (local.get $ptr)))
+      (if (i32.eq (local.get $ch) (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (then (local.set $last (local.get $ptr))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
+      (br $scan)))
+    ;; Convert WASM addr back to guest addr: wa - GUEST_BASE + image_base
+    (if (local.get $last)
+      (then (global.set $eax (i32.add (i32.sub (local.get $last) (global.get $GUEST_BASE)) (global.get $image_base))))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
+  )
+
+  ;; 766: UnregisterClassA(lpClassName, hInstance) — return TRUE
+  (func $handle_UnregisterClassA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; 767: SHRegGetUSValueA — return ERROR_FILE_NOT_FOUND
+  (func $handle_SHRegGetUSValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 2))  ;; ERROR_FILE_NOT_FOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+  )
+
+  ;; 768: SHGetPathFromIDListA(pidl, pszPath) — write "C:\WINDOWS" and return TRUE
+  (func $handle_SHGetPathFromIDListA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (local.get $wa) (i32.const 0x575C3A43))          ;; "C:\W"
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x4F444E49))  ;; "INDO"
+    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x5357))    ;; "WS"
+    (i32.store8 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; 769: GetVersionExW(lpVersionInfo) — fill OSVERSIONINFOW for Windows 98
+  (func $handle_GetVersionExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    ;; dwOSVersionInfoSize already set by caller at offset 0
+    ;; dwMajorVersion = 4 (Win98)
+    (i32.store offset=4 (local.get $wa) (i32.const 4))
+    ;; dwMinorVersion = 10 (Win98)
+    (i32.store offset=8 (local.get $wa) (i32.const 10))
+    ;; dwBuildNumber = 0x040A0004 (Win98 SE)
+    (i32.store offset=12 (local.get $wa) (i32.const 0x040A0004))
+    ;; dwPlatformId = 1 (VER_PLATFORM_WIN32_WINDOWS)
+    (i32.store offset=16 (local.get $wa) (i32.const 1))
+    ;; szCSDVersion — leave as zeroes
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; 770: CommandLineToArgvW — already handled above as crash stub replacement

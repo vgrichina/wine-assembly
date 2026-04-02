@@ -5332,5 +5332,54 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1583922372
+  },
+  {
+    "id": 762,
+    "name": "GetWindowLongA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3449052256
+  },
+  {
+    "id": 763,
+    "name": "waveOutMessage",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1756833583
+  },
+  {
+    "id": 764,
+    "name": "wcsrchr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3979010809
+  },
+  {
+    "id": 765,
+    "name": "UnregisterClassA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1586708540
+  },
+  {
+    "id": 766,
+    "name": "SHRegGetUSValueA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 958162268
+  },
+  {
+    "id": 767,
+    "name": "SHGetPathFromIDListA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 497432823
+  },
+  {
+    "id": 768,
+    "name": "GetVersionExW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1016210409
   }
 ]
