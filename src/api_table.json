@@ -5521,5 +5521,19 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1849296691
+  },
+  {
+    "id": 789,
+    "name": "SetObjectOwner",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 915204783
+  },
+  {
+    "id": 790,
+    "name": "GetKeyNameTextA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3996606165
   }
 ]

@@ -12,6 +12,9 @@
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
+  (import "host" "help_open" (func $host_help_open (param i32) (result i32)))
+  (import "host" "help_get_topic" (func $host_help_get_topic (param i32 i32 i32) (result i32)))
+  (import "host" "help_get_title" (func $host_help_get_title (param i32 i32) (result i32)))
   (import "host" "get_ticks" (func $host_get_ticks (result i32)))
   ;; GUI host imports — call into JS canvas renderer
   (import "host" "create_window" (func $host_create_window (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -196,7 +199,7 @@
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
-  (data (i32.const 0x100) "win.ini\00Help\00")
+  (data (i32.const 0x100) "win.ini\00Help\00[Contents]\00[Back]\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -349,7 +352,7 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   ;; Thread yield state (for multi-instance threading)
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load
   (global $wait_handle  (mut i32) (i32.const 0))
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
@@ -364,13 +367,16 @@
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
   ;; Help system state
-  (global $help_hwnd      (mut i32) (i32.const 0))  ;; Help window handle (0 = not open)
-  (global $help_file_wa   (mut i32) (i32.const 0))  ;; WASM ptr to loaded HLP data
-  (global $help_file_len  (mut i32) (i32.const 0))  ;; Length of HLP data
-  (global $help_topic_wa  (mut i32) (i32.const 0))  ;; WASM ptr to current topic text
-  (global $help_topic_len (mut i32) (i32.const 0))  ;; Length of current topic text
-  (global $help_title_wa  (mut i32) (i32.const 0))  ;; WASM ptr to help title string
-  (global $help_title_len (mut i32) (i32.const 0))  ;; Length of help title
+  (global $help_hwnd        (mut i32) (i32.const 0))  ;; Help window handle (0 = not open)
+  (global $help_topic_wa    (mut i32) (i32.const 0))  ;; WASM ptr to current topic text
+  (global $help_topic_len   (mut i32) (i32.const 0))  ;; Length of current topic text
+  (global $help_title_wa    (mut i32) (i32.const 0))  ;; WASM ptr to help title string
+  (global $help_title_len   (mut i32) (i32.const 0))  ;; Length of help title
+  (global $help_topic_count (mut i32) (i32.const 0))  ;; Total topics from HLP
+  (global $help_cur_topic   (mut i32) (i32.const 0))  ;; Current topic (0=Contents)
+  (global $help_scroll_y    (mut i32) (i32.const 0))  ;; Scroll offset pixels
+  (global $help_back_stack  (mut i32) (i32.const 0))  ;; WASM addr of back-stack
+  (global $help_back_count  (mut i32) (i32.const 0))  ;; Back stack size
 
   ;; Watchpoint: break when [watch_addr] changes (0=disabled)
   (global $watch_addr (mut i32) (i32.const 0))

@@ -1942,10 +1942,12 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; Load HLP file if not already loaded
-    (if (i32.eqz (global.get $help_file_wa))
+    (if (i32.eqz (global.get $help_topic_count))
       (then
         (if (local.get $arg1)
           (then (call $help_load_file (local.get $arg1))))))
+    ;; If yielding for async help file load, return without adjusting stack
+    (if (global.get $yield_reason) (then (return)))
     ;; Create help window if not open
     (if (i32.eqz (global.get $help_hwnd))
       (then (call $help_create_window)))
@@ -2573,9 +2575,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 210: _initterm(start, end) — CRT init table walker, skip for now
+  ;; 210: _initterm(start, end) — CRT init table walker
+  ;; Iterates function pointers from [start] to [end), calling each non-NULL entry.
+  ;; Uses continuation thunk (0xCACA0003) to chain calls through the emulator.
   (func $handle__initterm (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $fn i32)
+    ;; Save return address and end pointer for continuation
+    (global.set $initterm_ret (call $gl32 (global.get $esp)))
+    (global.set $initterm_end (local.get $arg1))
+    (global.set $initterm_ptr (local.get $arg0))
+    ;; Clean _initterm frame (ret + 2 args = 12 bytes)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ;; Find first non-NULL entry and call it
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (global.get $initterm_ptr) (global.get $initterm_end)))
+      (local.set $fn (call $gl32 (call $g2w (global.get $initterm_ptr))))
+      (global.set $initterm_ptr (i32.add (global.get $initterm_ptr) (i32.const 4)))
+      (if (local.get $fn)
+        (then
+          ;; Push continuation thunk as return address, then jump to fn
+          (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+          (call $gs32 (global.get $esp) (global.get $initterm_thunk))
+          (global.set $eip (local.get $fn))
+          (global.set $steps (i32.const 0))
+          (return)))
+      (br $scan)))
+    ;; All entries processed — return to original caller
+    (global.set $eip (global.get $initterm_ret))
   )
 
   ;; 211: _controlfp(new, mask) — return default FPU control word
@@ -3294,10 +3320,14 @@
     ))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
+    ;; Register hwnd→wndproc in window table (look up from class table by className)
+    ;; className is wide string for W version, but class_table_lookup_w handles it
+    (if (global.get $wndproc_addr)
+      (then (call $wnd_table_set (global.get $next_hwnd) (global.get $wndproc_addr))))
     ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
     (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
     (then
-    (global.set $pending_wm_create (i32.const 1))
+    (global.set $pending_wm_create (i32.const 2))
     ;; Store window outer dimensions
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
@@ -5908,7 +5938,12 @@
 
   ;; 646: GetWindowThreadProcessId — STUB: unimplemented
   (func $handle_GetWindowThreadProcessId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetWindowThreadProcessId(hWnd, lpdwProcessId) → threadId
+    ;; If lpdwProcessId is non-null, write process ID
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 1))))  ;; fake PID = 1
+    (global.set $eax (i32.const 1))  ;; fake thread ID = 1
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 647: GetMessageW — same as GetMessageA
@@ -5924,15 +5959,29 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver pending WM_CREATE before anything else
-    (if (global.get $pending_wm_create)
+    ;; Deliver pending WM_NCCREATE then WM_CREATE
+    ;; pending_wm_create: 2=need NCCREATE, 1=need CREATE, 0=done
+    (if (i32.eq (global.get $pending_wm_create) (i32.const 2))
+    (then
+    (global.set $pending_wm_create (i32.const 1))
+    ;; Fill CREATESTRUCT at 0x400100
+    (call $gs32 (i32.const 0x400100) (i32.const 0))  ;; lpCreateParams
+    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))
+    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0081)) ;; WM_NCCREATE
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (if (i32.eq (global.get $pending_wm_create) (i32.const 1))
     (then
     (global.set $pending_wm_create (i32.const 0))
     (call $gs32 (i32.const 0x400100) (i32.const 0))
     (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))
     (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
     (global.set $eax (i32.const 1))
@@ -6099,7 +6148,9 @@
 
   ;; 656: DeleteMenu — STUB: unimplemented
   (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 657: GetDCEx — STUB: unimplemented
@@ -7617,6 +7668,138 @@
     (global.set $eax (global.get $next_atom))
     (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 790: GetKeyNameTextA(lParam, lpString, cchSize) — write key name from scan code
+  (func $handle_GetKeyNameTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; arg0=lParam (scan code in bits 16-23), arg1=lpString, arg2=cchSize
+    (local $scan i32) (local $buf i32) (local $len i32) (local $ch i32)
+    (local.set $scan (i32.and (i32.shr_u (local.get $arg0) (i32.const 16)) (i32.const 0xFF)))
+    (local.set $buf (call $g2w (local.get $arg1)))
+    (local.set $len (i32.const 0))
+    (block $done
+      ;; Esc (0x01)
+      (if (i32.eq (local.get $scan) (i32.const 0x01)) (then
+        (i32.store (local.get $buf) (i32.const 0x00637345)) ;; "Esc\0"
+        (local.set $len (i32.const 3)) (br $done)))
+      ;; Number row: 0x02-0x0A = '1'-'9', 0x0B = '0'
+      (if (i32.and (i32.ge_u (local.get $scan) (i32.const 0x02)) (i32.le_u (local.get $scan) (i32.const 0x0A)))
+        (then (i32.store16 (local.get $buf) (i32.add (i32.const 0x30) (i32.sub (local.get $scan) (i32.const 1))))
+              (local.set $len (i32.const 1)) (br $done)))
+      (if (i32.eq (local.get $scan) (i32.const 0x0B)) (then
+        (i32.store16 (local.get $buf) (i32.const 0x30)) (local.set $len (i32.const 1)) (br $done)))
+      ;; Tab (0x0F)
+      (if (i32.eq (local.get $scan) (i32.const 0x0F)) (then
+        (i32.store (local.get $buf) (i32.const 0x00626154)) ;; "Tab\0"
+        (local.set $len (i32.const 3)) (br $done)))
+      ;; QWERTYUIOP: scancodes 0x10-0x19
+      (local.set $ch (i32.const 0))
+      (if (i32.eq (local.get $scan) (i32.const 0x10)) (then (local.set $ch (i32.const 0x51))))
+      (if (i32.eq (local.get $scan) (i32.const 0x11)) (then (local.set $ch (i32.const 0x57))))
+      (if (i32.eq (local.get $scan) (i32.const 0x12)) (then (local.set $ch (i32.const 0x45))))
+      (if (i32.eq (local.get $scan) (i32.const 0x13)) (then (local.set $ch (i32.const 0x52))))
+      (if (i32.eq (local.get $scan) (i32.const 0x14)) (then (local.set $ch (i32.const 0x54))))
+      (if (i32.eq (local.get $scan) (i32.const 0x15)) (then (local.set $ch (i32.const 0x59))))
+      (if (i32.eq (local.get $scan) (i32.const 0x16)) (then (local.set $ch (i32.const 0x55))))
+      (if (i32.eq (local.get $scan) (i32.const 0x17)) (then (local.set $ch (i32.const 0x49))))
+      (if (i32.eq (local.get $scan) (i32.const 0x18)) (then (local.set $ch (i32.const 0x4F))))
+      (if (i32.eq (local.get $scan) (i32.const 0x19)) (then (local.set $ch (i32.const 0x50))))
+      ;; Enter (0x1C)
+      (if (i32.eq (local.get $scan) (i32.const 0x1C)) (then
+        (i32.store (local.get $buf) (i32.const 0x65746E45)) ;; "Ente"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x0072)) ;; "r\0"
+        (local.set $len (i32.const 5)) (br $done)))
+      ;; Ctrl (0x1D)
+      (if (i32.eq (local.get $scan) (i32.const 0x1D)) (then
+        (i32.store (local.get $buf) (i32.const 0x6C727443)) ;; "Ctrl"
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
+        (local.set $len (i32.const 4)) (br $done)))
+      ;; ASDFGHJKL: scancodes 0x1E-0x26
+      (if (i32.eq (local.get $scan) (i32.const 0x1E)) (then (local.set $ch (i32.const 0x41))))
+      (if (i32.eq (local.get $scan) (i32.const 0x1F)) (then (local.set $ch (i32.const 0x53))))
+      (if (i32.eq (local.get $scan) (i32.const 0x20)) (then (local.set $ch (i32.const 0x44))))
+      (if (i32.eq (local.get $scan) (i32.const 0x21)) (then (local.set $ch (i32.const 0x46))))
+      (if (i32.eq (local.get $scan) (i32.const 0x22)) (then (local.set $ch (i32.const 0x47))))
+      (if (i32.eq (local.get $scan) (i32.const 0x23)) (then (local.set $ch (i32.const 0x48))))
+      (if (i32.eq (local.get $scan) (i32.const 0x24)) (then (local.set $ch (i32.const 0x4A))))
+      (if (i32.eq (local.get $scan) (i32.const 0x25)) (then (local.set $ch (i32.const 0x4B))))
+      (if (i32.eq (local.get $scan) (i32.const 0x26)) (then (local.set $ch (i32.const 0x4C))))
+      ;; Shift (0x2A, 0x36)
+      (if (i32.or (i32.eq (local.get $scan) (i32.const 0x2A)) (i32.eq (local.get $scan) (i32.const 0x36))) (then
+        (i32.store (local.get $buf) (i32.const 0x66696853)) ;; "Shif"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x0074)) ;; "t\0"
+        (local.set $len (i32.const 5)) (br $done)))
+      ;; ZXCVBNM: scancodes 0x2C-0x32
+      (if (i32.eq (local.get $scan) (i32.const 0x2C)) (then (local.set $ch (i32.const 0x5A))))
+      (if (i32.eq (local.get $scan) (i32.const 0x2D)) (then (local.set $ch (i32.const 0x58))))
+      (if (i32.eq (local.get $scan) (i32.const 0x2E)) (then (local.set $ch (i32.const 0x43))))
+      (if (i32.eq (local.get $scan) (i32.const 0x2F)) (then (local.set $ch (i32.const 0x56))))
+      (if (i32.eq (local.get $scan) (i32.const 0x30)) (then (local.set $ch (i32.const 0x42))))
+      (if (i32.eq (local.get $scan) (i32.const 0x31)) (then (local.set $ch (i32.const 0x4E))))
+      (if (i32.eq (local.get $scan) (i32.const 0x32)) (then (local.set $ch (i32.const 0x4D))))
+      ;; If a letter was matched, write it
+      (if (local.get $ch) (then
+        (i32.store8 (local.get $buf) (local.get $ch))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0))
+        (local.set $len (i32.const 1)) (br $done)))
+      ;; Alt (0x38)
+      (if (i32.eq (local.get $scan) (i32.const 0x38)) (then
+        (i32.store (local.get $buf) (i32.const 0x00746C41)) ;; "Alt\0"
+        (local.set $len (i32.const 3)) (br $done)))
+      ;; Space (0x39)
+      (if (i32.eq (local.get $scan) (i32.const 0x39)) (then
+        (i32.store (local.get $buf) (i32.const 0x63617053)) ;; "Spac"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x0065)) ;; "e\0"
+        (local.set $len (i32.const 5)) (br $done)))
+      ;; F1-F10: scan 0x3B-0x44
+      (if (i32.and (i32.ge_u (local.get $scan) (i32.const 0x3B)) (i32.le_u (local.get $scan) (i32.const 0x44)))
+        (then
+          (i32.store8 (local.get $buf) (i32.const 0x46))  ;; 'F'
+          (local.set $ch (i32.sub (local.get $scan) (i32.const 0x3A)))
+          (if (i32.le_u (local.get $ch) (i32.const 9))
+            (then (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.add (i32.const 0x30) (local.get $ch)))
+                  (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0))
+                  (local.set $len (i32.const 2)))
+            (else (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x31))
+                  (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x30))
+                  (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 0))
+                  (local.set $len (i32.const 3))))
+          (br $done)))
+      ;; Arrow keys: Up=0x48, Left=0x4B, Right=0x4D, Down=0x50
+      (if (i32.eq (local.get $scan) (i32.const 0x48)) (then
+        (i32.store (local.get $buf) (i32.const 0x00007055)) ;; "Up\0"
+        (local.set $len (i32.const 2)) (br $done)))
+      (if (i32.eq (local.get $scan) (i32.const 0x4B)) (then
+        (i32.store (local.get $buf) (i32.const 0x7466654C)) ;; "Left"
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
+        (local.set $len (i32.const 4)) (br $done)))
+      (if (i32.eq (local.get $scan) (i32.const 0x4D)) (then
+        (i32.store (local.get $buf) (i32.const 0x68676952)) ;; "Righ"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x0074)) ;; "t\0"
+        (local.set $len (i32.const 5)) (br $done)))
+      (if (i32.eq (local.get $scan) (i32.const 0x50)) (then
+        (i32.store (local.get $buf) (i32.const 0x6E776F44)) ;; "Down"
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
+        (local.set $len (i32.const 4)) (br $done)))
+      ;; F11-F12
+      (if (i32.eq (local.get $scan) (i32.const 0x57)) (then
+        (i32.store (local.get $buf) (i32.const 0x00313146)) ;; "F11\0"
+        (local.set $len (i32.const 3)) (br $done)))
+      (if (i32.eq (local.get $scan) (i32.const 0x58)) (then
+        (i32.store (local.get $buf) (i32.const 0x00323146)) ;; "F12\0"
+        (local.set $len (i32.const 3)) (br $done)))
+      ;; Unknown: write "?"
+      (i32.store16 (local.get $buf) (i32.const 0x003F))
+      (local.set $len (i32.const 1))
+    )
+    (global.set $eax (local.get $len))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 789: SetObjectOwner — obsolete GDI function, no-op
+  (func $handle_SetObjectOwner (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement
