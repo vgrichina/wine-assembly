@@ -704,7 +704,23 @@
     ;; Client = outer - borders(6w) - nc_height
     (global.set $pending_wm_size (i32.or
     (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16)))))
+    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
+    ;; Pre-populate client rect + viewport center so game code that runs between
+    ;; CreateWindowExA and WM_CREATE sees correct values. In real Win98, WM_CREATE
+    ;; is sent synchronously during CreateWindowExA, but we defer it via GetMessageA.
+    (local.set $tmp (i32.sub (global.get $main_win_cx) (i32.const 6)))    ;; clientW
+    (call $gs32 (i32.const 0x40c6b0) (i32.const 0))                       ;; rect.left
+    (call $gs32 (i32.const 0x40c6b4) (i32.const 0))                       ;; rect.top
+    (call $gs32 (i32.const 0x40c6b8) (local.get $tmp))                    ;; rect.right = clientW
+    (call $gs32 (i32.const 0x40c6bc)
+      (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)))    ;; rect.bottom = clientH
+    ;; centerY = clientH / 3 (16-bit store)
+    (i32.store16 (call $g2w (i32.const 0x40c5fc))
+      (i32.div_s (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 3)))
+    ;; centerX = clientW / 2 (16-bit store)
+    (i32.store16 (call $g2w (i32.const 0x40c704))
+      (i32.shr_u (local.get $tmp) (i32.const 1)))
+    )
     (else
     ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
     (global.set $pending_child_create (global.get $next_hwnd))
@@ -717,6 +733,9 @@
     (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
     (if (local.get $tmp)
       (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp))))
+    ;; Store parent hwnd (hWndParent = [esp+36])
+    (call $wnd_set_parent (global.get $next_hwnd)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -3056,6 +3075,9 @@
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
     (global.set $child_paint_hwnd (global.get $next_hwnd))
     ))
+    ;; Store parent hwnd (hWndParent = [esp+36])
+    (call $wnd_set_parent (global.get $next_hwnd)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -3190,8 +3212,10 @@
   )
 
   ;; 303: GetParent — STUB: unimplemented
+  ;; GetParent(hwnd) — 1 arg stdcall, return parent hwnd or 0
   (func $handle_GetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 304: GetWindow — STUB: unimplemented

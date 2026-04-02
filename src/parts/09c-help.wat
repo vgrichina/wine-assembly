@@ -103,6 +103,24 @@
     (local.get $old)
   )
 
+  ;; Get parent hwnd (parent table at 0x2280)
+  (func $wnd_get_parent (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.const 0x2280) (i32.shl (local.get $idx) (i32.const 2))))
+  )
+
+  ;; Set parent hwnd for a window
+  (func $wnd_set_parent (param $hwnd i32) (param $parent i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store (i32.add (i32.const 0x2280) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
+  )
+
   ;; ---- Class table helpers ----
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
@@ -250,10 +268,10 @@
     (local.set $magic (i32.load (global.get $help_file_wa)))
     (if (i32.ne (local.get $magic) (i32.const 0x00035F3F))
       (then (return)))  ;; Not a valid HLP file
-    ;; Get directory offset
+    ;; Get directory offset; skip 9-byte internal file header to reach B+tree
     (local.set $dir_off (i32.load offset=4 (global.get $help_file_wa)))
-    (local.set $dir_wa (i32.add (global.get $help_file_wa) (local.get $dir_off)))
-    ;; Directory header: magic(u16), flags(u16), page_size(u16), ...
+    (local.set $dir_wa (i32.add (global.get $help_file_wa) (i32.add (local.get $dir_off) (i32.const 9))))
+    ;; B+tree header: magic(u16), flags(u16), page_size(u16), ...
     (local.set $dir_magic (i32.load16_u (local.get $dir_wa)))
     (if (i32.ne (local.get $dir_magic) (i32.const 0x293B))
       (then (return)))
@@ -316,15 +334,15 @@
   (func $hlp_parse_system (param $wa i32)
     (local $magic i32) (local $rec_wa i32) (local $rec_type i32) (local $rec_size i32)
     (local $end_wa i32) (local $title_wa i32) (local $title_len i32)
-    ;; Internal file header: 9 bytes (usedSpace:u32, reserved:u8, reserved:u32)
-    ;; Then |SYSTEM header: magic(u16=0x036C), minor(u16), flags(u16)
-    ;; Then tagged records
+    ;; Internal file header: 9 bytes (usedSpace:u32, allocSpace:u32, flags:u8)
+    ;; Then |SYSTEM header: magic(u16=0x036C), minor(u16), flags(u16), GenDate(u32)
+    ;; Then tagged records (type:u16, size:u16, data)
     (local.set $wa (i32.add (local.get $wa) (i32.const 9))) ;; skip internal file header
     (local.set $magic (i32.load16_u (local.get $wa)))
     (if (i32.ne (local.get $magic) (i32.const 0x036C))
       (then (return)))
-    ;; Skip system header (magic + minor + flags = 6 bytes)
-    (local.set $rec_wa (i32.add (local.get $wa) (i32.const 6)))
+    ;; Skip system header: magic(2) + minor(2) + flags(2) + GenDate(4) = 10 bytes
+    (local.set $rec_wa (i32.add (local.get $wa) (i32.const 10)))
     ;; Scan tagged records (up to 256 bytes)
     (local.set $end_wa (i32.add (local.get $rec_wa) (i32.const 256)))
     (block $done (loop $rec_loop

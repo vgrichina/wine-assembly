@@ -15,39 +15,53 @@
 - 15 new CRT functions: malloc, _strdup, _stricmp, strlen, strrchr, strcmp,
   strcpy, strncpy, strcat, atoi, _ftol, realloc, _strlwr, _mbsrchr, _mbsinc
 - Memory layout expanded to 64MB (1024 pages) for larger DLL address space
-- EXE reaches batch 11 with 103 API calls (was batch 0 → 3 → 9 → 10 → 11)
+- mfc42.dll DllMain now recognized as successful (was misdetected as crash)
+- RegSetValueA/W restored to no-op stubs (registry writes during file
+  association setup are harmless)
+- EXE reaches 1229 API calls in MFC window creation (was 0 → 3 → 9 → 10 → 103 → 1229)
 
-### Current Blocker: mfc42 DllMain crash → EIP stuck at PE header (batch 11)
+### Current Blocker: EIP=0x86 crash after GetParent (API #1239)
 
-mfc42.dll's DllMain traps with `memory access out of bounds` during init.
-msvcrt.dll's DllMain succeeds (EAX=1). CRT startup proceeds normally through
-103 API calls (`__set_app_type`, `__p__fmode`, `__p__commode`, `_controlfp`).
-Then execution reaches EIP=0x01055004 — which is offset +4 in the mfc42.dll
-PE header (not code). The emulator detects "STUCK" after batch 11.
+`GetParent` implemented (parent table at WASM 0x2280, stored during
+`CreateWindowExA`/`CreateWindowExW`). MSPaint now reaches 1239 API calls
+(was 1229). After `GetParent(0x10001)` returns 0xf0, execution falls into
+EIP=0x86 — an indirect call through a bad pointer (likely MFC vtable dispatch
+using the parent handle as an object pointer).
 
-**Root cause:** mfc42's DllMain crashes during initialization (likely `rep stosd`
-with wild pointer, same class of bug as the previous hash table corruption).
-MFC is left uninitialized. After CRT init completes, `AfxWinMain` (MFC42
-ordinal 1576) is called but jumps to the PE header instead of real MFC code.
+The 0xf0 return is suspicious — top-level window should return 0 (no parent).
+Either the parent table slot has stale data, or the window's slot index changed
+between `wnd_set_parent` and `wnd_get_parent`. Needs investigation.
 
-The previous batch 10 use-after-free blocker (caused by `GetDlgItem` returning
-NULL) is no longer reachable — execution never gets that far because MFC itself
-fails to initialize.
+**Also fixed:** `SendMessageA` was implemented (externally, not in this session)
+— notepad now runs cleanly (146 API calls, no crashes).
 
-**Next step:** Debug mfc42 DllMain trap — either the expanded memory layout
-introduced a new wild pointer target, or the DllMain needs APIs that are now
-crash stubs (`GetDlgItem`, `GetTopWindow` were converted from silent return-0
-to `$crash_unimplemented`). Check if mfc42's DllMain calls any of the newly
-converted stubs.
+WASM low-memory window tables:
+```
+0x2000  Window table     32 × 8B   [hwnd, wndproc]
+0x2100  Class table      16 × 12B  [name_hash, wndproc, extra_bytes]
+0x2200  GWL_USERDATA     32 × 4B   [userdata per slot]
+0x2280  Parent table     32 × 4B   [parent_hwnd per slot]
+0x2300  (free)
+```
+
+All window infra lives in `09c-help.wat` (misleading name — it's the window
+table + class table + userdata + parent system; help dialog is appended at end).
+
+### Previous Blocker: mfc42 DllMain false crash — RESOLVED (2026-04-02)
+
+mfc42's DllMain was misdetected as crashing. Actually, it returned successfully
+(EAX=1) but the sentinel return address (0) caused the emulator to try executing
+at address 0 → `memory access out of bounds`. Fixed in `callDllMain`: detect
+EIP≤2 + EAX=1 as successful return rather than a real crash. Relocations were
+verified correct (e.g. `mov ecx,[0x5f4cbc50]` properly relocated to `[0x1120c50]`).
 
 ### Previous Blocker: use-after-free in MFC window management (batch 10) — SUPERSEDED
 
 At batch 10 (with old 32MB layout), crash on vtable call through freed memory.
 Root cause was `GetDlgItem` returning NULL, causing MFC to destroy frame object
-while still in use. This is no longer the active blocker — mfc42 DllMain now
-fails before reaching this point. The underlying issue (no window handle
-tracking for `GetDlgItem`/`GetTopWindow`) remains unresolved but is not the
-immediate problem.
+while still in use. No longer the active blocker — MFC init now proceeds past
+this point. The underlying issue (no window handle tracking for
+`GetDlgItem`/`GetTopWindow`) remains unresolved but is not the immediate problem.
 
 ### Silent stubs converted to crash-on-unimplemented (2026-04-02)
 
@@ -56,7 +70,7 @@ bugs by pretending to succeed without doing real work.
 
 **Wave 1 (safe — not hit by notepad/calc/skifree):**
 `wsprintfW`, `FindWindowA`, `GetDlgItem`, `GetTopWindow`, `GetActiveWindow`,
-`EnableMenuItem`, `CheckMenuItem`, `RegSetValueA`, `RegSetValueW`
+`EnableMenuItem`, `CheckMenuItem`
 
 **Wave 2 (notepad-affecting — breaks notepad until implemented):**
 `SendMessageA`, `SetFocus`, `SHGetSpecialFolderPathA`, `IsIconic`, `WinHelpA`
