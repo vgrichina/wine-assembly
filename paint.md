@@ -59,24 +59,22 @@ VirtualFree returns TRUE. malloc now returns 4-byte aligned pointers
 - EXE has 5 vtable write sites (0x1002064, 0x1006174, 0x10065a4, 0x100666c, 0x1006cdc) — NONE hit
 - Need to trace constructor call chain to find where execution diverges
 
-### Current blocker: GetLastActivePopup unimplemented (API #1365)
+### Current blocker: vtable / CMainFrame::OnCreate never runs
 
-After fixing VirtualAlloc alignment and implementing BeginDeferWindowPos,
-EndDeferWindowPos, GetTopWindow, SetWindowPlacement, and GetWindowPlacement,
-mspaint now crashes on GetLastActivePopup.
+MSPaint now runs crash-free through initialization and into the MFC message
+loop (1634 API calls, idle in GetMessageA). But only 1 CreateWindowExA call
+(the main frame) — no child windows (toolbar, statusbar, canvas).
 
-**Call sequence leading to crash (APIs #1360-1365):**
-```
-GetTopWindow(0x10001)              — returns NULL (no children)
-GetTopWindow(0x10001)              — returns NULL
-TlsGetValue(0)
-IsWindowVisible(0x10001)           — returns 1
-SetWindowPlacement(0x10001, 0x0103cfe4)  — moves window per rcNormalPosition
-GetLastActivePopup(0x10001)        ← CRASH
-```
+The vtable issue from before VirtualAlloc fix persists: `[this]` = 0x010f2c24
+(CFrameWnd vtable in MFC42), should be CMainFrame vtable in EXE. None of
+the EXE's 5 vtable write sites are hit. CMainFrame::OnCreate never executes,
+so no child windows are created. Window title IS set to "Paint" and
+DragAcceptFiles is called — some MFC init works, but OnCreate is skipped.
 
-This is MFC's `CFrameWnd::ActivateFrame` → `GetLastActivePopup(m_hWnd)`.
-Simple fix: return hWnd itself (no popups tracked).
+**Next step:** Trace the CMainFrame constructor call chain. The constructor
+allocates via malloc (now aligned), writes CFrameWnd vtable, but never
+overwrites with CMainFrame vtable. Need to find where the EXE's constructor
+body diverges — likely a failed conditional or missing API return.
 
 ### Fixes this sub-session
 
@@ -89,6 +87,10 @@ Simple fix: return hWnd itself (no popups tracked).
 - **GetWindowPlacement** — fills WINDOWPLACEMENT with SW_SHOWNORMAL defaults
   and 640×480 rect (2 args stdcall)
 - **BeginDeferWindowPos/EndDeferWindowPos/GetTopWindow** — implemented
+- **GetLastActivePopup** — returns hWnd (no popups tracked, per Win32 docs)
+- **BringWindowToTop/SetForegroundWindow** — return TRUE (single-window model)
+- **AdjustWindowRectEx** — same chrome offsets as AdjustWindowRect, 4 args
+- **GetWindow** — returns NULL for siblings/children, parent for GW_OWNER
 
 ### Previous Status (2026-04-02)
 
