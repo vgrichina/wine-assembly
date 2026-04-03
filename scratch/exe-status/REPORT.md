@@ -1,7 +1,9 @@
 # Wine-Assembly EXE Status Report
 
-**Date:** 2026-04-03
-**Score:** 18 PASS / 13 FAIL / 14 WARN / 0 SKIP (45 total)
+**Date:** 2026-04-03 (updated)
+**Score:** 23 PASS / 12 FAIL / 10 WARN / 0 SKIP (45 total)
+
+Progress since start of session: +5 PASS (was 18), -1 FAIL, -4 WARN
 
 ## PASS (18) — Window created, running
 
