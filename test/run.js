@@ -441,8 +441,6 @@ async function main() {
         }
       } catch (_) {}
     }
-    console.log(`VFS pre-loaded ${ctx.vfs.files.size} files`);
-    console.log(`  Has wavemix.inf: ${ctx.vfs.files.has('c:\\wavemix.inf')}`);
   }
 
   const regs = () => {

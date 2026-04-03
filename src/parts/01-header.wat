@@ -54,6 +54,8 @@
   ;; richedit_stream(ctrl_hwnd, text_wasm_ptr) — set RichEdit control text
   (import "host" "check_dlg_button" (func $host_check_dlg_button (param i32 i32 i32)))
   ;; check_dlg_button(hwnd, ctrl_id, check_state)
+  (import "host" "send_ctrl_msg" (func $host_send_ctrl_msg (param i32 i32 i32 i32)))
+  ;; send_ctrl_msg(ctrl_hwnd, msg, wParam, lParam) — forward control messages to renderer
   (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
   ;; check_radio_button(hwnd, first_id, last_id, check_id)
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))

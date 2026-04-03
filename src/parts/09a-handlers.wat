@@ -480,17 +480,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 38: VirtualAlloc
+  ;; 38: VirtualAlloc(lpAddr, dwSize, flAllocType, flProtect)
+  ;; Must return page-aligned (0x1000) addresses for reserve/commit
   (func $handle_VirtualAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $size i32)
     (if (local.get $arg0)
-    (then (global.set $eax (local.get $arg0))) ;; requested address, just return it
-    (else (global.set $eax (call $heap_alloc (local.get $arg1)))))
+      (then (global.set $eax (local.get $arg0))) ;; MEM_COMMIT at addr, just return it
+      (else
+        ;; Round size up to page boundary
+        (local.set $size (i32.and (i32.add (local.get $arg1) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
+        ;; Align heap_ptr up to page boundary before allocating
+        (global.set $heap_ptr (i32.and (i32.add (global.get $heap_ptr) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
+        ;; Bump-allocate page-aligned region (no header, VirtualAlloc memory not freed via HeapFree)
+        (global.set $eax (global.get $heap_ptr))
+        (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $size)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 39: VirtualFree — STUB: unimplemented
+  ;; 39: VirtualFree — return TRUE (no real decommit needed)
   (func $handle_VirtualFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 40: GetACP — STUB: unimplemented
@@ -1508,14 +1518,18 @@
         ;; EM_STREAMIN (0x449) — RichEdit text streaming
         (if (i32.eq (local.get $arg1) (i32.const 0x449))
           (then
-            ;; Read EDITSTREAM.dwCookie from lParam (guest addr)
-            ;; dwCookie is a pointer to the text buffer
             (call $host_richedit_stream
-              (local.get $arg0)                              ;; ctrl hwnd
-              (call $g2w (call $gl32 (local.get $arg3))))    ;; text at g2w(dwCookie)
+              (local.get $arg0)
+              (call $g2w (call $gl32 (local.get $arg3))))
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
             (return)))
+        ;; Forward progress bar / common control messages to renderer
+        (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x0401))
+                     (i32.le_u (local.get $arg1) (i32.const 0x0440)))
+          (then
+            (call $host_send_ctrl_msg (local.get $arg0) (local.get $arg1)
+              (local.get $arg2) (local.get $arg3))))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
@@ -7883,28 +7897,6 @@
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
-
-  ;; waveOut stubs — crash on unimplemented
-  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutPrepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutRestart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
-  (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
 
   ;; 764: GetUserDefaultLCID — already implemented at ID 413, this is a duplicate entry
   ;; (handled by dispatch to same function)
