@@ -1678,10 +1678,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 96: GetDlgItem — STUB: unimplemented
-  ;; GetDlgItem(hDlg, nIDDlgItem) — 2 args stdcall, return NULL
+  ;; 96: GetDlgItem(hDlg, nIDDlgItem) → HWND of child control
+  ;; Return a synthetic HWND based on dialog hwnd + control ID
   (func $handle_GetDlgItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Encode as 0x20000 | (dlg_index << 8) | (ctrl_id & 0xFF)
+    ;; This gives each control a unique pseudo-HWND
+    (global.set $eax (i32.or (i32.const 0x20000)
+      (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 97: GetCursorPos
@@ -1802,8 +1806,10 @@
   )
 
   ;; 112: EnableWindow — STUB: unimplemented
+  ;; EnableWindow(hWnd, bEnable) → BOOL (previous state)
   (func $handle_EnableWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))  ;; was previously enabled
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable) — stub, return previous state
@@ -2048,8 +2054,9 @@
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG
     (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))             ;; wParam (focus hwnd)
     (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
-    ;; Set EIP to dialog proc
+    ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)
     (global.set $eip (local.get $arg3))
+    (global.set $steps (i32.const 0))
   )
 
   ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall

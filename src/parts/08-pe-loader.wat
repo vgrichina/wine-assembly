@@ -132,6 +132,15 @@
       (i32.const 0xCACA0001))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate DialogBoxParamA message loop thunk (marker 0xCACA0004)
+    (global.set $dlg_loop_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0004))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate _initterm continuation thunk (marker 0xCACA0003)
     (global.set $initterm_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))

@@ -48,6 +48,66 @@
         (global.set $steps (i32.const 0))
         (return)))
 
+    ;; DialogBoxParamA continuation — dialog proc returned, pump next message or finish
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0004))
+      (then
+        ;; If EndDialog was called, return result to original caller
+        (if (global.get $dlg_ended)
+          (then
+            (global.set $eax (global.get $dlg_result))
+            (global.set $eip (global.get $dlg_ret_addr))
+            (global.set $dlg_ended (i32.const 0))
+            (global.set $quit_flag (i32.const 0))
+            (return)))
+        ;; Check post queue first
+        (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (then
+            (local.set $arg0 (i32.load (i32.const 0x400)))        ;; hwnd
+            (local.set $arg1 (i32.load (i32.const 0x404)))        ;; msg
+            (local.set $arg2 (i32.load (i32.const 0x408)))        ;; wParam
+            (local.set $arg3 (i32.load (i32.const 0x40c)))        ;; lParam
+            ;; Shift queue
+            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+            ;; Dispatch to dialog proc
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+            (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $eip (global.get $dlg_proc))
+            (global.set $steps (i32.const 0))
+            (return)))
+        ;; Poll host for input
+        (local.set $arg0 (call $host_check_input))
+        (if (local.get $arg0)
+          (then
+            ;; Unpack: msg = low 16 bits, wParam = high 16 bits
+            (local.set $arg1 (i32.and (local.get $arg0) (i32.const 0xFFFF)))      ;; msg
+            (local.set $arg2 (i32.shr_u (local.get $arg0) (i32.const 16)))        ;; wParam
+            (local.set $arg3 (call $host_check_input_lparam))                      ;; lParam
+            (local.set $arg0 (call $host_check_input_hwnd))                        ;; hwnd
+            (if (i32.eqz (local.get $arg0))
+              (then (local.set $arg0 (global.get $dlg_hwnd))))
+            ;; Dispatch to dialog proc
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+            (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $eip (global.get $dlg_proc))
+            (global.set $steps (i32.const 0))
+            (return)))
+        ;; No input — yield to host and come back
+        (global.set $yield_flag (i32.const 1))
+        (global.set $eip (global.get $dlg_loop_thunk))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     ;; _initterm continuation — init function returned, call next entry
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0003))
       (then
