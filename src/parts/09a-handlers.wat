@@ -937,14 +937,41 @@
 
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32)
     ;; Save dialog hwnd for IsChild/SendMessage routing
     (global.set $dlg_hwnd (i32.const 0x10002))
     ;; Clear quit_flag — dialog recreation (e.g. calc mode switch) cancels pending quit
     (global.set $quit_flag (i32.const 0))
     ;; Call host: create_dialog(hwnd, dlg_resource_id)
-    (global.set $eax (call $host_create_dialog
-    (i32.const 0x10002)    ;; hwnd for dialog
-    (local.get $arg1)))    ;; template name/ID
+    (call $host_create_dialog (i32.const 0x10002) (local.get $arg1))
+    drop
+    ;; If dlgProc is provided, dispatch WM_INITDIALOG via continuation thunk
+    (if (local.get $arg3)
+      (then
+        ;; Save return address and hwnd for CACA0001 continuation
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
+        (global.set $createwnd_saved_ret (local.get $ret_addr))
+        (global.set $createwnd_saved_hwnd (i32.const 0x10002))
+        ;; Pop CreateDialogParamA frame (ret + 5 args = 24 bytes)
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        ;; Push DlgProc args: hwnd, WM_INITDIALOG(0x110), 0, lParam
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $arg4))  ;; lParam
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0))  ;; wParam (focus hwnd)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x110))  ;; WM_INITDIALOG
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x10002))  ;; hwnd
+        ;; Push CACA0001 (createwnd_ret_thunk) as return address
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+        ;; Jump to dialog proc
+        (global.set $eip (local.get $arg3))
+        (global.set $steps (i32.const 0))
+        (return)))
+    ;; No dlgProc — just return hwnd
+    (global.set $eax (i32.const 0x10002))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
@@ -1421,17 +1448,29 @@
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Fall back to global wndproc if not in table
-    (if (i32.eqz (local.get $wndproc))
+    ;; Fall back to global wndproc if not in table (skip for child controls 0x20000+)
+    (if (i32.and (i32.eqz (local.get $wndproc))
+                 (i32.lt_u (local.get $arg0) (i32.const 0x20000)))
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (local.set $wndproc (global.get $wndproc_addr)))
           (else (if (global.get $wndproc_addr2)
             (then (local.set $wndproc (global.get $wndproc_addr2)))
             (else (local.set $wndproc (global.get $wndproc_addr))))))))
-    ;; If no WndProc, return 0
+    ;; If no WndProc, handle known child control messages or return 0
     (if (i32.eqz (local.get $wndproc))
       (then
+        ;; EM_STREAMIN (0x449) — RichEdit text streaming
+        (if (i32.eq (local.get $arg1) (i32.const 0x449))
+          (then
+            ;; Read EDITSTREAM.dwCookie from lParam (guest addr)
+            ;; dwCookie is a pointer to the text buffer
+            (call $host_richedit_stream
+              (local.get $arg0)                              ;; ctrl hwnd
+              (call $g2w (call $gl32 (local.get $arg3))))    ;; text at g2w(dwCookie)
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
@@ -2906,12 +2945,25 @@
 
   ;; 241: RegisterClassExA
   (func $handle_RegisterClassExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $class_name_wa i32)
-    ;; WNDCLASSEX: cbSize(+0) style(+4) lpfnWndProc(+8) ... hbrBackground(+32) lpszClassName(+40)
+    (local $tmp i32) (local $class_name_wa i32) (local $slot i32) (local $dst i32) (local $src i32)
+    ;; WNDCLASSEX: cbSize(+0) style(+4) lpfnWndProc(+8) cbClsExtra(+12) cbWndExtra(+16)
+    ;;   hInstance(+20) hIcon(+24) hCursor(+28) hbrBackground(+32) lpszMenuName(+36)
+    ;;   lpszClassName(+40) hIconSm(+44)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 40)))))
     ;; Register in class table (hwnd→wndproc lookup for multi-window dispatch)
     (global.set $eax (call $class_table_register (local.get $class_name_wa) (local.get $tmp)))
+    ;; Save as WNDCLASSA (40 bytes) at 0x2300 + slot*40 for GetClassInfoA
+    ;; Convert WNDCLASSEX(+4..+40) → WNDCLASSA(+0..+36) (skip cbSize, copy 9 dwords)
+    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $dst (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
+        (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
+        ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
+        (i32.store (i32.add (local.get $dst) (i32.const 36))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))))
     ;; Store first wndproc as main for backward compat
     (if (i32.eqz (global.get $wndproc_addr))
     (then
@@ -2923,17 +2975,20 @@
 
   ;; 242: RegisterClassA
   (func $handle_RegisterClassA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $class_name_wa i32)
+    (local $tmp i32) (local $class_name_wa i32) (local $slot i32) (local $dst i32)
     ;; WNDCLASSA: style(+0) lpfnWndProc(+4) cbClsExtra(+8) cbWndExtra(+12)
     ;;   hInstance(+16) hIcon(+20) hCursor(+24) hbrBackground(+28)
     ;;   lpszMenuName(+32) lpszClassName(+36)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
-    ;; DEBUG: log class name and wndproc
-    (call $host_log (local.get $class_name_wa) (call $strlen (local.get $class_name_wa)))
-    (call $host_log_i32 (local.get $tmp))
     ;; Register in class table
     (global.set $eax (call $class_table_register (local.get $class_name_wa) (local.get $tmp)))
+    ;; Save full WNDCLASS at 0x2300 + slot*40 for GetClassInfoA
+    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $dst (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
     ;; Store first wndproc as main for backward compat
     (if (i32.eqz (global.get $wndproc_addr))
     (then
@@ -3572,6 +3627,19 @@
 
   ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
   (func $handle_GetClassInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) → BOOL
+    ;; Look up class in our class table; if found, copy saved WNDCLASS to output
+    (local $slot i32) (local $src i32)
+    (local.set $slot (call $class_find_slot (call $g2w (local.get $arg1))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        ;; Found — copy 40-byte WNDCLASS from storage to output buffer
+        (local.set $src (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Not found — return FALSE
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

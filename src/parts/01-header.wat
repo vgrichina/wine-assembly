@@ -50,6 +50,8 @@
   ;; shell_about(hwnd, szApp_ptr) → result
   (import "host" "set_dlg_item_text" (func $host_set_dlg_item_text (param i32 i32 i32)))
   ;; set_dlg_item_text(hwnd, control_id, text_ptr)
+  (import "host" "richedit_stream" (func $host_richedit_stream (param i32 i32)))
+  ;; richedit_stream(ctrl_hwnd, text_wasm_ptr) — set RichEdit control text
   (import "host" "check_dlg_button" (func $host_check_dlg_button (param i32 i32 i32)))
   ;; check_dlg_button(hwnd, ctrl_id, check_state)
   (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
