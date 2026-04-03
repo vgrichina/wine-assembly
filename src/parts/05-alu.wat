@@ -802,6 +802,20 @@
     (call $set_reg (local.get $op) (local.get $r))
     (call $set_flags_sub (i32.const 0) (local.get $old) (local.get $r)) (call $next))
 
+  ;; 214: NEG r8 — 8-bit negate register
+  (func $th_neg_r8 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (call $get_reg8 (local.get $op)))
+    (local.set $r (i32.and (i32.sub (i32.const 0) (local.get $old)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $op) (local.get $r))
+    (global.set $flag_op (i32.const 2)) (global.set $flag_sign_shift (i32.const 7))
+    (global.set $flag_a (i32.const 0)) (global.set $flag_b (local.get $old)) (global.set $flag_res (local.get $r))
+    (call $next))
+  ;; 215: NOT r8 — 8-bit bitwise NOT register (no flag changes)
+  (func $th_not_r8 (param $op i32)
+    (call $set_reg8 (local.get $op) (i32.xor (call $get_reg8 (local.get $op)) (i32.const 0xFF)))
+    (call $next))
+
   ;; --- Unary memory ---
   ;; 68: operand = unary_type (0=inc,1=dec,2=not,3=neg), addr in next word
   (func $th_unary_m32 (param $op i32)
@@ -825,13 +839,19 @@
     (local.set $addr (call $read_addr))
     (local.set $old (call $gl8 (local.get $addr)))
     (if (i32.eq (local.get $op) (i32.const 0))
-      (then (local.set $r (i32.add (local.get $old) (i32.const 1)))))
+      (then (local.set $r (i32.and (i32.add (local.get $old) (i32.const 1)) (i32.const 0xFF)))
+            (call $set_flags_inc (local.get $old) (local.get $r))
+            (global.set $flag_sign_shift (i32.const 7))))
     (if (i32.eq (local.get $op) (i32.const 1))
-      (then (local.set $r (i32.sub (local.get $old) (i32.const 1)))))
+      (then (local.set $r (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFF)))
+            (call $set_flags_dec (local.get $old) (local.get $r))
+            (global.set $flag_sign_shift (i32.const 7))))
     (if (i32.eq (local.get $op) (i32.const 2))
       (then (local.set $r (i32.xor (local.get $old) (i32.const 0xFF)))))
     (if (i32.eq (local.get $op) (i32.const 3))
-      (then (local.set $r (i32.sub (i32.const 0) (local.get $old)))))
+      (then (local.set $r (i32.and (i32.sub (i32.const 0) (local.get $old)) (i32.const 0xFF)))
+            (global.set $flag_op (i32.const 2)) (global.set $flag_sign_shift (i32.const 7))
+            (global.set $flag_a (i32.const 0)) (global.set $flag_b (local.get $old)) (global.set $flag_res (local.get $r))))
     (call $gs8 (local.get $addr) (local.get $r)) (call $next))
 
   ;; --- LEA ---

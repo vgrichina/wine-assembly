@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 214 funcref)
+  (table $handlers 216 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -265,5 +265,8 @@
     ;; -- SAHF / LAHF --
     $th_sahf               ;; 212: SAHF — load flags from AH
     $th_lahf               ;; 213: LAHF — store flags to AH
+    ;; -- 8-bit register unary --
+    $th_neg_r8             ;; 214: NEG r8 (8-bit negate with flags)
+    $th_not_r8             ;; 215: NOT r8 (8-bit bitwise NOT)
   )
 

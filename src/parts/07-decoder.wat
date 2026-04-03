@@ -359,6 +359,11 @@
     (call $te (i32.const 68) (local.get $uop))
     (call $te_raw (local.get $a)))
 
+  (func $emit_unary_m8 (param $uop i32) (local $a i32)
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 69) (local.get $uop))
+    (call $te_raw (local.get $a)))
+
   ;; TEST [mem32], reg
   (func $emit_test_m32_r (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
@@ -794,14 +799,22 @@
           (if (i32.eq (global.get $mr_reg) (i32.const 2)) ;; NOT
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 66) (global.get $mr_val)))
-                (else (call $emit_unary_m32 (i32.const 2))))
+                (then (if (i32.eq (local.get $op) (i32.const 0xF6))
+                  (then (call $te (i32.const 215) (global.get $mr_val)))
+                  (else (call $te (i32.const 66) (global.get $mr_val)))))
+                (else (if (i32.eq (local.get $op) (i32.const 0xF6))
+                  (then (call $emit_unary_m8 (i32.const 2)))
+                  (else (call $emit_unary_m32 (i32.const 2))))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 3)) ;; NEG
             (then
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 67) (global.get $mr_val)))
-                (else (call $emit_unary_m32 (i32.const 3))))
+                (then (if (i32.eq (local.get $op) (i32.const 0xF6))
+                  (then (call $te (i32.const 214) (global.get $mr_val)))
+                  (else (call $te (i32.const 67) (global.get $mr_val)))))
+                (else (if (i32.eq (local.get $op) (i32.const 0xF6))
+                  (then (call $emit_unary_m8 (i32.const 3)))
+                  (else (call $emit_unary_m32 (i32.const 3))))))
               (br $decode)))
           ;; MUL/IMUL/DIV/IDIV
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
