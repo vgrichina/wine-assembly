@@ -19,15 +19,15 @@ const BATCH_SIZE = 1000;
 const OUT = process.argv[2] || 'desktop.png';
 
 const APPS = [
-  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree',
-    pos: { x: 10, y: 10 }, size: { w: 500, h: 400 } },
   { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi',
-    pos: { x: 520, y: 10 } },
+    pos: { x: 10, y: 10 } },
   { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper',
-    pos: { x: 20, y: 430 },
+    pos: { x: 360, y: 10 },
     click: { batch: 80, x: 80, y: 80 } },
+  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree',
+    pos: { x: 10, y: 420 } },
   { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei',
-    pos: { x: 520, y: 420 } },
+    pos: { x: 550, y: 10 } },
 ];
 
 async function runApp(wasmModule, app, renderer, appIndex) {
@@ -105,11 +105,17 @@ async function runApp(wasmModule, app, renderer, appIndex) {
   }
 
   // Save client area content to restore after other apps paint
+  // Also save menu reference since loadResources will overwrite shared resources
+  for (const w of Object.values(renderer.windows)) {
+    if (w.menu) w._savedMenu = w.menu;
+  }
   const win = renderer.windows[hwndBase];
-  if (win && win.clientRect) {
+  if (win) {
+    renderer._computeClientRect(win);
     const cr = win.clientRect;
-    if (cr.w > 0 && cr.h > 0) {
+    if (cr && cr.w > 0 && cr.h > 0) {
       win._savedClient = renderer.ctx.getImageData(cr.x, cr.y, cr.w, cr.h);
+      win._savedCR = { x: cr.x, y: cr.y, w: cr.w, h: cr.h };
     }
   }
 
@@ -132,10 +138,11 @@ async function main() {
 
   // Restore saved client area content (order matters: lower z-order first)
   const sorted = Object.values(renderer.windows)
-    .filter(w => w._savedClient && w.clientRect)
+    .filter(w => w._savedClient && w._savedCR)
     .sort((a, b) => (a.zOrder || 0) - (b.zOrder || 0));
   for (const win of sorted) {
-    renderer.ctx.putImageData(win._savedClient, win.clientRect.x, win.clientRect.y);
+    const cr = win._savedCR;
+    renderer.ctx.putImageData(win._savedClient, cr.x, cr.y);
   }
 
   const pngBuf = canvas.toBuffer('image/png');
