@@ -221,6 +221,8 @@
   ;; 0x00002100  192B    Class table (16 entries × 12 bytes: name_hash, wndproc, atom)
   ;; 0x00002200  128B    Window userdata table (32 entries × 4 bytes: GWL_USERDATA)
   ;; 0x00002300  320B    Timer table (16 entries × 20 bytes: hwnd, id, interval, last_tick, callback)
+  ;; 0x00003000  4000B   Console char buffer (80×25×2, UTF-16 LE)
+  ;; 0x00003FA0  4000B   Console attr buffer (80×25×2)
   ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
@@ -413,6 +415,23 @@
 
   ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
   (global $bp_addr (mut i32) (i32.const 0))
+
+  (global $clipboard_fmt_counter (mut i32) (i32.const 0))
+
+  ;; Console screen buffer state (for Telnet etc.)
+  ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)
+  ;; Attribute data at 0x3FA0 (80×25×2 = 4000 bytes)
+  (global $console_width (mut i32) (i32.const 80))
+  (global $console_height (mut i32) (i32.const 25))
+  (global $console_cursor_x (mut i32) (i32.const 0))
+  (global $console_cursor_y (mut i32) (i32.const 0))
+  (global $console_attr (mut i32) (i32.const 7))  ;; default: white on black
+  (global $console_mode (mut i32) (i32.const 3))  ;; ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT
+  (global $console_cursor_visible (mut i32) (i32.const 1))
+  (global $console_cursor_size (mut i32) (i32.const 25))  ;; percentage
+  (global $console_handle (mut i32) (i32.const 0x00030001))  ;; active screen buffer handle
+  (global $console_cp (mut i32) (i32.const 437))  ;; input code page
+  (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
 
   ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
