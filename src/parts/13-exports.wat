@@ -125,6 +125,10 @@
   (func (export "set_winver") (param i32) (global.set $winver (local.get 0)))
   (func (export "get_winver") (result i32) (global.get $winver))
 
+  ;; Multi-app hwnd allocation — set base hwnd before PE load
+  (func (export "set_hwnd_base") (param i32) (global.set $next_hwnd (local.get 0)))
+  (func (export "get_hwnd_base") (result i32) (global.get $next_hwnd))
+
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
