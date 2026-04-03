@@ -5556,5 +5556,138 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1700858052
+  },
+  {
+    "id": 794,
+    "name": "waveOutGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 536372453
+  },
+  {
+    "id": 795,
+    "name": "waveOutOpen",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2441508928
+  },
+  {
+    "id": 796,
+    "name": "waveOutClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1150018188
+  },
+  {
+    "id": 797,
+    "name": "waveOutPrepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3738137306
+  },
+  {
+    "id": 798,
+    "name": "waveOutUnprepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1618520031
+  },
+  {
+    "id": 799,
+    "name": "waveOutWrite",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1474799911
+  },
+  {
+    "id": 800,
+    "name": "waveOutReset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3697685511
+  },
+  {
+    "id": 801,
+    "name": "waveOutPause",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 77709018
+  },
+  {
+    "id": 802,
+    "name": "waveOutRestart",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4203349395
+  },
+  {
+    "id": 803,
+    "name": "waveOutGetPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3399218903
+  },
+  {
+    "id": 804,
+    "name": "mmioOpenA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 873038302
+  },
+  {
+    "id": 805,
+    "name": "mmioClose",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 660125405
+  },
+  {
+    "id": 806,
+    "name": "mmioDescend",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 915640639
+  },
+  {
+    "id": 807,
+    "name": "mmioRead",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1225375083
+  },
+  {
+    "id": 808,
+    "name": "mmioAscend",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1083245397
+  },
+  {
+    "id": 809,
+    "name": "mciSendCommandA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1269960066
+  },
+  {
+    "id": 810,
+    "name": "GetSystemPaletteEntries",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4003844375
+  },
+  {
+    "id": 811,
+    "name": "SetSystemPaletteUse",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1493501796
+  },
+  {
+    "id": 812,
+    "name": "ChangeDisplaySettingsA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 714668131
   }
 ]

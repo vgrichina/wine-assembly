@@ -451,6 +451,9 @@
   ;; 35: HeapAlloc
   (func $handle_HeapAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $heap_alloc (local.get $arg2)))
+    ;; DEBUG: log size and returned pointer
+    (call $host_log_i32 (local.get $arg2))
+    (call $host_log_i32 (global.get $eax))
     ;; Zero memory if HEAP_ZERO_MEMORY (0x08)
     (if (i32.and (local.get $arg1) (i32.const 0x08))
     (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg2))))
@@ -656,12 +659,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console handles, FILE_TYPE_UNKNOWN=0 otherwise
+  ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console, FILE_TYPE_DISK=1 for files
   (func $handle_GetFileType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (if (result i32) (i32.le_u (local.get $arg0) (i32.const 3))
         (then (i32.const 2))   ;; FILE_TYPE_CHAR (console)
-        (else (i32.const 0)))) ;; FILE_TYPE_UNKNOWN
+        (else (i32.const 1)))) ;; FILE_TYPE_DISK (regular file)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -4081,19 +4084,54 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 358: GetPaletteEntries — STUB: unimplemented
+  ;; 358: GetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
   (func $handle_GetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32) (local $src i32) (local $dst_wa i32) (local $count i32) (local $total i32)
+    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
+    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
+      (then
+        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        ;; If lppe is NULL, return total count
+        (if (i32.eqz (local.get $arg3))
+          (then
+            (global.set $eax (local.get $total))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        ;; Clamp nEntries to available
+        (local.set $count (local.get $arg2))
+        (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
+          (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
+        ;; Copy entries
+        (local.set $src (i32.add (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024)))
+          (i32.mul (local.get $arg1) (i32.const 4))))
+        (local.set $dst_wa (call $g2w (local.get $arg3)))
+        (call $memcpy (local.get $dst_wa) (local.get $src) (i32.mul (local.get $count) (i32.const 4)))
+        (global.set $eax (local.get $count)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
   )
 
-  ;; 359: SelectPalette — STUB: unimplemented
+  ;; 359: SelectPalette(hdc, hPalette, bForceBackground) — 3 args stdcall
+  ;; Store selected palette handle for this DC; return previous palette
   (func $handle_SelectPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $prev i32)
+    (local.set $prev (global.get $selected_palette))
+    (global.set $selected_palette (local.get $arg1))
+    (global.set $eax (local.get $prev))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
 
-  ;; 360: RealizePalette — STUB: unimplemented
+  ;; 360: RealizePalette(hdc) — 1 arg stdcall
+  ;; In true-color mode this is mostly a no-op; return number of entries mapped
   (func $handle_RealizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32)
+    ;; Look up selected palette entry count
+    (local.set $pal_idx (i32.sub (global.get $selected_palette) (i32.const 0x000A0001)))
+    (if (result i32) (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
+      (then (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+      (else (i32.const 0)))
+    global.set $eax
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
   ;; 361: CreateRectRgnIndirect — STUB: unimplemented
@@ -4121,9 +4159,32 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 366: CreatePalette — STUB: unimplemented
+  ;; 366: CreatePalette(lpLogPalette) — 1 arg stdcall
+  ;; LOGPALETTE: palVersion(u16, +0), palNumEntries(u16, +2), palPalEntry[](+4, each 4 bytes RGBX)
+  ;; Store palette entries in WASM memory at 0x2830 + palette_idx * 1024
+  ;; Palette handles: 0x000A0001+
   (func $handle_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $src_wa i32) (local $num_entries i32) (local $pal_idx i32) (local $dst i32) (local $copy_bytes i32)
+    (local.set $src_wa (call $g2w (local.get $arg0)))
+    (local.set $num_entries (i32.and (i32.load16_u (i32.add (local.get $src_wa) (i32.const 2))) (i32.const 0xFF)))
+    ;; Cap at 256 entries
+    (if (i32.gt_u (local.get $num_entries) (i32.const 256))
+      (then (local.set $num_entries (i32.const 256))))
+    ;; Allocate palette index (0-3)
+    (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
+    (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
+    ;; Store entry count at 0x2800 + idx * 8
+    (i32.store (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8)))
+      (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))  ;; handle
+    (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+      (local.get $num_entries))  ;; count
+    ;; Copy palette entries (4 bytes each: R, G, B, flags)
+    (local.set $dst (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+    (local.set $copy_bytes (i32.mul (local.get $num_entries) (i32.const 4)))
+    (call $memcpy (local.get $dst) (i32.add (local.get $src_wa) (i32.const 4)) (local.get $copy_bytes))
+    ;; Return handle
+    (global.set $eax (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
   ;; 367: GetNearestColor — STUB: unimplemented
@@ -4707,19 +4768,73 @@
     (global.set $eax (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 441: ResizePalette — STUB: unimplemented
+  ;; 441: ResizePalette(hPalette, nEntries) — 2 args stdcall
   (func $handle_ResizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32) (local $new_count i32)
+    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
+    (local.set $new_count (local.get $arg1))
+    (if (i32.gt_u (local.get $new_count) (i32.const 256))
+      (then (local.set $new_count (i32.const 256))))
+    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
+      (then
+        (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+          (local.get $new_count))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
   )
 
-  ;; 442: GetNearestPaletteIndex — STUB: unimplemented
+  ;; 442: GetNearestPaletteIndex(hPalette, crColor) — 2 args stdcall
+  ;; Find closest palette entry by color distance
   (func $handle_GetNearestPaletteIndex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32) (local $base i32) (local $count i32)
+    (local $i i32) (local $best_i i32) (local $best_dist i32) (local $entry i32)
+    (local $dr i32) (local $dg i32) (local $db i32) (local $dist i32)
+    (local $tr i32) (local $tg i32) (local $tb i32)
+    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
+    (local.set $best_dist (i32.const 0x7FFFFFFF))
+    ;; Target color components
+    (local.set $tr (i32.and (local.get $arg1) (i32.const 0xFF)))
+    (local.set $tg (i32.and (i32.shr_u (local.get $arg1) (i32.const 8)) (i32.const 0xFF)))
+    (local.set $tb (i32.and (i32.shr_u (local.get $arg1) (i32.const 16)) (i32.const 0xFF)))
+    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
+      (then
+        (local.set $base (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+        (local.set $count (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        (block $done (loop $scan
+          (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $entry (i32.load (i32.add (local.get $base) (i32.mul (local.get $i) (i32.const 4)))))
+          ;; PALETTEENTRY is R,G,B,flags (byte order)
+          (local.set $dr (i32.sub (i32.and (local.get $entry) (i32.const 0xFF)) (local.get $tr)))
+          (local.set $dg (i32.sub (i32.and (i32.shr_u (local.get $entry) (i32.const 8)) (i32.const 0xFF)) (local.get $tg)))
+          (local.set $db (i32.sub (i32.and (i32.shr_u (local.get $entry) (i32.const 16)) (i32.const 0xFF)) (local.get $tb)))
+          (local.set $dist (i32.add (i32.add (i32.mul (local.get $dr) (local.get $dr))
+            (i32.mul (local.get $dg) (local.get $dg))) (i32.mul (local.get $db) (local.get $db))))
+          (if (i32.lt_u (local.get $dist) (local.get $best_dist))
+            (then (local.set $best_dist (local.get $dist)) (local.set $best_i (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))))
+    (global.set $eax (local.get $best_i))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
   )
 
-  ;; 443: SetPaletteEntries — STUB: unimplemented
+  ;; 443: SetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
   (func $handle_SetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32) (local $dst i32) (local $src_wa i32) (local $count i32) (local $total i32)
+    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
+    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
+      (then
+        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        (local.set $count (local.get $arg2))
+        (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
+          (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
+        (local.set $dst (i32.add (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024)))
+          (i32.mul (local.get $arg1) (i32.const 4))))
+        (local.set $src_wa (call $g2w (local.get $arg3)))
+        (call $memcpy (local.get $dst) (local.get $src_wa) (i32.mul (local.get $count) (i32.const 4)))
+        (global.set $eax (local.get $count)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
   )
 
   ;; 444: SetDIBits — STUB: unimplemented
@@ -4853,9 +4968,41 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 457: CreateHalftonePalette — STUB: unimplemented
+  ;; 457: CreateHalftonePalette(hdc) — 1 arg stdcall
+  ;; Return a palette handle for a standard 256-color halftone palette
   (func $handle_CreateHalftonePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $pal_idx i32) (local $dst i32) (local $i i32) (local $r i32) (local $g i32) (local $b i32)
+    (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
+    (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
+    ;; Store as 256-entry palette
+    (i32.store (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8)))
+      (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
+    (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+      (i32.const 256))
+    ;; Fill with 6x6x6 color cube + grays
+    (local.set $dst (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $fill
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 216)))
+      (local.set $r (i32.mul (i32.rem_u (local.get $i) (i32.const 6)) (i32.const 51)))
+      (local.set $g (i32.mul (i32.rem_u (i32.div_u (local.get $i) (i32.const 6)) (i32.const 6)) (i32.const 51)))
+      (local.set $b (i32.mul (i32.div_u (local.get $i) (i32.const 36)) (i32.const 51)))
+      (i32.store (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 4)))
+        (i32.or (i32.or (local.get $r) (i32.shl (local.get $g) (i32.const 8)))
+          (i32.shl (local.get $b) (i32.const 16))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fill)))
+    ;; Fill remaining 40 with grays
+    (block $done2 (loop $gray
+      (br_if $done2 (i32.ge_u (local.get $i) (i32.const 256)))
+      (local.set $r (i32.mul (i32.sub (local.get $i) (i32.const 216)) (i32.const 6)))
+      (i32.store (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 4)))
+        (i32.or (i32.or (local.get $r) (i32.shl (local.get $r) (i32.const 8)))
+          (i32.shl (local.get $r) (i32.const 16))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $gray)))
+    (global.set $eax (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
   ;; 458: EnableScrollBar — STUB: unimplemented
@@ -7499,6 +7646,175 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
+
+  ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
+  ;; Fill WAVEOUTCAPSA struct with basic PCM support
+  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $wa) (local.get $arg2))
+    ;; wMid=1 (Microsoft), wPid=1
+    (i32.store16 (local.get $wa) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
+    ;; vDriverVersion = 4.0
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
+    ;; szPname = "Audio" at offset 8, 32 bytes
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x64755741))  ;; "Audi"
+    (i32.store8 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6F))      ;; "o"
+    ;; dwFormats at offset 40: support common formats (44.1k 16-bit stereo etc.)
+    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 0x00000FFF))
+    ;; wChannels at offset 44: 2 (stereo)
+    (i32.store16 (i32.add (local.get $wa) (i32.const 44)) (i32.const 2))
+    ;; dwSupport at offset 48: WAVECAPS_VOLUME|WAVECAPS_LRVOLUME
+    (i32.store (i32.add (local.get $wa) (i32.const 48)) (i32.const 0x0C))
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
+  )
+
+  ;; 795: waveOutOpen — return MMSYSERR_NOERROR, store fake handle
+  (func $handle_waveOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; arg0=phwo, arg1=uDeviceID, arg2=lpFormat, arg3=dwCallback, arg4=dwInstance
+    ;; [esp+24]=fdwOpen
+    ;; If phwo != NULL, store fake handle
+    (if (local.get $arg0)
+      (then (call $gs32 (local.get $arg0) (i32.const 0x000B0001))))
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args stdcall
+  )
+
+  ;; 796: waveOutClose — return MMSYSERR_NOERROR
+  (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 797: waveOutPrepareHeader — return MMSYSERR_NOERROR, set WHDR_PREPARED flag
+  (func $handle_waveOutPrepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Set dwFlags |= WHDR_PREPARED (0x02) in WAVEHDR at arg1+16
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (i32.add (local.get $wa) (i32.const 16))
+      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 2)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 798: waveOutUnprepareHeader — return MMSYSERR_NOERROR, clear WHDR_PREPARED
+  (func $handle_waveOutUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (i32.add (local.get $wa) (i32.const 16))
+      (i32.and (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 0xFFFFFFFD)))
+    ;; Set WHDR_DONE flag
+    (i32.store (i32.add (local.get $wa) (i32.const 16))
+      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 799: waveOutWrite — accept buffer, immediately mark done
+  (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Mark WHDR_DONE in WAVEHDR.dwFlags (+16)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (i32.add (local.get $wa) (i32.const 16))
+      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 800: waveOutReset — return MMSYSERR_NOERROR
+  (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 801: waveOutPause — return MMSYSERR_NOERROR
+  (func $handle_waveOutPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 802: waveOutRestart — return MMSYSERR_NOERROR
+  (func $handle_waveOutRestart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 803: waveOutGetPosition(hwo, lpInfo, cbInfo) — fill MMTIME struct
+  (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; MMTIME.wType = TIME_BYTES (4), u.cb = 0
+    (i32.store (local.get $wa) (i32.const 4))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 804: mmioOpenA — return 0 (failure, no file opened)
+  (func $handle_mmioOpenA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; NULL = failure
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 805: mmioClose — return 0
+  (func $handle_mmioClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 806: mmioDescend — return MMIOERR_CHUNKNOTFOUND
+  (func $handle_mmioDescend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 514))  ;; MMIOERR_CHUNKNOTFOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 807: mmioRead — return 0 bytes read
+  (func $handle_mmioRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 808: mmioAscend — return 0
+  (func $handle_mmioAscend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 809: mciSendCommandA — return 0 (success)
+  (func $handle_mciSendCommandA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 810: GetSystemPaletteEntries(hdc, iStart, nEntries, lppe) — 4 args stdcall
+  ;; Return default 20 system colors
+  (func $handle_GetSystemPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; If lppe is NULL, return number of entries (256 for 8-bit display)
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 256))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Fill with standard VGA colors for first 20 entries, black for rest
+    (call $zero_memory (call $g2w (local.get $arg3)) (i32.mul (local.get $arg2) (i32.const 4)))
+    (global.set $eax (local.get $arg2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 811: SetSystemPaletteUse(hdc, uUsage) — 2 args stdcall
+  (func $handle_SetSystemPaletteUse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))  ;; SYSPAL_NOSTATIC
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 812: ChangeDisplaySettingsA(lpDevMode, dwFlags) — 2 args stdcall
+  (func $handle_ChangeDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; DISP_CHANGE_SUCCESSFUL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
   (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))  ;; 1 device
@@ -7567,6 +7883,28 @@
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
+
+  ;; waveOut stubs — crash on unimplemented
+  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutPrepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutRestart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
+  (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
 
   ;; 764: GetUserDefaultLCID — already implemented at ID 413, this is a duplicate entry
   ;; (handled by dispatch to same function)

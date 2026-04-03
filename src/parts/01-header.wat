@@ -413,3 +413,7 @@
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
   (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word
 
+  ;; Palette management
+  (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index
+  (global $selected_palette (mut i32) (i32.const 0))  ;; Currently selected HPALETTE
+
