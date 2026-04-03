@@ -1796,9 +1796,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 98: GetLastActivePopup — STUB: unimplemented
+  ;; 98: GetLastActivePopup(hWnd) — 1 arg stdcall
+  ;; Returns the last active popup owned by hWnd. We don't track popups,
+  ;; so return hWnd itself (correct when no popup is active, per Win32 docs).
   (func $handle_GetLastActivePopup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 99: GetFocus — STUB: unimplemented
@@ -1863,9 +1866,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 105: SetForegroundWindow — STUB: unimplemented
+  ;; 105: SetForegroundWindow(hWnd) — 1 arg stdcall
+  ;; Brings window to foreground. Single-window model: always succeeds.
   (func $handle_SetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 106: SetCursor(hCursor) — 1 arg stdcall, return previous cursor (fake)
@@ -2595,9 +2600,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 190: BringWindowToTop — STUB: unimplemented
+  ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
+  ;; Sets window to top of Z-order. Single-window model: always succeeds.
   (func $handle_BringWindowToTop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 191: GetPrivateProfileIntA(lpAppName, lpKeyName, nDefault, lpFileName)
@@ -3698,9 +3705,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 304: GetWindow — STUB: unimplemented
+  ;; 304: GetWindow(hWnd, uCmd) — 2 args stdcall
+  ;; Returns related window (sibling, child, owner). No sibling/child tracking,
+  ;; so return NULL for all commands. GW_OWNER(4) returns parent if set.
   (func $handle_GetWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GW_OWNER = 4 → return parent hwnd
+    (if (i32.eq (local.get $arg1) (i32.const 4))
+      (then
+        (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; All others (FIRST/LAST/NEXT/PREV/CHILD) → NULL
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 305: IsWindow — STUB: unimplemented
@@ -6245,9 +6262,25 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 634: AdjustWindowRectEx — STUB: unimplemented
+  ;; 634: AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle) — 4 args stdcall
+  ;; Same as AdjustWindowRect but with extended style (ignored for now)
   (func $handle_AdjustWindowRectEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $left (i32.load (local.get $wa)))
+    (local.set $top (i32.load offset=4 (local.get $wa)))
+    (local.set $right (i32.load offset=8 (local.get $wa)))
+    (local.set $bottom (i32.load offset=12 (local.get $wa)))
+    ;; Add typical Win98 window chrome: caption=20, border=4, menu=19
+    (i32.store (local.get $wa) (i32.sub (local.get $left) (i32.const 4)))
+    (i32.store offset=4 (local.get $wa)
+      (i32.sub (local.get $top) (i32.add (i32.const 24)
+        (select (i32.const 19) (i32.const 0) (local.get $arg2)))))
+    (i32.store offset=8 (local.get $wa) (i32.add (local.get $right) (i32.const 4)))
+    (i32.store offset=12 (local.get $wa) (i32.add (local.get $bottom) (i32.const 4)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
   ;; 635: DispatchMessageW — same as DispatchMessageA (delegates to shared dispatch logic)
