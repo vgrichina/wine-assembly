@@ -19,11 +19,15 @@ const BATCH_SIZE = 1000;
 const OUT = process.argv[2] || 'desktop.png';
 
 const APPS = [
-  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree' },
-  { exe: 'test/binaries/notepad.exe', name: 'Notepad' },
-  { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi' },
+  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree',
+    pos: { x: 10, y: 10 }, size: { w: 500, h: 400 } },
+  { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi',
+    pos: { x: 520, y: 10 } },
   { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper',
+    pos: { x: 20, y: 430 },
     click: { batch: 80, x: 80, y: 80 } },
+  { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei',
+    pos: { x: 520, y: 420 } },
 ];
 
 async function runApp(wasmModule, app, renderer, appIndex) {
@@ -55,6 +59,22 @@ async function runApp(wasmModule, app, renderer, appIndex) {
     if (renderer) renderer.showWindow(hwnd, cmd);
   };
 
+  // Override create_window and move_window to apply position offset for tiling
+  const posOff = app.pos || { x: 0, y: 0 };
+  const origCreateWindow = base.host.create_window;
+  base.host.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
+    if (hwnd === hwndBase) { x = posOff.x; y = posOff.y; }
+    return origCreateWindow(hwnd, style, x, y, cx, cy, titlePtr, menuId);
+  };
+  const origMoveWindow = base.host.move_window;
+  base.host.move_window = (hwnd, x, y, w, h) => {
+    if (hwnd === hwndBase) {
+      x = posOff.x; y = posOff.y;
+      if (app.size) { w = app.size.w; h = app.size.h; }
+    }
+    origMoveWindow(hwnd, x, y, w, h);
+  };
+
   const instance = await WebAssembly.instantiate(wasmModule, { host: base.host });
   ctx.exports = instance.exports;
   instance.exports.set_hwnd_base(hwndBase);
@@ -84,6 +104,15 @@ async function runApp(wasmModule, app, renderer, appIndex) {
     }
   }
 
+  // Save client area content to restore after other apps paint
+  const win = renderer.windows[hwndBase];
+  if (win && win.clientRect) {
+    const cr = win.clientRect;
+    if (cr.w > 0 && cr.h > 0) {
+      win._savedClient = renderer.ctx.getImageData(cr.x, cr.y, cr.w, cr.h);
+    }
+  }
+
   console.log(`  ${app.name}: done (hwnd 0x${hwndBase.toString(16)})`);
 }
 
@@ -100,6 +129,14 @@ async function main() {
   }
 
   renderer.repaint();
+
+  // Restore saved client area content (order matters: lower z-order first)
+  const sorted = Object.values(renderer.windows)
+    .filter(w => w._savedClient && w.clientRect)
+    .sort((a, b) => (a.zOrder || 0) - (b.zOrder || 0));
+  for (const win of sorted) {
+    renderer.ctx.putImageData(win._savedClient, win.clientRect.x, win.clientRect.y);
+  }
 
   const pngBuf = canvas.toBuffer('image/png');
   fs.writeFileSync(OUT, pngBuf);
