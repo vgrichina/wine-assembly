@@ -194,17 +194,17 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/mem-utils.js?v=13"></script>
-  <script src="../lib/resources.js?v=13"></script>
-  <script src="../lib/renderer-input.js?v=13"></script>
-  <script src="../lib/renderer.js?v=13"></script>
-  <script src="../lib/dll-loader.js?v=13"></script>
-  <script src="../lib/storage.js?v=13"></script>
-  <script src="../lib/filesystem.js?v=13"></script>
-  <script src="../lib/hlp-parser.js?v=13"></script>
-  <script src="../lib/host-imports.js?v=13"></script>
-  <script src="../lib/thread-manager.js?v=13"></script>
-  <script src="host.js?v=13"></script>
+  <script src="../lib/mem-utils.js?v=14"></script>
+  <script src="../lib/resources.js?v=14"></script>
+  <script src="../lib/renderer-input.js?v=14"></script>
+  <script src="../lib/renderer.js?v=14"></script>
+  <script src="../lib/dll-loader.js?v=14"></script>
+  <script src="../lib/storage.js?v=14"></script>
+  <script src="../lib/filesystem.js?v=14"></script>
+  <script src="../lib/hlp-parser.js?v=14"></script>
+  <script src="../lib/host-imports.js?v=14"></script>
+  <script src="../lib/thread-manager.js?v=14"></script>
+  <script src="host.js?v=14"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -336,8 +336,10 @@ Resource-aware Win98 emulator
 
       // Set unique hwnd range for this app
       const appIndex = nextAppIndex++;
+      const hwndBase = 0x10001 + appIndex * 0x10000;
+      wine._hwndBase = hwndBase;
       if (wine.instance.exports.set_hwnd_base) {
-        wine.instance.exports.set_hwnd_base(0x10001 + appIndex * 0x10000);
+        wine.instance.exports.set_hwnd_base(hwndBase);
       }
 
       wireCanvasInput(canvas, sharedRenderer);

@@ -134,7 +134,19 @@ class WineAssembly {
       if (!self.renderer) return 0;
       _ciCount++;
       if (_ciCount % 100000 === 0) self.logToUI('[poll] calls=' + _ciCount + ' q=' + self.renderer.inputQueue.length);
-      const evt = self.renderer.checkInput();
+      // In multi-app mode, only dequeue events for this app's hwnd range
+      let evt;
+      if (self._hwndBase && self._multiApp) {
+        const lo = self._hwndBase;
+        const hi = lo + 0x10000;
+        const q = self.renderer.inputQueue;
+        const idx = q.findIndex(e => !e.hwnd || (e.hwnd >= lo && e.hwnd < hi));
+        if (idx < 0) return 0;
+        evt = q.splice(idx, 1)[0];
+        if (evt.msg === 0x000F) self.renderer.scheduleRepaint();
+      } else {
+        evt = self.renderer.checkInput();
+      }
       if (!evt) return 0;
       self._lastInputEvent = evt;
       if (evt.msg !== 0x200) {
@@ -217,7 +229,7 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=13');
+    const resp = await fetch('../build/wine-assembly.wasm?v=14');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
 
