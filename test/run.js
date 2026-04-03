@@ -253,9 +253,9 @@ async function main() {
     }
   };
 
-  h.create_dialog = (hwnd, dlgId) => {
-    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId}`);
-    if (renderer) return renderer.createDialog(hwnd, dlgId);
+  h.create_dialog = (hwnd, dlgId, parentHwnd) => {
+    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId} parent=0x${parentHwnd.toString(16)}`);
+    if (renderer) return renderer.createDialog(hwnd, dlgId, parentHwnd);
     return hwnd;
   };
 
@@ -356,6 +356,15 @@ async function main() {
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
 
+  // Set EXE name from path
+  if (instance.exports.set_exe_name) {
+    const exeName = path.basename(EXE_PATH);
+    const nameBytes = Buffer.from(exeName);
+    const staging = instance.exports.get_staging();
+    mem.set(nameBytes, staging);
+    instance.exports.set_exe_name(staging, nameBytes.length);
+  }
+
   // Set emulated Windows version
   if (WINVER && instance.exports.set_winver) {
     const versions = { 'win98': 0xC0000A04, 'nt4': 0x05650004, 'win2k': 0x05650005, 'winxp': 0x0A280105 };
@@ -419,6 +428,19 @@ async function main() {
     // Also register under the real basename in case something uses it differently
     const exeName = path.basename(EXE_PATH).toLowerCase();
     ctx.vfs.files.set('c:\\' + exeName, { data: exeData, attrs: 0x20 });
+    // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
+    const exeDir = path.dirname(EXE_PATH);
+    for (const f of fs.readdirSync(exeDir)) {
+      if (f.toLowerCase() === exeName) continue;
+      const fpath = path.join(exeDir, f);
+      try {
+        if (fs.statSync(fpath).isFile()) {
+          ctx.vfs.files.set('c:\\' + f.toLowerCase(), {
+            data: new Uint8Array(fs.readFileSync(fpath)), attrs: 0x20
+          });
+        }
+      } catch (_) {}
+    }
   }
 
   const regs = () => {

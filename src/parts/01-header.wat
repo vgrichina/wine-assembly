@@ -22,7 +22,7 @@
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
   (import "host" "show_window" (func $host_show_window (param i32 i32)))
   ;; show_window(hwnd, cmd)
-  (import "host" "create_dialog" (func $host_create_dialog (param i32 i32) (result i32)))
+  (import "host" "create_dialog" (func $host_create_dialog (param i32 i32 i32) (result i32)))
   ;; create_dialog(hwnd, dlg_resource_id) → hwnd
   (import "host" "load_string" (func $host_load_string (param i32 i32 i32) (result i32)))
   ;; load_string(string_id, buf_ptr, buf_len) → chars_written
@@ -203,6 +203,8 @@
 
   ;; String constants at WASM offset 0x100
   (data (i32.const 0x100) "win.ini\00Help\00[Contents]\00[Back]\00")
+  ;; EXE name buffer at 0x120 (max 128 bytes), default "app.exe"
+  (data (i32.const 0x120) "app.exe\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -282,6 +284,8 @@
   (global $heap_ptr (mut i32) (i32.const 0x01D12000))  ;; heap region: 0x01D12000-0x01E12000 (1MB)
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
+  (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string
+  (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
   ;; MSVCRT static data pointers (allocated on first use from heap)
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
