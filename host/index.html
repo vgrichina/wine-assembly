@@ -159,6 +159,7 @@
         <optgroup label="Other">
           <option value="ski32">SkiFree</option>
           <option value="winmine">Minesweeper (XP)</option>
+          <option value="pinball">Space Cadet Pinball</option>
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
@@ -186,6 +187,7 @@ Resource-aware Win98 emulator
   <script src="../lib/dll-loader.js?v=10"></script>
   <script src="../lib/storage.js?v=10"></script>
   <script src="../lib/filesystem.js?v=10"></script>
+  <script src="../lib/hlp-parser.js?v=10"></script>
   <script src="../lib/host-imports.js?v=10"></script>
   <script src="../lib/thread-manager.js?v=10"></script>
   <script src="host.js?v=10"></script>
@@ -206,6 +208,7 @@ Resource-aware Win98 emulator
       mspaint:  { exe: '../test/binaries/nt/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
       ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: '../test/binaries/xp/winmine.exe' },
+      pinball:  { exe: '../test/binaries/pinball/pinball.exe' },
     };
 
     async function launchApp() {

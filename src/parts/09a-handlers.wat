@@ -1814,7 +1814,9 @@
 
   ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable) — stub, return previous state
   (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable) — return previous state
+    (global.set $eax (i32.const 0))  ;; MF_ENABLED (previous state)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
@@ -2925,6 +2927,9 @@
     ;;   lpszMenuName(+32) lpszClassName(+36)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
+    ;; DEBUG: log class name and wndproc
+    (call $host_log (local.get $class_name_wa) (call $strlen (local.get $class_name_wa)))
+    (call $host_log_i32 (local.get $tmp))
     ;; Register in class table
     (global.set $eax (call $class_table_register (local.get $class_name_wa) (local.get $tmp)))
     ;; Store first wndproc as main for backward compat
@@ -5726,6 +5731,32 @@
   ;; 614: CallWindowProcW — STUB: unimplemented
   (func $handle_CallWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; 793: CallWindowProcA — call a WndProc with (hwnd, msg, wParam, lParam)
+  ;; Stack on entry: [ret][lpPrevWndFunc][hWnd][Msg][wParam][lParam]
+  ;; We set up a call frame to the WndProc so it returns to our caller.
+  (func $handle_CallWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32)
+    ;; Save caller's return address
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Clean CallWindowProcA stdcall frame: ret + 5 args = 24 bytes
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ;; Push WndProc args (stdcall order: lParam, wParam, Msg, hWnd)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg4))   ;; lParam
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg3))   ;; wParam
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg2))   ;; Msg
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))   ;; hWnd
+    ;; Push return address — WndProc returns directly to our caller
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Jump to WndProc
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0))
   )
 
   ;; 615: GetPropW — STUB: unimplemented

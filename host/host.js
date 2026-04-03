@@ -24,17 +24,16 @@ class WineAssembly {
 
   getImports() {
     const self = this;
-    const base = createHostImports({
+    const ctx = {
       getMemory: () => self.memory.buffer,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
       readFile: (name) => {
-        // Try fetching HLP files from binaries directory
         const baseName = name.replace(/^.*[\\\/]/, '');
         try {
           const xhr = new XMLHttpRequest();
-          xhr.open('GET', 'binaries/' + baseName, false); // sync XHR
+          xhr.open('GET', 'binaries/' + baseName, false);
           xhr.responseType = 'arraybuffer';
           xhr.send();
           if (xhr.status === 200) return new Uint8Array(xhr.response);
@@ -49,7 +48,9 @@ class WineAssembly {
           self.renderer.repaint();
         }
       },
-    });
+    };
+    self._helpCtx = ctx;
+    const base = createHostImports(ctx);
     const h = base.host;
 
     // --- Browser-specific overrides ---
@@ -383,6 +384,39 @@ class WineAssembly {
     }
   }
 
+  async handleHelpLoad() {
+    const ctx = this._helpCtx;
+    const baseName = (ctx._helpPendingPath || '').replace(/^.*[\\\/]/, '');
+    if (!baseName) {
+      this.instance.exports.clear_yield();
+      return;
+    }
+    const paths = ['binaries/help/' + baseName, 'binaries/' + baseName];
+    let data = null;
+    for (const url of paths) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          data = new Uint8Array(await resp.arrayBuffer());
+          break;
+        }
+      } catch (_) {}
+    }
+    if (data && typeof HlpParser !== 'undefined') {
+      try {
+        const parser = new HlpParser(data);
+        if (parser.parse()) {
+          ctx._helpParser = parser;
+          console.log(`[HelpLoad] Parsed ${baseName}: ${parser.topics.length} topics`);
+        }
+      } catch (e) {
+        console.error('[HelpLoad] Parse error:', e);
+      }
+    }
+    ctx._helpPendingPath = null;
+    this.instance.exports.clear_yield();
+  }
+
   run(stepsPerSlice = 500000) {
     this.running = true;
     const self = this;
@@ -400,10 +434,15 @@ class WineAssembly {
           self.running = false;
           return;
         }
-        // Handle COM DLL loading yield
+        // Handle yield reasons
         const yieldReason = self.instance.exports.get_yield_reason();
         if (yieldReason === 3) {
           await self.handleComDllLoad();
+          if (self.running) { setTimeout(step, 0); }
+          return;
+        }
+        if (yieldReason === 4) {
+          await self.handleHelpLoad();
           if (self.running) { setTimeout(step, 0); }
           return;
         }

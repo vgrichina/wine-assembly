@@ -201,7 +201,9 @@
 
   ;; Help window WndProc (WAT-native, called directly — not via x86)
   (func $help_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $hdc i32)
+    (local $hdc i32) (local $y i32) (local $line_start i32) (local $line_len i32)
+    (local $scan i32) (local $end i32) (local $ch i32) (local $vis_y i32)
+    (local $click_y i32) (local $click_line i32)
     ;; WM_PAINT (0x000F): draw help text using GDI (window-relative)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -209,26 +211,148 @@
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         ;; Set white background
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
-        (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))  ;; white
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000))) ;; black
-        ;; Fill client area white (stock WHITE_BRUSH = 0x30010)
+        (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
+        ;; Fill client area white
         (drop (call $host_gdi_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0) (i32.const 400) (i32.const 300)
           (i32.const 0x30010)))
-        ;; Draw help text
+        ;; Draw topic text line by line
         (if (global.get $help_topic_wa)
           (then
-            (drop (call $host_gdi_text_out (local.get $hdc)
-              (i32.const 8) (i32.const 8)
-              (global.get $help_topic_wa)
-              (global.get $help_topic_len))))
+            (local.set $scan (global.get $help_topic_wa))
+            (local.set $end (i32.add (global.get $help_topic_wa) (global.get $help_topic_len)))
+            (local.set $y (i32.const 0))
+            (local.set $line_start (local.get $scan))
+            (block $text_done (loop $text_loop
+              (if (i32.ge_u (local.get $scan) (local.get $end))
+                (then
+                  ;; Emit final line
+                  (local.set $line_len (i32.sub (local.get $scan) (local.get $line_start)))
+                  (if (i32.gt_u (local.get $line_len) (i32.const 0))
+                    (then
+                      (local.set $vis_y (i32.sub (i32.add (i32.const 8) (i32.mul (local.get $y) (i32.const 16))) (global.get $help_scroll_y)))
+                      (if (i32.and (i32.ge_s (local.get $vis_y) (i32.const -16))
+                                   (i32.lt_s (local.get $vis_y) (i32.const 270)))
+                        (then
+                          ;; On Contents page, draw topic lines in blue
+                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
+                                       (i32.gt_u (local.get $y) (i32.const 0)))
+                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000)))))
+                          (drop (call $host_gdi_text_out (local.get $hdc)
+                            (i32.const 8) (local.get $vis_y)
+                            (local.get $line_start) (local.get $line_len)))
+                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
+                                       (i32.gt_u (local.get $y) (i32.const 0)))
+                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))))
+                  (br $text_done)))
+              (local.set $ch (i32.load8_u (local.get $scan)))
+              (if (i32.eq (local.get $ch) (i32.const 0x0A))
+                (then
+                  ;; Newline — emit line
+                  (local.set $line_len (i32.sub (local.get $scan) (local.get $line_start)))
+                  (local.set $vis_y (i32.sub (i32.add (i32.const 8) (i32.mul (local.get $y) (i32.const 16))) (global.get $help_scroll_y)))
+                  (if (i32.and (i32.ge_s (local.get $vis_y) (i32.const -16))
+                               (i32.lt_s (local.get $vis_y) (i32.const 270)))
+                    (then
+                      (if (i32.gt_u (local.get $line_len) (i32.const 0))
+                        (then
+                          ;; On Contents page, draw topic lines in blue
+                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
+                                       (i32.gt_u (local.get $y) (i32.const 0)))
+                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000)))))
+                          (drop (call $host_gdi_text_out (local.get $hdc)
+                            (i32.const 8) (local.get $vis_y)
+                            (local.get $line_start) (local.get $line_len)))
+                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
+                                       (i32.gt_u (local.get $y) (i32.const 0)))
+                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))))
+                  (local.set $y (i32.add (local.get $y) (i32.const 1)))
+                  (local.set $line_start (i32.add (local.get $scan) (i32.const 1)))))
+              (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+              (br $text_loop))))
           (else
             ;; No topic: draw placeholder
             (drop (call $host_gdi_text_out (local.get $hdc)
               (i32.const 8) (i32.const 8)
-              (i32.const 0x108)  ;; WASM addr of "Help" string
+              (i32.const 0x108)  ;; "Help"
               (i32.const 4)))))
+        ;; Draw nav bar at bottom (y=276)
+        ;; Draw separator line
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.const 0) (i32.const 272) (i32.const 400) (i32.const 273)
+          (i32.const 0x30014))) ;; BLACK_BRUSH
+        ;; "[Contents]" at 0x10C (10 chars)
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000))) ;; blue (BGR)
+        (drop (call $host_gdi_text_out (local.get $hdc)
+          (i32.const 8) (i32.const 278) (i32.const 0x10C) (i32.const 10)))
+        ;; "[Back]" at 0x117 (6 chars)
+        (drop (call $host_gdi_text_out (local.get $hdc)
+          (i32.const 100) (i32.const 278) (i32.const 0x117) (i32.const 6)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
         (return (i32.const 0))))
+
+    ;; WM_LBUTTONDOWN (0x0201)
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        ;; lParam: low word = x, high word = y
+        (local.set $click_y (i32.shr_u (local.get $lParam) (i32.const 16)))
+        ;; Nav bar click (y >= 270)
+        (if (i32.ge_u (local.get $click_y) (i32.const 270))
+          (then
+            ;; Check x position: [Contents] at 8..90, [Back] at 100..150
+            (if (i32.lt_u (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 90))
+              (then (call $help_navigate (i32.const 0)))
+              (else (call $help_go_back)))
+            (return (i32.const 0))))
+        ;; On Contents page: click a topic line
+        (if (i32.eqz (global.get $help_cur_topic))
+          (then
+            ;; Calculate which line was clicked
+            (local.set $click_line (i32.div_u
+              (i32.add (local.get $click_y) (i32.sub (global.get $help_scroll_y) (i32.const 8)))
+              (i32.const 16)))
+            ;; Line 0 is header, lines 1+ are topics
+            (if (i32.and (i32.gt_u (local.get $click_line) (i32.const 0))
+                         (i32.le_u (local.get $click_line) (global.get $help_topic_count)))
+              (then
+                (call $help_navigate (local.get $click_line))
+                (return (i32.const 0))))))
+        (return (i32.const 0))))
+
+    ;; WM_KEYDOWN (0x0100)
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        ;; VK_UP (0x26): scroll up 16px
+        (if (i32.eq (local.get $wParam) (i32.const 0x26))
+          (then
+            (global.set $help_scroll_y (i32.sub (global.get $help_scroll_y) (i32.const 16)))
+            (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
+              (then (global.set $help_scroll_y (i32.const 0))))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        ;; VK_DOWN (0x28): scroll down 16px
+        (if (i32.eq (local.get $wParam) (i32.const 0x28))
+          (then
+            (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (i32.const 16)))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        ;; VK_PRIOR / Page Up (0x21)
+        (if (i32.eq (local.get $wParam) (i32.const 0x21))
+          (then
+            (global.set $help_scroll_y (i32.sub (global.get $help_scroll_y) (i32.const 200)))
+            (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
+              (then (global.set $help_scroll_y (i32.const 0))))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        ;; VK_NEXT / Page Down (0x22)
+        (if (i32.eq (local.get $wParam) (i32.const 0x22))
+          (then
+            (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (i32.const 200)))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        (return (i32.const 0))))
+
     ;; WM_CLOSE (0x0010)
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
@@ -238,172 +362,77 @@
     (i32.const 0)
   )
 
-  ;; Load HLP file into guest memory via host import
+  ;; Load HLP file via host imports (JS parses, WAT receives text)
   (func $help_load_file (param $path_ga i32)
-    (local $buf_ga i32) (local $bytes_read i32)
-    ;; Allocate buffer in guest heap for HLP data (64KB max)
-    (local.set $buf_ga (call $heap_alloc (i32.const 0x10000)))
-    (local.set $bytes_read (call $host_read_file
-      (call $g2w (local.get $path_ga))   ;; path (WASM addr of NUL-terminated string)
-      (call $g2w (local.get $buf_ga))    ;; dest buffer (WASM addr)
-      (i32.const 0x10000)))              ;; max bytes
-    (if (i32.gt_s (local.get $bytes_read) (i32.const 0))
+    (local $count i32) (local $len i32)
+    ;; Allocate buffers: title (256), topic text (16KB), back stack (64 = 16 entries * 4)
+    (if (i32.eqz (global.get $help_title_wa))
       (then
-        (global.set $help_file_wa (call $g2w (local.get $buf_ga)))
-        (global.set $help_file_len (local.get $bytes_read))
-        ;; Try to parse HLP and extract first topic
-        (call $hlp_parse)))
-  )
-
-  ;; Parse HLP file: extract title and first topic text
-  (func $hlp_parse
-    (local $magic i32) (local $dir_off i32) (local $dir_wa i32)
-    (local $dir_magic i32) (local $page_size i32) (local $num_pages i32)
-    (local $page_wa i32) (local $num_entries i32) (local $entry_wa i32)
-    (local $i i32) (local $name_wa i32) (local $file_off i32)
-    (local $topic_wa i32) (local $topic_len i32)
-    (local $sys_wa i32) (local $sys_len i32)
-    (local $ch i32)
-    ;; Check magic
-    (local.set $magic (i32.load (global.get $help_file_wa)))
-    (if (i32.ne (local.get $magic) (i32.const 0x00035F3F))
-      (then (return)))  ;; Not a valid HLP file
-    ;; Get directory offset; skip 9-byte internal file header to reach B+tree
-    (local.set $dir_off (i32.load offset=4 (global.get $help_file_wa)))
-    (local.set $dir_wa (i32.add (global.get $help_file_wa) (i32.add (local.get $dir_off) (i32.const 9))))
-    ;; B+tree header: magic(u16), flags(u16), pageSize(u16), format(NUL-term), ...
-    (local.set $dir_magic (i32.load16_u (local.get $dir_wa)))
-    (if (i32.ne (local.get $dir_magic) (i32.const 0x293B))
+        (global.set $help_title_wa (call $g2w (call $heap_alloc (i32.const 256))))
+        (global.set $help_topic_wa (call $g2w (call $heap_alloc (i32.const 0x4000))))
+        (global.set $help_back_stack (call $g2w (call $heap_alloc (i32.const 64))))))
+    ;; Call host to open and parse HLP
+    (local.set $count (call $host_help_open (call $g2w (local.get $path_ga))))
+    ;; -1 = file not ready, yield for async fetch
+    (if (i32.eq (local.get $count) (i32.const -1))
+      (then
+        (global.set $yield_reason (i32.const 4))
+        (return)))
+    (if (i32.le_s (local.get $count) (i32.const 0))
       (then (return)))
-    (local.set $page_size (i32.load16_u offset=4 (local.get $dir_wa)))
-    ;; Skip B+tree header: magic(2)+flags(2)+pageSize(2)+format(NUL-term)+14 bytes
-    ;; Scan past format string starting at +6
-    (local.set $entry_wa (i32.add (local.get $dir_wa) (i32.const 6)))
-    (block $fmt_end (loop $fmt_scan
-      (br_if $fmt_end (i32.eqz (i32.load8_u (local.get $entry_wa))))
-      (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1)))
-      (br $fmt_scan)))
-    (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1))) ;; skip NUL
-    ;; After format: first(2)+last(2)+unused(2)+totalPages(2)+nLevels(2)+totalEntries(4)=14
-    (local.set $num_pages (i32.load16_u offset=6 (local.get $entry_wa))) ;; totalPages at +6
-    (if (i32.eqz (local.get $num_pages)) (then (local.set $num_pages (i32.const 1))))
-    (local.set $page_wa (i32.add (local.get $entry_wa) (i32.const 14))) ;; first page
-    ;; Scan leaf pages for |SYSTEM and |TOPIC entries
-    (local.set $i (i32.const 0))
-    (block $pages_done (loop $page_loop
-      (br_if $pages_done (i32.ge_u (local.get $i) (local.get $num_pages)))
-      ;; Leaf page: unused(u16), nEntries(u16), prevPage(i16), nextPage(i16)
-      (local.set $num_entries (i32.load16_u offset=2 (local.get $page_wa)))
-      (local.set $entry_wa (i32.add (local.get $page_wa) (i32.const 8)))
-      ;; Walk entries: each is NUL-terminated filename + u32 offset
-      (block $entries_done
-        (loop $entry_loop
-          (br_if $entries_done (i32.le_s (local.get $num_entries) (i32.const 0)))
-          (local.set $name_wa (local.get $entry_wa))
-          ;; Skip past NUL-terminated name
-          (block $name_end (loop $skip_name
-            (br_if $name_end (i32.eqz (i32.load8_u (local.get $entry_wa))))
-            (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1)))
-            (br $skip_name)))
-          (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 1))) ;; skip NUL
-          ;; Read file offset (u32)
-          (local.set $file_off (i32.load (local.get $entry_wa)))
-          (local.set $entry_wa (i32.add (local.get $entry_wa) (i32.const 4)))
-          ;; Check for |SYSTEM (starts with '|S')
-          (if (i32.and
-                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))
-                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x53)))
-            (then
-              (local.set $sys_wa (i32.add (global.get $help_file_wa) (local.get $file_off)))
-              (call $hlp_parse_system (local.get $sys_wa))))
-          ;; Check for |TOPIC (starts with '|T')
-          (if (i32.and
-                (i32.eq (i32.load8_u (local.get $name_wa)) (i32.const 0x7C))
-                (i32.eq (i32.load8_u (i32.add (local.get $name_wa) (i32.const 1))) (i32.const 0x54)))
-            (then
-              (local.set $topic_wa (i32.add (global.get $help_file_wa) (local.get $file_off)))
-              (call $hlp_parse_topic (local.get $topic_wa))))
-          (local.set $num_entries (i32.sub (local.get $num_entries) (i32.const 1)))
-          (br $entry_loop)))
-      ;; Advance to next page
-      (local.set $page_wa (i32.add (local.get $page_wa) (local.get $page_size)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $page_loop)))
-  )
-
-  ;; Parse |SYSTEM internal file to extract title
-  (func $hlp_parse_system (param $wa i32)
-    (local $magic i32) (local $rec_wa i32) (local $rec_type i32) (local $rec_size i32)
-    (local $end_wa i32) (local $title_wa i32) (local $title_len i32)
-    ;; Internal file header: 9 bytes (usedSpace:u32, allocSpace:u32, flags:u8)
-    ;; Then |SYSTEM header: magic(u16=0x036C), minor(u16), flags(u16), GenDate(u32)
-    ;; Then tagged records (type:u16, size:u16, data)
-    (local.set $wa (i32.add (local.get $wa) (i32.const 9))) ;; skip internal file header
-    (local.set $magic (i32.load16_u (local.get $wa)))
-    (if (i32.ne (local.get $magic) (i32.const 0x036C))
-      (then (return)))
-    ;; Skip system header: magic(2) + minor(2) + flags(2) + GenDate(4) = 10 bytes
-    (local.set $rec_wa (i32.add (local.get $wa) (i32.const 10)))
-    ;; Scan tagged records (up to 256 bytes)
-    (local.set $end_wa (i32.add (local.get $rec_wa) (i32.const 256)))
-    (block $done (loop $rec_loop
-      (br_if $done (i32.ge_u (local.get $rec_wa) (local.get $end_wa)))
-      (local.set $rec_type (i32.load16_u (local.get $rec_wa)))
-      (local.set $rec_size (i32.load16_u offset=2 (local.get $rec_wa)))
-      (if (i32.eqz (local.get $rec_size)) (then (return)))
-      ;; Type 1 = title string
-      (if (i32.eq (local.get $rec_type) (i32.const 1))
-        (then
-          (global.set $help_title_wa (i32.add (local.get $rec_wa) (i32.const 4)))
-          (global.set $help_title_len (i32.sub (local.get $rec_size) (i32.const 1))) ;; exclude NUL
-          (return)))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.add (local.get $rec_size) (i32.const 4))))
-      (br $rec_loop)))
-  )
-
-  ;; Parse |TOPIC internal file — extract first topic's text
-  (func $hlp_parse_topic (param $wa i32)
-    (local $block_wa i32) (local $data_wa i32) (local $scan_wa i32)
-    (local $end_wa i32) (local $dst_wa i32) (local $ch i32) (local $len i32)
-    ;; Internal file header: 9 bytes
-    (local.set $block_wa (i32.add (local.get $wa) (i32.const 9)))
-    ;; Topic block header: next(u32), prev(u32), topic_off(u32) = 12 bytes
-    ;; After header comes topic data — paragraphs with formatting
-    (local.set $data_wa (i32.add (local.get $block_wa) (i32.const 12)))
-    ;; Allocate output buffer for clean text (4KB)
-    (local.set $dst_wa (call $heap_alloc (i32.const 4096)))
-    (global.set $help_topic_wa (call $g2w (local.get $dst_wa)))
-    ;; Scan topic data, extracting printable ASCII text
-    ;; Topic format is complex (formatting codes etc.), so we do a simple extraction:
-    ;; skip bytes < 0x20 (control codes), keep 0x20-0x7E (printable ASCII)
-    (local.set $scan_wa (local.get $data_wa))
-    (local.set $end_wa (i32.add (local.get $scan_wa) (i32.const 2048))) ;; scan up to 2KB
-    (local.set $len (i32.const 0))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $scan_wa) (local.get $end_wa)))
-      (br_if $done (i32.ge_u (local.get $len) (i32.const 4000))) ;; don't overflow buffer
-      (local.set $ch (i32.load8_u (local.get $scan_wa)))
-      ;; Keep printable ASCII (0x20-0x7E) and newlines (0x0A, 0x0D)
-      (if (i32.or
-            (i32.and (i32.ge_u (local.get $ch) (i32.const 0x20))
-                     (i32.le_u (local.get $ch) (i32.const 0x7E)))
-            (i32.or (i32.eq (local.get $ch) (i32.const 0x0A))
-                    (i32.eq (local.get $ch) (i32.const 0x0D))))
-        (then
-          (i32.store8 (i32.add (global.get $help_topic_wa) (local.get $len)) (local.get $ch))
-          (local.set $len (i32.add (local.get $len) (i32.const 1)))))
-      (local.set $scan_wa (i32.add (local.get $scan_wa) (i32.const 1)))
-      (br $scan)))
-    ;; NUL-terminate
-    (i32.store8 (i32.add (global.get $help_topic_wa) (local.get $len)) (i32.const 0))
+    (global.set $help_topic_count (local.get $count))
+    ;; Get title
+    (local.set $len (call $host_help_get_title (global.get $help_title_wa) (i32.const 255)))
+    (global.set $help_title_len (local.get $len))
+    ;; Load Contents page (index 0)
+    (local.set $len (call $host_help_get_topic (i32.const 0) (global.get $help_topic_wa) (i32.const 0x3FFF)))
     (global.set $help_topic_len (local.get $len))
+    (global.set $help_cur_topic (i32.const 0))
+    (global.set $help_scroll_y (i32.const 0))
+    (global.set $help_back_count (i32.const 0))
+  )
+
+  ;; Navigate to topic by index (0=Contents, 1..N=topics)
+  (func $help_navigate (param $index i32)
+    (local $len i32) (local $stack_ptr i32)
+    ;; Push current topic to back stack (max 16)
+    (if (i32.lt_u (global.get $help_back_count) (i32.const 16))
+      (then
+        (local.set $stack_ptr (i32.add (global.get $help_back_stack)
+          (i32.shl (global.get $help_back_count) (i32.const 2))))
+        (i32.store (local.get $stack_ptr) (global.get $help_cur_topic))
+        (global.set $help_back_count (i32.add (global.get $help_back_count) (i32.const 1)))))
+    ;; Load topic
+    (local.set $len (call $host_help_get_topic (local.get $index) (global.get $help_topic_wa) (i32.const 0x3FFF)))
+    (global.set $help_topic_len (local.get $len))
+    (global.set $help_cur_topic (local.get $index))
+    (global.set $help_scroll_y (i32.const 0))
+    (call $host_invalidate (global.get $help_hwnd))
+  )
+
+  ;; Go back in navigation history
+  (func $help_go_back
+    (local $len i32) (local $prev i32) (local $stack_ptr i32)
+    (if (i32.eqz (global.get $help_back_count))
+      (then (return)))
+    ;; Pop from back stack
+    (global.set $help_back_count (i32.sub (global.get $help_back_count) (i32.const 1)))
+    (local.set $stack_ptr (i32.add (global.get $help_back_stack)
+      (i32.shl (global.get $help_back_count) (i32.const 2))))
+    (local.set $prev (i32.load (local.get $stack_ptr)))
+    ;; Load that topic
+    (local.set $len (call $host_help_get_topic (local.get $prev) (global.get $help_topic_wa) (i32.const 0x3FFF)))
+    (global.set $help_topic_len (local.get $len))
+    (global.set $help_cur_topic (local.get $prev))
+    (global.set $help_scroll_y (i32.const 0))
+    (call $host_invalidate (global.get $help_hwnd))
   )
 
   ;; Create help window via host
   (func $help_create_window
     (local $title_wa i32) (local $hwnd i32)
     ;; Use parsed title or fallback
-    (if (global.get $help_title_wa)
+    (if (i32.and (global.get $help_title_wa) (global.get $help_title_len))
       (then (local.set $title_wa (global.get $help_title_wa)))
       (else (local.set $title_wa (i32.const 0x108)))) ;; "Help"
     ;; Allocate hwnd
@@ -432,10 +461,12 @@
       (then
         (call $wnd_table_remove (global.get $help_hwnd))
         (global.set $help_hwnd (i32.const 0))
-        (global.set $help_file_wa (i32.const 0))
-        (global.set $help_file_len (i32.const 0))
         (global.set $help_topic_wa (i32.const 0))
         (global.set $help_topic_len (i32.const 0))
         (global.set $help_title_wa (i32.const 0))
-        (global.set $help_title_len (i32.const 0))))
+        (global.set $help_title_len (i32.const 0))
+        (global.set $help_topic_count (i32.const 0))
+        (global.set $help_cur_topic (i32.const 0))
+        (global.set $help_scroll_y (i32.const 0))
+        (global.set $help_back_count (i32.const 0))))
   )

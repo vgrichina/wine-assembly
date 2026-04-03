@@ -5549,5 +5549,12 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 4193316377
+  },
+  {
+    "id": 793,
+    "name": "CallWindowProcA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1700858052
   }
 ]

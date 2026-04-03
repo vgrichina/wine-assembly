@@ -363,9 +363,10 @@ Offset  Size  Field
 1. File is read from offset 0 in 512-byte chunks
 2. Each chunk is scanned for the NSIS firstheader signature (0xDEADBEEF + "NullsoftInst")
 3. Once found, `remaining = length_of_all_following_data - 4` (exclude stored CRC)
-4. CRC32 is accumulated **only** over overlay data (NOT the PE stub before it)
-5. Total CRC'd = `length_of_all_following_data - 4` bytes (starting from the overlay chunk)
-6. Stored CRC is at file offset `overlay_pos + length_of_all_following_data - 4`
+4. CRC32 skips the **first 512 bytes** (MZ/PE header) — at pos=0, `esi == file_size`,
+   and the gate `cmp esi, file_size; jge skip` prevents CRC on that first chunk
+5. Total CRC'd = `file_size - 4 - 512` bytes (everything except first chunk and last 4)
+6. Stored CRC is at file offset `file_size - 4` (last 4 bytes)
 7. Standard CRC32 (polynomial 0xEDB88320, init=0, chained per-chunk)
 8. Comparison: `accumulated_crc == stored_4_bytes` (NOT checking for zero)
 
@@ -379,12 +380,53 @@ Offset  Size  Field
 
 The check at `0x404271`: `cmp esi, [0x42cbcc]` — when `esi >= file_size` (meaning we haven't found the overlay yet and are still decrementing from the original file_size), the CRC call is **skipped**. CRC only starts accumulating once `esi` has been reset to `data_len - 4` at `0x404229`, which is always less than file_size.
 
-**This means: CRC does NOT cover the PE stub. It only covers the NSIS overlay data (minus last 4 bytes).**
+**The first 512-byte chunk is skipped because `esi == file_size` on the first iteration, and the gate `cmp esi, [file_size]; jge skip_crc` prevents CRC computation. After the first read, `esi = file_size - 512 < file_size`, so all subsequent chunks are CRC'd.**
 
-Total CRC'd bytes = `length_of_all_following_data - 4` (NOT `file_size - 4`).
-Stored CRC is at file offset `overlay_pos + length_of_all_following_data - 4`.
-For typical NSIS installers where overlay extends to EOF, this equals `file_size - 4`.
+Total CRC'd bytes = `file_size - 4 - 512`.
+Stored CRC = last 4 bytes of file.
 
 ### Verified
 
-Both `Winamp291.exe` and `winamp295.exe` have **valid** CRC32 values when computed this way. The files are NOT corrupted — earlier failed checks were using the wrong byte range (including the PE stub).
+Both `Winamp291.exe` and `winamp295.exe` have **valid** CRC32 values when computed this way (skip first 512 bytes, CRC the rest minus last 4). The files are NOT corrupted.
+
+## NSIS Inflate Decompression
+
+### Bug: SHR [mem], CL with base+disp addressing (FIXED)
+
+**Root cause:** `$th_shift_m32_ro` (handler 139) checked `count == 0` to detect CL shifts, but the encoder sends `0xFF` as the CL sentinel. This caused `shr [ebp-0x30], cl` at `0x4014a6` to always shift by 31 (0xFF & 31) instead of the actual CL value.
+
+**Effect:** The inflate bit buffer was never properly advanced after each Huffman code lookup. The same 2-bit pattern kept matching symbol 10 (the shortest code in the code-length alphabet), filling all 309 lit/len/dist code lengths with value 10. `inflate_table` then failed to build a valid Huffman table for the distance codes, and the inflate function returned an error.
+
+**Fix:** Changed `$th_shift_m32_ro` in `06-fpu.wat` to check `count == 0xFF` instead of `count == 0`, matching the encoder convention used by `$th_shift_m32` (handler 54).
+
+### Inflate State Machine (at `esi` = `0x40c478`)
+
+The inflate struct base is at `0x40c468` (passed to `inflate_init` at `0x401000`). The inflate function at `0x401031` sets `esi = [struct+0x10]`, so internal state fields are at `esi+offset`:
+
+| Offset | Field | Description |
+|--------|-------|-------------|
+| `+0x00` | state | Inflate mode (0-9) |
+| `+0x04` | packed | `nlit\|ndist<<5\|ncode<<10` |
+| `+0x08` | index | Current code-length index |
+| `+0x0C` | lens[0..308] | Code-length array (dword per entry) |
+| `+0x50C` | bits | Bits needed for Huffman lookup |
+| `+0x510` | htbl_ptr | Code-length Huffman table pointer |
+| `+0x520` | htbl_data | Huffman table storage |
+
+State transitions: 0(header)→3(nlit/ndist/ncode)→4(read code-length codes)→5(decode lit/dist code lengths)→6(main decode)→...
+
+Jump table at `0x401bb0`: state 0→`0x4010af`, 3→`0x40133f`, 4→`0x40137e`, 5→`0x401575`, 6→`0x401666`.
+
+### Key Inflate Addresses
+
+| Address | Function |
+|---------|----------|
+| `0x401000` | `inflate_init(struct)` — reset state |
+| `0x401031` | `inflate(struct)` — main inflate entry |
+| `0x401d0f` | `inflate_table(lens, codes, type, ...)` — build Huffman table |
+| `0x403de6` | NSIS decompress wrapper — calls inflate in a loop |
+| `0x403d09` | `load_nsis_header` — reads firstheader, allocates, decompresses |
+
+### Current Blocker: GetUserDefaultLangID
+
+After successful decompression, the installer proceeds to read the registry and then calls `GetUserDefaultLangID` at `0x404687` (via `call [0x4070c4]`), which hits a crash stub. This is the next API to implement.
