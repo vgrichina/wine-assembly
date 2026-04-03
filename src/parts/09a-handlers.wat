@@ -1629,10 +1629,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 88: GetSubMenu — STUB: unimplemented
+  ;; 88: GetSubMenu(hMenu, nPos) → HMENU
+  ;; Returns submenu handle at position nPos. Encode as hMenu | (pos << 16).
   (func $handle_GetSubMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.or
+      (i32.and (local.get $arg0) (i32.const 0xFFFF))
+      (i32.shl (i32.add (local.get $arg1) (i32.const 1)) (i32.const 16))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 89: GetSystemMenu
   (func $handle_GetSystemMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4010,10 +4013,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 343: IsBadReadPtr — return 0 (valid) — STUB: unimplemented
+  ;; 343: IsBadReadPtr(lp, ucb) → BOOL
+  ;; Validates read access to memory range. Returns 0 if valid, 1 if bad.
+  ;; Check if address falls within our WASM memory range.
   (func $handle_IsBadReadPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (select (i32.const 1) (i32.const 0)
+      (i32.or (i32.eqz (local.get $arg0))
+              (i32.gt_u (i32.add (local.get $arg0) (local.get $arg1)) (i32.const 0x02000000)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 344: IsBadWritePtr — return 0 (valid) — STUB: unimplemented
   ;; IsBadWritePtr(lp, ucb) — return 0 (memory is always valid in our flat address space)
@@ -4234,10 +4241,12 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 368: StretchDIBits — STUB: unimplemented
+  ;; 368: StretchDIBits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, lpBits, lpBmi, usage, rop)
+  ;; 13 args stdcall. For now return hDst (number of scan lines copied).
+  ;; Full implementation would render DIB data to the DC via host GDI.
   (func $handle_StretchDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (local.get $arg3))  ;; return hDst (dest height = scan lines)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 56))))
 
   ;; 369: OffsetRgn — STUB: unimplemented
   (func $handle_OffsetRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5288,10 +5297,30 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 479: GetLocaleInfoW — return 0 (failure) — STUB: unimplemented
+  ;; 479: GetLocaleInfoW(Locale, LCType, lpLCData, cchData) → chars written
+  ;; Returns locale info as wide string. Common LCTypes:
+  ;; 0x0E=LOCALE_SDECIMAL, 0x0F=LOCALE_STHOUSAND, 0x01=LOCALE_ILANGUAGE
   (func $handle_GetLocaleInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    ;; If cchData==0, return required size
+    (if (i32.eqz (local.get $arg3))
+      (then (global.set $eax (i32.const 2))  ;; 1 char + NUL
+             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Write a default single-char response based on LCType
+    (if (i32.eq (local.get $arg1) (i32.const 0x0E))  ;; LOCALE_SDECIMAL
+      (then (call $gs16 (local.get $arg2) (i32.const 0x2E))  ;; "."
+             (call $gs16 (i32.add (local.get $arg2) (i32.const 2)) (i32.const 0))
+             (global.set $eax (i32.const 2))
+             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const 0x0F))  ;; LOCALE_STHOUSAND
+      (then (call $gs16 (local.get $arg2) (i32.const 0x2C))  ;; ","
+             (call $gs16 (i32.add (local.get $arg2) (i32.const 2)) (i32.const 0))
+             (global.set $eax (i32.const 2))
+             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Default: return "0" + NUL
+    (call $gs16 (local.get $arg2) (i32.const 0x30))
+    (call $gs16 (i32.add (local.get $arg2) (i32.const 2)) (i32.const 0))
+    (global.set $eax (i32.const 2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 480: GetTimeZoneInformation(lpTZI) — zero-fill 172-byte struct, return TIME_ZONE_ID_UNKNOWN (0)
   (func $handle_GetTimeZoneInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5578,10 +5607,12 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 524: CreateMutexW — STUB: unimplemented
+  ;; 524: CreateMutexW(lpMutexAttributes, bInitialOwner, lpName) → HANDLE
+  ;; Returns a unique handle for the mutex. Single-threaded, so always succeeds.
   (func $handle_CreateMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eax (global.get $next_hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 525: ReleaseMutex — STUB: unimplemented
   (func $handle_ReleaseMutex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8625,6 +8656,31 @@
   (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space
+  (func $handle_PathGetArgsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32) (local $ch i32) (local $in_quote i32)
+    (local.set $ptr (call $g2w (local.get $arg0)))
+    (block $done (loop $scan
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.eq (local.get $ch) (i32.const 0x22))  ;; quote
+        (then (local.set $in_quote (i32.xor (local.get $in_quote) (i32.const 1)))))
+      (if (i32.and (i32.eq (local.get $ch) (i32.const 0x20)) (i32.eqz (local.get $in_quote)))
+        (then
+          ;; Skip spaces
+          (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+          (block $end_sp (loop $sp
+            (br_if $end_sp (i32.ne (i32.load8_u (local.get $ptr)) (i32.const 0x20)))
+            (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+            (br $sp)))
+          (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $scan)))
+    ;; No args found, return pointer to NUL terminator
+    (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 818: FindResourceExA(hModule, lpType, lpName, wLanguage) → HRSRC
   ;; Same as FindResourceA but with explicit language (we use first lang match)
