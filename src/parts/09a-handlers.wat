@@ -781,10 +781,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 62: FreeResource — STUB: unimplemented
+  ;; 62: FreeResource(hResData) → BOOL
+  ;; On Win32, resources are mapped from the PE image and don't need freeing. Returns FALSE (0).
   (func $handle_FreeResource (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 63: RtlUnwind
   (func $handle_RtlUnwind (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6699,10 +6700,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 653: IsZoomed — STUB: unimplemented
+  ;; 653: IsZoomed(hwnd) → BOOL — returns TRUE if window is maximized
+  ;; Windows in this emulator are never maximized
   (func $handle_IsZoomed (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 654: SetParent — STUB: unimplemented
   (func $handle_SetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6864,10 +6866,12 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 678: FindWindowW — STUB: unimplemented
+  ;; 678: FindWindowW(lpClassName, lpWindowName) → HWND
+  ;; Searches for a top-level window. Returns NULL (no other instances running).
+  ;; Apps use this to detect if they're already running.
   (func $handle_FindWindowW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 679: GetTabbedTextExtentW — STUB: unimplemented
   (func $handle_GetTabbedTextExtentW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8656,6 +8660,45 @@
   (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 821: mixerGetID(hmxobj, puMxId, fdwId) → MMRESULT
+  ;; Returns MMSYSERR_NODRIVER (6) — no audio mixer device available
+  (func $handle_mixerGetID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 6))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 822: CreateDialogParamW(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
+  ;; Wide-char version — delegate to CreateDialogParamA behavior
+  (func $handle_CreateDialogParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; For resource ID templates (MAKEINTRESOURCE), treat same as A version
+    ;; Allocate dialog hwnd, create via renderer if available
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eax (global.get $next_hwnd))
+    (if (local.get $arg3)
+      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $arg3))))
+    (drop (call $host_create_dialog (global.get $next_hwnd) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; 823: GetConsoleScreenBufferInfo(hConsole, lpInfo) → BOOL
+  ;; Fill CONSOLE_SCREEN_BUFFER_INFO with 80x25 default
+  (func $handle_GetConsoleScreenBufferInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; dwSize.X=80, dwSize.Y=25
+    (call $gs16 (local.get $arg1) (i32.const 80))
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 2)) (i32.const 25))
+    ;; dwCursorPosition.X=0, Y=0
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+    ;; wAttributes = 7 (FOREGROUND_BLUE|GREEN|RED = white on black)
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 7))
+    ;; srWindow: left=0, top=0, right=79, bottom=24
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 10)) (i32.const 0))
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0))
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 14)) (i32.const 79))
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 16)) (i32.const 24))
+    ;; dwMaximumWindowSize.X=80, Y=25
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 18)) (i32.const 80))
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 20)) (i32.const 25))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space
   (func $handle_PathGetArgsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

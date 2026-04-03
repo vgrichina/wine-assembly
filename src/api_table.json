@@ -5745,5 +5745,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3423048694
+  },
+  {
+    "id": 821,
+    "name": "mixerGetID",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3633519339
+  },
+  {
+    "id": 822,
+    "name": "CreateDialogParamW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4183599339
+  },
+  {
+    "id": 823,
+    "name": "GetConsoleScreenBufferInfo",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 286567674
   }
 ]
