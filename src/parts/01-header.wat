@@ -100,6 +100,8 @@
   ;; get_prop(hwnd, name_ptr) → value
   (import "host" "set_prop" (func $host_set_prop (param i32 i32 i32) (result i32)))
   ;; set_prop(hwnd, name_ptr, value) → 1
+  (import "host" "remove_prop" (func $host_remove_prop (param i32 i32) (result i32)))
+  ;; remove_prop(hwnd, name_ptr) → removed value
 
 
 
@@ -320,6 +322,7 @@
   (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
+  (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table

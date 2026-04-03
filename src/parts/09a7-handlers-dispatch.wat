@@ -1121,6 +1121,26 @@
     (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct
+  (func $handle_GlobalMemoryStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (call $zero_memory (local.get $wa) (i32.const 32))
+    (i32.store (local.get $wa) (i32.const 32))             ;; dwLength
+    (i32.store offset=4 (local.get $wa) (i32.const 50))    ;; dwMemoryLoad = 50%
+    (i32.store offset=8 (local.get $wa) (i32.const 0x04000000))  ;; dwTotalPhys = 64MB
+    (i32.store offset=12 (local.get $wa) (i32.const 0x02000000)) ;; dwAvailPhys = 32MB
+    (i32.store offset=16 (local.get $wa) (i32.const 0x10000000)) ;; dwTotalPageFile = 256MB
+    (i32.store offset=20 (local.get $wa) (i32.const 0x08000000)) ;; dwAvailPageFile = 128MB
+    (i32.store offset=24 (local.get $wa) (i32.const 0x7FFE0000)) ;; dwTotalVirtual
+    (i32.store offset=28 (local.get $wa) (i32.const 0x7FFC0000)) ;; dwAvailVirtual
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; 852: RemovePropA(hwnd, lpString) → HANDLE (removed value)
+  (func $handle_RemovePropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_remove_prop (local.get $arg0) (call $g2w (local.get $arg1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 824: GetConsoleOutputCP() → UINT — returns output code page
   (func $handle_GetConsoleOutputCP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 437))  ;; CP 437 (OEM United States)

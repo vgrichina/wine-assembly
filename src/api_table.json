@@ -5962,5 +5962,82 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3418506431
+  },
+  {
+    "id": 852,
+    "name": "RemovePropA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2790268019
+  },
+  {
+    "id": 853,
+    "name": "waveInOpen",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1028497591
+  },
+  {
+    "id": 854,
+    "name": "waveInClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1811622737
+  },
+  {
+    "id": 855,
+    "name": "waveInStart",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3160301353
+  },
+  {
+    "id": 856,
+    "name": "waveInStop",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2121622339
+  },
+  {
+    "id": 857,
+    "name": "waveInReset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2974917274
+  },
+  {
+    "id": 858,
+    "name": "waveInPrepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2691464303
+  },
+  {
+    "id": 859,
+    "name": "waveInUnprepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2486145758
+  },
+  {
+    "id": 860,
+    "name": "waveInAddBuffer",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3800205064
+  },
+  {
+    "id": 861,
+    "name": "waveInGetNumDevs",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 796220243
+  },
+  {
+    "id": 862,
+    "name": "GlobalMemoryStatus",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2614496715
   }
 ]
