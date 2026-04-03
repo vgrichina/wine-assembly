@@ -2,6 +2,12 @@
   ;; GDI API HANDLERS
   ;; ============================================================
 
+  ;; 856: GetCurrentObject(hdc, uObjectType) → HGDIOBJ
+  ;; OBJ_PEN=1, OBJ_BRUSH=2, OBJ_PAL=5, OBJ_FONT=6, OBJ_BITMAP=7
+  (func $handle_GetCurrentObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_get_current_object (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 145: SelectObject(hdc, hObject) — delegate to host GDI
   (func $handle_SelectObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_select_object (local.get $arg0) (local.get $arg1)))

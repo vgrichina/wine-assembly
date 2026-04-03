@@ -85,6 +85,8 @@
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
   (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
   ;; gdi_line_to(hdc, x, y)
+  (import "host" "gdi_get_current_object" (func $host_gdi_get_current_object (param i32 i32) (result i32)))
+  ;; gdi_get_current_object(hdc, objectType) → handle
   (import "host" "gdi_arc" (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))

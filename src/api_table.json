@@ -5948,5 +5948,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 100522901
+  },
+  {
+    "id": 850,
+    "name": "mciSendCommandW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 900852448
+  },
+  {
+    "id": 851,
+    "name": "GetCurrentObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3418506431
   }
 ]
