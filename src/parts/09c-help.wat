@@ -19,8 +19,8 @@
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $i) (i32.const 8))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
       ;; Update existing entry
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (i32.store offset=4 (local.get $ptr) (local.get $wndproc)) (return)))
@@ -33,7 +33,7 @@
     ;; Insert in empty slot
     (if (i32.ne (local.get $empty) (i32.const -1))
       (then
-        (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $empty) (i32.const 8))))
+        (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $empty) (i32.const 8))))
         (i32.store (local.get $ptr) (local.get $hwnd))
         (i32.store offset=4 (local.get $ptr) (local.get $wndproc))))
   )
@@ -43,8 +43,8 @@
     (local $i i32) (local $ptr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $i) (i32.const 8))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (return (i32.load offset=4 (local.get $ptr)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -57,8 +57,8 @@
     (local $i i32) (local $ptr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $i) (i32.const 8))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then
           (i32.store (local.get $ptr) (i32.const 0))
@@ -73,8 +73,8 @@
     (local $i i32) (local $ptr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2000) (i32.mul (local.get $i) (i32.const 8))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -88,7 +88,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.const 0x2200) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load (i32.add (global.get $USERDATA_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
   )
 
   ;; Set per-window userdata; returns old value
@@ -97,7 +97,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $ptr (i32.add (i32.const 0x2200) (i32.shl (local.get $idx) (i32.const 2))))
+    (local.set $ptr (i32.add (global.get $USERDATA_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
     (local.set $old (i32.load (local.get $ptr)))
     (i32.store (local.get $ptr) (local.get $value))
     (local.get $old)
@@ -109,7 +109,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.const 0x2280) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load (i32.add (global.get $PARENT_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
   )
 
   ;; Set parent hwnd for a window
@@ -118,7 +118,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store (i32.add (i32.const 0x2280) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
+        (i32.store (i32.add (global.get $PARENT_TABLE) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
   )
 
   ;; Get window style (style table at 0x2580)
@@ -127,7 +127,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.const 0x2580) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load (i32.add (global.get $STYLE_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
   )
 
   ;; Set window style; returns old value
@@ -136,7 +136,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $ptr (i32.add (i32.const 0x2580) (i32.shl (local.get $idx) (i32.const 2))))
+    (local.set $ptr (i32.add (global.get $STYLE_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
     (local.set $old (i32.load (local.get $ptr)))
     (i32.store (local.get $ptr) (local.get $style))
     (local.get $old)
@@ -170,8 +170,8 @@
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
       ;; Update existing class
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then
@@ -186,7 +186,7 @@
     ;; Insert new class
     (if (i32.ne (local.get $empty) (i32.const -1))
       (then
-        (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $empty) (i32.const 12))))
+        (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $empty) (i32.const 12))))
         (i32.store (local.get $ptr) (local.get $hash))
         (i32.store offset=4 (local.get $ptr) (local.get $wndproc))
         (global.set $class_atom_counter (i32.add (global.get $class_atom_counter) (i32.const 1)))
@@ -201,8 +201,8 @@
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -215,8 +215,8 @@
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then (return (i32.load offset=4 (local.get $ptr)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

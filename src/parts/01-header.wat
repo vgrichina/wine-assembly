@@ -246,6 +246,16 @@
   (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x01F52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
+  ;; Window/class/parent tables (below GUEST_BASE)
+  (global $WND_TABLE     i32 (i32.const 0x00002000))  ;; 32 entries × 8 bytes
+  (global $CLASS_TABLE   i32 (i32.const 0x00002100))  ;; 16 entries × 12 bytes
+  (global $PARENT_TABLE  i32 (i32.const 0x00002200))  ;; 32 entries × 4 bytes
+  (global $USERDATA_TABLE i32 (i32.const 0x00002280)) ;; 32 entries × 4 bytes
+  (global $STYLE_TABLE   i32 (i32.const 0x00002580))  ;; 32 entries × 4 bytes
+  (global $MAX_WINDOWS   i32 (i32.const 32))
+  (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
+  (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
+  (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)

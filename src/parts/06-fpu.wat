@@ -338,7 +338,7 @@
   (func $th_fpu_mem (param $op i32)
     (local $addr i32)
     (local.set $addr (call $read_thread_word))
-    (if (i32.eq (local.get $addr) (i32.const 0xEADEAD))
+    (if (i32.eq (local.get $addr) (global.get $SIB_SENTINEL))
       (then (local.set $addr (global.get $ea_temp))))
     (call $fpu_exec_mem
       (i32.shr_u (local.get $op) (i32.const 4))

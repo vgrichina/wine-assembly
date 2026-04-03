@@ -419,7 +419,7 @@
   ;; Helper: read address from thread word, but if sentinel (0xEADEAD), use ea_temp
   (func $read_addr (result i32)
     (local $a i32) (local.set $a (call $read_thread_word))
-    (if (result i32) (i32.eq (local.get $a) (i32.const 0xEADEAD))
+    (if (result i32) (i32.eq (local.get $a) (global.get $SIB_SENTINEL))
       (then (global.get $ea_temp))
       (else (local.get $a))))
 

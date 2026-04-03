@@ -141,7 +141,7 @@
           (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
                   (i32.shl (global.get $mr_scale) (i32.const 8)))))
         (call $te_raw (global.get $mr_disp))
-        (return (i32.const 0xEADEAD))))
+        (return (global.get $SIB_SENTINEL))))
     (global.get $mr_disp))
 
   ;;
