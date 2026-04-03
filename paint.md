@@ -41,35 +41,54 @@ Added `$wnd_get_style` / `$wnd_set_style` using style table at WASM 0x2580
 (32 slots × 4 bytes). CreateWindowExA stores the style; GetWindowLongA(-16) and
 SetWindowLongA(-16) read/write it. Also added GWL_EXSTYLE(-20) returning 0.
 
-### Current blocker: MFC RecalcLayout needs child window infrastructure
+### Current blocker: msvcrt malloc returns misaligned pointer → vtable corrupt
 
-After CreateWindowExA + WM_CREATE, MFC's CFrameWnd::OnCreate calls RecalcLayout
-which needs real window management APIs:
+**Root cause:** MFC's `new CMainFrame` allocates via msvcrt `malloc` (real
+msvcrt.dll code running in emulator). The returned pointer is **0x0184f279** —
+an ODD address. This corrupts the C++ vtable:
 
-1. **BeginDeferWindowPos / DeferWindowPos / EndDeferWindowPos** — batch
-   repositioning of child windows. Need to call host to resize/move.
-2. **GetTopWindow(hwnd)** — returns first child of hwnd. Needs child window
-   linked list (currently we only track parent, not children).
-3. **IsWindowVisible(hwnd)** — needs per-window visibility state (tracked by
-   ShowWindow).
-4. **SetWindowPlacement(hwnd, lpwndpl)** — sets position and show state.
+- CFrameWnd constructor writes vtable ptr to `[0x0184f279]` = 0x010f2c24
+  (MFC42 base class vtable). This is a misaligned dword store.
+- The EXE's CMainFrame constructor should then overwrite with the app's vtable
+  (in EXE address space 0x0100xxxx). But watchpoint shows only ONE vtable
+  write — the CMainFrame constructor never runs, or its vtable write goes to
+  a wrong address due to the misalignment.
+- Result: vtable stays at CFrameWnd's vtable → MFC virtual dispatch for
+  WM_CREATE calls CFrameWnd::OnWndMsg instead of CMainFrame::OnWndMsg →
+  app's message map (with ON_WM_CREATE) never consulted → CMainFrame::OnCreate
+  never called → no child windows (toolbar, status bar) created →
+  RecalcLayout finds nothing → crashes on BeginDeferWindowPos.
 
-These all require a proper child window tree. The current window table has
-hwnd→wndproc, parent, userdata, style, but no child list or sibling links.
+**Evidence:**
+- CWnd `this` = 0x0184f279 (odd, should be 4-byte aligned)
+- `[this]` = vtable = 0x010f2c24 (MFC42.DLL RVA 0xa2c24 = CFrameWnd vtable)
+- Expected: vtable in EXE space (0x01000000-0x01055000) for CMainFrame
+- Only 4 API calls between WM_CREATE and RecalcLayout (no CreateWindowExA for
+  children) — confirms app's OnCreate never ran
+- PostMessageA(WM_IDLEUPDATECMDUI) confirms CFrameWnd::OnCreate DID run
 
-**Trace at crash (batch 14, API #1404):**
+**Why msvcrt malloc returns odd pointer:** msvcrt.dll's malloc calls our
+HeapAlloc internally. Our heap_alloc returns 4-byte aligned addresses
+(8n+4 pattern). But msvcrt's internal heap management adds its own headers
+and metadata. If msvcrt's heap init didn't run correctly (e.g. HeapCreate
+returned a fake handle 0x140000), or if msvcrt's internal bookkeeping
+expects different HeapAlloc behavior, the malloc arena could be corrupt.
+
+**Next step:** Debug msvcrt's heap initialization. Check what HeapCreate and
+initial HeapAlloc calls return. Verify msvcrt's internal heap pointers are
+sane. The fix likely needs our HeapAlloc/HeapCreate to provide a real
+heap region that msvcrt can manage correctly.
+
+**Trace at crash (batch 13, API #1352):**
 ```
 CallWindowProcA → DefWindowProcA(WM_CREATE) → returns to AfxWndProc
-PostMessageA(hwnd, WM_IDLEUPDATECMDUI)
+PostMessageA(hwnd, WM_IDLEUPDATECMDUI)  ← CFrameWnd::OnCreate ran
 GetWindowLongA(hwnd, GWL_STYLE)
 GetClientRect(hwnd, &rect)
-BeginDeferWindowPos(8)     ← needs real impl
-GetTopWindow(hwnd)         ← needs child list
-...
+BeginDeferWindowPos(8)     ← crash (no child windows exist)
 ```
 
-API call count went from 1352 (crash on CallWindowProcA) to 1404 (crash on
-GetTopWindow in RecalcLayout).
+API call count: 1352 (crash on BeginDeferWindowPos in RecalcLayout).
 
 ### Previous Status (2026-04-02)
 

@@ -169,6 +169,21 @@
   (func (export "guest_write16") (param $ga i32) (param $val i32)
     (call $gs16 (local.get $ga) (local.get $val)))
 
+  ;; Set EXE name — copies NUL-terminated string to 0x120 buffer (max 127 chars)
+  (func (export "set_exe_name") (param $wa i32) (param $len i32)
+    (local $i i32) (local $n i32)
+    (local.set $n (if (result i32) (i32.gt_u (local.get $len) (i32.const 127))
+      (then (i32.const 127)) (else (local.get $len))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (i32.store8 (i32.add (i32.const 0x120) (local.get $i))
+        (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (i32.const 0x120) (local.get $n)) (i32.const 0))
+    (global.set $exe_name_wa (i32.const 0x120))
+    (global.set $exe_name_len (local.get $n)))
+
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))

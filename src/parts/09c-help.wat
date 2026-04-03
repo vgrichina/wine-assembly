@@ -170,7 +170,7 @@
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
       ;; Update existing class
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
@@ -195,13 +195,13 @@
     (i32.const 0)
   )
 
-  ;; Find class table slot index by name hash; returns slot (0-15) or -1
+  ;; Find class table slot index by name hash; returns slot (0-31) or -1
   (func $class_find_slot (param $name_wa i32) (result i32)
     (local $hash i32) (local $i i32) (local $ptr i32)
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then (return (local.get $i))))
@@ -215,7 +215,7 @@
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $ptr (i32.add (i32.const 0x2100) (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then (return (i32.load offset=4 (local.get $ptr)))))

@@ -266,6 +266,17 @@ class WineAssembly {
     const entry = this.instance.exports.load_pe(exeBytes.length);
     console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
 
+    // Set EXE name from URL
+    const exeName = url.replace(/^.*[\\\/]/, '');
+    if (this.instance.exports.set_exe_name) {
+      const enc = new TextEncoder();
+      const nameBytes = enc.encode(exeName);
+      const mem2 = new Uint8Array(this.memory.buffer);
+      const tmpOff = staging; // reuse staging as scratch
+      mem2.set(nameBytes, tmpOff);
+      this.instance.exports.set_exe_name(tmpOff, nameBytes.length);
+    }
+
     return entry;
   }
 

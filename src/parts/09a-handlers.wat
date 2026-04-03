@@ -889,11 +889,13 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
-    ;; Send WM_CREATE synchronously for any top-level window with EXE-space wndproc
-    ;; (not just main_hwnd — apps like Pinball create multiple top-level windows)
-    (if (i32.and
-      (i32.and (local.get $tmp) (i32.ge_u (local.get $tmp) (global.get $image_base)))
-      (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    ;; Send WM_CREATE synchronously for main window OR any window with EXE-space wndproc
+    (if (i32.or
+      (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
+      (i32.and
+        (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+                 (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x200000))))
+        (i32.ne (local.get $tmp) (i32.const 0))))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
@@ -1758,10 +1760,15 @@
   )
 
   ;; 96: GetDlgItem(hDlg, nIDDlgItem) → HWND of child control
-  ;; Return a synthetic HWND based on dialog hwnd + control ID
+  ;; Returns NULL if hDlg is 0 or child not found; otherwise synthetic HWND
   (func $handle_GetDlgItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Encode as 0x20000 | (dlg_index << 8) | (ctrl_id & 0xFF)
-    ;; This gives each control a unique pseudo-HWND
+    ;; NULL parent → no dialog → return NULL
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; For real dialog windows, encode as 0x20000 | ctrl_id
     (global.set $eax (i32.or (i32.const 0x20000)
       (i32.and (local.get $arg1) (i32.const 0xFFFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
@@ -4690,15 +4697,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 439: GetDIBColorTable — STUB: unimplemented
+  ;; 439: GetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_GetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 440: SetDIBColorTable — STUB: unimplemented
+  ;; 440: SetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_SetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (local.get $arg2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 441: ResizePalette — STUB: unimplemented
   (func $handle_ResizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4772,10 +4779,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 447: CreateDIBSection — STUB: unimplemented
+  ;; 447: CreateDIBSection(hdc, pbmi, usage, ppvBits, hSection, offset)
+  ;; Allocates pixel buffer, creates bitmap handle, stores data pointer at ppvBits
   (func $handle_CreateDIBSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $w i32) (local $h i32) (local $bpp i32) (local $size i32) (local $ptr i32)
+    (local.set $w (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
+    (local.set $h (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
+    (if (i32.lt_s (local.get $h) (i32.const 0))
+      (then (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
+    (local.set $bpp (i32.and (i32.shr_u (call $gl32 (i32.add (local.get $arg1) (i32.const 12))) (i32.const 16)) (i32.const 0xFFFF)))
+    ;; size = width * height * bytes_per_pixel
+    (local.set $size (i32.mul (i32.mul (local.get $w) (local.get $h))
+      (select (i32.shr_u (local.get $bpp) (i32.const 3)) (i32.const 1) (i32.gt_u (local.get $bpp) (i32.const 8)))))
+    (if (i32.lt_s (local.get $size) (i32.const 4)) (then (local.set $size (i32.const 4))))
+    (local.set $ptr (call $heap_alloc (local.get $size)))
+    (if (local.get $arg3)
+      (then (call $gs32 (local.get $arg3) (local.get $ptr))))
+    (global.set $eax (call $host_gdi_create_bitmap
+      (local.get $w) (local.get $h) (local.get $bpp) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; 448: GetDIBits — STUB: unimplemented
   (func $handle_GetDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5870,6 +5892,12 @@
   ;; We set up a call frame to the WndProc so it returns to our caller.
   (func $handle_CallWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32)
+    ;; NULL wndproc — return 0
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)
     (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))

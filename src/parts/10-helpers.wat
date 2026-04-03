@@ -155,14 +155,19 @@
     (i32.add (global.get $rsrc_rva) (local.get $d)))
 
   (func $store_fake_cmdline
-    (local $ptr i32) (local.set $ptr (call $heap_alloc (i32.const 32)))
+    (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32)
+    (local.set $ptr (call $heap_alloc (i32.const 256)))
     (global.set $fake_cmdline_addr (local.get $ptr))
-    ;; "app.exe /NCRC\0"
-    (i32.store (call $g2w (local.get $ptr)) (i32.const 0x2E707061))       ;; "app."
-    (i32.store (i32.add (call $g2w (local.get $ptr)) (i32.const 4)) (i32.const 0x20657865)) ;; "exe "
-    (i32.store (i32.add (call $g2w (local.get $ptr)) (i32.const 8)) (i32.const 0x52434E2F)) ;; "/NCR"
-    (i32.store8 (i32.add (call $g2w (local.get $ptr)) (i32.const 12)) (i32.const 0x43)) ;; "C"
-    (i32.store8 (i32.add (call $g2w (local.get $ptr)) (i32.const 13)) (i32.const 0x00))) ;; NUL
+    ;; Copy exe name from $exe_name_wa buffer
+    (local.set $dst (call $g2w (local.get $ptr)))
+    (local.set $len (global.get $exe_name_len))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (local.get $dst) (local.get $i))
+        (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0)))
   (func $guest_strlen (param $gp i32) (result i32)
     (local $len i32)
     (block $d (loop $l
