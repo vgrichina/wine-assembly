@@ -1961,7 +1961,7 @@
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
         (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
         (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
         ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
@@ -1990,7 +1990,7 @@
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
         (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
     ;; Store first wndproc as main for backward compat
     (if (i32.eqz (global.get $wndproc_addr))
@@ -2665,7 +2665,7 @@
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         ;; Found — copy 40-byte WNDCLASS from storage to output buffer
-        (local.set $src (i32.add (i32.const 0x2300) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $src (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))

@@ -216,6 +216,40 @@ The actual SkiFree title on real Windows does show these colored instruction box
 - SRCCOPY, NOTSRCCOPY, SRCPAINT, SRCAND all operate correctly via pixel-level ops
 - The `.pixels` array on GDI objects is NOT updated by canvas operations (stale after blits); the `.canvas` is authoritative
 
+## Fixed: WNDCLASS Storage Overwrote Timer Table (2026-04-03)
+
+**Root cause:** RegisterClassA saved WNDCLASSA structs at WASM address 0x2300 (40 bytes per class), which collided with TIMER_TABLE (also at 0x2300). SkiFree registers 2 classes (SkiMain at 0x405800, SkiStatus at 0x4068d0), writing 80 bytes at 0x2300-0x2350, which overwrote the first 4 timer entries. When SetTimer stored the timer callback, the class data made it look like: hwnd=0x2023 (class hash), id=0x405800 (WndProc), callback=0x400000 (image base). DispatchMessageA jumped to 0x400000 (PE header garbage).
+
+**Fix:** Moved WNDCLASS storage from 0x2300 to 0x2600 (after STYLE_TABLE ends at 0x2600).
+
+**Result:** 496 GetMessageA calls per 500 batches (was 5). Input events now delivered correctly.
+
+### Message Loop Disassembly
+```
+0x40485e: push esi
+0x40485f: mov esi, [0x40a118]          ; esi = GetMessageA
+0x404865: push 0, 0, 0, &MSG
+0x404870: call esi                      ; GetMessageA(lpMsg,0,0,0)
+0x404876: push ebx; mov ebx,[0x40a120]  ; ebx = DispatchMessageA
+0x40487d: push edi; mov edi,[0x40a11c]  ; edi = TranslateMessage
+  loop:
+0x404884: push &MSG
+0x404889: call edi                      ; TranslateMessage(lpMsg)
+0x40488b: push &MSG
+0x404890: call ebx                      ; DispatchMessageA(lpMsg)
+0x404892: push 0, 0, 0, &MSG
+0x40489d: call esi                      ; GetMessageA(lpMsg,0,0,0)
+0x40489f: test eax, eax
+0x4048a1: jnz loop
+```
+
+### Input System Issues (also investigated)
+1. **WM_KEYUP was never queued** — fixed in renderer.js handleKeyUp()
+2. **WM_NULL idle loop never yielded** — fixed: set yield_flag=1 on WM_NULL in GetMessageA/GetMessageW
+3. **Browser slice too large (500K)** — reduced to 50K for better input responsiveness
+4. These fixes help idle apps (minesweeper) but are secondary to the crash
+
 ## Next Steps
-1. Fix 4bpp palette color order in `gdi_create_bitmap` (R/B swap) — not used by SkiFree but affects other apps
-2. Test other EXEs still work after dispatch refactor
+1. Test input in browser — verify arrow keys control the skier
+2. Fix 4bpp palette color order in `gdi_create_bitmap` (R/B swap) — not used by SkiFree but affects other apps
+3. Test other EXEs still work after dispatch refactor
