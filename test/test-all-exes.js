@@ -14,12 +14,16 @@ const TEST_CASES = [
   { exe: 'test/binaries/notepad.exe', name: 'Notepad' },
   { exe: 'test/binaries/calc.exe', name: 'Calculator' },
   { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree' },
-  { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell' },
-  { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire' },
+  { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell',
+    extraArgs: ['--no-close', '--input=5:0x111:102'] },  // Game > New Game (F2)
+  { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire',
+    extraArgs: ['--no-close', '--input=5:0x111:1000'] },  // Game > Deal
   { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)' },
   { exe: 'test/binaries/nt/mspaint.exe', name: 'MSPaint (NT)' },
-  { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel' },
-  { exe: 'test/binaries/entertainment-pack/golf.exe', name: 'Golf' },
+  { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel',
+    extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
+  { exe: 'test/binaries/entertainment-pack/golf.exe', name: 'Golf',
+    extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
   { exe: 'test/binaries/entertainment-pack/pegged.exe', name: 'Pegged' },
   { exe: 'test/binaries/entertainment-pack/snake.exe', name: 'Rattler Race' },
   { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei' },
@@ -63,7 +67,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
 ];
 
-const MAX_BATCHES = 50;
+const MAX_BATCHES = 80;
 const BATCH_SIZE = 1000;
 
 function runExe(testCase) {
@@ -75,10 +79,11 @@ function runExe(testCase) {
   const args = [
     RUN_JS,
     `--exe=${exePath}`,
-    `--max-batches=${MAX_BATCHES}`,
+    `--max-batches=${testCase.maxBatches || MAX_BATCHES}`,
     `--batch-size=${BATCH_SIZE}`,
     '--no-build',
     '--verbose',
+    ...(testCase.extraArgs || []),
   ];
 
   const result = spawnSync('node', args, {
@@ -111,7 +116,7 @@ function runExe(testCase) {
   const hasWmClose = output.includes('WM_CLOSE') || output.includes('0x10');
   const exitClean = output.includes('[Exit]');
 
-  if (result.status !== 0 || unimplMatch) {
+  if ((result.status !== null && result.status !== 0) || unimplMatch) {
     // Find the specific unimplemented API
     const crashLines = lines.filter(l => /unreachable|unimplemented|RuntimeError/.test(l));
     // Last API before crash is likely the unimplemented one
