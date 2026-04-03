@@ -154,11 +154,23 @@
           <option value="snake">Rattler Race</option>
           <option value="taipei">Taipei</option>
           <option value="tictac">TicTactics</option>
-          <option value="mspaint">Paint</option>
+          <option value="reversi">Reversi</option>
+          <option value="winmine_wep">Minesweeper</option>
+        </optgroup>
+        <optgroup label="Win98 Accessories">
+          <option value="mspaint98">Paint (Win98)</option>
+          <option value="notepad98">Notepad (98)</option>
+          <option value="mplayer">Media Player</option>
+          <option value="mplay32">Media Player 32</option>
+          <option value="sysmon">System Monitor</option>
+          <option value="rsrcmtr">Resource Meter</option>
+          <option value="cleanmgr">Disk Cleanup</option>
         </optgroup>
         <optgroup label="Other">
           <option value="ski32">SkiFree</option>
           <option value="winmine">Minesweeper (XP)</option>
+          <option value="sndrec32_xp">Sound Recorder (XP)</option>
+          <option value="mspaint">Paint (NT/MFC)</option>
           <option value="pinball">Space Cadet Pinball</option>
         </optgroup>
       </select>
@@ -207,9 +219,19 @@ Resource-aware Win98 emulator
       snake:    { exe: '../test/binaries/entertainment-pack/snake.exe' },
       taipei:   { exe: '../test/binaries/entertainment-pack/taipei.exe' },
       tictac:   { exe: '../test/binaries/entertainment-pack/tictac.exe' },
+      reversi:  { exe: '../test/binaries/entertainment-pack/reversi.exe' },
+      winmine_wep: { exe: '../test/binaries/entertainment-pack/winmine.exe' },
+      mspaint98: { exe: '../test/binaries/mspaint.exe' },
+      notepad98: { exe: '../test/binaries/win98-apps/notepad98.exe' },
+      mplayer:  { exe: '../test/binaries/win98-apps/mplayer.exe' },
+      mplay32:  { exe: '../test/binaries/win98-apps/mplay32.exe' },
+      sysmon:   { exe: '../test/binaries/win98-apps/sysmon.exe' },
+      rsrcmtr:  { exe: '../test/binaries/win98-apps/rsrcmtr.exe' },
+      cleanmgr: { exe: '../test/binaries/win98-apps/cleanmgr.exe' },
       mspaint:  { exe: '../test/binaries/nt/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
       ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: '../test/binaries/xp/winmine.exe' },
+      sndrec32_xp: { exe: '../test/binaries/xp/sndrec32.exe' },
       pinball:  { exe: '../test/binaries/pinball/pinball.exe' },
     };
 
