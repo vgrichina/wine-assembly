@@ -117,6 +117,22 @@
     (i32.const 0)
   )
 
+  ;; Post queue dequeue — reads one i32 at a time from queue at 0x400
+  ;; Call 4 times to get hwnd, msg, wParam, lParam; auto-shifts on 4th read
+  (func $post_queue_dequeue (result i32)
+    (local $val i32)
+    (local.set $val (i32.load (i32.add (i32.const 0x400) (global.get $pq_read_off))))
+    (global.set $pq_read_off (i32.add (global.get $pq_read_off) (i32.const 4)))
+    (if (i32.ge_u (global.get $pq_read_off) (i32.const 16))
+      (then
+        (global.set $pq_read_off (i32.const 0))
+        (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+        (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+            (i32.mul (global.get $post_queue_count) (i32.const 16)))))))
+    (local.get $val)
+  )
+
   ;; 0: ExitProcess
   (func $handle_ExitProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -452,6 +468,12 @@
   ;; 40: GetACP — STUB: unimplemented
   (func $handle_GetACP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1252))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 791: GetUserDefaultLangID() → LANGID (0x0409 = English US)
+  (func $handle_GetUserDefaultLangID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x0409))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -1789,8 +1811,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 114: EndDialog(hDlg, nResult) — stub, return 1
+  ;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $dlg_ended (i32.const 1))
+    (global.set $dlg_result (local.get $arg1))
+    (global.set $quit_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -1989,10 +2014,42 @@
   )
 
   ;; 136: DialogBoxParamA(hInstance, lpTemplate, hWndParent, lpDialogFunc, dwInitParam)
-  ;; Stub: return IDCANCEL (2) — pretend dialog was cancelled
+  ;; DialogBoxParamA(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
+  ;; Creates modal dialog, sends WM_INITDIALOG, enters message loop, returns EndDialog result
   (func $handle_DialogBoxParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 2))  ;; IDCANCEL
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+    (local $hwnd i32) (local $dlg_id i32) (local $init_param i32)
+    ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
+    ;; arg3=lpDialogFunc, arg4=dwInitParam (from stack: [esp+24])
+    (local.set $init_param (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; Allocate HWND
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Set as dialog hwnd
+    (global.set $dlg_hwnd (local.get $hwnd))
+    (global.set $dlg_ended (i32.const 0))
+    (global.set $dlg_result (i32.const 0))
+    (global.set $dlg_proc (local.get $arg3))
+    ;; Resource ID: if < 0x10000, use directly; otherwise string resource name
+    (local.set $dlg_id (if (result i32) (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+      (then (local.get $arg1)) (else (i32.const 0))))
+    ;; Create dialog via host (which reads dialog template from resources)
+    (drop (call $host_create_dialog (local.get $hwnd) (local.get $dlg_id)))
+    ;; Register dialog proc in wnd_table
+    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; Save return address — we'll restore it when EndDialog is called
+    (global.set $dlg_ret_addr (call $gl32 (global.get $esp)))
+    ;; Clean DialogBoxParamA frame (ret + 5 args = 24 bytes)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ;; Set up call to dialog proc: push args for DlgProc(hwnd, WM_INITDIALOG, 0, dwInitParam)
+    ;; Return to dialog loop thunk which pumps messages until EndDialog
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))  ;; 4 args + ret addr
+    (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))  ;; ret → dialog message loop
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $hwnd))          ;; hDlg
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))             ;; wParam (focus hwnd)
+    (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
+    ;; Set EIP to dialog proc
+    (global.set $eip (local.get $arg3))
   )
 
   ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
@@ -5246,7 +5303,9 @@
 
   ;; 539: SetThreadPriority — STUB: unimplemented
   (func $handle_SetThreadPriority (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; SetThreadPriority(hThread, nPriority) — return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 540: SuspendThread — STUB: unimplemented
@@ -7800,6 +7859,13 @@
   (func $handle_SetObjectOwner (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 792: timeGetTime — same as GetTickCount, returns ms
+  (func $handle_timeGetTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $tick_count (call $host_get_ticks))
+    (global.set $eax (global.get $tick_count))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement

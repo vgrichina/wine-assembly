@@ -5535,5 +5535,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3996606165
+  },
+  {
+    "id": 791,
+    "name": "GetUserDefaultLangID",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3825988
+  },
+  {
+    "id": 792,
+    "name": "timeGetTime",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 4193316377
   }
 ]
