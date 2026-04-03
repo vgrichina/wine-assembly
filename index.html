@@ -135,9 +135,16 @@
       display: flex;
       align-items: center;
     }
+    #compile-status {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: #c0c0c0; border: 2px outset #dfdfdf; padding: 16px 24px;
+      font-family: "MS Sans Serif", Tahoma, sans-serif; font-size: 13px;
+      z-index: 9999; display: none;
+    }
   </style>
 </head>
 <body>
+  <div id="compile-status">Compiling WAT source...</div>
   <div id="shell">
     <div id="titlebar">Wine-Assembly — Windows 98 Emulator</div>
     <div id="toolbar">
@@ -194,17 +201,18 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/mem-utils.js?v=14"></script>
-  <script src="../lib/resources.js?v=14"></script>
-  <script src="../lib/renderer-input.js?v=14"></script>
-  <script src="../lib/renderer.js?v=14"></script>
-  <script src="../lib/dll-loader.js?v=14"></script>
-  <script src="../lib/storage.js?v=14"></script>
-  <script src="../lib/filesystem.js?v=14"></script>
-  <script src="../lib/hlp-parser.js?v=14"></script>
-  <script src="../lib/host-imports.js?v=14"></script>
-  <script src="../lib/thread-manager.js?v=14"></script>
-  <script src="host.js?v=14"></script>
+  <script src="lib/mem-utils.js?v=15"></script>
+  <script src="lib/resources.js?v=15"></script>
+  <script src="lib/renderer-input.js?v=15"></script>
+  <script src="lib/renderer.js?v=15"></script>
+  <script src="lib/dll-loader.js?v=15"></script>
+  <script src="lib/storage.js?v=15"></script>
+  <script src="lib/filesystem.js?v=15"></script>
+  <script src="lib/hlp-parser.js?v=15"></script>
+  <script src="lib/host-imports.js?v=15"></script>
+  <script src="lib/compile-wat.js?v=15"></script>
+  <script src="lib/thread-manager.js?v=15"></script>
+  <script src="host.js?v=15"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -214,30 +222,30 @@ Resource-aware Win98 emulator
     let inputWired = false;
 
     const apps = {
-      notepad:  { exe: '../test/binaries/notepad.exe' },
-      calc:     { exe: '../test/binaries/calc.exe', dlls: ['../test/binaries/dlls/msvcrt.dll'] },
-      freecell: { exe: '../test/binaries/entertainment-pack/freecell.exe' },
-      sol:      { exe: '../test/binaries/entertainment-pack/sol.exe' },
-      cruel:    { exe: '../test/binaries/entertainment-pack/cruel.exe' },
-      golf:     { exe: '../test/binaries/entertainment-pack/golf.exe' },
-      pegged:   { exe: '../test/binaries/entertainment-pack/pegged.exe' },
-      snake:    { exe: '../test/binaries/entertainment-pack/snake.exe' },
-      taipei:   { exe: '../test/binaries/entertainment-pack/taipei.exe' },
-      tictac:   { exe: '../test/binaries/entertainment-pack/tictac.exe' },
-      reversi:  { exe: '../test/binaries/entertainment-pack/reversi.exe' },
-      winmine_wep: { exe: '../test/binaries/entertainment-pack/winmine.exe' },
-      mspaint98: { exe: '../test/binaries/mspaint.exe' },
-      notepad98: { exe: '../test/binaries/win98-apps/notepad98.exe' },
-      mplayer:  { exe: '../test/binaries/win98-apps/mplayer.exe' },
-      mplay32:  { exe: '../test/binaries/win98-apps/mplay32.exe' },
-      sysmon:   { exe: '../test/binaries/win98-apps/sysmon.exe' },
-      rsrcmtr:  { exe: '../test/binaries/win98-apps/rsrcmtr.exe' },
-      cleanmgr: { exe: '../test/binaries/win98-apps/cleanmgr.exe' },
-      mspaint:  { exe: '../test/binaries/nt/mspaint.exe', dlls: ['../test/binaries/dlls/msvcrt.dll', '../test/binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
-      ski32:    { exe: '../test/binaries/entertainment-pack/ski32.exe' },
-      winmine:  { exe: '../test/binaries/xp/winmine.exe' },
-      sndrec32_xp: { exe: '../test/binaries/xp/sndrec32.exe' },
-      pinball:  { exe: '../test/binaries/pinball/pinball.exe' },
+      notepad:  { exe: 'binaries/notepad.exe' },
+      calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
+      freecell: { exe: 'binaries/entertainment-pack/freecell.exe' },
+      sol:      { exe: 'binaries/entertainment-pack/sol.exe' },
+      cruel:    { exe: 'binaries/entertainment-pack/cruel.exe' },
+      golf:     { exe: 'binaries/entertainment-pack/golf.exe' },
+      pegged:   { exe: 'binaries/entertainment-pack/pegged.exe' },
+      snake:    { exe: 'binaries/entertainment-pack/snake.exe' },
+      taipei:   { exe: 'binaries/entertainment-pack/taipei.exe' },
+      tictac:   { exe: 'binaries/entertainment-pack/tictac.exe' },
+      reversi:  { exe: 'binaries/entertainment-pack/reversi.exe' },
+      winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
+      mspaint98: { exe: 'binaries/mspaint.exe' },
+      notepad98: { exe: 'binaries/win98-apps/notepad98.exe' },
+      mplayer:  { exe: 'binaries/win98-apps/mplayer.exe' },
+      mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' },
+      sysmon:   { exe: 'binaries/win98-apps/sysmon.exe' },
+      rsrcmtr:  { exe: 'binaries/win98-apps/rsrcmtr.exe' },
+      cleanmgr: { exe: 'binaries/win98-apps/cleanmgr.exe' },
+      mspaint:  { exe: 'binaries/nt/mspaint.exe', dlls: ['binaries/dlls/msvcrt.dll', 'binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
+      ski32:    { exe: 'binaries/entertainment-pack/ski32.exe' },
+      winmine:  { exe: 'binaries/xp/winmine.exe' },
+      sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
+      pinball:  { exe: 'binaries/pinball/pinball.exe' },
     };
 
     function wireCanvasInput(canvas, renderer) {
@@ -355,12 +363,12 @@ Resource-aware Win98 emulator
         if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
           const required = DllLoader.detectRequiredDlls(wine._exeBytes);
           const availableDlls = {
-            'msvcrt.dll': '../test/binaries/dlls/msvcrt.dll',
-            'mfc42u.dll': '../test/binaries/dlls/mfc42u.dll',
-            'mfc42.dll': '../test/binaries/dlls/mfc42.dll',
-            'msvcp60.dll': '../test/binaries/dlls/msvcp60.dll',
-            'oleaut32.dll': '../test/binaries/dlls/oleaut32.dll',
-            'cards.dll': '../test/binaries/entertainment-pack/cards.dll',
+            'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
+            'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
+            'mfc42.dll': 'binaries/dlls/mfc42.dll',
+            'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
+            'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
+            'cards.dll': 'binaries/entertainment-pack/cards.dll',
           };
           const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
           for (const name of required) {
