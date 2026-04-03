@@ -28,11 +28,18 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 | `03-registers.wat` | Register access helpers, lazy flag system (flag_op/flag_res/flag_a/flag_b) |
 | `04-cache.wat` | Block cache (decoded x86 → threaded code) |
 | `05-alu.wat` | ALU operations (32/16/8-bit), shifts, bit ops, MUL/DIV, SETcc |
+| `05b-string-ops.wat` | String operations (movsb/movsd/stosb/stosd/cmps/scas + REP) |
 | `06-fpu.wat` | x87 FPU, 16-bit memory ALU handlers |
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |
-| `09a-handlers.wat` | Hand-written Win32 API handler functions + sub-dispatchers |
+| `09a-handlers.wat` | Win32 API handler functions (core: process, memory, encoding, window props) |
+| `09a2-handlers-console.wat` | Console API handlers (screen buffer, cursor, read/write) |
+| `09a3-handlers-audio.wat` | Audio/wave API handlers (waveOut*, mmio*, mci) |
+| `09a4-handlers-gdi.wat` | GDI API handlers (SelectObject, pens, brushes, BitBlt, text) |
+| `09a5-handlers-window.wat` | Window creation & message dispatch (CreateWindowExA, GetMessage, etc.) |
+| `09a6-handlers-crt.wat` | C runtime/string handlers (strlen, strcmp, _mbschr, etc.) |
+| `09a7-handlers-dispatch.wat` | Sub-dispatchers (Local*, Global*, lstr*, Reg*) + misc handlers |
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `09c-help.wat` | Window table, class table, WAT-native help system |
@@ -45,8 +52,10 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 
 | File | Purpose |
 |------|---------|
+| `mem-utils.js` | Shared memory utilities (readStrA, readStrW, g2w) |
 | `host-imports.js` | Shared WASM host imports (GDI, file I/O, registry, help system) |
-| `renderer.js` | Win98 canvas renderer (windows, controls, menus, dialogs) |
+| `renderer.js` | Win98 canvas renderer (windows, controls, menus, dialogs, drawing) |
+| `renderer-input.js` | Renderer input handling (mouse, keyboard, menu interaction) |
 | `resources.js` | PE resource parser (menus, dialogs, strings, bitmaps, icons) |
 | `dll-loader.js` | DLL loading, relocation, import patching |
 | `hlp-parser.js` | Windows HLP file parser (B+tree, Hall phrase decompression) |
