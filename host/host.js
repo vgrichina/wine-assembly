@@ -129,11 +129,8 @@ class WineAssembly {
     };
 
     // --- Input ---
-    let _ciCount = 0;
     h.check_input = () => {
       if (!self.renderer) return 0;
-      _ciCount++;
-      if (_ciCount % 100000 === 0) self.logToUI('[poll] calls=' + _ciCount + ' q=' + self.renderer.inputQueue.length);
       // In multi-app mode, only dequeue events for this app's hwnd range
       let evt;
       if (self._hwndBase && self._multiApp) {
