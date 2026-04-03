@@ -121,6 +121,27 @@
         (i32.store (i32.add (i32.const 0x2280) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
   )
 
+  ;; Get window style (style table at 0x2580)
+  (func $wnd_get_style (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.const 0x2580) (i32.shl (local.get $idx) (i32.const 2))))
+  )
+
+  ;; Set window style; returns old value
+  (func $wnd_set_style (param $hwnd i32) (param $style i32) (result i32)
+    (local $idx i32) (local $ptr i32) (local $old i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (i32.const 0x2580) (i32.shl (local.get $idx) (i32.const 2))))
+    (local.set $old (i32.load (local.get $ptr)))
+    (i32.store (local.get $ptr) (local.get $style))
+    (local.get $old)
+  )
+
   ;; ---- Class table helpers ----
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)

@@ -1,6 +1,77 @@
 # MSPaint Debugging Notes
 
-## Current Status (2026-04-02)
+## Current Status (2026-04-03)
+
+### Three major fixes this session — MFC OnCreate now runs
+
+#### Fix 1: CallWindowProcA implemented
+
+MFC's CWnd::DefWindowProc calls `CallWindowProcA(m_pfnSuper, hwnd, msg, wParam,
+lParam)` to forward messages to the superclass WndProc. Two cases:
+
+1. **Thunk target (e.g. DefWindowProcA):** If prevWndFunc is in the thunk zone,
+   rewrite the stack inline and dispatch via `$win32_dispatch` directly. Cannot
+   set EIP to a thunk because the run loop would infinite-loop (handlers don't
+   set EIP, they just adjust ESP/EAX).
+
+2. **Real x86 code target:** Set up a call frame (push 4 WndProc args + return
+   address) and set EIP to the prevWndFunc. The WndProc executes normally and
+   returns to CallWindowProcA's caller via `ret`.
+
+#### Fix 2: GetClassInfoA implemented (was returning FALSE, causing garbage WndProc)
+
+**Root cause of m_pfnAfxWndProc NULL bug (from previous session):** MFC's
+`AfxEndDeferRegisterClass` calls `GetClassInfoA(hInst, "AfxFrameOrView42", &wc)`
+to get the base class info, modifies className to "MSPaintApp", then calls
+`RegisterClassA(&wc)`. Since GetClassInfoA returned FALSE without filling the
+struct, wc contained stack garbage — including a garbage lpfnWndProc (0x02bffbb0,
+a stack address). This was stored in the class table and later returned by
+`SetWindowLongA(GWL_WNDPROC)` as `m_pfnSuper`.
+
+**Fix:** GetClassInfoA now looks up the class in the class table and copies the
+saved WNDCLASS struct (40 bytes) to the output buffer. RegisterClassA and
+RegisterClassExA now save the full WNDCLASS at `0x2300 + slot*40`.
+
+New helper: `$class_find_slot` — returns class table slot index (0-15) by name
+hash, or -1 if not found.
+
+#### Fix 3: Window style tracking (GWL_STYLE)
+
+Added `$wnd_get_style` / `$wnd_set_style` using style table at WASM 0x2580
+(32 slots × 4 bytes). CreateWindowExA stores the style; GetWindowLongA(-16) and
+SetWindowLongA(-16) read/write it. Also added GWL_EXSTYLE(-20) returning 0.
+
+### Current blocker: MFC RecalcLayout needs child window infrastructure
+
+After CreateWindowExA + WM_CREATE, MFC's CFrameWnd::OnCreate calls RecalcLayout
+which needs real window management APIs:
+
+1. **BeginDeferWindowPos / DeferWindowPos / EndDeferWindowPos** — batch
+   repositioning of child windows. Need to call host to resize/move.
+2. **GetTopWindow(hwnd)** — returns first child of hwnd. Needs child window
+   linked list (currently we only track parent, not children).
+3. **IsWindowVisible(hwnd)** — needs per-window visibility state (tracked by
+   ShowWindow).
+4. **SetWindowPlacement(hwnd, lpwndpl)** — sets position and show state.
+
+These all require a proper child window tree. The current window table has
+hwnd→wndproc, parent, userdata, style, but no child list or sibling links.
+
+**Trace at crash (batch 14, API #1404):**
+```
+CallWindowProcA → DefWindowProcA(WM_CREATE) → returns to AfxWndProc
+PostMessageA(hwnd, WM_IDLEUPDATECMDUI)
+GetWindowLongA(hwnd, GWL_STYLE)
+GetClientRect(hwnd, &rect)
+BeginDeferWindowPos(8)     ← needs real impl
+GetTopWindow(hwnd)         ← needs child list
+...
+```
+
+API call count went from 1352 (crash on CallWindowProcA) to 1404 (crash on
+GetTopWindow in RecalcLayout).
+
+### Previous Status (2026-04-02)
 
 ### Working
 
@@ -28,7 +99,7 @@
   (was 0 → 3 → 9 → 10 → 103 → 1229 → 806 → 91K)
 - PNG render works — shows solid teal window background
 
-### Current Status: Window renders but no UI elements — two fixes applied, root cause found
+### Previous: Window renders but no UI elements — two fixes applied, root cause found
 
 MSPaint creates main window, enters MFC message loop. Window renders as solid
 teal background — no toolbar, statusbar, canvas, or menu visible.
@@ -102,12 +173,11 @@ imports was never resolved — only EXE imports were patched. Added
 - WM_CREATE reaches MFC's CFrameWnd::OnCreate
 - Relocations confirmed correct (guest 0x0111d040 = 0x0105c8e5)
 
-#### Current blocker: CallWindowProcA not implemented
+#### Previous blocker: CallWindowProcA not implemented — RESOLVED (2026-04-03)
 
 MFC's OnCreate calls `CallWindowProcA` (API #1352) to forward WM_CREATE to
-the previous WndProc. This is the next API to implement — needs to call the
-specified WndProc with the given (hwnd, msg, wParam, lParam) args, similar
-to how CBT hook dispatch works (push args, set EIP, continuation thunk).
+the previous WndProc. Implemented with two paths: inline dispatch for thunk
+targets, EIP-jump for real x86 code. See "Fix 1" in 2026-04-03 status.
 
 ### Key fix: PeekMessageA pending message delivery (2026-04-02)
 
