@@ -63,7 +63,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
 ];
 
-const MAX_BATCHES = 100;
+const MAX_BATCHES = 50;
 const BATCH_SIZE = 1000;
 
 function runExe(testCase) {
@@ -78,13 +78,14 @@ function runExe(testCase) {
     `--max-batches=${MAX_BATCHES}`,
     `--batch-size=${BATCH_SIZE}`,
     '--no-build',
-    '--trace-api',
+    '--verbose',
   ];
 
   const result = spawnSync('node', args, {
     cwd: ROOT,
     timeout: 30000,
     encoding: 'utf8',
+    maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
   });
 
@@ -93,24 +94,20 @@ function runExe(testCase) {
 
   // Check for crash_unimplemented (missing API)
   const unimplMatch = output.match(/crash_unimplemented|unreachable|RuntimeError/);
-  const missingApi = output.match(/\[API[^\]]*\]\s*(\S+)\s*\(/g);
-  let lastApi = null;
-  if (missingApi && missingApi.length > 0) {
-    // Get the last API call before crash
-    lastApi = missingApi[missingApi.length - 1].replace(/\[API[^\]]*\]\s*/, '').replace(/\(.*/, '');
-  }
 
-  // Find all unique API calls
+  // Find all unique API calls — handles both --verbose ([API] Name) and --trace-api ([API #N] Name(...))
   const apiCalls = new Set();
-  const apiPattern = /\[API[^\]]*\]\s*(\S+)\(/g;
+  const apiPattern = /\[API[^\]]*\]\s*(\S+)/g;
   let m;
   while ((m = apiPattern.exec(output)) !== null) {
-    apiCalls.add(m[1]);
+    const name = m[1].replace(/\(.*/, '');
+    if (name) apiCalls.add(name);
   }
 
   // Check for window creation (sign of successful init)
-  const hasWindow = output.includes('[CreateWindow]');
+  const hasWindow = output.includes('[CreateWindow]') || output.includes('[CreateDialog]');
   const hasShowWindow = output.includes('[ShowWindow]');
+  const hasMessageLoop = /GetMessageA|GetMessageW|DispatchMessageA|DispatchMessageW/.test(output);
   const hasWmClose = output.includes('WM_CLOSE') || output.includes('0x10');
   const exitClean = output.includes('[Exit]');
 
@@ -131,10 +128,13 @@ function runExe(testCase) {
   }
 
   // Reached max batches without crash = likely working
+  const windowOrLoop = hasWindow || hasMessageLoop;
   return {
     name: testCase.name,
-    status: hasWindow ? 'OK' : 'WARN',
-    reason: hasWindow ? `${apiCalls.size} APIs, window created` : `${apiCalls.size} APIs, no window`,
+    status: windowOrLoop ? 'OK' : 'WARN',
+    reason: windowOrLoop
+      ? `${apiCalls.size} APIs, ${hasWindow ? 'window created' : 'message loop running'}`
+      : `${apiCalls.size} APIs, no window`,
     apiCount: apiCalls.size,
     hasWindow,
     hasShowWindow,

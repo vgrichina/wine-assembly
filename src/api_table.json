@@ -5941,5 +5941,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3737471363
+  },
+  {
+    "id": 849,
+    "name": "UnhookWindowsHook",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 100522901
   }
 ]
