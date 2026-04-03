@@ -129,8 +129,11 @@ class WineAssembly {
     };
 
     // --- Input ---
+    let _ciCount = 0;
     h.check_input = () => {
       if (!self.renderer) return 0;
+      _ciCount++;
+      if (_ciCount % 100000 === 0) self.logToUI('[poll] calls=' + _ciCount + ' q=' + self.renderer.inputQueue.length);
       const evt = self.renderer.checkInput();
       if (!evt) return 0;
       self._lastInputEvent = evt;
@@ -161,6 +164,7 @@ class WineAssembly {
   }
 
   logToUI(msg) {
+    console.log(msg);
     const el = document.getElementById('log');
     if (el) {
       el.textContent += msg + '\n';
@@ -428,7 +432,7 @@ class WineAssembly {
     this.instance.exports.clear_yield();
   }
 
-  run(stepsPerSlice = 500000) {
+  run(stepsPerSlice = 50000) {
     this.running = true;
     const self = this;
     const step = async () => {
