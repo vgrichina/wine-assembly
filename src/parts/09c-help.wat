@@ -475,7 +475,7 @@
       (local.get $title_wa)   ;; title (WASM addr)
       (i32.const 0)))         ;; no menu
     ;; Register in window table as WAT-native (wndproc = 0xFFFF0001)
-    (call $wnd_table_set (local.get $hwnd) (i32.const 0xFFFF0001))
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
     (global.set $help_hwnd (local.get $hwnd))
     ;; Trigger immediate paint so content shows right away
     (drop (call $help_wndproc (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))

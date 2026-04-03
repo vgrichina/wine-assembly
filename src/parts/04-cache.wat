@@ -37,6 +37,12 @@
 
   ;; Thread emit helpers
   (func $te (param $fn i32) (param $op i32)
+    ;; Inline overflow check — reset cache if within 4KB of CACHE_INDEX
+    (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 4096)))
+      (then
+        (call $host_log_i32 (i32.const 0xCA00F10F))  ;; 0xCA00F10F = cache overflow marker
+        (global.set $thread_alloc (global.get $THREAD_BASE))
+        (call $clear_cache)))
     (i32.store (global.get $thread_alloc) (local.get $fn))
     (i32.store offset=4 (global.get $thread_alloc) (local.get $op))
     (global.set $thread_alloc (i32.add (global.get $thread_alloc) (i32.const 8))))

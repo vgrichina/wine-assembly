@@ -82,7 +82,8 @@
     ;; Register hwnd→wndproc in window table (look up from class table by className)
     (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
     (if (local.get $tmp)
-      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp))))
+      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
+      (else (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))
     ;; Store parent hwnd (hWndParent = [esp+36])
     (call $wnd_set_parent (global.get $next_hwnd)
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
@@ -587,6 +588,12 @@
           (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
+    ;; Built-in control wndproc — act as DefWindowProc (return 0)
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; x86 WndProc dispatch: use window table result, or fall back to globals
     (if (i32.eqz (local.get $wndproc))
       (then
@@ -688,6 +695,12 @@
       (then
         (global.set $eax (call $wat_wndproc_dispatch
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Built-in control wndproc — act as DefWindowProc (return 0)
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
+      (then
+        (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; Fall back to global wndproc if not in table (skip for child controls 0x20000+)

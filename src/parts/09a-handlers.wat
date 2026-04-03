@@ -5205,6 +5205,12 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    ;; Sentinel 0xFFFE0001 = built-in control default wndproc — act as DefWindowProc
+    (if (i32.eq (local.get $arg0) (global.get $WNDPROC_BUILTIN))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)
     (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))
@@ -5411,6 +5417,12 @@
           (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
           (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
           (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Built-in control wndproc — act as DefWindowProc (return 0)
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
+      (then
+        (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Fall back to global wndproc

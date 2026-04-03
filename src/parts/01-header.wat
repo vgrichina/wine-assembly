@@ -230,14 +230,14 @@
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
   ;; 0x01E12000  256KB   IAT thunk zone
-  ;; 0x01E52000  1MB     Thread cache
-  ;; 0x01F52000  64KB    Block cache index (4096 slots × 16 bytes)
-  ;; 0x01F62000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x02162000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x02162200  ...     Free
+  ;; 0x01E52000  4MB     Thread cache
+  ;; 0x02252000  64KB    Block cache index (4096 slots × 16 bytes)
+  ;; 0x02262000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x02462000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x02462200  ...     Free
 
   ;; Memory region bases
-  (global $PE_STAGING   i32 (i32.const 0x01F62000))
+  (global $PE_STAGING   i32 (i32.const 0x02262000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
   (global $GUEST_STACK  i32 (i32.const 0x01C12000))
   (global $THUNK_BASE   i32 (i32.const 0x01E12000))
@@ -246,7 +246,7 @@
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
-  (global $CACHE_INDEX  (mut i32) (i32.const 0x01F52000))
+  (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE)
   (global $WND_TABLE     i32 (i32.const 0x00002000))  ;; 32 entries × 8 bytes
@@ -258,6 +258,8 @@
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
+  (global $WNDPROC_WAT_NATIVE i32 (i32.const 0xFFFF0001))  ;; WAT-native window wndproc
+  (global $WNDPROC_BUILTIN    i32 (i32.const 0xFFFE0001))  ;; built-in control default wndproc
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)
@@ -265,7 +267,7 @@
   (global $code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x01E52000))
+  (global $thread_alloc (mut i32) (i32.const 0x01E52000))  ;; = THREAD_BASE
 
   ;; ============================================================
   ;; CPU STATE
@@ -326,7 +328,7 @@
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x02162000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (i32.const 0x02462000))  ;; 32 bytes x 16 DLLs = 512 bytes
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))
