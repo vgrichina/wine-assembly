@@ -5696,5 +5696,33 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3748071538
+  },
+  {
+    "id": 814,
+    "name": "PathFindFileNameA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3396175055
+  },
+  {
+    "id": 815,
+    "name": "StrStrIA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 855623993
+  },
+  {
+    "id": 816,
+    "name": "GetPropA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 467225953
+  },
+  {
+    "id": 817,
+    "name": "SetPropA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2281703453
   }
 ]

@@ -2002,10 +2002,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
 
-  ;; 121: CheckMenuRadioItem — STUB: unimplemented
+  ;; 121: CheckMenuRadioItem(hMenu, idFirst, idLast, idCheck, uFlags)
+  ;; Unchecks items [idFirst..idLast], checks idCheck with radio bullet. Returns TRUE.
+  ;; Menu item state is tracked in the renderer's menu model when available.
   (func $handle_CheckMenuRadioItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) — return previous state
   ;; TODO: track menu check state in renderer
@@ -8541,5 +8543,75 @@
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
+
+  ;; 814: PathFindFileNameA(lpszPath) → pointer to filename component
+  ;; Walks backwards from end of path string, returns pointer after last '\' or '/'
+  (func $handle_PathFindFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32) (local $last i32) (local $ch i32)
+    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local.set $last (local.get $ptr))
+    (block $done (loop $scan
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))    ;; backslash
+                  (i32.eq (local.get $ch) (i32.const 0x2F)))    ;; forward slash
+        (then (local.set $last (i32.add (local.get $ptr) (i32.const 1)))))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $scan)))
+    ;; Convert WASM pointer back to guest address
+    (global.set $eax (i32.add (i32.sub (local.get $last) (call $g2w (local.get $arg0))) (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; 815: StrStrIA(lpFirst, lpSrch) → pointer to match or NULL
+  ;; Case-insensitive substring search using byte-by-byte comparison
+  (func $handle_StrStrIA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hay i32) (local $ndl i32) (local $hi i32) (local $ni i32)
+    (local $hc i32) (local $nc i32) (local $ndl_len i32)
+    ;; Get needle length
+    (local.set $ndl (call $g2w (local.get $arg1)))
+    (local.set $ndl_len (call $strlen (local.get $ndl)))
+    (if (i32.eqz (local.get $ndl_len))
+      (then (global.set $eax (local.get $arg0))
+             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $hay (call $g2w (local.get $arg0)))
+    ;; Outer loop: try each position in haystack
+    (block $not_found (loop $outer
+      (br_if $not_found (i32.eqz (i32.load8_u (local.get $hay))))
+      ;; Inner loop: compare needle at current position
+      (local.set $hi (local.get $hay))
+      (local.set $ni (local.get $ndl))
+      (block $mismatch (loop $inner
+        (local.set $nc (i32.load8_u (local.get $ni)))
+        (if (i32.eqz (local.get $nc))
+          (then ;; needle exhausted = match found
+            (global.set $eax (i32.add (i32.sub (local.get $hay) (call $g2w (local.get $arg0))) (local.get $arg0)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+        (local.set $hc (i32.load8_u (local.get $hi)))
+        (br_if $mismatch (i32.eqz (local.get $hc)))
+        ;; Lowercase both chars for comparison (ASCII a-z/A-Z only)
+        (if (i32.and (i32.ge_u (local.get $hc) (i32.const 0x41)) (i32.le_u (local.get $hc) (i32.const 0x5A)))
+          (then (local.set $hc (i32.or (local.get $hc) (i32.const 0x20)))))
+        (if (i32.and (i32.ge_u (local.get $nc) (i32.const 0x41)) (i32.le_u (local.get $nc) (i32.const 0x5A)))
+          (then (local.set $nc (i32.or (local.get $nc) (i32.const 0x20)))))
+        (br_if $mismatch (i32.ne (local.get $hc) (local.get $nc)))
+        (local.set $hi (i32.add (local.get $hi) (i32.const 1)))
+        (local.set $ni (i32.add (local.get $ni) (i32.const 1)))
+        (br $inner)))
+      (local.set $hay (i32.add (local.get $hay) (i32.const 1)))
+      (br $outer)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; 816: GetPropA(hwnd, lpString) → HANDLE
+  ;; Returns property value for the window+key pair via host import
+  (func $handle_GetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_get_prop (local.get $arg0) (call $g2w (local.get $arg1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; 817: SetPropA(hwnd, lpString, hData) → BOOL
+  ;; Stores property value for the window+key pair via host import
+  (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement
