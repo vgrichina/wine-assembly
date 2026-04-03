@@ -16,6 +16,7 @@
   (import "host" "help_get_topic" (func $host_help_get_topic (param i32 i32 i32) (result i32)))
   (import "host" "help_get_title" (func $host_help_get_title (param i32 i32) (result i32)))
   (import "host" "get_ticks" (func $host_get_ticks (result i32)))
+  (import "host" "yield" (func $host_yield (param i32)))
   ;; GUI host imports — call into JS canvas renderer
   (import "host" "create_window" (func $host_create_window (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
@@ -337,6 +338,7 @@
   ;; Posted message queue: up to 8 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
   ;; Stored at fixed WASM address 0x400 (well below guest memory)
   (global $post_queue_count (mut i32) (i32.const 0))
+  (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
@@ -364,6 +366,11 @@
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
+  (global $dlg_result   (mut i32) (i32.const 0))    ;; EndDialog return value
+  (global $dlg_ended    (mut i32) (i32.const 0))    ;; Flag: EndDialog was called
+  (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
+  (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
+  (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
   ;; Help system state
