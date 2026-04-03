@@ -1552,9 +1552,21 @@
   )
 
   ;; 82: SendDlgItemMessageA — STUB: unimplemented
+  ;; 82: SendDlgItemMessageA(hDlg, nIDDlgItem, Msg, wParam, lParam)
+  ;; Equivalent to SendMessage(GetDlgItem(hDlg, nIDDlgItem), Msg, wParam, lParam)
   (func $handle_SendDlgItemMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $child_hwnd i32) (local $lParam i32)
+    ;; Construct child HWND: 0x20000 | (ctrlId & 0xFFFF)
+    (local.set $child_hwnd (i32.or (i32.const 0x20000) (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+    ;; Read lParam from stack (5th arg, at ESP+24)
+    (local.set $lParam (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; Forward progress bar / common control messages to renderer
+    (if (i32.and (i32.ge_u (local.get $arg2) (i32.const 0x0401))
+                 (i32.le_u (local.get $arg2) (i32.const 0x0440)))
+      (then (call $host_send_ctrl_msg (local.get $child_hwnd) (local.get $arg2)
+              (local.get $arg3) (local.get $lParam))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8613,5 +8625,31 @@
   (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 818: FindResourceExA(hModule, lpType, lpName, wLanguage) → HRSRC
+  ;; Same as FindResourceA but with explicit language (we use first lang match)
+  (func $handle_FindResourceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $rsrc_rva))
+      (then (global.set $eax (i32.const 0))
+             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; FindResourceExA: arg1=type, arg2=name (reversed from FindResourceA)
+    (global.set $eax (call $find_resource (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; 819: StrChrA(lpStart, wMatch) → pointer to first occurrence or NULL
+  (func $handle_StrChrA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32) (local $ch i32)
+    (local.set $ptr (call $g2w (local.get $arg0)))
+    (block $not_found (loop $scan
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $not_found (i32.eqz (local.get $ch)))
+      (if (i32.eq (local.get $ch) (i32.and (local.get $arg1) (i32.const 0xFF)))
+        (then
+          (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $scan)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement

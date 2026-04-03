@@ -5724,5 +5724,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2281703453
+  },
+  {
+    "id": 818,
+    "name": "FindResourceExA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3519364258
+  },
+  {
+    "id": 819,
+    "name": "StrChrA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3093576406
   }
 ]
