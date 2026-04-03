@@ -141,10 +141,13 @@ function runExe(testCase) {
   };
 }
 
-// Build first
-console.log('Building WASM...');
-execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
-console.log('');
+// Build first (skip with --no-build)
+const noBuild = process.argv.includes('--no-build');
+if (!noBuild) {
+  console.log('Building WASM...');
+  execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
+  console.log('');
+}
 
 // Run all tests
 console.log('=== Wine-Assembly EXE Smoke Tests ===\n');

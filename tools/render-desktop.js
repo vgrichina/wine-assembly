@@ -8,9 +8,10 @@ const { createCanvas } = require('canvas');
 const { Win98Renderer } = require('../lib/renderer');
 const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
+const { compileWat } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
-const WASM_PATH = path.join(ROOT, 'build', 'wine-assembly.wasm');
+const SRC_DIR = path.join(ROOT, 'src');
 
 const WIDTH = 1024;
 const HEIGHT = 768;
@@ -26,7 +27,7 @@ const APPS = [
     click: { batch: 80, x: 80, y: 80 } },
   { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree',
     pos: { x: 10, y: 420 } },
-  { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei',
+  { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell',
     pos: { x: 550, y: 10 } },
 ];
 
@@ -123,7 +124,7 @@ async function runApp(wasmModule, app, renderer, appIndex) {
 }
 
 async function main() {
-  const wasmBytes = fs.readFileSync(WASM_PATH);
+  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const canvas = createCanvas(WIDTH, HEIGHT);
   const renderer = new Win98Renderer(canvas);

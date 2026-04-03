@@ -5,28 +5,15 @@ const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
 const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
+const { compileWat } = require('../lib/compile-wat');
 let createCanvas, Win98Renderer;
 try {
   createCanvas = require('canvas').createCanvas;
   Win98Renderer = require('../lib/renderer').Win98Renderer;
 } catch (_) {}
 
-// Auto-build: rebuild wasm if any .wat source is newer
 const ROOT = path.join(__dirname, '..');
-const WASM_PATH = path.join(ROOT, 'build', 'wine-assembly.wasm');
-function autoBuild() {
-  const glob = require('path');
-  const srcDir = path.join(ROOT, 'src', 'parts');
-  let wasmTime = 0;
-  try { wasmTime = fs.statSync(WASM_PATH).mtimeMs; } catch (_) {}
-  const watFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.wat'));
-  const needsBuild = watFiles.some(f => fs.statSync(path.join(srcDir, f)).mtimeMs > wasmTime);
-  if (needsBuild) {
-    console.log('Building...');
-    execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
-    console.log('---');
-  }
-}
+const SRC_DIR = path.join(ROOT, 'src');
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
@@ -55,7 +42,7 @@ const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 
-if (!NO_BUILD) autoBuild();
+// NO_BUILD kept for compat but ignored — always compiles from WAT
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
@@ -63,7 +50,13 @@ const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 
 async function main() {
-  const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
+  let wasmBytes;
+  const prebuilt = path.join(__dirname, '..', 'build', 'wine-assembly.wasm');
+  if (NO_BUILD && fs.existsSync(prebuilt)) {
+    wasmBytes = fs.readFileSync(prebuilt);
+  } else {
+    wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
+  }
   const exeBytes = fs.readFileSync(EXE_PATH);
 
   const logs = [];
@@ -386,7 +379,7 @@ async function main() {
     const required = detectRequiredDlls(exeBytes);
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
-      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll']);
+      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll']);
     const dllSearchDirs = [dllDir, path.dirname(EXE_PATH), path.join(__dirname, 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {

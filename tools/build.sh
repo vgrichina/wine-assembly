@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 mkdir -p build
 
 echo "Concatenating WAT parts..."
-cat src/parts/*.wat > build/combined.wat
+cat src/*.wat > build/combined.wat
 
 echo "Compiling combined.wat..."
 wat2wasm build/combined.wat -o build/wine-assembly.wasm
