@@ -234,6 +234,13 @@
 
   ;; ---- Help system ----
 
+  ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0
+  (func $help_scroll_by (param $hwnd i32) (param $delta i32)
+    (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (local.get $delta)))
+    (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
+      (then (global.set $help_scroll_y (i32.const 0))))
+    (call $host_invalidate (local.get $hwnd)))
+
   ;; Help window WndProc (WAT-native, called directly — not via x86)
   (func $help_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $y i32) (local $line_start i32) (local $line_len i32)
@@ -360,32 +367,16 @@
       (then
         ;; VK_UP (0x26): scroll up 16px
         (if (i32.eq (local.get $wParam) (i32.const 0x26))
-          (then
-            (global.set $help_scroll_y (i32.sub (global.get $help_scroll_y) (i32.const 16)))
-            (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
-              (then (global.set $help_scroll_y (i32.const 0))))
-            (call $host_invalidate (local.get $hwnd))
-            (return (i32.const 0))))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const -16)) (return (i32.const 0))))
         ;; VK_DOWN (0x28): scroll down 16px
         (if (i32.eq (local.get $wParam) (i32.const 0x28))
-          (then
-            (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (i32.const 16)))
-            (call $host_invalidate (local.get $hwnd))
-            (return (i32.const 0))))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const 16)) (return (i32.const 0))))
         ;; VK_PRIOR / Page Up (0x21)
         (if (i32.eq (local.get $wParam) (i32.const 0x21))
-          (then
-            (global.set $help_scroll_y (i32.sub (global.get $help_scroll_y) (i32.const 200)))
-            (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
-              (then (global.set $help_scroll_y (i32.const 0))))
-            (call $host_invalidate (local.get $hwnd))
-            (return (i32.const 0))))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const -200)) (return (i32.const 0))))
         ;; VK_NEXT / Page Down (0x22)
         (if (i32.eq (local.get $wParam) (i32.const 0x22))
-          (then
-            (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (i32.const 200)))
-            (call $host_invalidate (local.get $hwnd))
-            (return (i32.const 0))))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const 200)) (return (i32.const 0))))
         (return (i32.const 0))))
 
     ;; WM_CLOSE (0x0010)

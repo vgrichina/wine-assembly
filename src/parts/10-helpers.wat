@@ -2,11 +2,6 @@
   ;; HELPER FUNCTIONS
   ;; ============================================================
 
-  ;; Write up to 4 bytes from packed little-endian integer to WASM buffer
-  ;; $write_str(buf_wa, packed) — writes non-zero bytes of packed to buf
-  (func $write_str (param $buf i32) (param $packed i32)
-    (i32.store (local.get $buf) (local.get $packed)))
-
   ;; FNV-1a hash over null-terminated string at WASM address
   (func $hash_api_name (param $ptr i32) (result i32)
     (local $h i32) (local $ch i32)
@@ -43,6 +38,16 @@
     (local $i i32)
     (block $d (loop $l
       (br_if $d (i32.eqz (i32.load8_u (i32.add (local.get $ptr) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (local.get $i))
+  ;; strlen for WASM-addressed byte strings (alias for $strlen)
+  (func $strlen_a (param $ptr i32) (result i32)
+    (call $strlen (local.get $ptr)))
+  ;; wcslen for WASM-addressed UTF-16 strings, returns char count
+  (func $strlen_w (param $ptr i32) (result i32)
+    (local $i i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (i32.load16_u (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 2))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (local.get $i))
   (func $memcpy (param $dst i32) (param $src i32) (param $len i32)
@@ -271,16 +276,18 @@
       (br $search)))
     (i32.const 0))
 
+  ;; ASCII tolower: if A-Z, add 0x20
+  (func $tolower (param $c i32) (result i32)
+    (if (result i32) (i32.and (i32.ge_u (local.get $c) (i32.const 0x41)) (i32.le_u (local.get $c) (i32.const 0x5A)))
+      (then (i32.add (local.get $c) (i32.const 0x20)))
+      (else (local.get $c))))
+
   ;; Wide case-insensitive compare
   (func $guest_wcsicmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)
     (block $d (loop $l
-      (local.set $a (call $gl16 (i32.add (local.get $s1) (i32.shl (local.get $i) (i32.const 1)))))
-      (local.set $b (call $gl16 (i32.add (local.get $s2) (i32.shl (local.get $i) (i32.const 1)))))
-      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x41)) (i32.le_u (local.get $a) (i32.const 0x5A)))
-        (then (local.set $a (i32.add (local.get $a) (i32.const 0x20)))))
-      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x41)) (i32.le_u (local.get $b) (i32.const 0x5A)))
-        (then (local.set $b (i32.add (local.get $b) (i32.const 0x20)))))
+      (local.set $a (call $tolower (call $gl16 (i32.add (local.get $s1) (i32.shl (local.get $i) (i32.const 1))))))
+      (local.set $b (call $tolower (call $gl16 (i32.add (local.get $s2) (i32.shl (local.get $i) (i32.const 1))))))
       (if (i32.ne (local.get $a) (local.get $b))
         (then (return (i32.sub (local.get $a) (local.get $b)))))
       (br_if $d (i32.eqz (local.get $a)))
@@ -291,13 +298,8 @@
   (func $dll_name_match (param $name_ptr i32) (param $cmp_ptr i32) (result i32)
     (local $a i32) (local $b i32) (local $i i32)
     (block $no (loop $l
-      (local.set $a (call $gl8 (i32.add (local.get $name_ptr) (local.get $i))))
-      (local.set $b (i32.load8_u (i32.add (local.get $cmp_ptr) (local.get $i))))
-      ;; tolower both
-      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x41)) (i32.le_u (local.get $a) (i32.const 0x5A)))
-        (then (local.set $a (i32.add (local.get $a) (i32.const 0x20)))))
-      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x41)) (i32.le_u (local.get $b) (i32.const 0x5A)))
-        (then (local.set $b (i32.add (local.get $b) (i32.const 0x20)))))
+      (local.set $a (call $tolower (call $gl8 (i32.add (local.get $name_ptr) (local.get $i)))))
+      (local.set $b (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (local.get $i)))))
       (br_if $no (i32.ne (local.get $a) (local.get $b)))
       (if (i32.eqz (local.get $a)) (then (return (i32.const 1)))) ;; both null = match
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
@@ -306,14 +308,8 @@
   (func $guest_stricmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)
     (block $d (loop $l
-      (local.set $a (call $gl8 (i32.add (local.get $s1) (local.get $i))))
-      (local.set $b (call $gl8 (i32.add (local.get $s2) (local.get $i))))
-      ;; tolower a
-      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x41)) (i32.le_u (local.get $a) (i32.const 0x5A)))
-        (then (local.set $a (i32.add (local.get $a) (i32.const 0x20)))))
-      ;; tolower b
-      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x41)) (i32.le_u (local.get $b) (i32.const 0x5A)))
-        (then (local.set $b (i32.add (local.get $b) (i32.const 0x20)))))
+      (local.set $a (call $tolower (call $gl8 (i32.add (local.get $s1) (local.get $i)))))
+      (local.set $b (call $tolower (call $gl8 (i32.add (local.get $s2) (local.get $i)))))
       (if (i32.ne (local.get $a) (local.get $b))
         (then (return (i32.sub (local.get $a) (local.get $b)))))
       (br_if $d (i32.eqz (local.get $a))) ;; both null → equal

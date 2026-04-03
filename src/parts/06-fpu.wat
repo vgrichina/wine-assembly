@@ -218,13 +218,20 @@
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then
             (if (i32.eq (local.get $rm) (i32.const 0))
-              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF))) (return))) ;; FPREM result ready
+              (then ;; FPREM: ST(0) = ST(0) mod ST(1), clear C2 (complete)
+                (call $fpu_set (i32.const 0)
+                  (f64.sub (local.get $st0)
+                    (f64.mul (f64.trunc (f64.div (local.get $st0) (call $fpu_get (i32.const 1))))
+                             (call $fpu_get (i32.const 1)))))
+                (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF)))
+                (return)))
             (if (i32.eq (local.get $rm) (i32.const 2))
               (then (call $fpu_set (i32.const 0) (f64.sqrt (local.get $st0))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 3))
               (then ;; FSINCOS: ST(0) = sin, push cos
+                (local.set $v (call $host_math_cos (local.get $st0)))
                 (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0)))
-                (call $fpu_push (call $host_math_cos (local.get $st0))) (return)))
+                (call $fpu_push (local.get $v)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 4))
               (then (call $fpu_set (i32.const 0) (f64.nearest (local.get $st0))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6))
