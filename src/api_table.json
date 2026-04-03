@@ -5689,5 +5689,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 714668131
+  },
+  {
+    "id": 813,
+    "name": "GetWindowsDirectoryA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3748071538
   }
 ]

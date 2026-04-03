@@ -41,54 +41,54 @@ Added `$wnd_get_style` / `$wnd_set_style` using style table at WASM 0x2580
 (32 slots × 4 bytes). CreateWindowExA stores the style; GetWindowLongA(-16) and
 SetWindowLongA(-16) read/write it. Also added GWL_EXSTYLE(-20) returning 0.
 
-### Current blocker: msvcrt malloc returns misaligned pointer → vtable corrupt
+### VirtualAlloc alignment fix (RESOLVED)
 
-**Root cause:** MFC's `new CMainFrame` allocates via msvcrt `malloc` (real
-msvcrt.dll code running in emulator). The returned pointer is **0x0184f279** —
-an ODD address. This corrupts the C++ vtable:
+**Root cause:** VirtualAlloc(NULL, size) called heap_alloc() which returned
+non-page-aligned addresses. msvcrt's Small Block Heap (SBH) expected
+page-aligned VirtualAlloc returns → corrupt sub-allocation → odd malloc
+pointers (0x0184f279).
 
-- CFrameWnd constructor writes vtable ptr to `[0x0184f279]` = 0x010f2c24
-  (MFC42 base class vtable). This is a misaligned dword store.
-- The EXE's CMainFrame constructor should then overwrite with the app's vtable
-  (in EXE address space 0x0100xxxx). But watchpoint shows only ONE vtable
-  write — the CMainFrame constructor never runs, or its vtable write goes to
-  a wrong address due to the misalignment.
-- Result: vtable stays at CFrameWnd's vtable → MFC virtual dispatch for
-  WM_CREATE calls CFrameWnd::OnWndMsg instead of CMainFrame::OnWndMsg →
-  app's message map (with ON_WM_CREATE) never consulted → CMainFrame::OnCreate
-  never called → no child windows (toolbar, status bar) created →
-  RecalcLayout finds nothing → crashes on BeginDeferWindowPos.
+**Fix:** VirtualAlloc now page-aligns heap_ptr before bump-allocating;
+VirtualFree returns TRUE. malloc now returns 4-byte aligned pointers
+(e.g. 0x0158a01c).
 
-**Evidence:**
-- CWnd `this` = 0x0184f279 (odd, should be 4-byte aligned)
-- `[this]` = vtable = 0x010f2c24 (MFC42.DLL RVA 0xa2c24 = CFrameWnd vtable)
-- Expected: vtable in EXE space (0x01000000-0x01055000) for CMainFrame
-- Only 4 API calls between WM_CREATE and RecalcLayout (no CreateWindowExA for
-  children) — confirms app's OnCreate never ran
-- PostMessageA(WM_IDLEUPDATECMDUI) confirms CFrameWnd::OnCreate DID run
+### Vtable still wrong (ONGOING)
 
-**Why msvcrt malloc returns odd pointer:** msvcrt.dll's malloc calls our
-HeapAlloc internally. Our heap_alloc returns 4-byte aligned addresses
-(8n+4 pattern). But msvcrt's internal heap management adds its own headers
-and metadata. If msvcrt's heap init didn't run correctly (e.g. HeapCreate
-returned a fake handle 0x140000), or if msvcrt's internal bookkeeping
-expects different HeapAlloc behavior, the malloc arena could be corrupt.
+- `[this]` = 0x010f2c24 (CFrameWnd vtable in MFC42), expected CMainFrame vtable in EXE
+- Only ONE vtable write observed — CMainFrame constructor body never executes its vtable assignment
+- EXE has 5 vtable write sites (0x1002064, 0x1006174, 0x10065a4, 0x100666c, 0x1006cdc) — NONE hit
+- Need to trace constructor call chain to find where execution diverges
 
-**Next step:** Debug msvcrt's heap initialization. Check what HeapCreate and
-initial HeapAlloc calls return. Verify msvcrt's internal heap pointers are
-sane. The fix likely needs our HeapAlloc/HeapCreate to provide a real
-heap region that msvcrt can manage correctly.
+### Current blocker: GetLastActivePopup unimplemented (API #1365)
 
-**Trace at crash (batch 13, API #1352):**
+After fixing VirtualAlloc alignment and implementing BeginDeferWindowPos,
+EndDeferWindowPos, GetTopWindow, SetWindowPlacement, and GetWindowPlacement,
+mspaint now crashes on GetLastActivePopup.
+
+**Call sequence leading to crash (APIs #1360-1365):**
 ```
-CallWindowProcA → DefWindowProcA(WM_CREATE) → returns to AfxWndProc
-PostMessageA(hwnd, WM_IDLEUPDATECMDUI)  ← CFrameWnd::OnCreate ran
-GetWindowLongA(hwnd, GWL_STYLE)
-GetClientRect(hwnd, &rect)
-BeginDeferWindowPos(8)     ← crash (no child windows exist)
+GetTopWindow(0x10001)              — returns NULL (no children)
+GetTopWindow(0x10001)              — returns NULL
+TlsGetValue(0)
+IsWindowVisible(0x10001)           — returns 1
+SetWindowPlacement(0x10001, 0x0103cfe4)  — moves window per rcNormalPosition
+GetLastActivePopup(0x10001)        ← CRASH
 ```
 
-API call count: 1352 (crash on BeginDeferWindowPos in RecalcLayout).
+This is MFC's `CFrameWnd::ActivateFrame` → `GetLastActivePopup(m_hWnd)`.
+Simple fix: return hWnd itself (no popups tracked).
+
+### Fixes this sub-session
+
+- **VirtualAlloc alignment** — page-aligns heap_ptr before bump-allocating;
+  VirtualFree returns TRUE. msvcrt SBH no longer corrupts malloc pointers.
+- **IsWindowVisible** — returns normalized BOOL (0/1), was returning raw
+  WS_VISIBLE bit (0x10000000)
+- **SetWindowPlacement** — reads rcNormalPosition from WINDOWPLACEMENT struct,
+  calls host_move_window, returns TRUE (2 args stdcall)
+- **GetWindowPlacement** — fills WINDOWPLACEMENT with SW_SHOWNORMAL defaults
+  and 640×480 rect (2 args stdcall)
+- **BeginDeferWindowPos/EndDeferWindowPos/GetTopWindow** — implemented
 
 ### Previous Status (2026-04-02)
 

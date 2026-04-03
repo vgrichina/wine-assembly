@@ -451,9 +451,6 @@
   ;; 35: HeapAlloc
   (func $handle_HeapAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $heap_alloc (local.get $arg2)))
-    ;; DEBUG: log size and returned pointer
-    (call $host_log_i32 (local.get $arg2))
-    (call $host_log_i32 (global.get $eax))
     ;; Zero memory if HEAP_ZERO_MEMORY (0x08)
     (if (i32.and (local.get $arg1) (i32.const 0x08))
     (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg2))))
@@ -4359,8 +4356,14 @@
   )
 
   ;; 390: IsWindowVisible — STUB: unimplemented
+  ;; IsWindowVisible(hWnd) → TRUE (windows are visible by default)
   (func $handle_IsWindowVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Check WS_VISIBLE bit in window style
+    (global.set $eax
+      (if (result i32) (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
+        (then (i32.const 1))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 391: InflateRect — STUB: unimplemented
@@ -5702,6 +5705,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; 813: GetWindowsDirectoryA(lpBuffer, uSize) → length
+  (func $handle_GetWindowsDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    ;; Write "C:\WINDOWS" (10 chars + null)
+    (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
+    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
+    (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
+    (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
+    (global.set $eax (i32.const 10))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 546: GetVolumeInformationW — STUB: unimplemented
   (func $handle_GetVolumeInformationW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
@@ -6013,9 +6029,30 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 608: GetWindowPlacement — STUB: unimplemented
+  ;; 608: GetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
+  ;; Fill WINDOWPLACEMENT with defaults: SW_SHOWNORMAL, zero min/max pts, 0,0,640,480 rect
   (func $handle_GetWindowPlacement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; length = 44
+    (i32.store (local.get $wa) (i32.const 44))
+    ;; flags = 0
+    (i32.store offset=4 (local.get $wa) (i32.const 0))
+    ;; showCmd = SW_SHOWNORMAL (1)
+    (i32.store offset=8 (local.get $wa) (i32.const 1))
+    ;; ptMinPosition = (0,0)
+    (i32.store offset=12 (local.get $wa) (i32.const 0))
+    (i32.store offset=16 (local.get $wa) (i32.const 0))
+    ;; ptMaxPosition = (-1,-1)
+    (i32.store offset=20 (local.get $wa) (i32.const -1))
+    (i32.store offset=24 (local.get $wa) (i32.const -1))
+    ;; rcNormalPosition = {0, 0, 640, 480}
+    (i32.store offset=28 (local.get $wa) (i32.const 0))
+    (i32.store offset=32 (local.get $wa) (i32.const 0))
+    (i32.store offset=36 (local.get $wa) (i32.const 640))
+    (i32.store offset=40 (local.get $wa) (i32.const 480))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 609: RegisterWindowMessageW — STUB: unimplemented
@@ -6095,19 +6132,22 @@
     (global.set $steps (i32.const 0))
   )
 
-  ;; 632: BeginDeferWindowPos — STUB: unimplemented
+  ;; 632: BeginDeferWindowPos(nNumWindows) → HDWP handle
   (func $handle_BeginDeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0xDEF00001))  ;; fake HDWP handle
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 633: DeferWindowPos — STUB: unimplemented
+  ;; 633: DeferWindowPos(hWinPosInfo, hWnd, hWndInsertAfter, x, y, cx, cy, uFlags) → HDWP
   (func $handle_DeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))  ;; return same HDWP handle
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
 
-  ;; 631: EndDeferWindowPos — STUB: unimplemented
+  ;; 631: EndDeferWindowPos(hWinPosInfo) → BOOL
   (func $handle_EndDeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))  ;; TRUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 615: GetPropW — STUB: unimplemented
@@ -6125,9 +6165,22 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 618: SetWindowPlacement — STUB: unimplemented
+  ;; 618: SetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
+  ;; WINDOWPLACEMENT: length(0), flags(4), showCmd(8), ptMin(12,16), ptMax(20,24), rcNormal(28: left,top,right,bottom)
   (func $handle_SetWindowPlacement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; Read rcNormalPosition from WINDOWPLACEMENT at offset 28
+    (local.set $left   (i32.load offset=28 (local.get $wa)))
+    (local.set $top    (i32.load offset=32 (local.get $wa)))
+    (local.set $right  (i32.load offset=36 (local.get $wa)))
+    (local.set $bottom (i32.load offset=40 (local.get $wa)))
+    ;; Move window to rcNormalPosition
+    (call $host_move_window (local.get $arg0) (local.get $left) (local.get $top)
+      (i32.sub (local.get $right) (local.get $left))
+      (i32.sub (local.get $bottom) (local.get $top)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 619: TrackPopupMenu — STUB: unimplemented
@@ -6146,8 +6199,10 @@
   )
 
   ;; 622: GetTopWindow(hWnd) — 1 arg stdcall, return NULL
+  ;; GetTopWindow(hWnd) → NULL (no child windows tracked)
   (func $handle_GetTopWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 623: SetScrollPos — STUB: unimplemented

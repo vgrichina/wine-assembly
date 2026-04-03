@@ -182,15 +182,15 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/resources.js?v=10"></script>
-  <script src="../lib/renderer.js?v=10"></script>
-  <script src="../lib/dll-loader.js?v=10"></script>
-  <script src="../lib/storage.js?v=10"></script>
-  <script src="../lib/filesystem.js?v=10"></script>
-  <script src="../lib/hlp-parser.js?v=10"></script>
-  <script src="../lib/host-imports.js?v=10"></script>
-  <script src="../lib/thread-manager.js?v=10"></script>
-  <script src="host.js?v=10"></script>
+  <script src="../lib/resources.js?v=11"></script>
+  <script src="../lib/renderer.js?v=11"></script>
+  <script src="../lib/dll-loader.js?v=11"></script>
+  <script src="../lib/storage.js?v=11"></script>
+  <script src="../lib/filesystem.js?v=11"></script>
+  <script src="../lib/hlp-parser.js?v=11"></script>
+  <script src="../lib/host-imports.js?v=11"></script>
+  <script src="../lib/thread-manager.js?v=11"></script>
+  <script src="host.js?v=11"></script>
   <script>
     let wine = null;
 
@@ -229,6 +229,8 @@ Resource-aware Win98 emulator
 
       // Wire canvas events
       canvas.onmousedown = e => {
+        canvas.focus();
+        wine.logToUI('[click] q=' + wine.renderer.inputQueue.length);
         const r = canvas.getBoundingClientRect();
         const sx = canvas.width / r.width, sy = canvas.height / r.height;
         wine.renderer.handleMouseDown(
@@ -258,6 +260,7 @@ Resource-aware Win98 emulator
       canvas.focus();
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
+        wine.logToUI('[key] vk=' + vk + ' q=' + wine.renderer.inputQueue.length);
         wine.renderer.handleKeyDown(vk);
         if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
           e.preventDefault();
