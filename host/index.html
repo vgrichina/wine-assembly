@@ -175,7 +175,7 @@
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
-      <button onclick="wine && (wine.running = false)">Stop</button>
+      <button onclick="runningApps.forEach(a => a.wine.running = false); runningApps.length = 0; if(sharedRenderer){sharedRenderer.windows={};sharedRenderer.repaint();}">Stop All</button>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
     <div id="content">
@@ -194,19 +194,24 @@ Resource-aware Win98 emulator
     <div id="clock-area"><span id="clock"></span></div>
   </div>
 
-  <script src="../lib/mem-utils.js?v=12"></script>
-  <script src="../lib/resources.js?v=12"></script>
-  <script src="../lib/renderer-input.js?v=12"></script>
-  <script src="../lib/renderer.js?v=12"></script>
-  <script src="../lib/dll-loader.js?v=12"></script>
-  <script src="../lib/storage.js?v=12"></script>
-  <script src="../lib/filesystem.js?v=12"></script>
-  <script src="../lib/hlp-parser.js?v=12"></script>
-  <script src="../lib/host-imports.js?v=12"></script>
-  <script src="../lib/thread-manager.js?v=12"></script>
-  <script src="host.js?v=12"></script>
+  <script src="../lib/mem-utils.js?v=13"></script>
+  <script src="../lib/resources.js?v=13"></script>
+  <script src="../lib/renderer-input.js?v=13"></script>
+  <script src="../lib/renderer.js?v=13"></script>
+  <script src="../lib/dll-loader.js?v=13"></script>
+  <script src="../lib/storage.js?v=13"></script>
+  <script src="../lib/filesystem.js?v=13"></script>
+  <script src="../lib/hlp-parser.js?v=13"></script>
+  <script src="../lib/host-imports.js?v=13"></script>
+  <script src="../lib/thread-manager.js?v=13"></script>
+  <script src="host.js?v=13"></script>
   <script>
     let wine = null;
+    const runningApps = [];  // array of { wine, name, appIndex }
+    let nextAppIndex = 0;
+    let sharedRenderer = null;
+    let sharedWasmModule = null;
+    let inputWired = false;
 
     const apps = {
       notepad:  { exe: '../test/binaries/notepad.exe' },
@@ -235,6 +240,77 @@ Resource-aware Win98 emulator
       pinball:  { exe: '../test/binaries/pinball/pinball.exe' },
     };
 
+    function wireCanvasInput(canvas, renderer) {
+      if (inputWired) return;
+      inputWired = true;
+      canvas.onmousedown = e => {
+        canvas.focus();
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        renderer.handleMouseDown(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy)
+        );
+      };
+      canvas.onmouseup = e => {
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        renderer.handleMouseUp(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy)
+        );
+      };
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        renderer.handleWheel(
+          Math.floor((e.clientX - r.left) * sx),
+          Math.floor((e.clientY - r.top) * sy),
+          e.deltaY
+        );
+      }, { passive: false });
+      canvas.setAttribute('tabindex', '0');
+      canvas.focus();
+      canvas.addEventListener('keydown', e => {
+        const vk = e.keyCode;
+        renderer.handleKeyDown(vk);
+        if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
+          e.preventDefault();
+        }
+        if (e.ctrlKey && (vk === 65 || vk === 67 || vk === 88 || vk === 86)) e.preventDefault();
+        if (e.altKey) e.preventDefault();
+      });
+      canvas.addEventListener('keyup', e => {
+        renderer.handleKeyUp(e.keyCode);
+      });
+      canvas.addEventListener('keypress', e => {
+        e.preventDefault();
+        renderer.handleKeyPress(e.charCode || e.keyCode);
+      });
+      canvas.addEventListener('beforeinput', e => {
+        if (e.data) {
+          for (const ch of e.data) {
+            renderer.handleKeyPress(ch.charCodeAt(0));
+          }
+        }
+      });
+      canvas.onmousemove = e => {
+        const rr = canvas.getBoundingClientRect();
+        const ssx = canvas.width / rr.width, ssy = canvas.height / rr.height;
+        renderer.handleMenuHover(
+          Math.floor((e.clientX - rr.left) * ssx),
+          Math.floor((e.clientY - rr.top) * ssy)
+        );
+        if (e.buttons & 1) {
+          renderer.handleMouseMove(
+            Math.floor((e.clientX - rr.left) * ssx),
+            Math.floor((e.clientY - rr.top) * ssy)
+          );
+        }
+      };
+    }
+
     async function launchApp() {
       const sel = document.getElementById('app-select').value;
       const app = apps[sel];
@@ -246,84 +322,25 @@ Resource-aware Win98 emulator
       canvas.height = wrap.clientHeight;
 
       const log = document.getElementById('log');
-      log.textContent = `Launching ${sel}.exe...\n`;
+      log.textContent += `Launching ${sel}.exe...\n`;
+
+      // Create shared renderer on first launch
+      if (!sharedRenderer) {
+        sharedRenderer = new Win98Renderer(canvas);
+      }
 
       wine = new WineAssembly();
+      wine.renderer = sharedRenderer;  // set before init so it won't create a new one
+      wine._multiApp = true;
       await wine.init(canvas);
 
-      // Wire canvas events
-      canvas.onmousedown = e => {
-        canvas.focus();
-        wine.logToUI('[click] q=' + wine.renderer.inputQueue.length);
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        wine.renderer.handleMouseDown(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy)
-        );
-      };
-      canvas.onmouseup = e => {
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        wine.renderer.handleMouseUp(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy)
-        );
-      };
-      canvas.addEventListener('wheel', e => {
-        e.preventDefault();
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        wine.renderer.handleWheel(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy),
-          e.deltaY
-        );
-      }, { passive: false });
-      canvas.setAttribute('tabindex', '0');
-      canvas.focus();
-      canvas.addEventListener('keydown', e => {
-        const vk = e.keyCode;
-        wine.logToUI('[key] vk=' + vk + ' q=' + wine.renderer.inputQueue.length);
-        wine.renderer.handleKeyDown(vk);
-        if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
-          e.preventDefault();
-        }
-        if (e.ctrlKey && (vk === 65 || vk === 67 || vk === 88 || vk === 86)) e.preventDefault();
-        if (e.altKey) e.preventDefault();
-      });
-      canvas.addEventListener('keyup', e => {
-        wine.renderer.handleKeyUp(e.keyCode);
-      });
-      canvas.addEventListener('keypress', e => {
-        e.preventDefault();
-        wine.renderer.handleKeyPress(e.charCode || e.keyCode);
-      });
-      // Fallback for browsers where keypress doesn't fire
-      canvas.addEventListener('beforeinput', e => {
-        if (e.data) {
-          for (const ch of e.data) {
-            wine.renderer.handleKeyPress(ch.charCodeAt(0));
-          }
-        }
-      });
-      canvas.onmousemove = e => {
-        // Track hover for menus
-        const rr = canvas.getBoundingClientRect();
-        const ssx = canvas.width / rr.width, ssy = canvas.height / rr.height;
-        wine.renderer.handleMenuHover(
-          Math.floor((e.clientX - rr.left) * ssx),
-          Math.floor((e.clientY - rr.top) * ssy)
-        );
-        if (e.buttons & 1) { // only while button held
-          const r = canvas.getBoundingClientRect();
-          const sx = canvas.width / r.width, sy = canvas.height / r.height;
-          wine.renderer.handleMouseMove(
-            Math.floor((e.clientX - r.left) * sx),
-            Math.floor((e.clientY - r.top) * sy)
-          );
-        }
-      };
+      // Set unique hwnd range for this app
+      const appIndex = nextAppIndex++;
+      if (wine.instance.exports.set_hwnd_base) {
+        wine.instance.exports.set_hwnd_base(0x10001 + appIndex * 0x10000);
+      }
+
+      wireCanvasInput(canvas, sharedRenderer);
 
       document.getElementById('status').textContent = 'Loading PE...';
 
@@ -332,7 +349,6 @@ Resource-aware Win98 emulator
         if (app.winver && wine.instance.exports.set_winver) {
           wine.instance.exports.set_winver(app.winver);
         }
-        // Auto-detect required DLLs from EXE imports, merge with explicit config
         const dllsToLoad = app.dlls ? [...app.dlls] : [];
         if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
           const required = DllLoader.detectRequiredDlls(wine._exeBytes);
@@ -355,7 +371,8 @@ Resource-aware Win98 emulator
           document.getElementById('status').textContent = 'Loading DLLs...';
           await wine.loadDlls(dllsToLoad);
         }
-        document.getElementById('status').textContent = 'Running ' + sel + '.exe';
+        runningApps.push({ wine, name: sel, appIndex });
+        document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
         wine.run();
       } else {
         document.getElementById('status').textContent = 'Failed to load';

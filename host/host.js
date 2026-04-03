@@ -42,7 +42,7 @@ class WineAssembly {
       },
       onExit: (code) => {
         self.running = false;
-        if (self.renderer) {
+        if (self.renderer && !self._multiApp) {
           self.renderer._exited = true;
           self.renderer.windows = {};
           self.renderer.repaint();
@@ -98,7 +98,7 @@ class WineAssembly {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
         self.running = false;
-        if (self.renderer) {
+        if (self.renderer && !self._multiApp) {
           self.renderer._exited = true;
           self.renderer.windows = {};
           self.renderer.repaint();
@@ -217,7 +217,7 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=10');
+    const resp = await fetch('../build/wine-assembly.wasm?v=13');
     const bytes = await resp.arrayBuffer();
     const imports = this.getImports();
 
@@ -241,7 +241,7 @@ class WineAssembly {
     };
     this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports);
 
-    if (canvas) {
+    if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
     }
   }
