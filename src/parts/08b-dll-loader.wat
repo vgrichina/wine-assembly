@@ -57,7 +57,8 @@
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
       (local.set $vsize (i32.load (i32.add (local.get $section_off) (i32.const 8))))
       (local.set $dst (call $g2w (i32.add (local.get $load_addr) (local.get $vaddr))))
-      (if (i32.gt_u (local.get $raw_size) (i32.const 0))
+      (if (i32.and (i32.gt_u (local.get $raw_size) (i32.const 0))
+                   (i32.le_u (i32.add (local.get $raw_off) (local.get $raw_size)) (local.get $size)))
         (then
           (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
           (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))))

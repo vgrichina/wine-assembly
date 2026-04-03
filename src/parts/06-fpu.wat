@@ -11,6 +11,7 @@
       (local.get $v)))
 
   (func $fpu_push (param $v f64)
+    ;; Note: no tag word tracking — wraps silently on overflow (8 slots)
     (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
     (call $fpu_set (i32.const 0) (local.get $v)))
 
