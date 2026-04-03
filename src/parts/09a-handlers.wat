@@ -2258,350 +2258,6 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 145: SelectObject(hdc, hObject) — delegate to host GDI
-  (func $handle_SelectObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_select_object (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 146: DeleteObject(hObject) — delegate to host GDI
-  (func $handle_DeleteObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_delete_object (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 147: DeleteDC(hdc) — delegate to host GDI
-  (func $handle_DeleteDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 148: CreatePen(style, width, color) — delegate to host GDI
-  (func $handle_CreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_pen (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 149: CreateSolidBrush(color) — delegate to host GDI
-  (func $handle_CreateSolidBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_solid_brush (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 150: CreateCompatibleDC(hdc) — delegate to host GDI
-  (func $handle_CreateCompatibleDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_dc (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 151: CreateCompatibleBitmap(hdc, w, h) — delegate to host GDI
-  (func $handle_CreateCompatibleBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_bitmap (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 152: GetViewportOrgEx
-  (func $handle_GetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Fill POINT with (0,0)
-    (if (i32.ne (local.get $arg1) (i32.const 0))
-    (then
-    (call $gs32 (local.get $arg1) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 153: Rectangle
-  (func $handle_Rectangle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_rectangle
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-  )
-
-  ;; 154: MoveToEx(hdc, x, y, lpPoint) — delegate to host GDI
-  (func $handle_MoveToEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_move_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 155: LineTo(hdc, x, y) — delegate to host GDI
-  (func $handle_LineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 156: Ellipse
-  (func $handle_Ellipse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_ellipse
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-  )
-
-  ;; 157: Arc
-  (func $handle_Arc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_arc
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-    (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
-  )
-
-  ;; 158: BitBlt
-  (func $handle_BitBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_bitblt
-    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-    (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-    (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
-  )
-
-  ;; 159: PatBlt — hdc(arg0), x(arg1), y(arg2), w=[esp+16], h=[esp+20], rop=[esp+24]
-  (func $handle_PatBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    (local.set $tmp (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; rop
-    ;; Use BitBlt with no source DC for WHITENESS/BLACKNESS/PATCOPY
-    (drop (call $host_gdi_bitblt
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 16)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 20)))
-      (i32.const 0) (i32.const 0) (i32.const 0)  ;; no source DC
-      (local.get $tmp)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
-  )
-
-  ;; 160: CreateBitmap — nWidth(arg0), nHeight(arg1), nPlanes(arg2), nBitCount(arg3), lpBits(arg4)
-  (func $handle_CreateBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (local.get $arg4))
-      (then
-        ;; NULL lpBits — create blank bitmap, pass bpp so host can mark monochrome
-        (global.set $eax (call $host_gdi_create_bitmap
-          (local.get $arg0) (local.get $arg1) (local.get $arg3) (i32.const 0))))
-      (else
-        ;; Has pixel data — convert via host
-        (global.set $eax (call $host_gdi_create_bitmap
-          (local.get $arg0) (local.get $arg1) (local.get $arg3)
-          (call $g2w (local.get $arg4))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-  )
-
-  ;; 161: TextOutA — hdc(arg0), x(arg1), y(arg2), lpString(arg3), nCount(arg4)
-  (func $handle_TextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_text_out
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $arg3)) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
-  )
-
-  ;; 162: GetStockObject(index) → stock object handle (0x30010 + index)
-  (func $handle_GetStockObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.add (i32.const 0x30010) (i32.and (local.get $arg0) (i32.const 0x1F))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 163: GetObjectA
-  (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    (if (i32.gt_u (local.get $arg1) (i32.const 0))
-    (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $arg1))))
-    ;; Try to fill BITMAP struct if it's a bitmap object
-    (local.set $tmp (call $host_gdi_get_object_w (local.get $arg0)))
-    (if (i32.ne (local.get $tmp) (i32.const 0))
-    (then
-    ;; BITMAP: bmType(0,4), bmWidth(+4,4), bmHeight(+8,4), bmWidthBytes(+12,4), bmPlanes(+16,2), bmBitsPixel(+18,2), bmBits(+20,4)
-    (if (i32.ge_u (local.get $arg1) (i32.const 24))
-    (then
-    (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $tmp))  ;; bmWidth
-    (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (call $host_gdi_get_object_h (local.get $arg0))) ;; bmHeight
-    (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
-    (i32.mul (local.get $tmp) (i32.const 4))) ;; bmWidthBytes (assuming 32bpp)
-    (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))    ;; bmPlanes
-    (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (i32.const 32))   ;; bmBitsPixel
-    ))))
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
-  )
-
-  ;; 164: GetTextMetricsA — queries host for font-aware metrics
-  (func $handle_GetTextMetricsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $w i32) (local $packed i32) (local $h i32) (local $aveW i32)
-    (local.set $w (call $g2w (local.get $arg1)))
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0))) ;; hdc
-    (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))
-    (call $zero_memory (local.get $w) (i32.const 56))
-    (call $gs32 (local.get $arg1) (local.get $h))                                    ;; tmHeight
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-      (i32.sub (local.get $h) (i32.const 3)))                                        ;; tmAscent ~= h-3
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 3))             ;; tmDescent = 3
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (local.get $aveW))        ;; tmAveCharWidth
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 24))
-      (i32.mul (local.get $aveW) (i32.const 2)))                                     ;; tmMaxCharWidth ~= 2*ave
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 28)) (i32.const 400))          ;; tmWeight = FW_NORMAL
-    (i32.store8 (i32.add (local.get $w) (i32.const 40)) (i32.const 32))              ;; tmFirstChar = 0x20
-    (i32.store8 (i32.add (local.get $w) (i32.const 41)) (i32.const 255))             ;; tmLastChar = 0xFF
-    (i32.store8 (i32.add (local.get $w) (i32.const 42)) (i32.const 31))              ;; tmDefaultChar
-    (i32.store8 (i32.add (local.get $w) (i32.const 44)) (i32.const 0x26))            ;; tmPitchAndFamily
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 165: GetTextExtentPointA — font-aware text measurement via host
-  (func $handle_GetTextExtentPointA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0))) ;; get height from hdc font
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2))) ;; cx
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))                                            ;; cy
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
-
-  ;; 166: GetTextCharset — STUB: unimplemented
-  (func $handle_GetTextCharset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 167: CreateFontIndirectA — LOGFONT at arg0
-  (func $handle_CreateFontIndirectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lf i32)
-    (local.set $lf (call $g2w (local.get $arg0)))
-    ;; LOGFONT: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28)
-    (global.set $eax (call $host_create_font
-      (i32.load (local.get $lf))                              ;; height
-      (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
-      (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
-      (i32.add (local.get $lf) (i32.const 28))               ;; faceName WASM ptr
-    ))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-  )
-
-  ;; 168: CreateFontA — 14 params on stack
-  (func $handle_CreateFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; arg0=nHeight, esp+16=fnWeight, esp+20=bItalic, esp+52=lpszFace
-    (global.set $eax (call $host_create_font
-      (local.get $arg0)                                              ;; height
-      (call $gl32 (i32.add (global.get $esp) (i32.const 16)))       ;; weight
-      (call $gl32 (i32.add (global.get $esp) (i32.const 20)))       ;; italic
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 52)))) ;; faceName
-    ))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
-  )
-
-  ;; 169: CreateDCA — STUB: unimplemented
-  (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 170: SetAbortProc — STUB: unimplemented
-  (func $handle_SetAbortProc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 171: SetBkColor(hdc, color) → prev color
-  (func $handle_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_set_bk_color (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
-  )
-
-  ;; 172: SetBkMode(hdc, mode) → prev mode
-  (func $handle_SetBkMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetBkMode(hdc, mode) → previous mode. mode: 1=TRANSPARENT, 2=OPAQUE
-    (global.set $eax (call $host_gdi_set_bk_mode (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
-  )
-
-  ;; 173: SetTextColor(hdc, color) → prev color
-  (func $handle_SetTextColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_set_text_color (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
-  )
-
-  ;; 174: SetMenu
-  (func $handle_SetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_set_menu
-    (local.get $arg0)                                       ;; hWnd
-    (i32.and (local.get $arg1) (i32.const 0xFFFF)))         ;; resource ID from HMENU
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 175: SetMapMode — STUB: unimplemented
-  (func $handle_SetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 176: SetWindowExtEx — STUB: unimplemented
-  (func $handle_SetWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 177: LPtoDP — STUB: unimplemented
-  (func $handle_LPtoDP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 178: StartDocA — STUB: unimplemented
-  (func $handle_StartDocA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 179: StartPage — STUB: unimplemented
-  (func $handle_StartPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 180: EndPage — STUB: unimplemented
-  (func $handle_EndPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 181: EndPaint(hwnd, lpPaintStruct) — return TRUE
-  (func $handle_EndPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 182: EndDoc — STUB: unimplemented
-  (func $handle_EndDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 183: AbortDoc — STUB: unimplemented
-  (func $handle_AbortDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 184: SetCapture — STUB: unimplemented
-  (func $handle_SetCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetCapture(hwnd) → previous capture hwnd. 1 arg stdcall
-    (global.set $eax (global.get $capture_hwnd))
-    (global.set $capture_hwnd (local.get $arg0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 185: ReleaseCapture() → BOOL. 0 args stdcall
-  (func $handle_ReleaseCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $capture_hwnd (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; 186: ShowCursor — STUB: unimplemented
-  (func $handle_ShowCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; ShowCursor(bShow) → display count. 1 arg stdcall
-    ;; Track internal display count: show increments, hide decrements
-    (if (local.get $arg0)
-      (then (global.set $cursor_count (i32.add (global.get $cursor_count) (i32.const 1))))
-      (else (global.set $cursor_count (i32.sub (global.get $cursor_count) (i32.const 1)))))
-    (global.set $eax (global.get $cursor_count))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
 
   ;; 187: KillTimer(hwnd, nIDEvent) — clear the timer
   (func $handle_KillTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3899,10 +3555,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 325: wsprintfW — wide sprintf, return 0 chars written (cdecl, caller cleans up)
+  ;; 325: wsprintfW — wide sprintf (cdecl, caller cleans up)
+  ;; wsprintfW(buf, fmt, ...) — args start at esp+12 in guest memory
   (func $handle_wsprintfW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    ;; arg0=buf (guest), arg1=fmt (guest), args on stack at esp+12
+    (global.set $eax (call $wsprintf_impl_w
+      (call $g2w (local.get $arg0))
+      (call $g2w (local.get $arg1))
+      (i32.add (call $g2w (global.get $esp)) (i32.const 8)))))
 
   ;; 326: TlsAlloc — return next TLS index
   (func $handle_TlsAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4325,10 +3985,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 380: UnhookWindowsHookEx — STUB: unimplemented
+  ;; 380: UnhookWindowsHookEx(hhk) → BOOL — always succeed
   (func $handle_UnhookWindowsHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 381: SetWindowsHookExW — return fake handle, 4 args stdcall
   (func $handle_SetWindowsHookExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5289,25 +4949,93 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 475: CompareStringA — return CSTR_EQUAL (2) — STUB: unimplemented
+  ;; 475: CompareStringA(Locale, dwCmpFlags, lpString1, cchCount1, lpString2, cchCount2) → int
+  ;; Real byte-by-byte comparison. Returns CSTR_LESS_THAN(1), CSTR_EQUAL(2), CSTR_GREATER_THAN(3)
   (func $handle_CompareStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $p1 i32) (local $p2 i32) (local $len1 i32) (local $len2 i32)
+    (local $i i32) (local $c1 i32) (local $c2 i32) (local $minlen i32)
+    (local.set $p1 (call $g2w (local.get $arg2)))
+    (local.set $len1 (local.get $arg3))
+    ;; arg4 = lpString2, read cchCount2 from stack
+    (local.set $p2 (call $g2w (local.get $arg4)))
+    (local.set $len2 (call $gl32 (i32.add (call $g2w (global.get $esp)) (i32.const 4))))
+    ;; If len == -1, compute strlen
+    (if (i32.eq (local.get $len1) (i32.const -1))
+      (then (local.set $len1 (call $strlen_a (local.get $p1)))))
+    (if (i32.eq (local.get $len2) (i32.const -1))
+      (then (local.set $len2 (call $strlen_a (local.get $p2)))))
+    (local.set $minlen (select (local.get $len1) (local.get $len2) (i32.lt_u (local.get $len1) (local.get $len2))))
+    (block $cmp_done (loop $cmp
+      (br_if $cmp_done (i32.ge_u (local.get $i) (local.get $minlen)))
+      (local.set $c1 (i32.load8_u (i32.add (local.get $p1) (local.get $i))))
+      (local.set $c2 (i32.load8_u (i32.add (local.get $p2) (local.get $i))))
+      ;; NORM_IGNORECASE (flag 1): uppercase both
+      (if (i32.and (local.get $arg1) (i32.const 1))
+        (then
+          (if (i32.and (i32.ge_u (local.get $c1) (i32.const 97)) (i32.le_u (local.get $c1) (i32.const 122)))
+            (then (local.set $c1 (i32.sub (local.get $c1) (i32.const 32)))))
+          (if (i32.and (i32.ge_u (local.get $c2) (i32.const 97)) (i32.le_u (local.get $c2) (i32.const 122)))
+            (then (local.set $c2 (i32.sub (local.get $c2) (i32.const 32)))))))
+      (if (i32.lt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const 1))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+      (if (i32.gt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const 3))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    ;; All compared bytes equal — compare lengths
+    (global.set $eax (select (i32.const 1) (select (i32.const 3) (i32.const 2)
+      (i32.gt_u (local.get $len1) (local.get $len2)))
+      (i32.lt_u (local.get $len1) (local.get $len2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  ;; 476: CompareStringW — return CSTR_EQUAL (2) — STUB: unimplemented
+  ;; 476: CompareStringW(Locale, dwCmpFlags, lpString1, cchCount1, lpString2, cchCount2) → int
   (func $handle_CompareStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $p1 i32) (local $p2 i32) (local $len1 i32) (local $len2 i32)
+    (local $i i32) (local $c1 i32) (local $c2 i32) (local $minlen i32)
+    (local.set $p1 (call $g2w (local.get $arg2)))
+    (local.set $len1 (local.get $arg3))
+    (local.set $p2 (call $g2w (local.get $arg4)))
+    (local.set $len2 (call $gl32 (i32.add (call $g2w (global.get $esp)) (i32.const 4))))
+    ;; If len == -1, compute wcslen
+    (if (i32.eq (local.get $len1) (i32.const -1))
+      (then (local.set $len1 (call $strlen_w (local.get $p1)))))
+    (if (i32.eq (local.get $len2) (i32.const -1))
+      (then (local.set $len2 (call $strlen_w (local.get $p2)))))
+    (local.set $minlen (select (local.get $len1) (local.get $len2) (i32.lt_u (local.get $len1) (local.get $len2))))
+    (block $cmp_done (loop $cmp
+      (br_if $cmp_done (i32.ge_u (local.get $i) (local.get $minlen)))
+      (local.set $c1 (i32.load16_u (i32.add (local.get $p1) (i32.mul (local.get $i) (i32.const 2)))))
+      (local.set $c2 (i32.load16_u (i32.add (local.get $p2) (i32.mul (local.get $i) (i32.const 2)))))
+      (if (i32.and (local.get $arg1) (i32.const 1))
+        (then
+          (if (i32.and (i32.ge_u (local.get $c1) (i32.const 97)) (i32.le_u (local.get $c1) (i32.const 122)))
+            (then (local.set $c1 (i32.sub (local.get $c1) (i32.const 32)))))
+          (if (i32.and (i32.ge_u (local.get $c2) (i32.const 97)) (i32.le_u (local.get $c2) (i32.const 122)))
+            (then (local.set $c2 (i32.sub (local.get $c2) (i32.const 32)))))))
+      (if (i32.lt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const 1))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+      (if (i32.gt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const 3))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    (global.set $eax (select (i32.const 1) (select (i32.const 3) (i32.const 2)
+      (i32.gt_u (local.get $len1) (local.get $len2)))
+      (i32.lt_u (local.get $len1) (local.get $len2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  ;; 477: IsValidLocale — return TRUE — STUB: unimplemented
+  ;; 477: IsValidLocale(Locale, dwFlags) → BOOL
   (func $handle_IsValidLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 478: EnumSystemLocalesA — no-op, return TRUE — STUB: unimplemented
+  ;; 478: EnumSystemLocalesA(lpLocaleEnumProc, dwFlags) → BOOL — no-op
   (func $handle_EnumSystemLocalesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 479: GetLocaleInfoW(Locale, LCType, lpLCData, cchData) → chars written
   ;; Returns locale info as wide string. Common LCTypes:
@@ -7847,179 +7575,6 @@
   )
 
 
-  ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
-  ;; Fill WAVEOUTCAPSA struct with basic PCM support
-  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (call $zero_memory (local.get $wa) (local.get $arg2))
-    ;; wMid=1 (Microsoft), wPid=1
-    (i32.store16 (local.get $wa) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    ;; vDriverVersion = 4.0
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
-    ;; szPname = "Audio" at offset 8, 32 bytes
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x64755741))  ;; "Audi"
-    (i32.store8 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6F))      ;; "o"
-    ;; dwFormats at offset 40: support common formats (44.1k 16-bit stereo etc.)
-    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 0x00000FFF))
-    ;; wChannels at offset 44: 2 (stereo)
-    (i32.store16 (i32.add (local.get $wa) (i32.const 44)) (i32.const 2))
-    ;; dwSupport at offset 48: WAVECAPS_VOLUME|WAVECAPS_LRVOLUME
-    (i32.store (i32.add (local.get $wa) (i32.const 48)) (i32.const 0x0C))
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
-  )
-
-  ;; 795: waveOutOpen — return MMSYSERR_NOERROR, store fake handle
-  (func $handle_waveOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; arg0=phwo, arg1=uDeviceID, arg2=lpFormat, arg3=dwCallback, arg4=dwInstance
-    ;; [esp+24]=fdwOpen
-    ;; If phwo != NULL, store fake handle
-    (if (local.get $arg0)
-      (then (call $gs32 (local.get $arg0) (i32.const 0x000B0001))))
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args stdcall
-  )
-
-  ;; 796: waveOutClose — return MMSYSERR_NOERROR
-  (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 797: waveOutPrepareHeader — return MMSYSERR_NOERROR, set WHDR_PREPARED flag
-  (func $handle_waveOutPrepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Set dwFlags |= WHDR_PREPARED (0x02) in WAVEHDR at arg1+16
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 2)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 798: waveOutUnprepareHeader — return MMSYSERR_NOERROR, clear WHDR_PREPARED
-  (func $handle_waveOutUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.and (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 0xFFFFFFFD)))
-    ;; Set WHDR_DONE flag
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 799: waveOutWrite — accept buffer, immediately mark done
-  (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Mark WHDR_DONE in WAVEHDR.dwFlags (+16)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 800: waveOutReset — return MMSYSERR_NOERROR
-  (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 801: waveOutPause — return MMSYSERR_NOERROR
-  (func $handle_waveOutPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 802: waveOutRestart — return MMSYSERR_NOERROR
-  (func $handle_waveOutRestart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 803: waveOutGetPosition(hwo, lpInfo, cbInfo) — fill MMTIME struct
-  (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    ;; MMTIME.wType = TIME_BYTES (4), u.cb = 0
-    (i32.store (local.get $wa) (i32.const 4))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 804: mmioOpenA — return 0 (failure, no file opened)
-  (func $handle_mmioOpenA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; NULL = failure
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 805: mmioClose — return 0
-  (func $handle_mmioClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 806: mmioDescend — return MMIOERR_CHUNKNOTFOUND
-  (func $handle_mmioDescend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 514))  ;; MMIOERR_CHUNKNOTFOUND
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 807: mmioRead — return 0 bytes read
-  (func $handle_mmioRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 808: mmioAscend — return 0
-  (func $handle_mmioAscend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 809: mciSendCommandA — return 0 (success)
-  (func $handle_mciSendCommandA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 810: GetSystemPaletteEntries(hdc, iStart, nEntries, lppe) — 4 args stdcall
-  ;; Return default 20 system colors
-  (func $handle_GetSystemPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; If lppe is NULL, return number of entries (256 for 8-bit display)
-    (if (i32.eqz (local.get $arg3))
-      (then
-        (global.set $eax (i32.const 256))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    ;; Fill with standard VGA colors for first 20 entries, black for rest
-    (call $zero_memory (call $g2w (local.get $arg3)) (i32.mul (local.get $arg2) (i32.const 4)))
-    (global.set $eax (local.get $arg2))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 811: SetSystemPaletteUse(hdc, uUsage) — 2 args stdcall
-  (func $handle_SetSystemPaletteUse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; SYSPAL_NOSTATIC
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 812: ChangeDisplaySettingsA(lpDevMode, dwFlags) — 2 args stdcall
-  (func $handle_ChangeDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; DISP_CHANGE_SUCCESSFUL
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
-  (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; 1 device
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
-  )
 
   ;; 758: SHGetSpecialFolderLocation(hwndOwner, nFolder, ppidl) — return E_FAIL
   (func $handle_SHGetSpecialFolderLocation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8750,352 +8305,6 @@
     (drop (call $host_create_dialog (global.get $next_hwnd) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 823: GetConsoleScreenBufferInfo(hConsole, lpInfo) → BOOL
-  (func $handle_GetConsoleScreenBufferInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32)
-    (local.set $p (call $g2w (local.get $arg1)))
-    ;; dwSize.X, dwSize.Y
-    (i32.store16 (local.get $p) (global.get $console_width))
-    (i32.store16 (i32.add (local.get $p) (i32.const 2)) (global.get $console_height))
-    ;; dwCursorPosition.X, Y
-    (i32.store16 (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_x))
-    (i32.store16 (i32.add (local.get $p) (i32.const 6)) (global.get $console_cursor_y))
-    ;; wAttributes
-    (i32.store16 (i32.add (local.get $p) (i32.const 8)) (global.get $console_attr))
-    ;; srWindow: left=0, top=0, right=width-1, bottom=height-1
-    (i32.store16 (i32.add (local.get $p) (i32.const 10)) (i32.const 0))
-    (i32.store16 (i32.add (local.get $p) (i32.const 12)) (i32.const 0))
-    (i32.store16 (i32.add (local.get $p) (i32.const 14)) (i32.sub (global.get $console_width) (i32.const 1)))
-    (i32.store16 (i32.add (local.get $p) (i32.const 16)) (i32.sub (global.get $console_height) (i32.const 1)))
-    ;; dwMaximumWindowSize
-    (i32.store16 (i32.add (local.get $p) (i32.const 18)) (global.get $console_width))
-    (i32.store16 (i32.add (local.get $p) (i32.const 20)) (global.get $console_height))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; --- Console API handlers ---
-
-  ;; SetConsoleScreenBufferSize(hConsole, dwSize) → BOOL
-  ;; dwSize is COORD packed as i32: loword=X, hiword=Y
-  (func $handle_SetConsoleScreenBufferSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $console_width (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-    (global.set $console_height (i32.shr_u (local.get $arg1) (i32.const 16)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; SetConsoleActiveScreenBuffer(hConsole) → BOOL
-  (func $handle_SetConsoleActiveScreenBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $console_handle (local.get $arg0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; SetConsoleCursorPosition(hConsole, dwCursorPosition) → BOOL
-  ;; dwCursorPosition is COORD packed: loword=X, hiword=Y
-  (func $handle_SetConsoleCursorPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $console_cursor_x (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-    (global.set $console_cursor_y (i32.shr_u (local.get $arg1) (i32.const 16)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; SetConsoleCursorInfo(hConsole, lpConsoleCursorInfo) → BOOL
-  (func $handle_SetConsoleCursorInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32)
-    (local.set $p (call $g2w (local.get $arg1)))
-    (global.set $console_cursor_size (i32.load (local.get $p)))
-    (global.set $console_cursor_visible (i32.load (i32.add (local.get $p) (i32.const 4))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; GetConsoleCursorInfo(hConsole, lpConsoleCursorInfo) → BOOL
-  (func $handle_GetConsoleCursorInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32)
-    (local.set $p (call $g2w (local.get $arg1)))
-    (i32.store (local.get $p) (global.get $console_cursor_size))
-    (i32.store (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_visible))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; SetConsoleTitleW(lpConsoleTitle) → BOOL
-  (func $handle_SetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; SetConsoleWindowInfo(hConsole, bAbsolute, lpConsoleWindow) → BOOL
-  (func $handle_SetConsoleWindowInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; GetLargestConsoleWindowSize(hConsole) → COORD (packed in eax)
-  (func $handle_GetLargestConsoleWindowSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.or (global.get $console_width) (i32.shl (global.get $console_height) (i32.const 16))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; GetConsoleCP() → UINT
-  (func $handle_GetConsoleCP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $console_cp))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
-
-  ;; FillConsoleOutputCharacterW(hConsole, cCharacter, nLength, dwWriteCoord, lpNumberOfCharsWritten) → BOOL
-  ;; Fills console buffer with a character starting at coord
-  (func $handle_FillConsoleOutputCharacterW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $x i32) (local $y i32) (local $i i32) (local $off i32)
-    (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $fill
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-        (then (i32.store16 (i32.add (i32.const 0x3000) (i32.mul (local.get $off) (i32.const 2))) (local.get $arg1))))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (if (i32.ge_u (local.get $x) (global.get $console_width))
-        (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $fill)))
-    ;; Write count to lpNumberOfCharsWritten
-    (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; FillConsoleOutputAttribute(hConsole, wAttribute, nLength, dwWriteCoord, lpNumberOfAttrsWritten) → BOOL
-  (func $handle_FillConsoleOutputAttribute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $x i32) (local $y i32) (local $i i32) (local $off i32)
-    (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $fill
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-        (then (i32.store16 (i32.add (i32.const 0x3FA0) (i32.mul (local.get $off) (i32.const 2))) (local.get $arg1))))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (if (i32.ge_u (local.get $x) (global.get $console_width))
-        (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $fill)))
-    (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; WriteConsoleW(hConsole, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten, lpReserved) → BOOL
-  ;; Writes UTF-16 chars to console buffer at cursor position, advancing cursor
-  (func $handle_WriteConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $ch i32) (local $off i32) (local $src i32)
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $write
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
-      (if (i32.eq (local.get $ch) (i32.const 10)) ;; newline
-        (then
-          (global.set $console_cursor_x (i32.const 0))
-          (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1))))
-        (else (if (i32.eq (local.get $ch) (i32.const 13)) ;; carriage return
-          (then (global.set $console_cursor_x (i32.const 0)))
-          (else
-            (local.set $off (i32.add (i32.mul (global.get $console_cursor_y) (global.get $console_width)) (global.get $console_cursor_x)))
-            (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-              (then
-                (i32.store16 (i32.add (i32.const 0x3000) (i32.mul (local.get $off) (i32.const 2))) (local.get $ch))
-                (i32.store16 (i32.add (i32.const 0x3FA0) (i32.mul (local.get $off) (i32.const 2))) (global.get $console_attr))))
-            (global.set $console_cursor_x (i32.add (global.get $console_cursor_x) (i32.const 1)))
-            (if (i32.ge_u (global.get $console_cursor_x) (global.get $console_width))
-              (then
-                (global.set $console_cursor_x (i32.const 0))
-                (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1)))))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $write)))
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; WriteConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion) → BOOL
-  ;; Writes CHAR_INFO array (4 bytes each: wchar + attributes) to a rectangular region
-  (func $handle_WriteConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $bw i32) (local $bh i32) (local $bx i32) (local $by i32)
-    (local $rgn i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
-    (local $row i32) (local $col i32) (local $soff i32) (local $doff i32)
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $bw (i32.and (local.get $arg2) (i32.const 0xFFFF)))
-    (local.set $bh (i32.shr_u (local.get $arg2) (i32.const 16)))
-    (local.set $bx (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $by (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $rgn (call $g2w (local.get $arg4)))
-    (local.set $left (i32.load16_s (local.get $rgn)))
-    (local.set $top (i32.load16_s (i32.add (local.get $rgn) (i32.const 2))))
-    (local.set $right (i32.load16_s (i32.add (local.get $rgn) (i32.const 4))))
-    (local.set $bottom (i32.load16_s (i32.add (local.get $rgn) (i32.const 6))))
-    (local.set $row (local.get $top))
-    (block $rdone (loop $rows
-      (br_if $rdone (i32.gt_s (local.get $row) (local.get $bottom)))
-      (local.set $col (local.get $left))
-      (block $cdone (loop $cols
-        (br_if $cdone (i32.gt_s (local.get $col) (local.get $right)))
-        ;; source offset in CHAR_INFO array
-        (local.set $soff (i32.add (local.get $src)
-          (i32.mul (i32.const 4)
-            (i32.add
-              (i32.mul (i32.add (i32.sub (local.get $row) (local.get $top)) (local.get $by)) (local.get $bw))
-              (i32.add (i32.sub (local.get $col) (local.get $left)) (local.get $bx))))))
-        ;; dest offset in console buffer
-        (local.set $doff (i32.add (i32.mul (local.get $row) (global.get $console_width)) (local.get $col)))
-        (if (i32.and (i32.ge_s (local.get $col) (i32.const 0))
-              (i32.and (i32.ge_s (local.get $row) (i32.const 0))
-                (i32.lt_u (local.get $doff) (i32.mul (global.get $console_width) (global.get $console_height)))))
-          (then
-            (i32.store16 (i32.add (i32.const 0x3000) (i32.mul (local.get $doff) (i32.const 2)))
-              (i32.load16_u (local.get $soff)))
-            (i32.store16 (i32.add (i32.const 0x3FA0) (i32.mul (local.get $doff) (i32.const 2)))
-              (i32.load16_u (i32.add (local.get $soff) (i32.const 2))))))
-        (local.set $col (i32.add (local.get $col) (i32.const 1)))
-        (br $cols)))
-      (local.set $row (i32.add (local.get $row) (i32.const 1)))
-      (br $rows)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; WriteConsoleOutputCharacterA(hConsole, lpCharacter, nLength, dwWriteCoord, lpNumberOfCharsWritten) → BOOL
-  (func $handle_WriteConsoleOutputCharacterA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $x i32) (local $y i32) (local $i i32) (local $off i32) (local $src i32)
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $fill
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-        (then (i32.store16 (i32.add (i32.const 0x3000) (i32.mul (local.get $off) (i32.const 2)))
-          (i32.load8_u (i32.add (local.get $src) (local.get $i))))))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (if (i32.ge_u (local.get $x) (global.get $console_width))
-        (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $fill)))
-    (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; WriteConsoleOutputAttribute(hConsole, lpAttribute, nLength, dwWriteCoord, lpNumberOfAttrsWritten) → BOOL
-  (func $handle_WriteConsoleOutputAttribute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $x i32) (local $y i32) (local $i i32) (local $off i32) (local $src i32)
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $fill
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-        (then (i32.store16 (i32.add (i32.const 0x3FA0) (i32.mul (local.get $off) (i32.const 2)))
-          (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (if (i32.ge_u (local.get $x) (global.get $console_width))
-        (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $fill)))
-    (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; ReadConsoleW(hConsole, lpBuffer, nNumberOfCharsToRead, lpNumberOfCharsRead, pInputControl) → BOOL
-  ;; No input available — return 0 chars read
-  (func $handle_ReadConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; ReadConsoleInputW — same as A version
-  (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
-  ;; Read CHAR_INFO from console buffer
-  (func $handle_ReadConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $bw i32) (local $bx i32) (local $by i32)
-    (local $rgn i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
-    (local $row i32) (local $col i32) (local $doff i32) (local $soff i32)
-    (local.set $dst (call $g2w (local.get $arg1)))
-    (local.set $bw (i32.and (local.get $arg2) (i32.const 0xFFFF)))
-    (local.set $bx (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $by (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $rgn (call $g2w (local.get $arg4)))
-    (local.set $left (i32.load16_s (local.get $rgn)))
-    (local.set $top (i32.load16_s (i32.add (local.get $rgn) (i32.const 2))))
-    (local.set $right (i32.load16_s (i32.add (local.get $rgn) (i32.const 4))))
-    (local.set $bottom (i32.load16_s (i32.add (local.get $rgn) (i32.const 6))))
-    (local.set $row (local.get $top))
-    (block $rdone (loop $rows
-      (br_if $rdone (i32.gt_s (local.get $row) (local.get $bottom)))
-      (local.set $col (local.get $left))
-      (block $cdone (loop $cols
-        (br_if $cdone (i32.gt_s (local.get $col) (local.get $right)))
-        (local.set $soff (i32.add (i32.mul (local.get $row) (global.get $console_width)) (local.get $col)))
-        (local.set $doff (i32.add (local.get $dst)
-          (i32.mul (i32.const 4)
-            (i32.add
-              (i32.mul (i32.add (i32.sub (local.get $row) (local.get $top)) (local.get $by)) (local.get $bw))
-              (i32.add (i32.sub (local.get $col) (local.get $left)) (local.get $bx))))))
-        (if (i32.lt_u (local.get $soff) (i32.mul (global.get $console_width) (global.get $console_height)))
-          (then
-            (i32.store16 (local.get $doff)
-              (i32.load16_u (i32.add (i32.const 0x3000) (i32.mul (local.get $soff) (i32.const 2)))))
-            (i32.store16 (i32.add (local.get $doff) (i32.const 2))
-              (i32.load16_u (i32.add (i32.const 0x3FA0) (i32.mul (local.get $soff) (i32.const 2))))))
-          (else
-            (i32.store (local.get $doff) (i32.const 0))))
-        (local.set $col (i32.add (local.get $col) (i32.const 1)))
-        (br $cols)))
-      (local.set $row (i32.add (local.get $row) (i32.const 1)))
-      (br $rows)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; ReadConsoleOutputAttribute(hConsole, lpAttribute, nLength, dwReadCoord, lpNumberOfAttrsRead) → BOOL
-  (func $handle_ReadConsoleOutputAttribute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $x i32) (local $y i32) (local $i i32) (local $off i32) (local $dst i32)
-    (local.set $dst (call $g2w (local.get $arg1)))
-    (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $read
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-        (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 2)))
-          (i32.load16_u (i32.add (i32.const 0x3FA0) (i32.mul (local.get $off) (i32.const 2))))))
-        (else (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 2))) (i32.const 0))))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (if (i32.ge_u (local.get $x) (global.get $console_width))
-        (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $read)))
-    (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; ScrollConsoleScreenBufferW(hConsole, lpScrollRectangle, lpClipRectangle, dwDestinationOrigin, lpFill) → BOOL
-  ;; Simplified: just return success (full scroll would need temp buffer)
-  (func $handle_ScrollConsoleScreenBufferW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; WriteConsoleInputW(hConsole, lpBuffer, nLength, lpNumberOfEventsWritten) → BOOL
-  (func $handle_WriteConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space
   (func $handle_PathGetArgsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
