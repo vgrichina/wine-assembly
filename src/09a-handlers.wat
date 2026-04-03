@@ -1243,8 +1243,11 @@
   ;; 118: LoadBitmapA
   (func $handle_LoadBitmapA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
-    ;; arg1 = resource ID (MAKEINTRESOURCE value, low 16 bits)
-    (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0) (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+    ;; arg1 = resource ID (MAKEINTRESOURCE if <= 0xFFFF, else string pointer)
+    (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
+      (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
+        (then (local.get $arg1))
+        (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
     ;; If host couldn't find it, return a fake 32x32 bitmap
     (if (i32.eqz (local.get $tmp))
     (then (local.set $tmp (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))))
