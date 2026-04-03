@@ -1955,7 +1955,9 @@
 
   ;; 130: ScreenToClient — STUB: unimplemented
   (func $handle_ScreenToClient (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; ScreenToClient(hwnd, lpPoint) — all windows at (0,0), so no-op
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
   ;; 131: TabbedTextOutA — STUB: unimplemented
@@ -6002,7 +6004,9 @@
 
   ;; 640: IsWindowEnabled — STUB: unimplemented
   (func $handle_IsWindowEnabled (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; IsWindowEnabled(hwnd) — always return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 641: GetDesktopWindow — STUB: unimplemented
