@@ -295,6 +295,20 @@ class WineAssembly {
     return entry;
   }
 
+  async loadFiles(urls) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (!vfs) return;
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) continue;
+        const data = new Uint8Array(await resp.arrayBuffer());
+        const name = url.replace(/^.*[\\\/]/, '').toLowerCase();
+        vfs.files.set('c:\\' + name, { data, attrs: 0x20 });
+      } catch (_) {}
+    }
+  }
+
   async loadDlls(dllPaths) {
     if (!this.instance) return;
     const _loadDlls = (typeof DllLoader !== 'undefined' && DllLoader.loadDlls) || (typeof loadDlls === 'function' && loadDlls);
