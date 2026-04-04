@@ -159,6 +159,65 @@
     ;; Return as offset from image_base (rsrc_rva + d)
     (i32.add (global.get $rsrc_rva) (local.get $d)))
 
+  ;; Find a WAVE resource by name ID. Walks L1 looking for named type "WAVE",
+  ;; then L2 by integer name_id, then takes first lang entry.
+  ;; Returns offset from image_base to data entry, or 0.
+  (func $find_resource_named_type (param $name_id i32) (result i32)
+    (local $base_wa i32) (local $total i32) (local $e i32) (local $i i32)
+    (local $eid i32) (local $doff i32) (local $str_wa i32) (local $str_len i32)
+    (local $type_subdir i32) (local $d i32) (local $lang_off i32) (local $n i32)
+    ;; L1: scan entries for named type "WAVE"
+    (local.set $base_wa (call $g2w (i32.add (global.get $image_base) (global.get $rsrc_rva))))
+    (local.set $total (i32.add
+      (i32.load16_u (i32.add (local.get $base_wa) (i32.const 12)))
+      (i32.load16_u (i32.add (local.get $base_wa) (i32.const 14)))))
+    (local.set $e (i32.add (global.get $rsrc_rva) (i32.const 16)))
+    (block $found_type
+    (block $not_found
+    (loop $l1
+      (br_if $not_found (i32.ge_u (local.get $i) (local.get $total)))
+      (local.set $eid (call $gl32 (i32.add (global.get $image_base) (local.get $e))))
+      (local.set $doff (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $e) (i32.const 4)))))
+      ;; Check if named entry (high bit set)
+      (if (i32.and (local.get $eid) (i32.const 0x80000000))
+        (then
+          ;; String offset from rsrc start
+          (local.set $str_wa (call $g2w (i32.add (global.get $image_base)
+            (i32.add (global.get $rsrc_rva) (i32.and (local.get $eid) (i32.const 0x7FFFFFFF))))))
+          (local.set $str_len (i32.load16_u (local.get $str_wa)))
+          ;; Check if "WAVE" (4 chars: W=0x57, A=0x41, V=0x56, E=0x45)
+          (if (i32.and
+                (i32.eq (local.get $str_len) (i32.const 4))
+                (i32.and
+                  (i32.eq (i32.load16_u (i32.add (local.get $str_wa) (i32.const 2))) (i32.const 0x57))
+                  (i32.and
+                    (i32.eq (i32.load16_u (i32.add (local.get $str_wa) (i32.const 4))) (i32.const 0x41))
+                    (i32.and
+                      (i32.eq (i32.load16_u (i32.add (local.get $str_wa) (i32.const 6))) (i32.const 0x56))
+                      (i32.eq (i32.load16_u (i32.add (local.get $str_wa) (i32.const 8))) (i32.const 0x45))))))
+            (then
+              (local.set $type_subdir (local.get $doff))
+              (br $found_type)))))
+      (local.set $e (i32.add (local.get $e) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l1))
+    ) ;; $not_found
+    (return (i32.const 0))
+    ) ;; $found_type
+    ;; L2: find name by integer ID in the type subdirectory
+    (local.set $d (call $rsrc_find_entry
+      (i32.add (global.get $rsrc_rva) (i32.and (local.get $type_subdir) (i32.const 0x7FFFFFFF)))
+      (local.get $name_id)))
+    (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
+    ;; L3: take first language entry
+    (local.set $lang_off (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
+    (local.set $n (i32.add
+      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 12)))))
+      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    (local.set $d (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 20)))))
+    (i32.add (global.get $rsrc_rva) (local.get $d)))
+
   (func $store_fake_cmdline
     (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32)
     (local.set $ptr (call $heap_alloc (i32.const 256)))

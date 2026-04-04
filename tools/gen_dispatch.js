@@ -9,10 +9,10 @@ const fs = require('fs');
 const path = require('path');
 
 const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
-const outPath = path.join(__dirname, '..', 'src', 'parts', '09b2-dispatch-table.generated.wat');
+const outPath = path.join(__dirname, '..', 'src', '09b2-dispatch-table.generated.wat');
 
 // Clean up old generated file if it exists
-const oldPath = path.join(__dirname, '..', 'src', 'parts', '09b-dispatch.generated.wat');
+const oldPath = path.join(__dirname, '..', 'src', '09b-dispatch.generated.wat');
 if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
 
 const N = apiTable.length;

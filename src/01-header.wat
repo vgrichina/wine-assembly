@@ -141,6 +141,8 @@
   ;; Audio host imports
   (import "host" "message_beep" (func $host_message_beep (param i32)))
   ;; message_beep(uType) — play system sound (0=default, 0x10=error, 0x30=warning, 0x40=info)
+  (import "host" "play_sound" (func $host_play_sound (param i32 i32)))
+  ;; play_sound(wasm_ptr, length) — play WAV data from WASM memory
 
   ;; INI file host imports — backed by localStorage
   (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))

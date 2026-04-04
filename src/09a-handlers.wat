@@ -807,6 +807,53 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; 863: PlaySoundW(pszSound, hmod, fdwSound) — 3 args stdcall
+  ;; SND_RESOURCE=0x40004: pszSound is MAKEINTRESOURCE(id), find WAVE resource and play it
+  ;; SND_PURGE=0x40: stop playing, return TRUE
+  (func $handle_PlaySoundW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
+    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
+    (local.set $flags (local.get $arg2))
+    (local.set $name_id (local.get $arg0))
+    ;; If pszSound is NULL or SND_PURGE, just return TRUE (stop sound)
+    (if (i32.or (i32.eqz (local.get $name_id))
+                (i32.and (local.get $flags) (i32.const 0x40)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; Only handle SND_RESOURCE (0x40004) — find WAVE resource by integer ID
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
+      (then
+        ;; Not a resource — just return TRUE (no file/alias support)
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; Find WAVE resource: walk type entries looking for named "WAVE"
+    (if (i32.eqz (global.get $rsrc_rva))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; Find WAVE type entry (named type, need to match "WAVE" string)
+    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
+    (if (i32.eqz (local.get $hrsrc))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; hrsrc points to data entry (RVA, Size at rsrc_rva-relative offset)
+    ;; Read data RVA and size from the resource data entry
+    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
+    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
+    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
+    (if (i32.eqz (local.get $data_size))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    ;; Convert data RVA to WASM address and call host
+    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
+    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
   (func $handle_RegisterWindowMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
@@ -3478,14 +3525,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 405: ClientToScreen — STUB: unimplemented
+  ;; 405: ClientToScreen
   (func $handle_ClientToScreen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; ClientToScreen(hwnd, lpPoint) — all windows at (0,0), so no-op
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 406: SetActiveWindow — STUB: unimplemented
+  ;; 406: SetActiveWindow(hwnd) — return previous active window (fake: return arg)
   (func $handle_SetActiveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 407: RemoveMenu — STUB: unimplemented
@@ -4717,9 +4767,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 534: SizeofResource — STUB: unimplemented
+  ;; 534: SizeofResource(hModule, hResInfo) — return size from resource data entry
   (func $handle_SizeofResource (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; hResInfo (arg1) is offset from image_base to data entry (same as FindResource return)
+    ;; Data entry: [RVA:4][Size:4][CodePage:4][Reserved:4]
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (global.set $eax (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $arg1) (i32.const 4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 535: GetProcessVersion — 1 arg stdcall, return winver

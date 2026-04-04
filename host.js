@@ -226,8 +226,10 @@ class WineAssembly {
   }
 
   async init(canvas) {
-    const resp = await fetch('../build/wine-assembly.wasm?v=14');
-    const bytes = await resp.arrayBuffer();
+    const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
+    if (compileEl) compileEl.style.display = 'block';
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=16').then(r => r.text()));
+    if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
     // Create shared memory externally
@@ -353,7 +355,7 @@ class WineAssembly {
 
     try {
       // Try to fetch the DLL
-      const paths = [`dlls/${fileName}`, `../test/binaries/dlls/${fileName}`];
+      const paths = [`binaries/dlls/${fileName}`, `dlls/${fileName}`];
       let dllBytes = null;
       for (const p of paths) {
         try {

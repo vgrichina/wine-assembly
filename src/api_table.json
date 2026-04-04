@@ -6039,5 +6039,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2614496715
+  },
+  {
+    "id": 863,
+    "name": "PlaySoundW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1820623599
   }
 ]

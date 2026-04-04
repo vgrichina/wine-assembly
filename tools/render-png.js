@@ -2,10 +2,13 @@
 // Render a PE exe through wine-assembly using the shared Win98Renderer + node-canvas → PNG
 
 const fs = require('fs');
+const path = require('path');
 const { createCanvas } = require('canvas');
 const { Win98Renderer } = require('../lib/renderer');
 const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
+const { compileWat } = require('../lib/compile-wat');
+const SRC_DIR = path.join(__dirname, '..', 'src');
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
@@ -18,7 +21,7 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 
 async function main() {
-  const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
+  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   const exeBytes = fs.readFileSync(EXE_PATH);
 
   // Create node-canvas and renderer
