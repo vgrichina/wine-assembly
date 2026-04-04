@@ -45,46 +45,91 @@
     (call $next))
   ;; REP versions (inline loop)
   (func $th_rep_movsb (param $op i32)
-    (block $d (loop $l
-      (br_if $d (i32.eqz (global.get $ecx)))
-      (call $gs8 (global.get $edi) (call $gl8 (global.get $esi)))
+    (local $n i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
       (if (global.get $df)
-        (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1)))
-              (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
-        (else (global.set $esi (i32.add (global.get $esi) (i32.const 1)))
-              (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
-      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
-      (br $l))) (call $next))
+        (then
+          ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
+          (memory.copy
+            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+            (call $g2w (i32.sub (global.get $esi) (i32.sub (local.get $n) (i32.const 1))))
+            (local.get $n))
+          (global.set $esi (i32.sub (global.get $esi) (local.get $n)))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
+        (else
+          (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $n))
+          (global.set $esi (i32.add (global.get $esi) (local.get $n)))
+          (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
+      (global.set $ecx (i32.const 0))))
+    (call $next))
   (func $th_rep_movsd (param $op i32)
-    (block $d (loop $l
-      (br_if $d (i32.eqz (global.get $ecx)))
-      (call $gs32 (global.get $edi) (call $gl32 (global.get $esi)))
+    (local $n i32) (local $bytes i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
       (if (global.get $df)
-        (then (global.set $esi (i32.sub (global.get $esi) (i32.const 4)))
-              (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
-        (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))
-              (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
-      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
-      (br $l))) (call $next))
+        (then
+          (memory.copy
+            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+            (call $g2w (i32.sub (global.get $esi) (i32.sub (local.get $bytes) (i32.const 4))))
+            (local.get $bytes))
+          (global.set $esi (i32.sub (global.get $esi) (local.get $bytes)))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
+        (else
+          (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $bytes))
+          (global.set $esi (i32.add (global.get $esi) (local.get $bytes)))
+          (global.set $edi (i32.add (global.get $edi) (local.get $bytes)))))
+      (global.set $ecx (i32.const 0))))
+    (call $next))
   (func $th_rep_stosb (param $op i32)
-    (local $al i32) (local.set $al (i32.and (global.get $eax) (i32.const 0xFF)))
-    (block $d (loop $l
-      (br_if $d (i32.eqz (global.get $ecx)))
-      (call $gs8 (global.get $edi) (local.get $al))
+    (local $n i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
       (if (global.get $df)
-        (then (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
-        (else (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
-      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
-      (br $l))) (call $next))
+        (then
+          (memory.fill
+            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+            (i32.and (global.get $eax) (i32.const 0xFF))
+            (local.get $n))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
+        (else
+          (memory.fill (call $g2w (global.get $edi)) (i32.and (global.get $eax) (i32.const 0xFF)) (local.get $n))
+          (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
+      (global.set $ecx (i32.const 0))))
+    (call $next))
   (func $th_rep_stosd (param $op i32)
-    (block $d (loop $l
-      (br_if $d (i32.eqz (global.get $ecx)))
-      (call $gs32 (global.get $edi) (global.get $eax))
-      (if (global.get $df)
-        (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
-        (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
-      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
-      (br $l))) (call $next))
+    (local $n i32) (local $bytes i32) (local $al i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
+      (local.set $al (i32.and (global.get $eax) (i32.const 0xFF)))
+      ;; Fast path: if all 4 bytes of EAX are the same, use memory.fill
+      (if (i32.eq (global.get $eax) (i32.or (i32.shl (local.get $al) (i32.const 24))
+            (i32.or (i32.shl (local.get $al) (i32.const 16))
+              (i32.or (i32.shl (local.get $al) (i32.const 8)) (local.get $al)))))
+        (then
+          (if (global.get $df)
+            (then
+              (memory.fill
+                (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+                (local.get $al) (local.get $bytes))
+              (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
+            (else
+              (memory.fill (call $g2w (global.get $edi)) (local.get $al) (local.get $bytes))
+              (global.set $edi (i32.add (global.get $edi) (local.get $bytes))))))
+        (else
+          ;; Slow path: arbitrary dword value
+          (block $d (loop $l
+            (br_if $d (i32.eqz (local.get $n)))
+            (i32.store (call $g2w (global.get $edi)) (global.get $eax))
+            (if (global.get $df)
+              (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+              (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+            (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+            (br $l)))))
+      (global.set $ecx (i32.const 0))))
+    (call $next))
   (func $th_cmpsb (param $op i32)
     (local $a i32) (local $b i32)
     (local.set $a (call $gl8 (global.get $esi))) (local.set $b (call $gl8 (global.get $edi)))

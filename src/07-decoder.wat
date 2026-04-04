@@ -25,13 +25,9 @@
     (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 4)))
     (local.get $v))
   (func $sign_ext8 (param $v i32) (result i32)
-    (if (result i32) (i32.ge_u (local.get $v) (i32.const 0x80))
-      (then (i32.or (local.get $v) (i32.const 0xFFFFFF00)))
-      (else (local.get $v))))
+    (i32.extend8_s (local.get $v)))
   (func $sign_ext16 (param $v i32) (result i32)
-    (if (result i32) (i32.ge_u (local.get $v) (i32.const 0x8000))
-      (then (i32.or (local.get $v) (i32.const 0xFFFF0000)))
-      (else (local.get $v))))
+    (i32.extend16_s (local.get $v)))
 
   ;; Decode SIB byte and return base+index*scale
   (func $decode_sib (param $mod i32) (result i32)
