@@ -2569,10 +2569,12 @@
 
   ;; 289: DefWindowProcW — same as DefWindowProcA
   (func $handle_DefWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd)
+    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd) — only quit if main/dialog window
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
-    (global.set $quit_flag (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
+                (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+    (then (global.set $quit_flag (i32.const 1))))))
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
@@ -2833,9 +2835,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 321: lstrcpyW
+  ;; 321: lstrcpyW — NULL-safe per Win32 spec
   (func $handle_lstrcpyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $guest_wcscpy (local.get $arg0) (local.get $arg1))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (call $guest_wcscpy (local.get $arg0) (local.get $arg1))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -4017,9 +4020,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 449: CreateDIBitmap — STUB: unimplemented
+  ;; 449: CreateDIBitmap(hdc, lpbmih, fdwInit, lpbInit, lpbmi, fuUsage) — 6 args
   (func $handle_CreateDIBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; arg0=hdc, arg1=lpbmih, arg2=fdwInit, arg3=lpbInit, arg4=lpbmi
+    ;; fuUsage at [ESP+24]
+    (global.set $eax (call $host_gdi_create_dib_bitmap
+      (call $g2w (local.get $arg4))   ;; lpbmi (BITMAPINFO: header + color table)
+      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))  ;; lpbInit
+      (local.get $arg2)))             ;; fdwInit
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; 6 args + ret
   )
 
   ;; 450: StretchBlt(hdcDest, xDest, yDest, wDest, hDest, hdcSrc, xSrc, ySrc, wSrc, hSrc, dwRop)

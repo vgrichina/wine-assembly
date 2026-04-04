@@ -98,8 +98,13 @@
         (i32.ne (local.get $tmp) (i32.const 0))))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
+    ;; Handle CW_USEDEFAULT (0x80000000) — use 2/3 screen as default
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.eq (global.get $main_win_cx) (i32.const 0x80000000))
+      (then (global.set $main_win_cx (i32.const 427))))  ;; ~2/3 of 640
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (if (i32.eq (global.get $main_win_cy) (i32.const 0x80000000))
+      (then (global.set $main_win_cy (i32.const 320))))  ;; ~2/3 of 480
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
       (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
     (global.set $pending_wm_size (i32.or
@@ -645,12 +650,12 @@
 
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd)
+    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd) — only quit if main/dialog window
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
-    ;; DestroyWindow sends WM_DESTROY to WndProc
-    ;; For now, just set quit_flag directly since WM_DESTROY→PostQuitMessage
-    (global.set $quit_flag (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
+                (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+    (then (global.set $quit_flag (i32.const 1))))))
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
