@@ -113,6 +113,34 @@
     (global.set $free_list (local.get $block)))
   ;; Find resource entry in PE resource directory
   ;; Returns offset of data entry (relative to image_base) or 0
+  ;; Compare ASCII string at guest $str_ptr with Unicode resource name at rsrc offset $name_off
+  ;; Resource name format: u16 length, then u16[] chars. Returns 1 if match (case-insensitive).
+  (func $rsrc_name_match (param $str_ptr i32) (param $name_off i32) (result i32)
+    (local $str_wa i32) (local $name_wa i32) (local $len i32) (local $j i32)
+    (local $ch_a i32) (local $ch_r i32)
+    (local.set $str_wa (call $g2w (local.get $str_ptr)))
+    (local.set $name_wa (call $g2w (i32.add (global.get $image_base)
+      (i32.add (global.get $rsrc_rva) (local.get $name_off)))))
+    (local.set $len (i32.load16_u (local.get $name_wa)))
+    (local.set $j (i32.const 0))
+    (block $fail (loop $cmp
+      (br_if $fail (i32.ge_u (local.get $j) (local.get $len)))
+      (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa) (local.get $j))))
+      (br_if $fail (i32.eqz (local.get $ch_a))) ;; ASCII string shorter
+      (local.set $ch_r (i32.load16_u (i32.add (local.get $name_wa)
+        (i32.add (i32.const 2) (i32.mul (local.get $j) (i32.const 2))))))
+      ;; Uppercase both for case-insensitive compare
+      (if (i32.and (i32.ge_u (local.get $ch_a) (i32.const 0x61)) (i32.le_u (local.get $ch_a) (i32.const 0x7a)))
+        (then (local.set $ch_a (i32.sub (local.get $ch_a) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $ch_r) (i32.const 0x61)) (i32.le_u (local.get $ch_r) (i32.const 0x7a)))
+        (then (local.set $ch_r (i32.sub (local.get $ch_r) (i32.const 0x20)))))
+      (br_if $fail (i32.ne (local.get $ch_a) (local.get $ch_r)))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $cmp))
+    (return (i32.const 0)))
+    ;; Matched all chars — check ASCII string is also at end
+    (i32.eqz (i32.load8_u (i32.add (local.get $str_wa) (local.get $len)))))
+
   (func $rsrc_find_entry (param $dir_off i32) (param $id i32) (result i32)
     (local $named i32) (local $ids i32) (local $total i32)
     (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
@@ -129,7 +157,16 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $total)))
       (local.set $eid (call $gl32 (i32.add (global.get $image_base) (local.get $e))))
       (local.set $doff (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $e) (i32.const 4)))))
-      (if (i32.eq (local.get $eid) (local.get $id))
+      ;; If id is a string pointer (>= 0x10000) and entry is named (high bit set), compare strings
+      (if (i32.and (i32.ge_u (local.get $id) (i32.const 0x10000))
+                   (i32.ne (i32.and (local.get $eid) (i32.const 0x80000000)) (i32.const 0)))
+        (then
+          (if (call $rsrc_name_match (local.get $id)
+                (i32.and (local.get $eid) (i32.const 0x7FFFFFFF)))
+            (then (return (local.get $doff))))))
+      ;; Integer ID match
+      (if (i32.and (i32.lt_u (local.get $id) (i32.const 0x10000))
+                   (i32.eq (local.get $eid) (local.get $id)))
         (then (return (local.get $doff))))
       (local.set $e (i32.add (local.get $e) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

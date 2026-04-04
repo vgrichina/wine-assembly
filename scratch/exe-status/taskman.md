@@ -1,37 +1,28 @@
 # taskman.exe (Task Manager) - Win98
 
 **Status:** FAIL
-**Crashes on:** SHELL32.dll ordinal 181 (RunFileDlg - undocumented)
+**Crashes on:** memory access out of bounds after SetWindowLongA (window subclass)
 **Batch reached:** 0
 
 ## Crash Details
 
-Taskman initializes successfully -- creates its main dialog window with a listbox, registers for drag-drop, reads registry settings, draws its UI with MultiByteToWideChar text conversion. Then it calls SHELL32 ordinal 181 which is `RunFileDlg`, an undocumented Shell32 API that opens the "Run..." dialog.
+Taskman creates its dialog window (hwnd 0x10001), a child listbox (0x10002), then a listview child (0x10003). When subclassing the listview with SetWindowLongA(GWL_WNDPROC), the old wndproc is returned. The app continues execution and shortly after crashes with "memory access out of bounds".
 
-The import is by ordinal (not by name), so the hash-based API name lookup fails. The dispatch table has no entry for it, and the API shows as unnamed `(0x00010001, 0x00000001, 0x00400000, 0x00000000, 0x00000000, 0x00000000)`.
+EIP at crash: 0x004015e6 (within the dialog initialization code)
+EIP before batch: 0x00403680 — `fs: mov eax, [0x0]` (SEH frame setup)
+EAX=0xfffe0001 (suspicious return value from wnd_table_get)
 
-EIP at crash: `0x004015e6` -- calling `[0x409414]` which is the IAT entry for SHELL32 ordinal 181.
+The crash appears to happen during the threaded code execution of a large batch that includes SEH frame setup and dialog init code. The root cause is likely an address that maps outside WASM linear memory.
 
-Call args: `RunFileDlg(hwnd=0x10001, hIcon=NULL, workingDir=NULL, title=NULL, description=NULL, flags=0)`
+## API Call Sequence (256 calls before crash)
 
-## API Call Sequence (257 calls before crash)
-
-Key APIs:
-- GetModuleHandleA, GetCommandLineA, GetStartupInfoA
-- DialogBoxParamA (creates main dialog)
-- DragAcceptFiles, GetWindowLongA, SetWindowLongA
-- CreateWindowExA (listbox child)
-- RegOpenKeyExA, RegQueryValueExA x multiple (window position)
-- GetDC, SelectObject, GetTextExtentPoint32A (font measurement)
-- MultiByteToWideChar x many (text conversion)
-- CreateWindowExA (another child window, style 0x54100b51)
-- **SHELL32 ordinal 181 (RunFileDlg)** -- CRASH
-
-## What Needs to Be Implemented
-
-1. Ordinal-based import resolution for SHELL32.dll -- the emulator needs to map SHELL32 ordinal 181 to a name so it can dispatch it.
-2. `RunFileDlg` handler -- this is an undocumented API: `void RunFileDlg(HWND hwndOwner, HICON hIcon, LPCSTR lpszWorkingDir, LPCSTR lpszTitle, LPCSTR lpszDescription, UINT uFlags)`. It displays the Run dialog.
+- DialogBoxParamA, DragAcceptFiles
+- GetWindowLongA/SetWindowLongA (GWL_USERDATA, GWL_WNDPROC)
+- CreateWindowExA x3 (dialog, listbox, listview child)
+- GetDlgItem, GetWindowLongA(GWL_STYLE)
+- SetWindowLongA(0x10003, GWL_WNDPROC, 0x0040150c) — subclass listview
+- **CRASH** during continued execution
 
 ## Difficulty: Hard
 
-Two separate problems: (1) ordinal-to-name mapping for SHELL32 (infrastructure), and (2) implementing the Run dialog which is a complex UI element with file browsing, command history, and process launching. A minimal stub that does nothing might get past the crash but Task Manager's core purpose is launching programs via Run dialog.
+Complex interaction between window subclassing, SEH frame setup, and the dialog initialization sequence. Needs careful debugging of the batch execution to find the exact OOB access.

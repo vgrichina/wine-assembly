@@ -245,7 +245,10 @@ Resource-aware Win98 emulator
       ski32:    { exe: 'binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: 'binaries/xp/winmine.exe' },
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
-      pinball:  { exe: 'binaries/pinball/pinball.exe' },
+      pinball:  { exe: 'binaries/pinball/pinball.exe', files: [
+        'binaries/pinball/wavemix.inf', 'binaries/pinball/PINBALL.DAT', 'binaries/pinball/FONT.DAT',
+        'binaries/pinball/table.bmp', 'binaries/pinball/PINBALL.MID', 'binaries/pinball/PINBALL2.MID',
+      ] },
     };
 
     function wireCanvasInput(canvas, renderer) {
@@ -359,6 +362,10 @@ Resource-aware Win98 emulator
 
       const ok = await wine.loadExe(app.exe);
       if (ok) {
+        if (app.files && app.files.length) {
+          document.getElementById('status').textContent = 'Loading data files...';
+          await wine.loadFiles(app.files);
+        }
         if (app.winver && wine.instance.exports.set_winver) {
           wine.instance.exports.set_winver(app.winver);
         }

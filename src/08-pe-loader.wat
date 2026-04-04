@@ -28,6 +28,10 @@
     ;; Set heap to be above the image
     (global.set $heap_ptr (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
 
+    ;; Copy DOS+PE headers into guest memory (CRT startup reads MZ signature from image base)
+    (call $memcpy (global.get $GUEST_BASE) (global.get $PE_STAGING)
+      (i32.load (i32.add (local.get $pe_off) (i32.const 84))))  ;; SizeOfHeaders
+
     (local.set $section_off (i32.add (local.get $pe_off) (i32.add (i32.const 24) (local.get $opt_hdr_size))))
     (local.set $i (i32.const 0))
     (block $sd (loop $sl

@@ -3,7 +3,7 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Boots, creates window, loads WaveMix config, opens PINBALL.DAT — stuck in msvcrt CriticalSection during fread
+**Status:** Boots, creates window, loads WaveMix config, opens PINBALL.DAT, loads resources (bitmap, message table). Exits with code 0 — init function returns failure before opening PINBALL.DAT for full game data loading.
 
 ## What Works
 
@@ -36,20 +36,26 @@
 
 ## Current Blocker
 
-**Stuck in msvcrt CriticalSection during fread of PINBALL.DAT**
+**Init function returns failure — app exits before opening PINBALL.DAT for game data**
 
-After OpenFile succeeds and the first _lread completes (183 bytes), execution enters msvcrt's internal file I/O code. msvcrt calls EnterCriticalSection/LeaveCriticalSection on CRT-internal critical sections (at 0x011174e4, 0x01117504). The emulator loops at EIP=0x010d6ab8 without making progress — 844 API calls then infinite loop in 200+ batches.
+After processing the message table (RCDATA "PBMSG_FT"), the init function returns. WinMain sees failure and calls exit(0) without entering the message loop. No GetMessage/PeekMessage ever called.
 
-### Likely Cause
-msvcrt's CRT file buffering uses per-file CriticalSections. Our CriticalSection implementation may not properly handle:
-- OwningThread matching (we return thread ID 1 for all)
-- RecursionCount (reentrant locking)
-- Or the CRT is spinning waiting for a condition that never becomes true
+API trace: 1379 calls total. After HeapAlloc (#844, for message table), ~400 CriticalSection calls (msvcrt locale locking during string processing), FreeResource (#1231), then CRT exit cleanup (more CS calls), SetUnhandledExceptionFilter, ExitProcess(0).
+
+### Investigation Status
+- CriticalSection ✓ (fixed — proper LockCount/RecursionCount)
+- `test ax, imm16` decoder ✓ (was consuming 4 bytes with 0x66 prefix)
+- Named resource lookup ✓ (string matching for RCDATA "PBMSG_FT")
+- CreateDIBitmap ✓ (implemented, bitmap loads correctly)
+- PE headers ✓ (MZ at image_base for CRT startup)
+- No unrecognized x86 opcodes in the trace
+- lstrcmpA header check passes (PARTOUT signature matches)
 
 ### Next Steps
-1. Debug the CriticalSection loop — check what msvcrt expects from the CS struct fields
-2. May need to implement proper CS OwningThread/RecursionCount semantics
-3. Once fread works, pinball will parse PINBALL.DAT and call GDI APIs (CreateDIBitmap, StretchDIBits) to render the table
+1. Trace the return path from message table loader to WinMain to find what condition fails
+2. Check if fopen is called at all (it should be, but CreateFileA never appears after wavemix.inf)
+3. May be an issue with msvcrt's _alloc_osfhnd or file descriptor management
+4. Could be a wrong return value from GetVersion, ChangeDisplaySettingsA, or similar check
 
 ## Memory Layout for Palette Storage
 
