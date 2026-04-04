@@ -104,7 +104,17 @@
             (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))
             ;; Lookup and store API ID in thunk+4
             (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-              (call $lookup_api_id (i32.add (global.get $GUEST_BASE) (i32.add (local.get $entry) (i32.const 2)))))))
+              (call $lookup_api_id (i32.add (global.get $GUEST_BASE) (i32.add (local.get $entry) (i32.const 2))))))
+          (else
+            ;; Ordinal import: bit 31 set, low 16 bits = ordinal number
+            ;; Store ordinal as name RVA marker, resolve API ID via host
+            (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))
+            (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
+              (call $host_resolve_ordinal
+                ;; DLL name ptr: desc+12 = name RVA
+                (i32.add (global.get $GUEST_BASE) (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+                ;; ordinal = entry & 0xFFFF
+                (i32.and (local.get $entry) (i32.const 0xFFFF))))))
         (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
         (call $update_thunk_end)
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))

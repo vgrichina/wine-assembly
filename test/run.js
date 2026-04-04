@@ -102,10 +102,13 @@ async function main() {
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
 
+  const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
     resourceJson,
+    apiTable,
+    verbose: VERBOSE,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     readFile: (name) => {

@@ -6046,5 +6046,348 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1820623599
+  },
+  {
+    "id": 864,
+    "name": "ShellExecuteW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 420481993
+  },
+  {
+    "id": 865,
+    "name": "ShellExecuteExA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3163153200
+  },
+  {
+    "id": 866,
+    "name": "DragQueryFileW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2913452352
+  },
+  {
+    "id": 867,
+    "name": "SHGetFileInfoW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 998752965
+  },
+  {
+    "id": 868,
+    "name": "ExtractIconExA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1682648485
+  },
+  {
+    "id": 869,
+    "name": "Shell_NotifyIconA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2664794405
+  },
+  {
+    "id": 870,
+    "name": "SHBrowseForFolderA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2236557610
+  },
+  {
+    "id": 871,
+    "name": "SHGetMalloc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3345895926
+  },
+  {
+    "id": 872,
+    "name": "SHFileOperationA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2683157120
+  },
+  {
+    "id": 873,
+    "name": "RunFileDlg",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1426548385
+  },
+  {
+    "id": 874,
+    "name": "ExitWindowsDialog",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3994729402
+  },
+  {
+    "id": 875,
+    "name": "RegisterShellHook",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2778459661
+  },
+  {
+    "id": 876,
+    "name": "ArrangeWindows",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1185362540
+  },
+  {
+    "id": 877,
+    "name": "InitCommonControls",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3204230012
+  },
+  {
+    "id": 878,
+    "name": "ImageList_Create",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3268438971
+  },
+  {
+    "id": 879,
+    "name": "ImageList_Destroy",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1445438195
+  },
+  {
+    "id": 880,
+    "name": "ImageList_LoadImageA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3596066851
+  },
+  {
+    "id": 881,
+    "name": "ImageList_LoadImageW",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3428290661
+  },
+  {
+    "id": 882,
+    "name": "CreateStatusWindowA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 488230658
+  },
+  {
+    "id": 883,
+    "name": "CreateToolbarEx",
+    "nargs": 13,
+    "convention": "stdcall",
+    "hash": 3048747093
+  },
+  {
+    "id": 884,
+    "name": "CreateUpDownControl",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 2913013433
+  },
+  {
+    "id": 885,
+    "name": "GetEffectiveClientRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4016377985
+  },
+  {
+    "id": 886,
+    "name": "DrawStatusTextA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2997443757
+  },
+  {
+    "id": 887,
+    "name": "DrawStatusTextW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2628336139
+  },
+  {
+    "id": 888,
+    "name": "MenuHelp",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3189261661
+  },
+  {
+    "id": 889,
+    "name": "ShowHideMenuCtl",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2159160704
+  },
+  {
+    "id": 890,
+    "name": "CreateMappedBitmap",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3559593713
+  },
+  {
+    "id": 891,
+    "name": "CreatePropertySheetPageA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3977036443
+  },
+  {
+    "id": 892,
+    "name": "PropertySheetA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3123595998
+  },
+  {
+    "id": 893,
+    "name": "ImageList_SetBkColor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 30666209
+  },
+  {
+    "id": 894,
+    "name": "ImageList_GetBkColor",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2909562301
+  },
+  {
+    "id": 895,
+    "name": "CreateStatusWindowW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 119123040
+  },
+  {
+    "id": 896,
+    "name": "Comctl32_Alloc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 554498332
+  },
+  {
+    "id": 897,
+    "name": "Comctl32_ReAlloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1472122591
+  },
+  {
+    "id": 898,
+    "name": "Comctl32_Free",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1754563109
+  },
+  {
+    "id": 899,
+    "name": "Comctl32_GetSize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2489063648
+  },
+  {
+    "id": 900,
+    "name": "DSA_Create",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2812649488
+  },
+  {
+    "id": 901,
+    "name": "DSA_Destroy",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2728501558
+  },
+  {
+    "id": 902,
+    "name": "DSA_GetItem",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 485724559
+  },
+  {
+    "id": 903,
+    "name": "DSA_GetItemPtr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1908382251
+  },
+  {
+    "id": 904,
+    "name": "DSA_InsertItem",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1524704826
+  },
+  {
+    "id": 905,
+    "name": "DSA_DeleteItem",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3631037032
+  },
+  {
+    "id": 906,
+    "name": "DPA_Create",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 952699469
+  },
+  {
+    "id": 907,
+    "name": "DPA_Destroy",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1752851989
+  },
+  {
+    "id": 908,
+    "name": "DPA_GetPtr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2986811315
+  },
+  {
+    "id": 909,
+    "name": "DPA_InsertPtr",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3297219938
+  },
+  {
+    "id": 910,
+    "name": "DPA_DeletePtr",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 167851172
+  },
+  {
+    "id": 911,
+    "name": "DPA_DeleteAllPtrs",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2670718914
+  },
+  {
+    "id": 912,
+    "name": "StrToIntA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2934772081
   }
 ]

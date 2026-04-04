@@ -1637,14 +1637,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 197: DragQueryFileA — STUB: unimplemented
+  ;; 197: DragQueryFileA(hDrop, iFile, lpszFile, cch) — no drag-drop, return 0 files
   (func $handle_DragQueryFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; If iFile=0xFFFFFFFF, return count of files (0)
+    ;; Otherwise return 0 (no file at that index)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 198: DragFinish — STUB: unimplemented
+  ;; 198: DragFinish(hDrop) — free drop handle, no-op for us
   (func $handle_DragFinish (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 199: GetOpenFileNameA — STUB: unimplemented
@@ -2916,23 +2919,65 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 330: InitializeCriticalSection(ptr) — no-op (single-threaded) — STUB: unimplemented
+  ;; 330: InitializeCriticalSection(lpCriticalSection)
+  ;; CRITICAL_SECTION: +0=DebugInfo, +4=LockCount, +8=RecursionCount, +0C=OwningThread, +10=LockSemaphore, +14=SpinCount
   (func $handle_InitializeCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32)
+    (local.set $cs (call $g2w (local.get $arg0)))
+    ;; Zero the struct then set LockCount = -1 (unlocked)
+    (i32.store (local.get $cs) (i32.const 0))            ;; DebugInfo
+    (i32.store offset=4 (local.get $cs) (i32.const -1))  ;; LockCount = -1 (unlocked)
+    (i32.store offset=8 (local.get $cs) (i32.const 0))   ;; RecursionCount
+    (i32.store offset=12 (local.get $cs) (i32.const 0))  ;; OwningThread
+    (i32.store offset=16 (local.get $cs) (i32.const 0))  ;; LockSemaphore
+    (i32.store offset=20 (local.get $cs) (i32.const 0))  ;; SpinCount
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 331: EnterCriticalSection(ptr) — no-op — STUB: unimplemented
+  ;; 331: EnterCriticalSection(lpCriticalSection) — single-threaded: always succeeds
   (func $handle_EnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32)
+    (local.set $cs (call $g2w (local.get $arg0)))
+    ;; LockCount: -1 -> 0 (first acquire) or increment (recursive)
+    (i32.store offset=4 (local.get $cs)
+      (i32.add (i32.load offset=4 (local.get $cs)) (i32.const 1)))
+    ;; RecursionCount++
+    (i32.store offset=8 (local.get $cs)
+      (i32.add (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+    ;; OwningThread = 1 (our single thread ID)
+    (i32.store offset=12 (local.get $cs) (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 332: LeaveCriticalSection(ptr) — no-op — STUB: unimplemented
+  ;; 332: LeaveCriticalSection(lpCriticalSection)
   (func $handle_LeaveCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32)
+    (local.set $cs (call $g2w (local.get $arg0)))
+    ;; RecursionCount--
+    (i32.store offset=8 (local.get $cs)
+      (i32.sub (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+    ;; If RecursionCount == 0, clear OwningThread
+    (if (i32.eqz (i32.load offset=8 (local.get $cs)))
+      (then
+        (i32.store offset=12 (local.get $cs) (i32.const 0))
+      )
+    )
+    ;; LockCount--
+    (i32.store offset=4 (local.get $cs)
+      (i32.sub (i32.load offset=4 (local.get $cs)) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 333: DeleteCriticalSection(ptr) — no-op — STUB: unimplemented
+  ;; 333: DeleteCriticalSection(lpCriticalSection)
   (func $handle_DeleteCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32)
+    (local.set $cs (call $g2w (local.get $arg0)))
+    (i32.store (local.get $cs) (i32.const 0))
+    (i32.store offset=4 (local.get $cs) (i32.const -1))
+    (i32.store offset=8 (local.get $cs) (i32.const 0))
+    (i32.store offset=12 (local.get $cs) (i32.const 0))
+    (i32.store offset=16 (local.get $cs) (i32.const 0))
+    (i32.store offset=20 (local.get $cs) (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -4207,6 +4252,87 @@
     (i32.store (call $g2w (local.get $arg1)) (i32.const 1))
     (global.set $eax (local.get $buf))  ;; return pointer to argv array
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; --- Additional Shell32 APIs ---
+
+  ;; ShellExecuteW — same as A version, return >32 for success, 6 args
+  (func $handle_ShellExecuteW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 33))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
+  ;; ShellExecuteExA(lpExecInfo) — 1 arg, return TRUE
+  (func $handle_ShellExecuteExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; SHELLEXECUTEINFO.hInstApp at offset 28 = set to >32
+    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 28))) (i32.const 33))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DragQueryFileW — same as A, return 0 files, 4 args
+  (func $handle_DragQueryFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; SHGetFileInfoW — same as A version, return 1, 5 args
+  (func $handle_SHGetFileInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; ExtractIconExA(lpszFile, nIconIndex, phiconLarge, phiconSmall, nIcons) — 5 args, return 0 icons
+  (func $handle_ExtractIconExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; Shell_NotifyIconA(dwMessage, lpData) — tray icon, return TRUE, 2 args
+  (func $handle_Shell_NotifyIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; SHBrowseForFolderA(lpbi) — 1 arg, return NULL (user cancelled)
+  (func $handle_SHBrowseForFolderA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; SHGetMalloc(ppMalloc) — return E_NOTIMPL, 1 arg
+  (func $handle_SHGetMalloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+    (global.set $eax (i32.const 0x80004001))  ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; SHFileOperationA(lpFileOp) — 1 arg, return 0 (success)
+  (func $handle_SHFileOperationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; RunFileDlg(hwndOwner, hIcon, lpszDir, lpszTitle, lpszDesc) — 5 args, no return value
+  (func $handle_RunFileDlg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; ExitWindowsDialog(hwndOwner) — 1 arg, no meaningful return
+  (func $handle_ExitWindowsDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; RegisterShellHook(hwnd, dwType) — 2 args, return TRUE
+  (func $handle_RegisterShellHook (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ArrangeWindows(hwndParent, dwReserved, lpRect, cKids, lpKids) — 5 args, return count
+  (func $handle_ArrangeWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 468: IsBadCodePtr — STUB: unimplemented
@@ -6157,4 +6283,465 @@
     (global.set $eip (local.get $ret_addr))
   )
 
+  ;; ============================================================
+  ;; COMCTL32 Common Controls handlers
+  ;; ============================================================
+
+  ;; InitCommonControls() — 0 args, void return, registers common control window classes
+  (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; No-op: our window creation handles class names directly
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; ImageList_Create(cx, cy, flags, cInitial, cGrow) — 5 args, returns HIMAGELIST handle
+  (func $handle_ImageList_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    ;; Allocate a small struct to track the image list: [cx, cy, flags, count]
+    (local.set $buf (call $heap_alloc (i32.const 16)))
+    (i32.store (call $g2w (local.get $buf)) (local.get $arg0))           ;; cx
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg1))  ;; cy
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (local.get $arg2))  ;; flags
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))     ;; count=0
+    (global.set $eax (local.get $buf))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
+  (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Free not implemented yet, just return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
+  (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    ;; Create an empty image list — real bitmap loading would need host support
+    ;; arg2=cx (icon width), return a valid HIMAGELIST
+    (local.set $buf (call $heap_alloc (i32.const 16)))
+    (i32.store (call $g2w (local.get $buf)) (local.get $arg2))           ;; cx
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg2))  ;; cy=cx
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))
+    (global.set $eax (local.get $buf))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
+  )
+
+  ;; ImageList_LoadImageW — same as A, 7 args
+  (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    (local.set $buf (call $heap_alloc (i32.const 16)))
+    (i32.store (call $g2w (local.get $buf)) (local.get $arg2))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg2))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))
+    (global.set $eax (local.get $buf))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; CreateStatusWindowA(style, lpszText, hwndParent, wID) — 4 args, returns HWND
+  (func $handle_CreateStatusWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Create a status bar window via CreateWindowExA with "msctls_statusbar32" class
+    ;; For now, return a valid hwnd via host_create_window
+    (global.set $eax (call $host_create_window
+      (i32.add (global.get $next_hwnd) (i32.const 0))  ;; hwnd
+      (local.get $arg0)   ;; style
+      (i32.const 0)       ;; x
+      (i32.const 0)       ;; y
+      (i32.const 0)       ;; cx (auto-size)
+      (i32.const 20)      ;; cy (typical status bar height)
+      (call $g2w (local.get $arg1))  ;; text ptr
+      (local.get $arg3))) ;; wID as menu
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; CreateToolbarEx — 13 args, returns HWND of toolbar
+  (func $handle_CreateToolbarEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; CreateToolbarEx(hwndParent, ws, wID, nBitmaps, hBMInst, wBMID, lpButtons, iNumButtons, dxButton, dyButton, dxBitmap, dyBitmap, uStructSize)
+    ;; Return a valid hwnd
+    (global.set $eax (call $host_create_window
+      (global.get $next_hwnd)
+      (local.get $arg1)   ;; style
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 28) ;; typical toolbar height
+      (i32.const 0) ;; no text
+      (local.get $arg2))) ;; wID
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 56)))  ;; stdcall, 13 args
+  )
+
+  ;; CreateUpDownControl — 12 args, returns HWND
+  (func $handle_CreateUpDownControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; CreateUpDownControl(dwStyle, x, y, cx, cy, hParent, nID, hInst, hBuddy, nUpper, nLower, nPos)
+    (global.set $eax (call $host_create_window
+      (global.get $next_hwnd)
+      (local.get $arg0) ;; style
+      (local.get $arg1) ;; x
+      (local.get $arg2) ;; y
+      (local.get $arg3) ;; cx
+      (local.get $arg4) ;; cy
+      (i32.const 0) ;; no text
+      (i32.const 0)))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 52)))  ;; stdcall, 12 args
+  )
+
+  ;; GetEffectiveClientRect(hWnd, lprc, lpInfo) — 3 args, void
+  (func $handle_GetEffectiveClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Calculates the client rect excluding toolbars/status bars
+    ;; For now, just call GetClientRect equivalent — fill rect with window client area
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (local.get $wa) (i32.const 0))          ;; left
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))  ;; top
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 640))  ;; right
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 480)) ;; bottom
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; DrawStatusTextA(hDC, lprc, pszText, uFlags) — 4 args, void
+  (func $handle_DrawStatusTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Draw text in a status bar style rect — delegate to host TextOut
+    (if (local.get $arg2)
+      (then
+        (call $host_draw_text
+          (local.get $arg0) ;; hDC
+          (call $g2w (local.get $arg2)) ;; text
+          (i32.const -1) ;; nCount=-1 (null terminated)
+          (call $g2w (local.get $arg1)) ;; lpRect
+          (i32.const 0)))) ;; flags
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; DrawStatusTextW — 4 args, void (same but wide)
+  (func $handle_DrawStatusTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Wide version — for now just skip the draw
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; MenuHelp(uMsg, wParam, lParam, hMainMenu, hInst) — 5 args, void
+  (func $handle_MenuHelp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Processes WM_MENUSELECT and WM_COMMAND for status bar help text — no-op
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; ShowHideMenuCtl(hWnd, uFlags, lpInfo) — 3 args, returns BOOL
+  (func $handle_ShowHideMenuCtl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; CreateMappedBitmap(hInstance, idBitmap, wFlags, lpColorMap, iNumMaps) — 5 args, returns HBITMAP
+  (func $handle_CreateMappedBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return a valid bitmap handle
+    (global.set $eax (i32.const 0x30002))  ;; fake bitmap handle
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; CreatePropertySheetPageA(lppsp) — 1 arg, returns HPROPSHEETPAGE
+  (func $handle_CreatePropertySheetPageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return a fake handle
+    (local.set $arg0 (call $heap_alloc (i32.const 4)))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; PropertySheetA(lppsph) — 1 arg, returns int (>0 if user clicked OK)
+  (func $handle_PropertySheetA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return 0 (user cancelled / no change)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ImageList_SetBkColor(himl, clrBk) — 2 args, returns old bk color
+  (func $handle_ImageList_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old i32)
+    (local.set $old (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $arg1))
+    (global.set $eax (local.get $old))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ImageList_GetBkColor(himl) — 1 arg
+  (func $handle_ImageList_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; CreateStatusWindowW — same as A version, 4 args
+  (func $handle_CreateStatusWindowW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_create_window
+      (global.get $next_hwnd)
+      (local.get $arg0)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 20)
+      (i32.const 0) (local.get $arg3)))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; ============================================================
+  ;; COMCTL32 internal heap functions (ordinal-only)
+  ;; ============================================================
+
+  ;; Comctl32_Alloc(dwSize) — 1 arg, returns pointer (zeroed)
+  (func $handle_Comctl32_Alloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32)
+    (local.set $ptr (call $heap_alloc (local.get $arg0)))
+    ;; Zero the allocation
+    (if (local.get $arg0)
+      (then (memory.fill (call $g2w (local.get $ptr)) (i32.const 0) (local.get $arg0))))
+    (global.set $eax (local.get $ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; Comctl32_ReAlloc(pv, cbNew) — 2 args, returns pointer
+  (func $handle_Comctl32_ReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Simple: allocate new, copy, return new (no free of old — heap doesn't support free yet)
+    (local $new_ptr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        ;; NULL input = just alloc
+        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
+        (if (local.get $arg1)
+          (then (memory.fill (call $g2w (local.get $new_ptr)) (i32.const 0) (local.get $arg1)))))
+      (else
+        ;; Realloc: alloc new, copy old data
+        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
+        (if (local.get $arg1)
+          (then (memory.copy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $arg0)) (local.get $arg1))))))
+    (global.set $eax (local.get $new_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; Comctl32_Free(pv) — 1 arg, returns BOOL
+  (func $handle_Comctl32_Free (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Our heap doesn't support free, just return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; Comctl32_GetSize(pv) — 1 arg, returns DWORD size
+  (func $handle_Comctl32_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Our heap doesn't track sizes, return a reasonable default
+    (global.set $eax (i32.const 256))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ============================================================
+  ;; DSA (Dynamic Structure Array) — real implementation
+  ;; DSA layout in memory: [item_size:4, count:4, capacity:4, data_ptr:4]
+  ;; ============================================================
+
+  ;; DSA_Create(cbItem, cItemGrow) — 2 args, returns HDSA
+  (func $handle_DSA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dsa i32)
+    (local $cap i32)
+    (local.set $cap (select (local.get $arg1) (i32.const 8) (i32.gt_u (local.get $arg1) (i32.const 0))))
+    (local.set $dsa (call $heap_alloc (i32.const 16)))
+    (i32.store (call $g2w (local.get $dsa)) (local.get $arg0))           ;; item_size
+    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 4))) (i32.const 0))  ;; count
+    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 8))) (local.get $cap))  ;; capacity
+    ;; Allocate data buffer: capacity * item_size
+    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 12)))
+      (call $heap_alloc (i32.mul (local.get $cap) (local.get $arg0))))
+    (global.set $eax (local.get $dsa))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; DSA_Destroy(hdsa) — 1 arg, returns BOOL
+  (func $handle_DSA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Can't free, just return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DSA_GetItem(hdsa, index, pitem) — 3 args, returns BOOL
+  (func $handle_DSA_GetItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $item_size i32)
+    (local $data_ptr i32)
+    (local $count i32)
+    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
+    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
+    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (if (i32.lt_u (local.get $arg1) (local.get $count))
+      (then
+        ;; Copy item_size bytes from data[index*item_size] to pitem
+        (memory.copy (call $g2w (local.get $arg2))
+          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
+          (local.get $item_size))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; DSA_GetItemPtr(hdsa, index) — 2 args, returns pointer to item
+  (func $handle_DSA_GetItemPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $item_size i32)
+    (local $data_ptr i32)
+    (local $count i32)
+    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
+    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
+    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (if (i32.lt_u (local.get $arg1) (local.get $count))
+      (then
+        (global.set $eax (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size)))))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; DSA_InsertItem(hdsa, index, pitem) — 3 args, returns index or -1
+  (func $handle_DSA_InsertItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $item_size i32)
+    (local $count i32)
+    (local $data_ptr i32)
+    (local $idx i32)
+    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
+    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
+    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    ;; Clamp index: if index > count or DA_LAST (0x7FFFFFFF), append
+    (local.set $idx (select (local.get $count) (local.get $arg1)
+      (i32.gt_u (local.get $arg1) (local.get $count))))
+    ;; Copy item data to data[idx * item_size]
+    (memory.copy
+      (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
+      (call $g2w (local.get $arg2))
+      (local.get $item_size))
+    ;; Increment count
+    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
+      (i32.add (local.get $count) (i32.const 1)))
+    (global.set $eax (local.get $idx))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; DSA_DeleteItem(hdsa, index) — 2 args, returns BOOL
+  (func $handle_DSA_DeleteItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32)
+    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
+    (if (i32.and (i32.lt_u (local.get $arg1) (local.get $count)) (i32.gt_u (local.get $count) (i32.const 0)))
+      (then
+        ;; Decrement count (simplified — doesn't shift items, but works for stack-like usage)
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
+          (i32.sub (local.get $count) (i32.const 1)))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ============================================================
+  ;; DPA (Dynamic Pointer Array) — real implementation
+  ;; DPA layout: [count:4, capacity:4, ptrs_ptr:4]
+  ;; ============================================================
+
+  ;; DPA_Create(cItemGrow) — 1 arg, returns HDPA
+  (func $handle_DPA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dpa i32)
+    (local $cap i32)
+    (local.set $cap (select (local.get $arg0) (i32.const 8) (i32.gt_u (local.get $arg0) (i32.const 0))))
+    (local.set $dpa (call $heap_alloc (i32.const 12)))
+    (i32.store (call $g2w (local.get $dpa)) (i32.const 0))           ;; count
+    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 4))) (local.get $cap))  ;; capacity
+    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 8)))
+      (call $heap_alloc (i32.shl (local.get $cap) (i32.const 2))))   ;; ptrs array
+    (global.set $eax (local.get $dpa))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DPA_Destroy(hdpa) — 1 arg, returns BOOL
+  (func $handle_DPA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DPA_GetPtr(hdpa, index) — 2 args, returns pointer at index
+  (func $handle_DPA_GetPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32)
+    (local $ptrs i32)
+    (local.set $count (i32.load (call $g2w (local.get $arg0))))
+    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (if (i32.lt_u (local.get $arg1) (local.get $count))
+      (then
+        (global.set $eax (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2)))))))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; DPA_InsertPtr(hdpa, index, p) — 3 args, returns index or -1
+  (func $handle_DPA_InsertPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32)
+    (local $ptrs i32)
+    (local $idx i32)
+    (local.set $count (i32.load (call $g2w (local.get $arg0))))
+    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (local.set $idx (select (local.get $count) (local.get $arg1)
+      (i32.gt_u (local.get $arg1) (local.get $count))))
+    ;; Store pointer at ptrs[idx]
+    (i32.store (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $idx) (i32.const 2))))
+      (local.get $arg2))
+    ;; Increment count
+    (i32.store (call $g2w (local.get $arg0)) (i32.add (local.get $count) (i32.const 1)))
+    (global.set $eax (local.get $idx))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; DPA_DeletePtr(hdpa, index) — 2 args, returns removed pointer
+  (func $handle_DPA_DeletePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32)
+    (local $ptrs i32)
+    (local $removed i32)
+    (local.set $count (i32.load (call $g2w (local.get $arg0))))
+    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (if (i32.lt_u (local.get $arg1) (local.get $count))
+      (then
+        (local.set $removed (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2))))))
+        (i32.store (call $g2w (local.get $arg0)) (i32.sub (local.get $count) (i32.const 1)))
+        (global.set $eax (local.get $removed)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; DPA_DeleteAllPtrs(hdpa) — 1 arg, returns BOOL
+  (func $handle_DPA_DeleteAllPtrs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Set count to 0
+    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; StrToIntA(lpSrc) — 1 arg, returns integer value
+  (func $handle_StrToIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32) (local $result i32) (local $neg i32) (local $ch i32)
+    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local.set $result (i32.const 0))
+    (local.set $neg (i32.const 0))
+    ;; Skip leading whitespace
+    (block $ws_done (loop $ws
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $ws_done (i32.ne (local.get $ch) (i32.const 0x20))) ;; space
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $ws)))
+    ;; Check for sign
+    (if (i32.eq (i32.load8_u (local.get $ptr)) (i32.const 0x2D)) ;; '-'
+      (then (local.set $neg (i32.const 1))
+            (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))))
+    (if (i32.eq (i32.load8_u (local.get $ptr)) (i32.const 0x2B)) ;; '+'
+      (then (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))))
+    ;; Parse digits
+    (block $done (loop $digits
+      (local.set $ch (i32.load8_u (local.get $ptr)))
+      (br_if $done (i32.lt_u (local.get $ch) (i32.const 0x30)))
+      (br_if $done (i32.gt_u (local.get $ch) (i32.const 0x39)))
+      (local.set $result (i32.add (i32.mul (local.get $result) (i32.const 10))
+        (i32.sub (local.get $ch) (i32.const 0x30))))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+      (br $digits)))
+    (if (local.get $neg)
+      (then (local.set $result (i32.sub (i32.const 0) (local.get $result)))))
+    (global.set $eax (local.get $result))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
 

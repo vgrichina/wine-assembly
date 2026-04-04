@@ -2,17 +2,32 @@
 
 System DLLs used for testing Win32 PE emulation. All extracted from publicly archived Microsoft redistributables on archive.org.
 
-## From IE6 SP1 (archive.org)
+## From Windows 98 SE install CD (archive.org)
+
+Source: `https://archive.org/details/win98se` (Win98SE ISO)
+Extracted from: `win98/BASE4.CAB` (spanning cabinet)
+
+| DLL | Size | Date | Notes |
+|-----|------|------|-------|
+| shell32.dll | 1,400,832 | 1999-04-23 | Stock Win98SE, no ntdll dependency |
+| shlwapi.dll | 282,896 | 1999-04-23 | Imports only GDI32/KERNEL32/USER32/ADVAPI32 |
+| advapi32.dll | 65,536 | 1999-04-23 | Imports only KERNEL32 |
+
+## From IE5 for Win95/Win98 (archive.org)
+
+Source: `https://archive.org/details/ie5_20231127`
+File: `ie5.zip` > `SETUPW95.CAB`
+
+| DLL | Size | Date | Notes |
+|-----|------|------|-------|
+| comctl32.dll | 577,808 | 1999-03-18 | IE5 updated version |
+
+## From IE6 SP1 (archive.org) — NT versions, replaced by Win98 native above
 
 Source: `https://archive.org/details/windows-98systemfiles`
 File: `Windows98systemfiles.iso` > `IE6 SP1.zip`
 
-| DLL | Size | Date | Extracted From |
-|-----|------|------|----------------|
-| advapi32.dll | 41,472 | 2002-08-29 | `ie6sp1en/SETUPW95.CAB` |
-| comctl32.dll | 548,624 | 2002-08-29 | `ie6sp1en/SETUPW95.CAB` |
-| shell32.dll | 1,720,080 | 1999-01-29 | `ie6sp1en/IE4SHLNT.CAB` |
-| shlwapi.dll | 395,264 | 2002-08-29 | `ie6sp1en/IEMIL_3.CAB` |
+Previously had NT-based shell32.dll (1,720,080 bytes) from `IE4SHLNT.CAB` which imports ntdll.dll — incompatible with Win9x emulation. Replaced with stock Win98SE versions above.
 
 ## From Windows Installer 2.0 (archive.org)
 

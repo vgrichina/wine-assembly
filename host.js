@@ -26,6 +26,7 @@ class WineAssembly {
     const self = this;
     const ctx = {
       getMemory: () => self.memory.buffer,
+      apiTable: self.apiTable,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
@@ -140,7 +141,6 @@ class WineAssembly {
         const idx = q.findIndex(e => !e.hwnd || (e.hwnd >= lo && e.hwnd < hi));
         if (idx < 0) return 0;
         evt = q.splice(idx, 1)[0];
-        if (evt.msg === 0x000F) self.renderer.scheduleRepaint();
       } else {
         evt = self.renderer.checkInput();
       }
