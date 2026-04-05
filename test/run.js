@@ -36,6 +36,7 @@ const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only br
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
+const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
@@ -821,6 +822,17 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  if (DUMP_VFS && ctx.vfs) {
+    console.log('\n[VFS] Files:');
+    for (const [k, v] of ctx.vfs.files) {
+      console.log(`  ${k} (${v.data.length} bytes)`);
+    }
+    console.log(`[VFS] Directories:`);
+    for (const d of ctx.vfs.dirs) {
+      console.log(`  ${d}\\`);
+    }
+  }
 
   if (DUMP_SPEC) {
     const [addrStr, lenStr] = DUMP_SPEC.split(':');
