@@ -468,6 +468,9 @@
     (if (i32.eq (local.get $arg1) (i32.const -4))   ;; GWL_WNDPROC
       (then
         (global.set $eax (call $wnd_table_get (local.get $arg0)))
+        ;; If WNDPROC_BUILTIN sentinel, return 0 (no real wndproc)
+        (if (i32.eq (global.get $eax) (global.get $WNDPROC_BUILTIN))
+          (then (global.set $eax (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -6))   ;; GWL_HINSTANCE
       (then
