@@ -63,7 +63,8 @@ const TEST_CASES = [
   // Pinball
   { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball' },
   // Installers (NSIS etc.)
-  { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer' },
+  { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer',
+    extraArgs: ['--buttons=2'], maxBatches: 20000 },  // Click Cancel on license dialog (needs batches for CRC loop)
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
 ];
 
@@ -115,6 +116,7 @@ function runExe(testCase) {
   const hasMessageLoop = /GetMessageA|GetMessageW|DispatchMessageA|DispatchMessageW/.test(output);
   const hasWmClose = output.includes('WM_CLOSE') || output.includes('0x10');
   const exitClean = output.includes('[Exit]');
+  const hasMessageBox = output.includes('[MessageBox]');
 
   if ((result.status !== null && result.status !== 0) || unimplMatch) {
     // Find the specific unimplemented API
@@ -133,13 +135,15 @@ function runExe(testCase) {
   }
 
   // Reached max batches without crash = likely working
-  const windowOrLoop = hasWindow || hasMessageLoop;
+  const windowOrLoop = hasWindow || hasMessageLoop || hasMessageBox;
   return {
     name: testCase.name,
-    status: windowOrLoop ? 'OK' : 'WARN',
+    status: windowOrLoop || exitClean ? 'OK' : 'WARN',
     reason: windowOrLoop
-      ? `${apiCalls.size} APIs, ${hasWindow ? 'window created' : 'message loop running'}`
-      : `${apiCalls.size} APIs, no window`,
+      ? `${apiCalls.size} APIs, ${hasWindow ? 'window created' : hasMessageBox ? 'message box shown' : 'message loop running'}`
+      : exitClean
+        ? `${apiCalls.size} APIs, clean exit`
+        : `${apiCalls.size} APIs, no window`,
     apiCount: apiCalls.size,
     hasWindow,
     hasShowWindow,

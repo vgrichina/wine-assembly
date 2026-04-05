@@ -152,6 +152,12 @@
     )
     (else
     ;; No CBT hook — dispatch WM_CREATE directly
+    ;; Save hwnd+ret on stack below WndProc args (for nested CreateWindowExA)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
+    ;; Push WndProc args: lParam, wParam, msg, hwnd
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0x400100))             ;; lParam = &CREATESTRUCT
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -192,9 +198,11 @@
     ;; Call host: create_dialog(hwnd, dlg_resource_id)
     (call $host_create_dialog (i32.const 0x10002) (local.get $arg1) (local.get $arg2))
     drop
-    ;; If dlgProc is provided, dispatch WM_INITDIALOG via continuation thunk
+    ;; If dlgProc is provided, store it in window table and dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
+        ;; Store dialog proc in window table so SendMessageA can route to it
+        (call $wnd_table_set (i32.const 0x10002) (local.get $arg3))
         ;; Save return address and hwnd for CACA0001 continuation
         (local.set $ret_addr (call $gl32 (global.get $esp)))
         (global.set $createwnd_saved_ret (local.get $ret_addr))
@@ -693,6 +701,14 @@
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $wndproc i32)
+    ;; Intercept TreeView messages (0x1100-0x1150) — handle directly, bypass comctl32
+    (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x1100))
+                 (i32.le_u (local.get $arg1) (i32.const 0x1150)))
+      (then
+        (global.set $eax (call $treeview_dispatch
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Look up wndproc from window table first
     (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
     ;; WAT-native WndProc dispatch (e.g. help window)
@@ -727,6 +743,14 @@
               (local.get $arg0)
               (call $g2w (call $gl32 (local.get $arg3))))
             (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        ;; Route TreeView messages (0x1100-0x1150) to WAT-native TreeView
+        (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x1100))
+                     (i32.le_u (local.get $arg1) (i32.const 0x1150)))
+          (then
+            (global.set $eax (call $treeview_dispatch
+              (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
             (return)))
         ;; Forward progress bar / common control messages to renderer

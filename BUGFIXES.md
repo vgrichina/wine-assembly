@@ -67,3 +67,21 @@
 **Problem:** `$load_eflags` (used by POPFD and IRET) only set up `flag_res` to encode ZF. CF, SF, and OF were not restored. Any code that pushed flags, modified them, and popped them back would lose carry, sign, and overflow state. This broke SEH dispatch and flag-dependent control flow.
 
 **Fix:** Added a new `flag_op=8` (raw mode) where CF is stored directly in `$flag_a`, OF in `$flag_b`, and ZF/SF encoded in `$flag_res` (bit 31 = SF, zero iff ZF). Updated `$get_cf` and `$get_of` to check for flag_op=8 and return the stored values directly. The existing `$get_zf` and `$get_sf` work automatically via `$flag_res` and `$flag_sign_shift`.
+
+## 10. Dialog proc not stored in window table (NSIS installer)
+
+**Problem:** `CreateDialogParamA` dispatched `WM_INITDIALOG` to the dialog proc but never stored the proc in the window table. Subsequent `SendMessageA` calls to the dialog window couldn't find the dialog proc and fell through to `DefWindowProcA`. This prevented NSIS installer pages from receiving custom messages (e.g., the "start extraction" notification on the InstFiles page).
+
+**Fix:** Added `wnd_table_set(0x10002, dlgProc)` in `$handle_CreateDialogParamA` before dispatching WM_INITDIALOG.
+
+## 11. Thread VFS isolation (NSIS file extraction)
+
+**Problem:** Each thread created by `ThreadManager` got a fresh `VirtualFS` instance via `createHostImports`. The extraction thread couldn't read the installer EXE because it only existed in the main thread's VFS. File creation succeeded but decompression read garbage.
+
+**Fix:** Pass `ctx.vfs` from the main context to the worker context so threads share the same virtual filesystem. Also pass `ctx.exports` so the thread's `g2w()` correctly converts guest addresses (was using raw guest addresses as WASM offsets, causing decompressed data to be written to wrong memory locations).
+
+## 12. FreeLibrary infinite loop (NSIS UnRegDLL)
+
+**Problem:** NSIS calls `while(FreeLibrary(h)) {}` to fully unload a DLL before re-registering. Our `FreeLibrary` always returned TRUE (success), causing an infinite loop (28,847 calls before batch exhaustion).
+
+**Fix:** Track the last freed handle in `$freelib_last_handle`. First call returns TRUE; repeated calls to the same handle return FALSE (already freed), breaking the loop.

@@ -6389,5 +6389,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2934772081
+  },
+  {
+    "id": 913,
+    "name": "FindWindowExA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3223484230
+  },
+  {
+    "id": 914,
+    "name": "DllUnregisterServer",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1230901162
+  },
+  {
+    "id": 915,
+    "name": "SearchPathA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 395813609
   }
 ]

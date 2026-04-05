@@ -377,6 +377,7 @@
   (global $post_queue_count (mut i32) (i32.const 0))
   (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase
+  (global $freelib_last_handle (mut i32) (i32.const 0)) ;; Last FreeLibrary'd handle (for loop detection)
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent

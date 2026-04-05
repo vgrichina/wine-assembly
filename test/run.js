@@ -320,6 +320,8 @@ async function main() {
       resourceJson,
       onExit: () => {},
       trace: traceCategories,
+      vfs: ctx.vfs,  // share filesystem with main thread
+      exports: instance.exports,  // share main instance exports for g2w
     };
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;
@@ -803,7 +805,7 @@ if (VERBOSE) {
       stuckCount = 0;
     } else {
       stuckCount++;
-      if (stuckCount > STUCK_AFTER) {
+      if (stuckCount > STUCK_AFTER && !scheduledInput.length) {
         console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
         dumpStack();
         break;

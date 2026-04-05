@@ -798,7 +798,17 @@
 
   ;; 64: FreeLibrary — STUB: unimplemented
   (func $handle_FreeLibrary (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FreeLibrary returns TRUE on success (first call), FALSE if already freed
+    ;; This handles the NSIS pattern: while(FreeLibrary(h)) {}
+    (if (i32.eq (local.get $arg0) (global.get $freelib_last_handle))
+      (then
+        ;; Same handle freed again — already unloaded, return FALSE
+        (global.set $eax (i32.const 0)))
+      (else
+        ;; First free of this handle — succeed and remember it
+        (global.set $freelib_last_handle (local.get $arg0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 65: sndPlaySoundA(pszSound, fuSound) — no-op (no audio support)
@@ -1136,6 +1146,9 @@
     (if (i32.eq (local.get $arg1) (i32.const -4))   ;; GWL_WNDPROC — subclass
       (then
         (global.set $eax (call $wnd_table_get (local.get $arg0)))  ;; return old wndproc
+        ;; If old wndproc is WNDPROC_BUILTIN sentinel, return 0 (no real wndproc to chain)
+        (if (i32.eq (global.get $eax) (global.get $WNDPROC_BUILTIN))
+          (then (global.set $eax (i32.const 0))))
         (call $wnd_table_set (local.get $arg0) (local.get $arg2)) ;; set new wndproc
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
@@ -1188,7 +1201,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 107: SetFocus(hwnd) — 1 arg stdcall, return 0 (no previous focus)
+  ;; 107: SetFocus(hwnd) — 1 arg stdcall, return previous focus hwnd
   (func $handle_SetFocus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (global.get $focus_hwnd))  ;; return previous focus
     (global.set $focus_hwnd (local.get $arg0))
@@ -1572,6 +1585,24 @@
   (func $handle_FindWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))  ;; NULL — no window found
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; 915: SearchPathA(lpPath, lpFileName, lpExtension, nBufLen, lpBuffer, lpFilePart) — return 0 (not found)
+  (func $handle_SearchPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; 0 = not found
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+  )
+
+  ;; 914: DllUnregisterServer() — no-op, return S_OK
+  (func $handle_DllUnregisterServer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow) — return NULL
+  (func $handle_FindWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
@@ -3172,7 +3203,7 @@
     (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
     (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
       (then
-        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
         ;; If lppe is NULL, return total count
         (if (i32.eqz (local.get $arg3))
           (then
@@ -3184,7 +3215,7 @@
         (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
           (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
         ;; Copy entries
-        (local.set $src (i32.add (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024)))
+        (local.set $src (i32.add (i32.add (i32.const 0x6040) (i32.mul (local.get $pal_idx) (i32.const 1024)))
           (i32.mul (local.get $arg1) (i32.const 4))))
         (local.set $dst_wa (call $g2w (local.get $arg3)))
         (call $memcpy (local.get $dst_wa) (local.get $src) (i32.mul (local.get $count) (i32.const 4)))
@@ -3210,7 +3241,7 @@
     ;; Look up selected palette entry count
     (local.set $pal_idx (i32.sub (global.get $selected_palette) (i32.const 0x000A0001)))
     (if (result i32) (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+      (then (i32.load (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
       (else (i32.const 0)))
     global.set $eax
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
@@ -3243,7 +3274,7 @@
 
   ;; 366: CreatePalette(lpLogPalette) — 1 arg stdcall
   ;; LOGPALETTE: palVersion(u16, +0), palNumEntries(u16, +2), palPalEntry[](+4, each 4 bytes RGBX)
-  ;; Store palette entries in WASM memory at 0x2830 + palette_idx * 1024
+  ;; Store palette entries in WASM memory at 0x6040 + palette_idx * 1024
   ;; Palette handles: 0x000A0001+
   (func $handle_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $src_wa i32) (local $num_entries i32) (local $pal_idx i32) (local $dst i32) (local $copy_bytes i32)
@@ -3255,13 +3286,13 @@
     ;; Allocate palette index (0-3)
     (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
     (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
-    ;; Store entry count at 0x2800 + idx * 8
-    (i32.store (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8)))
+    ;; Store entry count at 0x6000 + idx * 8
+    (i32.store (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8)))
       (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))  ;; handle
-    (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+    (i32.store (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
       (local.get $num_entries))  ;; count
     ;; Copy palette entries (4 bytes each: R, G, B, flags)
-    (local.set $dst (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+    (local.set $dst (i32.add (i32.const 0x6040) (i32.mul (local.get $pal_idx) (i32.const 1024))))
     (local.set $copy_bytes (i32.mul (local.get $num_entries) (i32.const 4)))
     (call $memcpy (local.get $dst) (i32.add (local.get $src_wa) (i32.const 4)) (local.get $copy_bytes))
     ;; Return handle
@@ -3723,8 +3754,10 @@
   )
 
   ;; 427: SetFileTime — STUB: unimplemented
+  ;; SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime) — no-op
   (func $handle_SetFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))  ;; TRUE = success
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
   ;; 428: LocalFileTimeToFileTime — STUB: unimplemented
@@ -3878,7 +3911,7 @@
       (then (local.set $new_count (i32.const 256))))
     (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
       (then
-        (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+        (i32.store (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
           (local.get $new_count))
         (global.set $eax (i32.const 1)))
       (else (global.set $eax (i32.const 0))))
@@ -3900,8 +3933,8 @@
     (local.set $tb (i32.and (i32.shr_u (local.get $arg1) (i32.const 16)) (i32.const 0xFF)))
     (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
       (then
-        (local.set $base (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
-        (local.set $count (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        (local.set $base (i32.add (i32.const 0x6040) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+        (local.set $count (i32.load (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
         (block $done (loop $scan
           (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
           (local.set $entry (i32.load (i32.add (local.get $base) (i32.mul (local.get $i) (i32.const 4)))))
@@ -3925,11 +3958,11 @@
     (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
     (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
       (then
-        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
+        (local.set $total (i32.load (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
         (local.set $count (local.get $arg2))
         (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
           (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
-        (local.set $dst (i32.add (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024)))
+        (local.set $dst (i32.add (i32.add (i32.const 0x6040) (i32.mul (local.get $pal_idx) (i32.const 1024)))
           (i32.mul (local.get $arg1) (i32.const 4))))
         (local.set $src_wa (call $g2w (local.get $arg3)))
         (call $memcpy (local.get $dst) (local.get $src_wa) (i32.mul (local.get $count) (i32.const 4)))
@@ -4082,12 +4115,12 @@
     (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
     (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
     ;; Store as 256-entry palette
-    (i32.store (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8)))
+    (i32.store (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8)))
       (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
-    (i32.store (i32.add (i32.add (i32.const 0x2800) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
+    (i32.store (i32.add (i32.add (i32.const 0x6000) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
       (i32.const 256))
     ;; Fill with 6x6x6 color cube + grays
-    (local.set $dst (i32.add (i32.const 0x2830) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+    (local.set $dst (i32.add (i32.const 0x6040) (i32.mul (local.get $pal_idx) (i32.const 1024))))
     (local.set $i (i32.const 0))
     (block $done (loop $fill
       (br_if $done (i32.ge_u (local.get $i) (i32.const 216)))
@@ -4548,9 +4581,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 483: GetDiskFreeSpaceA — STUB: unimplemented
+  ;; 483: GetDiskFreeSpaceA(lpRoot, lpSectorsPerCluster, lpBytesPerSector, lpFreeClusters, lpTotalClusters)
   (func $handle_GetDiskFreeSpaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Report ~2GB free on a ~4GB disk (8 sectors/cluster, 512 bytes/sector)
+    (if (local.get $arg1) (then (call $gs32 (call $g2w (local.get $arg1)) (i32.const 8))))     ;; SectorsPerCluster
+    (if (local.get $arg2) (then (call $gs32 (call $g2w (local.get $arg2)) (i32.const 512))))   ;; BytesPerSector
+    (if (local.get $arg3) (then (call $gs32 (call $g2w (local.get $arg3)) (i32.const 524288)))) ;; FreeClusters (~2GB)
+    (if (local.get $arg4) (then (call $gs32 (call $g2w (local.get $arg4)) (i32.const 1048576)))) ;; TotalClusters (~4GB)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; 484: GetLogicalDrives() — return bitmask of drives (bit 2 = C:)
@@ -5394,9 +5433,17 @@
   ;; We set up a call frame to the WndProc so it returns to our caller.
   (func $handle_CallWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32)
-    ;; NULL wndproc — return 0
+    ;; NULL wndproc — route TreeView messages or return 0
     (if (i32.eqz (local.get $arg0))
       (then
+        ;; Route TreeView messages (0x1100-0x1150) to WAT-native TreeView
+        (if (i32.and (i32.ge_u (local.get $arg2) (i32.const 0x1100))
+                     (i32.le_u (local.get $arg2) (i32.const 0x1150)))
+          (then
+            (global.set $eax (call $treeview_dispatch
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))

@@ -427,6 +427,21 @@ Jump table at `0x401bb0`: state 0→`0x4010af`, 3→`0x40133f`, 4→`0x40137e`, 
 | `0x403de6` | NSIS decompress wrapper — calls inflate in a loop |
 | `0x403d09` | `load_nsis_header` — reads firstheader, allocates, decompresses |
 
-### Current Blocker: GetUserDefaultLangID
+### Status: File Extraction Working (Slow)
 
-After successful decompression, the installer proceeds to read the registry and then calls `GetUserDefaultLangID` at `0x404687` (via `call [0x4070c4]`), which hits a crash stub. This is the next API to implement.
+The NSIS installer successfully decompresses and extracts files to the virtual filesystem. All pages navigate correctly (License → Components → Folder → Installing Files → Completed).
+
+**Key fixes applied:**
+- Dialog proc stored in window table (`wnd_table_set`) so `SendMessageA` routes messages to the correct dialog proc
+- Shared VFS between main thread and extraction thread (thread was getting empty filesystem)
+- Shared `ctx.exports` so thread's `g2w()` converts guest addresses correctly (was using raw guest addresses as WASM offsets)
+- `FreeLibrary` returns FALSE on second call to same handle (breaks NSIS `while(FreeLibrary(h)){}` loop)
+- Implemented: `GetDiskFreeSpaceA`, `FindWindowExA`, `DllUnregisterServer`, `SetFileTime`, `SearchPathA`
+
+**Extracted files confirmed:** winamp.m3u (36 bytes), winamp.exe, demo.mp3, whatsnew.txt, winampmb.htm, Plugins/in_mp3.dll, Plugins/out_wave.dll, winampa.exe, Plugins/gen_ml.dll, Plugins/in_wm.dll, Plugins/out_wm.dll
+
+**Current limitation:** Inflate decompression through x86 emulation is very slow for large files. The extraction thread needs millions of batches to decompress all files.
+
+Test commands:
+- Quick (skip extraction): `node test/run.js --exe=/private/tmp/Winamp291/winamp291.exe --max-batches=50000 --batch-size=5000 --buttons=1,1,1,1,1,1`
+- With extraction: `node test/run.js --exe=/private/tmp/Winamp291/winamp291.exe --max-batches=500000 --batch-size=10000 --buttons=1,1,1 --no-close`
