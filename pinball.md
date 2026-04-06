@@ -30,6 +30,10 @@
 
 ## Fixes Applied (This Session)
 
+1. **Class table lookup fallback for rotating string buffers** (`09a5-handlers-window.wat`): Pinball uses a 6-slot rotating buffer at 0x010248a8 (256 bytes each, index at [0x1024ea8]) for LoadStringA results. The GUID class name (string ID 167) was registered in one slot, but by the time CreateWindowExA ran, the buffer index had advanced and the slot was overwritten with "Replay Awarded" (string ID 0). The class_table_lookup hash didn't match, so the game WndProc was never associated with the window. Fix: when class_table_lookup fails for a non-first window, scan the class table for an EXE-range WndProc not already used by main_hwnd.
+
+## Fixes Applied (Previous Sessions)
+
 1. **CreateWindowExA stack leak** (`09b-dispatch.wat`): CACA0001 continuation thunk wasn't cleaning saved_ret + saved_hwnd (8 bytes) from the stack after WndProc returned. This caused ESP to drift -8 per CreateWindowExA call, corrupting all subsequent stack reads. After the frame window's WM_CREATE, registers EBX/ESI/EDI and all stack args were shifted, causing the game window's class name to be loaded from string ID 0 ("Replay Awarded") instead of string ID 167 (the GUID).
 
 2. **CreateWindowExA nesting** (`09b-dispatch.wat`): CACA0001 read saved_ret and saved_hwnd from globals that were overwritten by nested CreateWindowExA calls. Fixed to pop them from the stack instead, which naturally supports arbitrary nesting depth.
@@ -38,37 +42,39 @@
 
 4. **_hread implementation** (`09a-handlers.wat`): Added `$handle__hread` (identical to `_lread`) — the game uses _hread for reading the full DAT file after the header check.
 
-## Fixes Applied (Previous Sessions)
-
-1. **VFS pre-loading** (`test/run.js`): Companion files from EXE's directory auto-loaded into VFS
-2. **OpenFile** (`09a-handlers.wat`): Implemented via `host_fs_create_file` instead of always returning HFILE_ERROR
-3. **_lopen, _lread, _llseek, _lclose** (`09a-handlers.wat`): Implemented using host FS imports
-4. **GetFileType** (`09a-handlers.wat`): Returns FILE_TYPE_DISK(1) for file handles instead of FILE_TYPE_UNKNOWN(0) — msvcrt's fopen needs this
-5. **WM_CREATE for all windows** (`09a5-handlers-window.wat`): Changed condition from `next_hwnd == main_hwnd` to check if wndproc is in EXE address range. Fixed bitwise AND bug.
-6. **Class table expanded** (`09c-help.wat`): 16→32 slots. Pinball + comctl32 register 17+ classes.
-7. **Palette APIs** (`09a-handlers.wat`): CreatePalette, SelectPalette, RealizePalette, etc. — real implementations storing RGBX entries in WASM memory at 0x2830
-8. **WINMM audio APIs** (`09a-handlers.wat`): waveOutGetDevCapsA, waveOutOpen/Close/Write/Reset, mmioOpenA/Close/Descend/Read/Ascend, mciSendCommandA, sndPlaySoundA
-9. **ChangeDisplaySettingsA**: Returns DISP_CHANGE_SUCCESSFUL
-10. **Nested CreateWindowExA stack save** (`09a5-handlers-window.wat`): Saves createwnd_saved_hwnd/ret on guest stack before WM_CREATE dispatch so nested CreateWindowExA calls don't corrupt the outer context's return path
-11. **PE headers at image_base**: MZ+PE headers present for CRT startup check
+5. **VFS pre-loading** (`test/run.js`): Companion files from EXE's directory auto-loaded into VFS
+6. **OpenFile** (`09a-handlers.wat`): Implemented via `host_fs_create_file` instead of always returning HFILE_ERROR
+7. **_lopen, _lread, _llseek, _lclose** (`09a-handlers.wat`): Implemented using host FS imports
+8. **GetFileType** (`09a-handlers.wat`): Returns FILE_TYPE_DISK(1) for file handles instead of FILE_TYPE_UNKNOWN(0) — msvcrt's fopen needs this
+9. **WM_CREATE for all windows** (`09a5-handlers-window.wat`): Changed condition from `next_hwnd == main_hwnd` to check if wndproc is in EXE address range. Fixed bitwise AND bug.
+10. **Class table expanded** (`09c-help.wat`): 16→32 slots. Pinball + comctl32 register 17+ classes.
+11. **Palette APIs** (`09a-handlers.wat`): CreatePalette, SelectPalette, RealizePalette, etc. — real implementations storing RGBX entries in WASM memory at 0x2830
+12. **WINMM audio APIs** (`09a-handlers.wat`): waveOutGetDevCapsA, waveOutOpen/Close/Write/Reset, mmioOpenA/Close/Descend/Read/Ascend, mciSendCommandA, sndPlaySoundA
+13. **ChangeDisplaySettingsA**: Returns DISP_CHANGE_SUCCESSFUL
+14. **Nested CreateWindowExA stack save** (`09a5-handlers-window.wat`): Saves createwnd_saved_hwnd/ret on guest stack before WM_CREATE dispatch so nested CreateWindowExA calls don't corrupt the outer context's return path
+15. **PE headers at image_base**: MZ+PE headers present for CRT startup check
 
 ## Current Blocker
 
-**Teal screen — no table rendering**
+**Null pointer crash in TPinballTable::NewTimer (0x010153d2)**
 
-The game window shows with menu bar but the client area is blank teal. The game loop is running (timeGetTime/PeekMessage polling) but no GDI draw calls (BitBlt, StretchDIBits) appear in the trace. The table bitmap was loaded from the RCDATA resource but is not being painted.
+After WM_CREATE completes and the game loop starts, the code at 0x010153d2 dereferences `[0x1025658]` (the global TPinballTable pointer) which is NULL. The function:
+```
+010153d2  mov ecx, [0x1025658]    ; NULL!
+010153d8  fild dword [0x1028234]  ; load frame timing
+010153de  mov eax, [ecx]          ; vtable → CRASH
+010153e0  push ecx
+010153e1  fstp dword [esp]        ; float param
+010153e4  push 0x3f6              ; timer ID
+010153e9  call [eax]              ; virtual call
+```
 
-Key observations:
-- Game loop polls timeGetTime and waits for 2000ms elapsed before first frame update
-- No ShowWindow/UpdateWindow called for the game window (0x10002) after init
-- The game's WndProc returns normally from WM_CREATE (doesn't enter game loop from there)
-- Game loop is entered from WinMain after CreateWindowExA returns
-- Need to investigate: does the 2s timer trigger a render? What APIs are called when it does?
+The TPinballTable is created at 0x010145f5 during init (function at 0x010155f2). When it returns NULL, it's stored at `[0x1025658]` and later crashes. Need to investigate why the table object creation (0x010145f5) fails — likely a missing API or incorrect return value during the C++ object construction chain.
 
-### Next Steps
-1. **Timer-triggered rendering**: Run with enough batches (>2s wall time) to trigger the 2000ms frame update
-2. **GDI rendering path**: Trace what happens after the 2s threshold — likely BitBlt/StretchDIBits calls
-3. **ShowWindow for game window**: The game might need ShowWindow(0x10002) + UpdateWindow to generate WM_PAINT
+### Investigation Path
+1. Trace execution through 0x010145f5 (table object factory) to find where it returns NULL
+2. Check if a missing API call during object construction causes early return
+3. The function calls 0x1013e25 then 0x10145f5 — both need tracing
 
 ## Architecture Notes
 
@@ -81,6 +87,7 @@ Key observations:
 - Table definition also embedded as RCDATA resource in EXE
 - Audio via WaveMix library (reads wavemix.inf, uses waveOut* APIs)
 - Registry key: `HKCU\Software\Microsoft\Plus!\Pinball\SpaceCadet`
+- **Rotating string buffer**: Helper at 0x01003752 uses 6 slots × 256 bytes at 0x010248a8, index at [0x1024ea8]. LoadStringA results are transient — callers must copy before the next call.
 
 ## Memory Layout for Palette Storage
 

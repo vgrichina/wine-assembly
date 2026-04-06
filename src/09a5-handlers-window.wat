@@ -81,6 +81,22 @@
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
     (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
+    ;; If lookup failed and this isn't the first window, scan class table for an
+    ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
+    ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
+    (if (i32.and (i32.eqz (local.get $tmp)) (global.get $main_hwnd))
+      (then
+        (local.set $i (i32.const 0))
+        (block $found3 (loop $scan3
+          (br_if $found3 (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+          (local.set $v (i32.load offset=4 (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12)))))
+          (if (i32.and
+            (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
+                     (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (i32.const 0x80000))))
+            (i32.ne (local.get $v) (call $wnd_table_get (global.get $main_hwnd))))
+            (then (local.set $tmp (local.get $v)) (br $found3)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan3)))))
     (if (local.get $tmp)
       (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
       (else (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))
