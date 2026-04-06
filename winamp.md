@@ -37,7 +37,7 @@ Extracted from `winamp291.exe` NSIS installer via VFS dump. Binary is 846,848 by
 11. Message loop: GetMessageA / TranslateMessage / DispatchMessageA
 ```
 
-## Current Status: RUNS — No Rendering
+## Current Status: RUNS — Window Renders at 275×116
 
 **Test command:**
 ```bash
@@ -47,44 +47,27 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=50000 --batch-size
 - Runs 100K+ API calls through 50K batches without crashing
 - Creates "Winamp 2.91" main window and enters message loop
 - Processes WM_PAINT, WM_TIMER, WM_COMMAND, WM_ACTIVATE
-- **Window rendered at 0×0 pixels** — blank screen
+- **Window rendered at 275×116 pixels** — title bar + menu visible, client area gray
 
-## Blocking Issue: Main Window Has Zero Size
+## Fixed Issues
 
-The main window is created with `CreateWindowExA(..., x=26, y=29, cx=0, cy=0)`, class name `"Winamp v1.x"`. Winamp deliberately creates the window at size 0 and resizes later via `MoveWindow` after loading its skin.
+### 1. WndProc Detection (commit f256248)
 
-### Bug Fixed: WndProc Detection
+`$wndproc_addr` was captured from comctl32.dll's RegisterClassA (DllMain), giving a DLL-space WndProc. Fix: only capture EXE-space WndProcs.
 
-**Previously:** `$wndproc_addr` was captured from the first `RegisterClassA` call, which came from **comctl32.dll** (during DllMain). This gave wndproc `0x004eddb1` (DLL space), not Winamp's actual WndProc.
+### 2. DeferWindowPos / SetWindowPos not applying (current)
 
-**Fix:** Only capture `$wndproc_addr` from EXE-space WndProcs (`>= image_base && < image_base + 0x80000`). Now correctly detects `0x0041c210` as the first EXE WndProc.
+Winamp resizes its main window via `BeginDeferWindowPos` → `DeferWindowPos(hwnd, x=26, y=29, cx=275, cy=116)` → `EndDeferWindowPos`. These were stubs returning success without updating the renderer. Fix: `DeferWindowPos` now calls `host_move_window` immediately; `SetWindowPos` also calls it (respecting SWP_NOMOVE/SWP_NOSIZE flags).
 
-### Current State
+## Current Blocking Issue: Idle Message Loop
 
-WM_CREATE IS dispatched synchronously to the WndProc at `0x0041c210`. But the WndProc returns almost immediately (only `GetTickCount` + `TlsGetValue` during WM_CREATE — 4 API calls). No `MoveWindow` or `SetWindowPos` targets the main window.
-
-### Analysis
-
-The startup flow is:
-1. `CreateWindowExA` main window (size 0×0) → WM_CREATE does almost nothing
-2. `CreateWindowExA` child window → `ShowWindow`
-3. First-run "User information" `DialogBoxParamA` (modal) → user clicks Next
-4. Survey HTTP POST attempt (socket fails → gives up gracefully)
-5. `ShowWindow(main, SW_SHOWNA)` + `SetForegroundWindow` + `SetTimer(42)`
-6. Enters `GetMessage/DispatchMessage` loop
-7. WM_TIMER fires but doesn't trigger MoveWindow
-
-### Root Cause Hypothesis
-
-Winamp's WM_CREATE handler likely checks a global/config flag to decide whether to initialize the skin engine. On first run, the `winamp.ini` file doesn't exist, so the skin loading path may be skipped or takes a different code path that doesn't call MoveWindow.
-
-Alternatively: The WndProc at `0x0041c210` may NOT be the correct WndProc for "Winamp v1.x". There are 8 RegisterClassA calls from the EXE (#421-#429), each registering a different class. The class_table_lookup needs to correctly match "Winamp v1.x" to the right WndProc.
+After first-run dialog and initial setup, the message loop receives only WM_NULL (49,998 out of 50,013 dispatched messages). Only 1 WM_TIMER, 2 WM_PAINT, 9 WM_COMMAND. The program is effectively idle — no skin drawing, no further initialization.
 
 ### What's Needed
 
-1. **Verify class→WndProc mapping** — dump the class table to confirm "Winamp v1.x" maps to the correct WndProc (not `0x0041c210` but the actual main WndProc)
-2. **Trace WM_CREATE execution** — break at the WndProc entry with single-step to see what it does
-3. **winamp.ini** — Winamp reads config from `winamp.ini` via GetPrivateProfileString. The INI file doesn't exist on first run, so all reads return defaults. Check if any critical setting is missing.
+1. **Skin loading** — Winamp loads BMP files for its custom-drawn UI. No skin files exist in VFS. The classic skin may need to be extracted from resources or provided as files.
+2. **WM_TIMER handler** — timer 42 fires but doesn't trigger any visible work. May need config/INI values.
+3. **winamp.ini** — Winamp reads config via GetPrivateProfileString. Missing INI may cause skin engine to skip initialization.
 
 ## APIs Implemented for Winamp
 
@@ -118,7 +101,7 @@ Thread runs safely alongside main thread; socket failure causes graceful fallbac
 
 Once past the first-run dialog, the main loop processes:
 - **WM_TIMER** (0x113): Timer ID 42 fires regularly
-- **WM_PAINT** (0x0F): Dispatched to WndProc but window is 0×0
+- **WM_PAINT** (0x0F): Dispatched to WndProc, window now 275×116
 - **WM_COMMAND** (0x111): Many command messages dispatched (init-time menu setup?)
 - **WM_ACTIVATE** (0x06): Falls through to DefWindowProcA
 - **WM_ERASEBKGND** (0x14): Falls through to DefWindowProcA

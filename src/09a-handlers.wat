@@ -1536,7 +1536,13 @@
 
   ;; 141: SetWindowPos — STUB: unimplemented
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags) — return TRUE
+    ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
+    (local $cy i32) (local $uFlags i32)
+    (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    ;; SWP_NOSIZE=0x0001, SWP_NOMOVE=0x0002 — update unless both are set
+    (if (i32.ne (i32.and (local.get $uFlags) (i32.const 0x0003)) (i32.const 0x0003))
+      (then (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -5521,6 +5527,11 @@
 
   ;; 633: DeferWindowPos(hWinPosInfo, hWnd, hWndInsertAfter, x, y, cx, cy, uFlags) → HDWP
   (func $handle_DeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Apply position immediately (no batching needed)
+    ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y, cx=stack[24], cy=stack[28]
+    (call $host_move_window (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $eax (local.get $arg0))  ;; return same HDWP handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
@@ -5857,26 +5868,26 @@
     (if (i32.eq (global.get $pending_wm_create) (i32.const 2))
     (then
     (global.set $pending_wm_create (i32.const 1))
-    ;; Fill CREATESTRUCT at 0x400100
-    (call $gs32 (i32.const 0x400100) (i32.const 0))  ;; lpCreateParams
-    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))
-    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))
+    ;; Fill CREATESTRUCT at image_base+0x100
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (i32.const 0))  ;; lpCreateParams
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0081)) ;; WM_NCCREATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.add (global.get $image_base) (i32.const 0x100)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (if (i32.eq (global.get $pending_wm_create) (i32.const 1))
     (then
     (global.set $pending_wm_create (i32.const 0))
-    (call $gs32 (i32.const 0x400100) (i32.const 0))
-    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))
-    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (i32.const 0))
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0x400100))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.add (global.get $image_base) (i32.const 0x100)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
