@@ -129,33 +129,33 @@
     ;; Save state for continuation thunk
     (global.set $createwnd_saved_hwnd (global.get $next_hwnd))
     (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
-    ;; Build CREATESTRUCT at scratch address 0x400100 (BEFORE cleaning frame —
-    ;; need stack args at esp+24..esp+48 which are destroyed by cleanup)
+    ;; Build CREATESTRUCT at scratch address image_base+0x100 (in DOS header area,
+    ;; safe to overwrite). BEFORE cleaning frame — need stack args at esp+24..esp+48.
     ;; CREATESTRUCT: lpCreateParams(+0), hInstance(+4), hMenu(+8), hwndParent(+12),
     ;;   cy(+16), cx(+20), y(+24), x(+28), style(+32), lpszName(+36), lpszClass(+40), dwExStyle(+44)
-    (call $gs32 (i32.const 0x400100) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
-    (call $gs32 (i32.const 0x400104) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
-    (call $gs32 (i32.const 0x400108) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
-    (call $gs32 (i32.const 0x40010c) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
-    (call $gs32 (i32.const 0x400110) (global.get $main_win_cy))                               ;; cy
-    (call $gs32 (i32.const 0x400114) (global.get $main_win_cx))                               ;; cx
-    (call $gs32 (i32.const 0x400118) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
-    (call $gs32 (i32.const 0x40011c) (local.get $arg4))                                       ;; x
-    (call $gs32 (i32.const 0x400120) (local.get $arg3))                                       ;; style
-    (call $gs32 (i32.const 0x400124) (local.get $arg2))                                       ;; lpszName
-    (call $gs32 (i32.const 0x400128) (local.get $arg1))                                       ;; lpszClass
-    (call $gs32 (i32.const 0x40012c) (local.get $arg0))                                       ;; dwExStyle
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))                               ;; cy
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))                               ;; cx
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c)) (local.get $arg4))                                       ;; x
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (local.get $arg3))                                       ;; style
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
     ;; Clean CreateWindowExA frame (ret + 12 args = 52 bytes stdcall)
     (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
     ;; If CBT hook is installed, call it first; it will chain to WM_CREATE via thunk
     (if (global.get $cbt_hook_proc)
     (then
-    ;; Build CBT_CREATEWND at 0x400140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
-    (call $gs32 (i32.const 0x400140) (i32.const 0x400100))  ;; lpcs
-    (call $gs32 (i32.const 0x400144) (i32.const 0))         ;; hwndInsertAfter = HWND_TOP
+    ;; Build CBT_CREATEWND at image_base+0x140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x140)) (i32.add (global.get $image_base) (i32.const 0x100)))  ;; lpcs
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x144)) (i32.const 0))         ;; hwndInsertAfter = HWND_TOP
     ;; Push hook args (stdcall, 12 bytes): lParam, wParam, nCode
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0x400140))     ;; lParam = &CBT_CREATEWND
+    (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x140)))     ;; lParam = &CBT_CREATEWND
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $next_hwnd))  ;; wParam = hwnd
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -175,7 +175,7 @@
     (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
     ;; Push WndProc args: lParam, wParam, msg, hwnd
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0x400100))             ;; lParam = &CREATESTRUCT
+    (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))             ;; lParam = &CREATESTRUCT
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                    ;; wParam = 0
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -206,25 +206,30 @@
 
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
+    (local $ret_addr i32) (local $hwnd i32)
+    ;; Allocate HWND from next_hwnd
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     ;; Save dialog hwnd for IsChild/SendMessage routing
-    (global.set $dlg_hwnd (i32.const 0x10002))
+    (global.set $dlg_hwnd (local.get $hwnd))
     ;; Clear quit_flag — dialog recreation (e.g. calc mode switch) cancels pending quit
     (global.set $quit_flag (i32.const 0))
-    ;; Call host: create_dialog(hwnd, dlg_resource_id)
-    (call $host_create_dialog (i32.const 0x10002) (local.get $arg1) (local.get $arg2))
-    drop
+    ;; Call host: create_dialog(hwnd, dlg_resource_id, parent)
+    (drop (call $host_create_dialog (local.get $hwnd) (local.get $arg1) (local.get $arg2)))
     ;; If dlgProc is provided, store it in window table and dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
         ;; Store dialog proc in window table so SendMessageA can route to it
-        (call $wnd_table_set (i32.const 0x10002) (local.get $arg3))
-        ;; Save return address and hwnd for CACA0001 continuation
+        (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+        ;; Save return address for CACA0001 continuation
         (local.set $ret_addr (call $gl32 (global.get $esp)))
-        (global.set $createwnd_saved_ret (local.get $ret_addr))
-        (global.set $createwnd_saved_hwnd (i32.const 0x10002))
         ;; Pop CreateDialogParamA frame (ret + 5 args = 24 bytes)
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        ;; Push saved_ret + hwnd for CACA0001 continuation (below DlgProc args)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $hwnd))  ;; saved_hwnd (eax after CACA0001)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $ret_addr))  ;; saved_ret
         ;; Push DlgProc args: hwnd, WM_INITDIALOG(0x110), 0, lParam
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $arg4))  ;; lParam
@@ -233,7 +238,7 @@
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0x110))  ;; WM_INITDIALOG
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0x10002))  ;; hwnd
+        (call $gs32 (global.get $esp) (local.get $hwnd))  ;; hwnd
         ;; Push CACA0001 (createwnd_ret_thunk) as return address
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
@@ -242,7 +247,7 @@
         (global.set $steps (i32.const 0))
         (return)))
     ;; No dlgProc — just return hwnd
-    (global.set $eax (i32.const 0x10002))
+    (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
