@@ -1663,8 +1663,19 @@
   )
 
   ;; 143: DrawEdge — STUB: unimplemented
+  ;; DrawEdge(hdc, qrc, edge, grfFlags) — 4 args stdcall
   (func $handle_DrawEdge (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $rc i32)
+    (local.set $rc (call $g2w (local.get $arg1)))
+    (global.set $eax (call $host_gdi_draw_edge
+      (local.get $arg0)                      ;; hdc
+      (i32.load (local.get $rc))             ;; left
+      (i32.load offset=4 (local.get $rc))    ;; top
+      (i32.load offset=8 (local.get $rc))    ;; right
+      (i32.load offset=12 (local.get $rc))   ;; bottom
+      (local.get $arg2)                      ;; edge
+      (local.get $arg3)))                    ;; grfFlags
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 144: GetClipboardData — STUB: unimplemented
@@ -3434,7 +3445,9 @@
 
   ;; 367: GetNearestColor — STUB: unimplemented
   (func $handle_GetNearestColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; On true-color display, return the same color
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 368: StretchDIBits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, lpBits, lpBmi, usage, rop)
@@ -3493,9 +3506,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; 374: RectVisible — STUB: unimplemented
+  ;; 374: RectVisible(hdc, lprc) — 2 args stdcall, return TRUE (always visible)
   (func $handle_RectVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 375: TextOutW — STUB: unimplemented
@@ -7172,6 +7186,46 @@
   (func $handle_CopyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 950: DrawFrameControl(hdc, lprc, uType, uState) — 4 args stdcall
+  ;; Draw the frame as a raised edge (BDR_RAISEDOUTER|BDR_RAISEDINNER=5, BF_RECT=15)
+  (func $handle_DrawFrameControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rc i32)
+    (local.set $rc (call $g2w (local.get $arg1)))
+    (drop (call $host_gdi_draw_edge
+      (local.get $arg0)
+      (i32.load (local.get $rc))
+      (i32.load offset=4 (local.get $rc))
+      (i32.load offset=8 (local.get $rc))
+      (i32.load offset=12 (local.get $rc))
+      (i32.const 5)    ;; EDGE_RAISED
+      (i32.const 15))) ;; BF_RECT
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 949: ExtTextOutA(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
+  ;; Delegates to TextOut, ignoring clipping/spacing.
+  (func $handle_ExtTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $lpString i32) (local $count i32)
+    (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
+    (local.set $count (call $gl32 (i32.add (global.get $esp) (i32.const 28))))    ;; arg6
+    (global.set $eax (call $host_gdi_text_out
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (call $g2w (local.get $lpString)) (local.get $count)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; 8 args + ret
+  )
+
+  ;; 948: RegEnumKeyA(hKey, dwIndex, lpName, cchName) — 4 args stdcall
+  (func $handle_RegEnumKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_reg_enum_key
+      (local.get $arg0)                    ;; hKey
+      (local.get $arg1)                    ;; dwIndex
+      (call $g2w (local.get $arg2))        ;; lpName → WASM ptr
+      (local.get $arg3)                    ;; cchName
+      (i32.const 0)))                      ;; isWide = false
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 947: SetPixelV(hdc, x, y, color) — 4 args stdcall, like SetPixel but returns BOOL

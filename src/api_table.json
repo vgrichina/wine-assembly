@@ -6632,5 +6632,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2085835605
+  },
+  {
+    "id": 948,
+    "name": "RegEnumKeyA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3028477034
+  },
+  {
+    "id": 949,
+    "name": "ExtTextOutA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 2497760028
+  },
+  {
+    "id": 950,
+    "name": "DrawFrameControl",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 871044429
   }
 ]

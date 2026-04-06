@@ -95,6 +95,7 @@
   (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_rectangle(hdc, left, top, right, bottom)
   (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_draw_edge" (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
@@ -159,6 +160,8 @@
   ;; reg_set_value(hKey, nameWA, type, dataGA, cbData, isWide) → error code
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
+  (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
+  ;; reg_enum_key(hKey, dwIndex, lpNameWA, cchName, isWide) → error code
 
   ;; Audio host imports
   (import "host" "message_beep" (func $host_message_beep (param i32)))
