@@ -2074,8 +2074,10 @@
       (then
         (local.set $dst (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
         (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
-    ;; Store first wndproc as main for backward compat
-    (if (i32.eqz (global.get $wndproc_addr))
+    ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
+    (if (i32.and (i32.eqz (global.get $wndproc_addr))
+      (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000)))))
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (local.get $arg0)))

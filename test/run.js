@@ -731,9 +731,17 @@ async function main() {
 
     try {
       instance.exports.run(BATCH_SIZE);
-      // DEBUG: check IAT after each batch
-      { const dv2 = new DataView(memory.buffer); const v2 = dv2.getUint32(g2w(instance.exports.get_image_base() + 0x1260), true);
-        if (v2 !== _iatWatchPrev) { console.log(`!!! IAT[timeGetTime] CHANGED at batch ${batch}: 0x${_iatWatchPrev.toString(16)} -> 0x${v2.toString(16)}`); _iatWatchPrev = v2; } }
+      // DEBUG: check IAT + object ptr after each batch
+      { const dv2 = new DataView(memory.buffer);
+        const v2 = dv2.getUint32(g2w(instance.exports.get_image_base() + 0x1260), true);
+        if (v2 !== _iatWatchPrev) { console.log(`!!! IAT[timeGetTime] CHANGED at batch ${batch}: 0x${_iatWatchPrev.toString(16)} -> 0x${v2.toString(16)}`); _iatWatchPrev = v2; }
+        if (batch <= 5) {
+          const objPtr = dv2.getUint32(g2w(0x1025658), true);
+          const objPtr2 = dv2.getUint32(g2w(0x1025654), true);
+          const objPtr3 = dv2.getUint32(g2w(0x1025650), true);
+          console.log(`  [batch ${batch}] [0x1025658]=${hex(objPtr)} [0x1025654]=${hex(objPtr2)} [0x1025650]=${hex(objPtr3)} EDI=${hex(instance.exports.get_edi())}`);
+        }
+      }
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);

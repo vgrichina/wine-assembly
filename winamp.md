@@ -51,25 +51,40 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=50000 --batch-size
 
 ## Blocking Issue: Main Window Has Zero Size
 
-The main window is created with `CreateWindowExA(..., x=26, y=29, cx=0, cy=0)`. Winamp 2.91 expects to resize the window later via `MoveWindow(hwnd, x, y, 275, 116)` during WM_CREATE processing of the main WndProc. However, **no MoveWindow or SetWindowPos call targets the main window** (0x10001).
+The main window is created with `CreateWindowExA(..., x=26, y=29, cx=0, cy=0)`, class name `"Winamp v1.x"`. Winamp deliberately creates the window at size 0 and resizes later via `MoveWindow` after loading its skin.
 
-### Root Cause Investigation
+### Bug Fixed: WndProc Detection
 
-Winamp's main WndProc (at class "Winamp_v1.x") handles WM_CREATE by:
-1. Loading skin bitmaps from `C:\Program Files\Winamp\` directory
-2. Calculating window size from skin dimensions (classic skin = 275×116)
-3. Calling MoveWindow to resize
+**Previously:** `$wndproc_addr` was captured from the first `RegisterClassA` call, which came from **comctl32.dll** (during DllMain). This gave wndproc `0x004eddb1` (DLL space), not Winamp's actual WndProc.
 
-The WndProc IS being dispatched for WM_CREATE (synchronous during CreateWindow), but it either:
-- Fails to find skin files and skips the MoveWindow call
-- Encounters an unimplemented code path (e.g., file I/O for bitmap loading)
-- Returns early due to some initialization check failing
+**Fix:** Only capture `$wndproc_addr` from EXE-space WndProcs (`>= image_base && < image_base + 0x80000`). Now correctly detects `0x0041c210` as the first EXE WndProc.
+
+### Current State
+
+WM_CREATE IS dispatched synchronously to the WndProc at `0x0041c210`. But the WndProc returns almost immediately (only `GetTickCount` + `TlsGetValue` during WM_CREATE — 4 API calls). No `MoveWindow` or `SetWindowPos` targets the main window.
+
+### Analysis
+
+The startup flow is:
+1. `CreateWindowExA` main window (size 0×0) → WM_CREATE does almost nothing
+2. `CreateWindowExA` child window → `ShowWindow`
+3. First-run "User information" `DialogBoxParamA` (modal) → user clicks Next
+4. Survey HTTP POST attempt (socket fails → gives up gracefully)
+5. `ShowWindow(main, SW_SHOWNA)` + `SetForegroundWindow` + `SetTimer(42)`
+6. Enters `GetMessage/DispatchMessage` loop
+7. WM_TIMER fires but doesn't trigger MoveWindow
+
+### Root Cause Hypothesis
+
+Winamp's WM_CREATE handler likely checks a global/config flag to decide whether to initialize the skin engine. On first run, the `winamp.ini` file doesn't exist, so the skin loading path may be skipped or takes a different code path that doesn't call MoveWindow.
+
+Alternatively: The WndProc at `0x0041c210` may NOT be the correct WndProc for "Winamp v1.x". There are 8 RegisterClassA calls from the EXE (#421-#429), each registering a different class. The class_table_lookup needs to correctly match "Winamp v1.x" to the right WndProc.
 
 ### What's Needed
 
-1. **Debug WM_CREATE path** — trace what the WndProc does during WM_CREATE (break at wndproc entry, single-step)
-2. **Skin file loading** — Winamp loads BMP files for its skin. The VFS has the winamp directory but no skin BMPs (the classic skin may be hardcoded or in a resource we're not extracting)
-3. **CreateDIBSection / CreateCompatibleDC** — Winamp creates off-screen bitmaps for double-buffered skinned drawing. These GDI APIs need to work for the skin engine.
+1. **Verify class→WndProc mapping** — dump the class table to confirm "Winamp v1.x" maps to the correct WndProc (not `0x0041c210` but the actual main WndProc)
+2. **Trace WM_CREATE execution** — break at the WndProc entry with single-step to see what it does
+3. **winamp.ini** — Winamp reads config from `winamp.ini` via GetPrivateProfileString. The INI file doesn't exist on first run, so all reads return defaults. Check if any critical setting is missing.
 
 ## APIs Implemented for Winamp
 
