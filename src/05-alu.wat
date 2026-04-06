@@ -552,6 +552,14 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall)))))
 
+  ;; 216: JECXZ — jump if ECX==0 (target in next word, fallthrough in word after)
+  (func $th_jecxz (param $op i32)
+    (local $target i32) (local $fall i32)
+    (local.set $target (call $read_thread_word)) (local.set $fall (call $read_thread_word))
+    (if (i32.eqz (global.get $ecx))
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
   ;; --- ALU memory ---
   ;; 47: [addr] OP= reg  (operand=alu_op<<4|reg, addr in next word)
   (func $th_alu_m32_r (param $op i32)

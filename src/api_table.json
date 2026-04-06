@@ -6410,5 +6410,152 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 395813609
+  },
+  {
+    "id": 916,
+    "name": "RasEnumConnectionsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2597257832
+  },
+  {
+    "id": 917,
+    "name": "CoCreateGuid",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2146151930
+  },
+  {
+    "id": 918,
+    "name": "MonitorFromRect",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3429893395
+  },
+  {
+    "id": 919,
+    "name": "GetMonitorInfoA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 486592134
+  },
+  {
+    "id": 920,
+    "name": "MonitorFromWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 486916049
+  },
+  {
+    "id": 921,
+    "name": "SetWindowRgn",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2506989278
+  },
+  {
+    "id": 922,
+    "name": "GetWindowRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2551412386
+  },
+  {
+    "id": 923,
+    "name": "WSAStartup",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 538074207
+  },
+  {
+    "id": 924,
+    "name": "WSACleanup",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2345834946
+  },
+  {
+    "id": 925,
+    "name": "WSAGetLastError",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3753760860
+  },
+  {
+    "id": 926,
+    "name": "socket",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2417129068
+  },
+  {
+    "id": 927,
+    "name": "closesocket",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 109265666
+  },
+  {
+    "id": 928,
+    "name": "connect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2866859257
+  },
+  {
+    "id": 929,
+    "name": "send",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1919010991
+  },
+  {
+    "id": 930,
+    "name": "recv",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3974385709
+  },
+  {
+    "id": 931,
+    "name": "gethostbyname",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 695126147
+  },
+  {
+    "id": 932,
+    "name": "htons",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2986200853
+  },
+  {
+    "id": 933,
+    "name": "inet_addr",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3427581171
+  },
+  {
+    "id": 934,
+    "name": "select",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 297952813
+  },
+  {
+    "id": 935,
+    "name": "setsockopt",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 910428104
+  },
+  {
+    "id": 936,
+    "name": "ioctlsocket",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2151917855
   }
 ]

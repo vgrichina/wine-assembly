@@ -56,6 +56,8 @@
   ;; richedit_stream(ctrl_hwnd, text_wasm_ptr) — set RichEdit control text
   (import "host" "check_dlg_button" (func $host_check_dlg_button (param i32 i32 i32)))
   ;; check_dlg_button(hwnd, ctrl_id, check_state)
+  (import "host" "is_dlg_button_checked" (func $host_is_dlg_button_checked (param i32 i32) (result i32)))
+  ;; is_dlg_button_checked(hwnd, ctrl_id) → 0=unchecked, 1=checked
   (import "host" "send_ctrl_msg" (func $host_send_ctrl_msg (param i32 i32 i32 i32)))
   ;; send_ctrl_msg(ctrl_hwnd, msg, wParam, lParam) — forward control messages to renderer
   (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
@@ -336,6 +338,8 @@
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
+  (global $guid_counter (mut i32) (i32.const 0))
+  (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table
   (global $initterm_end (mut i32) (i32.const 0))  ;; end of fn ptr table

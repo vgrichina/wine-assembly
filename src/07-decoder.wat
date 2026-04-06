@@ -983,6 +983,15 @@
           (call $te_raw (global.get $d_pc))
           (local.set $done (i32.const 1)) (br $decode)))
 
+      ;; ---- JECXZ (0xE3) ----
+      (if (i32.eq (local.get $op) (i32.const 0xE3))
+        (then
+          (local.set $disp (call $sign_ext8 (call $d_fetch8)))
+          (call $te (i32.const 216) (i32.const 0))
+          (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
+          (call $te_raw (global.get $d_pc))
+          (local.set $done (i32.const 1)) (br $decode)))
+
       ;; ---- String ops ----
       (if (i32.eq (local.get $op) (i32.const 0xA4)) ;; MOVSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (i32.const 0))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))

@@ -3246,7 +3246,10 @@
 
   ;; 361: CreateRectRgnIndirect — STUB: unimplemented
   (func $handle_CreateRectRgnIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CreateRectRgnIndirect(lprc) — 1 arg stdcall
+    (global.set $rgn_counter (i32.add (global.get $rgn_counter) (i32.const 1)))
+    (global.set $eax (i32.or (i32.const 0x00DD0000) (global.get $rgn_counter)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 362: GetObjectW — STUB: unimplemented
@@ -5118,7 +5121,10 @@
 
   ;; 555: CombineRgn — STUB: unimplemented
   (func $handle_CombineRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode) — 4 args stdcall
+    ;; Return COMPLEXREGION (3) to indicate success
+    (global.set $eax (i32.const 3))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 556: SetRectRgn — STUB: unimplemented
@@ -5173,7 +5179,11 @@
 
   ;; 566: CreateRectRgn — STUB: unimplemented
   (func $handle_CreateRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; CreateRectRgn(left, top, right, bottom) — 4 args stdcall
+    ;; Return a fake region handle from counter
+    (global.set $rgn_counter (i32.add (global.get $rgn_counter) (i32.const 1)))
+    (global.set $eax (i32.or (i32.const 0x00DD0000) (global.get $rgn_counter)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 567: GetClipRgn — STUB: unimplemented
@@ -5415,7 +5425,9 @@
 
   ;; 610: GetForegroundWindow — STUB: unimplemented
   (func $handle_GetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetForegroundWindow() — 0 args, return active window handle
+    (global.set $eax (global.get $main_hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 611: GetMessagePos — STUB: unimplemented
@@ -6105,7 +6117,10 @@
 
   ;; 669: IsDlgButtonChecked — STUB: unimplemented
   (func $handle_IsDlgButtonChecked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; IsDlgButtonChecked(hDlg, nIDButton) — 2 args stdcall
+    ;; Returns BST_UNCHECKED(0) or BST_CHECKED(1)
+    (global.set $eax (call $host_is_dlg_button_checked (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 670: ScrollWindowEx — STUB: unimplemented
@@ -6809,5 +6824,167 @@
       (then (local.set $result (i32.sub (i32.const 0) (local.get $result)))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 926: socket(af, type, protocol) — 3 args stdcall
+  ;; Return INVALID_SOCKET (-1) — no networking
+  (func $handle_socket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 927: closesocket(s) — 1 arg stdcall
+  (func $handle_closesocket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 928: connect(s, name, namelen) — 3 args stdcall, return SOCKET_ERROR (-1)
+  (func $handle_connect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 929: send(s, buf, len, flags) — 4 args stdcall, return SOCKET_ERROR (-1)
+  (func $handle_send (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 930: recv(s, buf, len, flags) — 4 args stdcall, return SOCKET_ERROR (-1)
+  (func $handle_recv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 931: gethostbyname(name) — 1 arg stdcall, return NULL (lookup failed)
+  (func $handle_gethostbyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 932: htons(hostshort) — 1 arg stdcall, byte-swap 16-bit
+  (func $handle_htons (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.or
+      (i32.shl (i32.and (local.get $arg0) (i32.const 0xFF)) (i32.const 8))
+      (i32.and (i32.shr_u (local.get $arg0) (i32.const 8)) (i32.const 0xFF))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 933: inet_addr(cp) — 1 arg stdcall, return INADDR_NONE (-1)
+  (func $handle_inet_addr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 934: select(nfds, readfds, writefds, exceptfds, timeout) — 5 args stdcall
+  (func $handle_select (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; 0 = timeout, no ready sockets
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 935: setsockopt(s, level, optname, optval, optlen) — 5 args stdcall
+  (func $handle_setsockopt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 936: ioctlsocket(s, cmd, argp) — 3 args stdcall
+  (func $handle_ioctlsocket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 923: WSAStartup(wVersionRequested, lpWSAData) — 2 args stdcall
+  ;; Fill WSADATA struct with version 2.2, return 0 (success)
+  (func $handle_WSAStartup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; WSADATA: wVersion(2), wHighVersion(2), rest is description strings + status
+    (i32.store16 (local.get $wa) (i32.const 0x0202))         ;; wVersion = 2.2
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 0x0202)) ;; wHighVersion = 2.2
+    (global.set $eax (i32.const 0))  ;; success
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 924: WSACleanup() — 0 args stdcall
+  (func $handle_WSACleanup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 925: WSAGetLastError() — 0 args stdcall
+  (func $handle_WSAGetLastError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall, return 1 (success)
+  (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 922: GetWindowRgn(hwnd, hRgn) — 2 args stdcall, return ERROR (0)
+  (func $handle_GetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 918: MonitorFromRect(lprc, dwFlags) — 2 args stdcall
+  ;; Return fake monitor handle 0x00010000 (single monitor)
+  (func $handle_MonitorFromRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00010000))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 919: GetMonitorInfoA(hMonitor, lpmi) — 2 args stdcall
+  ;; Fill MONITORINFO with 640x480 desktop
+  (func $handle_GetMonitorInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; MONITORINFO: cbSize(4), rcMonitor(16), rcWork(16), dwFlags(4) = 40 bytes
+    ;; rcMonitor: left=0, top=0, right=640, bottom=480
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))   ;; left
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))   ;; top
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 640)) ;; right
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 480)) ;; bottom
+    ;; rcWork: same as rcMonitor
+    (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0))
+    (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0))
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 640))
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 480))
+    ;; dwFlags: MONITORINFOF_PRIMARY = 1
+    (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))
+    (global.set $eax (i32.const 1))  ;; success
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 920: MonitorFromWindow(hwnd, dwFlags) — 2 args stdcall
+  (func $handle_MonitorFromWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00010000))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 917: CoCreateGuid(pguid) — 1 arg stdcall
+  ;; Write a deterministic GUID based on a counter, return S_OK
+  (func $handle_CoCreateGuid (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (global.set $guid_counter (i32.add (global.get $guid_counter) (i32.const 1)))
+    (i32.store (local.get $wa) (global.get $guid_counter))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0000CAFE))
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0xDEAD0040))
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0xBEEF0000))
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 916: RasEnumConnectionsA(lpRasConn, lpcb, lpcConnections) — 3 args stdcall
+  ;; Return 0 (SUCCESS) with *lpcConnections = 0 (no dial-up connections)
+  (func $handle_RasEnumConnectionsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store (call $g2w (local.get $arg2)) (i32.const 0)) ;; *lpcConnections = 0
+    (global.set $eax (i32.const 0))  ;; SUCCESS
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 

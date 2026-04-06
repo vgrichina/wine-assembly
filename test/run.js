@@ -37,6 +37,7 @@ const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: 
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
+const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
@@ -670,6 +671,18 @@ async function main() {
     stepping = true;
   };
 
+  // DEBUG: check WINMM IAT after PE+DLL loading
+  let _iatWatchPrev = 0;
+  {
+    const dv = new DataView(memory.buffer);
+    const imageBase = instance.exports.get_image_base();
+    const iatAddr = g2w(imageBase + 0x1260);
+    const val = dv.getUint32(iatAddr, true);
+    _iatWatchPrev = val;
+    console.log(`After patching: ${instance.exports.get_num_thunks()} thunks`);
+    console.log(`IAT[timeGetTime] @ guest 0x${(imageBase+0x1260).toString(16)} = 0x${val.toString(16)}`);
+  }
+
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
@@ -718,6 +731,9 @@ async function main() {
 
     try {
       instance.exports.run(BATCH_SIZE);
+      // DEBUG: check IAT after each batch
+      { const dv2 = new DataView(memory.buffer); const v2 = dv2.getUint32(g2w(instance.exports.get_image_base() + 0x1260), true);
+        if (v2 !== _iatWatchPrev) { console.log(`!!! IAT[timeGetTime] CHANGED at batch ${batch}: 0x${_iatWatchPrev.toString(16)} -> 0x${v2.toString(16)}`); _iatWatchPrev = v2; } }
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
@@ -855,6 +871,17 @@ if (VERBOSE) {
     console.log(`[VFS] Directories:`);
     for (const d of ctx.vfs.dirs) {
       console.log(`  ${d}\\`);
+    }
+  }
+
+  if (SAVE_VFS && ctx.vfs) {
+    for (const [k, v] of ctx.vfs.files.entries()) {
+      if (k === 'c:\\app.exe') continue;
+      const rel = k.replace(/^c:\\/, '');
+      const outPath = path.join(SAVE_VFS, ...rel.split('\\'));
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, Buffer.from(v.data));
+      console.log(`[save-vfs] ${outPath} (${v.data.length} bytes)`);
     }
   }
 
