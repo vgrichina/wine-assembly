@@ -6583,5 +6583,54 @@
     "name": "GetPrivateProfileStructA",
     "convention": "stdcall",
     "hash": 978286525
+  },
+  {
+    "id": 941,
+    "name": "GetClassLongA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1163398082
+  },
+  {
+    "id": 942,
+    "name": "CopyIcon",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2325960805
+  },
+  {
+    "id": 943,
+    "name": "GetIconInfo",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1211745318
+  },
+  {
+    "id": 944,
+    "name": "DrawIconEx",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 2583794455
+  },
+  {
+    "id": 945,
+    "name": "CreateIconIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3447228446
+  },
+  {
+    "id": 946,
+    "name": "CopyImage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4035899857
+  },
+  {
+    "id": 947,
+    "name": "SetPixelV",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2085835605
   }
 ]

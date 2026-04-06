@@ -950,9 +950,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 84: DestroyMenu — STUB: unimplemented
+  ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
   (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 85: GetDC
@@ -7156,5 +7157,60 @@
     (i32.store (call $g2w (local.get $arg2)) (i32.const 0)) ;; *lpcConnections = 0
     (global.set $eax (i32.const 0))  ;; SUCCESS
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
+  ;; 941: GetClassLongA(hwnd, nIndex) — 2 args stdcall
+  ;; GCL_HICON=-14, GCL_HICONSM=-34, GCL_HCURSOR=-12, GCL_HBRBACKGROUND=-10
+  ;; GCL_STYLE=-26, GCL_WNDPROC=-24, GCL_CBWNDEXTRA=-18, GCL_CBCLSEXTRA=-20
+  (func $handle_GetClassLongA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return 0 for most indices — we don't track per-class data
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 942: CopyIcon(hIcon) — 1 arg stdcall, return same handle (no real copy needed)
+  (func $handle_CopyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 947: SetPixelV(hdc, x, y, color) — 4 args stdcall, like SetPixel but returns BOOL
+  (func $handle_SetPixelV (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_gdi_set_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; 946: CopyImage(hImage, uType, cx, cy, flags) — 5 args stdcall, return same handle
+  (func $handle_CopyImage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 945: CreateIconIndirect(piconinfo) — 1 arg stdcall, return fake icon handle
+  (func $handle_CreateIconIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00CC0001))  ;; fake icon handle
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 944: DrawIconEx(hdc, x, y, hIcon, cx, cy, istep, hbrFlicker, diFlags) — 9 args stdcall
+  ;; Return TRUE, no-op for now (icon drawing delegated to renderer)
+  (func $handle_DrawIconEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; 9 args + ret
+  )
+
+  ;; 943: GetIconInfo(hIcon, piconinfo) — 2 args stdcall
+  ;; ICONINFO: fIcon(4), xHotspot(4), yHotspot(4), hbmMask(4), hbmColor(4)
+  (func $handle_GetIconInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ptr i32)
+    (local.set $ptr (call $g2w (local.get $arg1)))
+    (i32.store (local.get $ptr) (i32.const 1))           ;; fIcon = TRUE (it's an icon)
+    (i32.store offset=4 (local.get $ptr) (i32.const 0))  ;; xHotspot
+    (i32.store offset=8 (local.get $ptr) (i32.const 0))  ;; yHotspot
+    (i32.store offset=12 (local.get $ptr) (i32.const 0)) ;; hbmMask = NULL
+    (i32.store offset=16 (local.get $ptr) (i32.const 0)) ;; hbmColor = NULL
+    (global.set $eax (i32.const 1))  ;; success
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
