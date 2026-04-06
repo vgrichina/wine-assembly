@@ -430,7 +430,9 @@
 
   ;; 25: Sleep — STUB: unimplemented
   (func $handle_Sleep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Sleep(dwMilliseconds) — 1 arg stdcall. No-op in single-threaded emulation.
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
@@ -4157,9 +4159,21 @@
       (local.get $w) (local.get $h) (local.get $bpp) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  ;; 448: GetDIBits — STUB: unimplemented
+  ;; 448: GetDIBits(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbmi, uUsage) — 7 args stdcall
   (func $handle_GetDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa_esp i32) (local $lpbmi i32) (local $uUsage i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $lpbmi (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (local.set $uUsage (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
+    (global.set $eax (call $host_gdi_get_di_bits
+      (local.get $arg0)              ;; hdc
+      (local.get $arg1)              ;; hbmp
+      (local.get $arg2)              ;; uStartScan
+      (local.get $arg3)              ;; cScanLines
+      (local.get $arg4)              ;; lpvBits (guest address)
+      (if (result i32) (local.get $lpbmi) (then (call $g2w (local.get $lpbmi))) (else (i32.const 0)))  ;; lpbmi (WASM ptr)
+      (local.get $uUsage)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; 7 args + ret
   )
 
   ;; 449: CreateDIBitmap(hdc, lpbmih, fdwInit, lpbInit, lpbmi, fuUsage) — 6 args

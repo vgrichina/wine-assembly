@@ -133,6 +133,8 @@
   ;; gdi_frame_rect(hdc, left, top, right, bottom, hbrush, hwnd) → 1
   (import "host" "gdi_get_pixel" (func $host_gdi_get_pixel (param i32 i32 i32) (result i32)))
   ;; gdi_get_pixel(hdc, x, y) → COLORREF
+  (import "host" "gdi_get_di_bits" (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
   (import "host" "gdi_set_dib_bits" (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
   (import "host" "gdi_set_dib_to_device" (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
