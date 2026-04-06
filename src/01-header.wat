@@ -133,6 +133,8 @@
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
   (import "host" "gdi_set_dib_to_device" (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
+  (import "host" "gdi_stretch_dib_bits" (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_stretch_dib_bits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bitsWA, bmiWA, usage, rop)
 
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))

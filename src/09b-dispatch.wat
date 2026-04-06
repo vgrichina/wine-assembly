@@ -18,13 +18,12 @@
       (then (global.set $eip (global.get $eax)) (return)))
 
     ;; CreateWindowEx continuation — WndProc(WM_CREATE) returned
-    ;; Stack: [ESP] = saved_ret, [ESP+4] = saved_hwnd (pushed before WndProc args)
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))
       (then
-        ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA)
-        (global.set $eip (call $gl32 (global.get $esp)))
-        (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        ;; Return hwnd to caller of CreateWindowExA
+        (global.set $eax (global.get $createwnd_saved_hwnd))
+        ;; Resume at saved return address
+        (global.set $eip (global.get $createwnd_saved_ret))
         (return)))
 
     ;; CBT hook continuation — hook returned, now dispatch WM_CREATE

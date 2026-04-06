@@ -3303,10 +3303,23 @@
   )
 
   ;; 368: StretchDIBits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, lpBits, lpBmi, usage, rop)
-  ;; 13 args stdcall. For now return hDst (number of scan lines copied).
-  ;; Full implementation would render DIB data to the DC via host GDI.
+  ;; 13 args stdcall
   (func $handle_StretchDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg3))  ;; return hDst (dest height = scan lines)
+    (global.set $eax (call $host_gdi_stretch_dib_bits
+      (local.get $arg0)                                              ;; hdc
+      (local.get $arg1)                                              ;; xDst
+      (local.get $arg2)                                              ;; yDst
+      (local.get $arg3)                                              ;; wDst
+      (local.get $arg4)                                              ;; hDst
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))       ;; xSrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))       ;; ySrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))       ;; wSrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36)))       ;; hSrc
+      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; lpBits → WASM addr
+      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 44))))  ;; lpBmi → WASM addr
+      (call $gl32 (i32.add (global.get $esp) (i32.const 48)))       ;; iUsage
+      (call $gl32 (i32.add (global.get $esp) (i32.const 52)))       ;; dwRop
+    ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 56))))
 
   ;; 369: OffsetRgn — STUB: unimplemented

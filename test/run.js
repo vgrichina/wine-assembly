@@ -256,10 +256,14 @@ async function main() {
     return hwnd;
   };
 
+  let installingFiles = false;
   h.set_window_text = (hwnd, textPtr) => {
     const text = readStr(textPtr);
     logs.push(`[SetWindowText] "${text}"`);
     if (renderer) renderer.setWindowText(hwnd, text);
+    // Track "Installing Files" page for button delay
+    if (text.includes('Installing')) installingFiles = true;
+    else if (text.includes('Completed') || text.includes('Finish')) installingFiles = false;
   };
 
   h.set_menu = (hwnd, menuResId) => {
@@ -275,6 +279,8 @@ async function main() {
       evt = inputEvent;
       inputEvent = null;
     } else if (inputQueue && inputQueue.length > 0) {
+      // Delay button clicks while on "Installing Files" page (let extraction thread work)
+      if (installingFiles) return 0;
       const id = inputQueue.shift();
       evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
     } else if (renderer) {
@@ -787,7 +793,9 @@ async function main() {
       await threadManager.spawnPending();
     }
     if (threadManager.hasActiveThreads()) {
-      threadManager.runSlice(BATCH_SIZE);
+      // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
+      const slices = installingFiles ? 1000 : 1;
+      for (let s = 0; s < slices; s++) threadManager.runSlice(BATCH_SIZE);
     }
     // Check if main thread is waiting on an event
     if (threadManager.checkMainYield()) {
@@ -840,8 +848,8 @@ if (VERBOSE) {
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
 
   if (DUMP_VFS && ctx.vfs) {
-    console.log('\n[VFS] Files:');
-    for (const [k, v] of ctx.vfs.files) {
+    console.log('\n[VFS] Files (' + ctx.vfs.files.size + '):');
+    for (const [k, v] of ctx.vfs.files.entries()) {
       console.log(`  ${k} (${v.data.length} bytes)`);
     }
     console.log(`[VFS] Directories:`);
