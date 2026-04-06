@@ -30,6 +30,7 @@ class WineAssembly {
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
+      get exports() { return self.instance ? self.instance.exports : null; },
       readFile: (name) => {
         const baseName = name.replace(/^.*[\\\/]/, '');
         try {
@@ -228,7 +229,7 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     if (compileEl) compileEl.style.display = 'block';
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=22').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=29').then(r => r.text()));
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
@@ -458,14 +459,9 @@ class WineAssembly {
   }
 
   run(stepsPerSlice = 50000) {
-    console.log('[run] CALLED, stepsPerSlice=' + stepsPerSlice);
     this.running = true;
     const self = this;
-    let _stepCount = 0;
     const step = async () => {
-      _stepCount++;
-      if (_stepCount <= 5 || _stepCount % 50 === 0) console.log(`[run] step=${_stepCount} eip=0x${(self.instance.exports.get_eip()||0).toString(16)} yield=${self.instance.exports.get_yield_reason()}`);
-
       if (!self.running) return;
       try {
         // Check if main thread is waiting
