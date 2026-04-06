@@ -208,14 +208,58 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 7: GetTimeFormatA — STUB: unimplemented
+  ;; 7: GetTimeFormatA(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime) — 6 args stdcall
   (func $handle_GetTimeFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa_esp i32) (local $buf i32) (local $cch i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $cch (call $gl32 (i32.add (local.get $wa_esp) (i32.const 24))))
+    (local.set $buf (call $g2w (local.get $arg4)))
+    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 9)))
+      (then
+        ;; Write "12:00 AM\0"
+        (i32.store8 (local.get $buf) (i32.const 49))          ;; '1'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 50))  ;; '2'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 58))  ;; ':'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 48))  ;; '0'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 48))  ;; '0'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 32))  ;; ' '
+        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 65))  ;; 'A'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 7)) (i32.const 77))  ;; 'M'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))   ;; NUL
+        (global.set $eax (i32.const 9))
+      )
+      (else
+        (global.set $eax (i32.const 9))
+      ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
 
-  ;; 8: GetDateFormatA — STUB: unimplemented
+  ;; 8: GetDateFormatA(Locale, dwFlags, lpDate, lpFormat, lpDateStr, cchDateStr) — 6 args stdcall
   (func $handle_GetDateFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa_esp i32) (local $buf i32) (local $len i32) (local $cch i32)
+    ;; Read cchDateStr from stack (6th arg at esp+24)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $cch (call $gl32 (i32.add (local.get $wa_esp) (i32.const 24))))
+    ;; If lpDate (arg2) is NULL, use current date; if lpFormat (arg3) is NULL, use default
+    ;; Simple implementation: write "1/1/01" as a short date
+    (local.set $buf (call $g2w (local.get $arg4)))
+    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 7)))
+      (then
+        ;; Write "1/1/01\0"
+        (i32.store8 (local.get $buf) (i32.const 49))          ;; '1'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 47))  ;; '/'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 49))  ;; '1'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 47))  ;; '/'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 48))  ;; '0'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 49))  ;; '1'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0))   ;; NUL
+        (global.set $eax (i32.const 7))  ;; chars written including NUL
+      )
+      (else
+        ;; Buffer too small or NULL — return required size
+        (global.set $eax (i32.const 7))
+      ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
 
   ;; 9: GetProfileStringA(appName, keyName, default, retBuf, nSize) → chars copied
@@ -1392,9 +1436,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 127: IsDialogMessageA — STUB: unimplemented
+  ;; 127: IsDialogMessageA(hDlg, lpMsg) — return 0 (not a dialog message, let app process)
   (func $handle_IsDialogMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 128: IsIconic(hwnd) — 1 arg stdcall, return 0 (not minimized)
@@ -1705,9 +1750,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 199: GetOpenFileNameA — STUB: unimplemented
+  ;; 199: GetOpenFileNameA(lpOFN) — return 0 (user cancelled)
   (func $handle_GetOpenFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 200: GetFileTitleA — STUB: unimplemented
@@ -1715,24 +1761,37 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 201: ChooseFontA — STUB: unimplemented
+  ;; 201: ChooseFontA(lpCF) — return 0 (user cancelled)
   (func $handle_ChooseFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 202: FindTextA — STUB: unimplemented
+  ;; 202: FindTextA(lpFR) — create modeless Find dialog, return HWND
   (func $handle_FindTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $hwnd i32) (local $owner i32)
+    ;; Allocate HWND
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Read hwndOwner from FINDREPLACE struct at offset +4
+    (local.set $owner (call $gl32 (i32.add (call $g2w (local.get $arg0)) (i32.const 4))))
+    ;; Call host to show the find dialog
+    (drop (call $host_show_find_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0)))
+    ;; Return HWND
+    (global.set $eax (local.get $hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 203: PageSetupDlgA — STUB: unimplemented
+  ;; 203: PageSetupDlgA(lpPS) — return 0 (user cancelled)
   (func $handle_PageSetupDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 204: CommDlgExtendedError — STUB: unimplemented
+  ;; 204: CommDlgExtendedError() — return 0 (no error)
   (func $handle_CommDlgExtendedError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
   ;; 205: exit
@@ -2160,9 +2219,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 248: GetSaveFileNameA — STUB: unimplemented
+  ;; 248: GetSaveFileNameA(lpOFN) — return 0 (user cancelled)
   (func $handle_GetSaveFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 249: SetViewportExtEx — STUB: unimplemented

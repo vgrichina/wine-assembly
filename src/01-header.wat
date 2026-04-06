@@ -106,6 +106,8 @@
   ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)
   (import "host" "gdi_scroll_window" (func $host_gdi_scroll_window (param i32 i32 i32) (result i32)))
   ;; gdi_scroll_window(hwnd, dx, dy)
+  (import "host" "show_find_dialog" (func $host_show_find_dialog (param i32 i32 i32) (result i32)))
+  ;; show_find_dialog(dlgHwnd, ownerHwnd, findreplace_guest_addr) → hwnd
   (import "host" "get_prop" (func $host_get_prop (param i32 i32) (result i32)))
   ;; get_prop(hwnd, name_ptr) → value
   (import "host" "set_prop" (func $host_set_prop (param i32 i32 i32) (result i32)))
