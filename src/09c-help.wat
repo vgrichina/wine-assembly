@@ -1,15 +1,15 @@
   ;; ============================================================
   ;; WINDOW TABLE + HELP SYSTEM
   ;; ============================================================
-  ;; Window table at WASM 0x2000: maps hwnd → wndproc (max 32 entries)
-  ;; Each entry: [hwnd:i32, wndproc:i32] = 8 bytes, total 256 bytes
+  ;; Window table at WASM 0x2000: maps hwnd → wndproc (max 64 entries)
+  ;; Each entry: [hwnd:i32, wndproc:i32] = 8 bytes, total 512 bytes (ends 0x2200)
   ;; wndproc = guest VA for x86 wndproc, or 0xFFFFxxxx for WAT-native
   ;;
-  ;; Class table at WASM 0x2100: maps class_name_hash → wndproc (max 16 entries)
-  ;; Each entry: [name_hash:i32, wndproc:i32, extra_bytes:i32] = 12 bytes, total 192 bytes
+  ;; Class table at WASM 0x2200: maps class_name_hash → wndproc (max 16 entries)
+  ;; Each entry: [name_hash:i32, wndproc:i32, extra_bytes:i32] = 12 bytes (ends 0x22C0)
   ;;
-  ;; Parent table at WASM 0x2200: maps slot index → parent hwnd (max 32 entries)
-  ;; Each entry: [parent_hwnd:i32] = 4 bytes, total 128 bytes
+  ;; Parent table at WASM 0x22C0: maps slot index → parent hwnd (max 64 entries)
+  ;; Each entry: [parent_hwnd:i32] = 4 bytes (ends 0x23C0)
 
   ;; ---- Window table helpers ----
 
@@ -82,7 +82,7 @@
     (i32.const -1)
   )
 
-  ;; Get per-window userdata (GWL_USERDATA table at 0x2200)
+  ;; Get per-window userdata (GWL_USERDATA table at 0x23C0)
   (func $wnd_get_userdata (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
@@ -103,7 +103,7 @@
     (local.get $old)
   )
 
-  ;; Get parent hwnd (parent table at 0x2280)
+  ;; Get parent hwnd (parent table at 0x22C0)
   (func $wnd_get_parent (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
@@ -121,7 +121,7 @@
         (i32.store (i32.add (global.get $PARENT_TABLE) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
   )
 
-  ;; Get window style (style table at 0x2580)
+  ;; Get window style (style table at 0x2600)
   (func $wnd_get_style (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
@@ -228,7 +228,12 @@
   ;; Called from DispatchMessageA/SendMessageA for WAT-native windows (wndproc >= 0xFFFF0000)
   ;; Dispatches to the correct WAT wndproc based on the ID encoded in the low bits
   (func $wat_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    ;; Currently only ID 1 = help wndproc
+    (local $wp i32)
+    (local.set $wp (call $wnd_table_get (local.get $hwnd)))
+    ;; 0xFFFF0002 = built-in control wndproc
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
+      (then (return (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 0xFFFF0001 = help wndproc
     (call $help_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
   )
 

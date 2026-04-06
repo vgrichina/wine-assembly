@@ -6,7 +6,7 @@
   ;; ============================================================
 
   ;; ---- Timer table helpers ----
-  ;; Timer table at 0x2300: 16 entries × 20 bytes
+  ;; Timer table at 0x24C0: 16 entries × 20 bytes
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
   ;; id=0 means slot is empty
 
@@ -1157,17 +1157,22 @@
   )
 
   ;; 96: GetDlgItem(hDlg, nIDDlgItem) → HWND of child control
-  ;; Returns NULL if hDlg is 0 or child not found; otherwise synthetic HWND
+  ;; Returns NULL if hDlg is 0 or child not found; otherwise real control HWND
   (func $handle_GetDlgItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
     ;; NULL parent → no dialog → return NULL
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    ;; For real dialog windows, encode as 0x20000 | ctrl_id
-    (global.set $eax (i32.or (i32.const 0x20000)
-      (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+    ;; Look up real HWND from control table
+    (local.set $result (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    ;; Fallback to synthetic HWND if not found (pre-control-table dialogs)
+    (if (i32.eqz (local.get $result))
+      (then (local.set $result (i32.or (i32.const 0x20000)
+        (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
+    (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -1415,6 +1420,12 @@
 
   ;; 124: CheckDlgButton
   (func $handle_CheckDlgButton (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ctrl_hwnd i32)
+    ;; Update WAT-side state
+    (local.set $ctrl_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $ctrl_hwnd)
+      (then (call $ctrl_set_check_state (local.get $ctrl_hwnd) (local.get $arg2))))
+    ;; Also update JS-side for rendering
     (call $host_check_dlg_button (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -1530,6 +1541,7 @@
   ;; Creates modal dialog, sends WM_INITDIALOG, enters message loop, returns EndDialog result
   (func $handle_DialogBoxParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hwnd i32) (local $dlg_id i32) (local $init_param i32)
+    (local $ctrl_count i32) (local $ctrl_i i32) (local $ctrl_info i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32)
     ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
     ;; arg3=lpDialogFunc, arg4=dwInitParam (from stack: [esp+24])
     (local.set $init_param (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -1546,6 +1558,27 @@
       (then (local.get $arg1)) (else (i32.const 0))))
     ;; Create dialog via host (which reads dialog template from resources)
     (drop (call $host_create_dialog (local.get $hwnd) (local.get $dlg_id) (local.get $arg2)))
+    ;; Allocate real HWNDs for each dialog control
+    (local.set $ctrl_count (call $host_get_control_count (local.get $hwnd)))
+    (local.set $ctrl_i (i32.const 0))
+    (block $ctrl_done
+      (loop $ctrl_loop
+        (br_if $ctrl_done (i32.ge_u (local.get $ctrl_i) (local.get $ctrl_count)))
+        (local.set $ctrl_info (call $host_get_control_info (local.get $hwnd) (local.get $ctrl_i)))
+        (local.set $ctrl_hwnd (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+        (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $hwnd))
+        (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
+        (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
+          (then
+            (call $ctrl_table_set (local.get $ctrl_slot)
+              (i32.shr_u (local.get $ctrl_info) (i32.const 16))
+              (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))))
+        (call $host_register_control (local.get $hwnd) (local.get $ctrl_i) (local.get $ctrl_hwnd)
+          (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
+        (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
+        (br $ctrl_loop)))
     ;; Register dialog proc in wnd_table
     (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
     ;; Save return address — we'll restore it when EndDialog is called
@@ -2131,7 +2164,7 @@
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
         (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
         (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
         ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
@@ -2160,7 +2193,7 @@
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
         (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
     ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
@@ -2840,7 +2873,7 @@
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         ;; Found — copy 40-byte WNDCLASS from storage to output buffer
-        (local.set $src (i32.add (i32.const 0x2600) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $src (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -6230,10 +6263,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 669: IsDlgButtonChecked — STUB: unimplemented
+  ;; 669: IsDlgButtonChecked
   (func $handle_IsDlgButtonChecked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ctrl_hwnd i32)
     ;; IsDlgButtonChecked(hDlg, nIDButton) — 2 args stdcall
     ;; Returns BST_UNCHECKED(0) or BST_CHECKED(1)
+    ;; Try WAT-side state first (controls with real HWNDs)
+    (local.set $ctrl_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $ctrl_hwnd)
+      (then
+        (global.set $eax (call $ctrl_get_check_state (local.get $ctrl_hwnd)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Fallback to host-side state
     (global.set $eax (call $host_is_dlg_button_checked (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

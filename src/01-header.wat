@@ -66,6 +66,12 @@
   ;; get_dlg_item_text(hwnd, ctrl_id, bufWA, maxLen) → chars copied
   (import "host" "get_window_text" (func $host_get_window_text (param i32 i32 i32) (result i32)))
   ;; get_window_text(hwnd, bufWA, maxLen) → chars copied
+  (import "host" "get_control_count" (func $host_get_control_count (param i32) (result i32)))
+  ;; get_control_count(dlgHwnd) → number of controls in dialog
+  (import "host" "get_control_info" (func $host_get_control_info (param i32 i32) (result i32)))
+  ;; get_control_info(dlgHwnd, index) → (classEnum << 16) | ctrlId
+  (import "host" "register_control" (func $host_register_control (param i32 i32 i32 i32)))
+  ;; register_control(dlgHwnd, ctrlIndex, controlHwnd, ctrlId)
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
@@ -269,12 +275,14 @@
   (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE)
-  (global $WND_TABLE     i32 (i32.const 0x00002000))  ;; 32 entries × 8 bytes
-  (global $CLASS_TABLE   i32 (i32.const 0x00002100))  ;; 16 entries × 12 bytes
-  (global $PARENT_TABLE  i32 (i32.const 0x00002200))  ;; 32 entries × 4 bytes
-  (global $USERDATA_TABLE i32 (i32.const 0x00002280)) ;; 32 entries × 4 bytes
-  (global $STYLE_TABLE   i32 (i32.const 0x00002580))  ;; 32 entries × 4 bytes
-  (global $MAX_WINDOWS   i32 (i32.const 32))
+  (global $WND_TABLE     i32 (i32.const 0x00002000))  ;; 64 entries × 8 bytes (ends 0x2200)
+  (global $CLASS_TABLE   i32 (i32.const 0x00002200))  ;; 16 entries × 12 bytes (ends 0x22C0)
+  (global $PARENT_TABLE  i32 (i32.const 0x000022C0))  ;; 64 entries × 4 bytes (ends 0x23C0)
+  (global $USERDATA_TABLE i32 (i32.const 0x000023C0)) ;; 64 entries × 4 bytes (ends 0x24C0)
+  (global $STYLE_TABLE   i32 (i32.const 0x00002600))  ;; 64 entries × 4 bytes (ends 0x2700)
+  (global $MAX_WINDOWS   i32 (i32.const 64))
+  (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
+  (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
@@ -399,10 +407,10 @@
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
-  ;; Timer table at 0x2300: 16 entries × 20 bytes each
+  ;; Timer table at 0x24C0: 16 entries × 20 bytes each (ends 0x2600)
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
   ;; Entry with id=0 is unused
-  (global $TIMER_TABLE  i32 (i32.const 0x00002300))
+  (global $TIMER_TABLE  i32 (i32.const 0x000024C0))
   (global $TIMER_MAX    i32 (i32.const 16))
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers

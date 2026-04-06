@@ -206,7 +206,8 @@
 
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $hwnd i32)
+    (local $ret_addr i32) (local $hwnd i32) (local $ctrl_count i32) (local $ctrl_i i32)
+    (local $ctrl_info i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32)
     ;; Allocate HWND from next_hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -216,6 +217,30 @@
     (global.set $quit_flag (i32.const 0))
     ;; Call host: create_dialog(hwnd, dlg_resource_id, parent)
     (drop (call $host_create_dialog (local.get $hwnd) (local.get $arg1) (local.get $arg2)))
+    ;; Allocate real HWNDs for each dialog control
+    (local.set $ctrl_count (call $host_get_control_count (local.get $hwnd)))
+    (local.set $ctrl_i (i32.const 0))
+    (block $ctrl_done
+      (loop $ctrl_loop
+        (br_if $ctrl_done (i32.ge_u (local.get $ctrl_i) (local.get $ctrl_count)))
+        (local.set $ctrl_info (call $host_get_control_info (local.get $hwnd) (local.get $ctrl_i)))
+        (local.set $ctrl_hwnd (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        ;; Register control in window table with WNDPROC_CTRL_NATIVE
+        (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+        (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $hwnd))
+        ;; Set control metadata in CONTROL_TABLE
+        (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
+        (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
+          (then
+            (call $ctrl_table_set (local.get $ctrl_slot)
+              (i32.shr_u (local.get $ctrl_info) (i32.const 16))       ;; classEnum
+              (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))))  ;; ctrlId
+        ;; Notify renderer of control→hwnd mapping
+        (call $host_register_control (local.get $hwnd) (local.get $ctrl_i) (local.get $ctrl_hwnd)
+          (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
+        (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
+        (br $ctrl_loop)))
     ;; If dlgProc is provided, store it in window table and dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
@@ -809,10 +834,19 @@
   ;; Equivalent to SendMessage(GetDlgItem(hDlg, nIDDlgItem), Msg, wParam, lParam)
   (func $handle_SendDlgItemMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $child_hwnd i32) (local $lParam i32)
-    ;; Construct child HWND: 0x20000 | (ctrlId & 0xFFFF)
-    (local.set $child_hwnd (i32.or (i32.const 0x20000) (i32.and (local.get $arg1) (i32.const 0xFFFF))))
     ;; Read lParam from stack (5th arg, at ESP+24)
     (local.set $lParam (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; Try to find real control HWND
+    (local.set $child_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $child_hwnd)
+      (then
+        ;; Route through control wndproc dispatch
+        (global.set $eax (call $control_wndproc_dispatch (local.get $child_hwnd) (local.get $arg2)
+          (local.get $arg3) (local.get $lParam)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Fallback: construct synthetic child HWND
+    (local.set $child_hwnd (i32.or (i32.const 0x20000) (i32.and (local.get $arg1) (i32.const 0xFFFF))))
     ;; Forward progress bar / common control messages to renderer
     (if (i32.and (i32.ge_u (local.get $arg2) (i32.const 0x0401))
                  (i32.le_u (local.get $arg2) (i32.const 0x0440)))
