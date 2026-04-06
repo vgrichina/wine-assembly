@@ -97,7 +97,7 @@ Key regions:
 - `tools/disasm.js` — x86 disassembler for debugging (importable module)
 - `tools/hexdump.js` — Memory hexdump utility
 - `tools/parse-rsrc.js` — PE resource section parser
-- `tools/pe-imports.js` — PE import table dumper
+- `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)
 - `tools/pe-sections.js` — PE section header dumper
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.py` — WAT parenthesis balance checker

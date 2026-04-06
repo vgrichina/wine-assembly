@@ -67,6 +67,7 @@ async function main() {
   let lastApiName = null;  // track last API name for return value correlation
   let inputEvent = null;   // pending input event to inject via check_input
   let inputQueue = null;   // button ID sequence to inject
+  let crossThreadMsgs = []; // messages from worker threads to deliver via check_input
 
   // Parse --input=batch:msg:wParam[:lParam],... into scheduled events
   const scheduledInput = [];
@@ -272,6 +273,10 @@ async function main() {
     if (renderer) renderer.setMenu(hwnd, menuResId);
   };
 
+  // Speed up ticks so timers fire faster in tests
+  const tickStart = Date.now();
+  h.get_ticks = () => ((tickStart + (Date.now() - tickStart) * 200) & 0x7FFFFFFF);
+
   // --- Override input for test injection ---
   let lastInputEvent = null;
   h.check_input = () => {
@@ -279,11 +284,14 @@ async function main() {
     if (inputEvent) {
       evt = inputEvent;
       inputEvent = null;
+    } else if (crossThreadMsgs.length > 0) {
+      evt = crossThreadMsgs.shift();
     } else if (inputQueue && inputQueue.length > 0) {
       // Delay button clicks while on "Installing Files" page (let extraction thread work)
       if (installingFiles) return 0;
       const id = inputQueue.shift();
-      evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
+      if (typeof id === 'object') { evt = id; } // allow full event objects in queue
+      else evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
     } else if (renderer) {
       evt = renderer.checkInput();
     }
@@ -671,18 +679,6 @@ async function main() {
     stepping = true;
   };
 
-  // DEBUG: check WINMM IAT after PE+DLL loading
-  let _iatWatchPrev = 0;
-  {
-    const dv = new DataView(memory.buffer);
-    const imageBase = instance.exports.get_image_base();
-    const iatAddr = g2w(imageBase + 0x1260);
-    const val = dv.getUint32(iatAddr, true);
-    _iatWatchPrev = val;
-    console.log(`After patching: ${instance.exports.get_num_thunks()} thunks`);
-    console.log(`IAT[timeGetTime] @ guest 0x${(imageBase+0x1260).toString(16)} = 0x${val.toString(16)}`);
-  }
-
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
@@ -731,17 +727,6 @@ async function main() {
 
     try {
       instance.exports.run(BATCH_SIZE);
-      // DEBUG: check IAT + object ptr after each batch
-      { const dv2 = new DataView(memory.buffer);
-        const v2 = dv2.getUint32(g2w(instance.exports.get_image_base() + 0x1260), true);
-        if (v2 !== _iatWatchPrev) { console.log(`!!! IAT[timeGetTime] CHANGED at batch ${batch}: 0x${_iatWatchPrev.toString(16)} -> 0x${v2.toString(16)}`); _iatWatchPrev = v2; }
-        if (batch <= 5) {
-          const objPtr = dv2.getUint32(g2w(0x1025658), true);
-          const objPtr2 = dv2.getUint32(g2w(0x1025654), true);
-          const objPtr3 = dv2.getUint32(g2w(0x1025650), true);
-          console.log(`  [batch ${batch}] [0x1025658]=${hex(objPtr)} [0x1025654]=${hex(objPtr2)} [0x1025650]=${hex(objPtr3)} EDI=${hex(instance.exports.get_edi())}`);
-        }
-      }
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);

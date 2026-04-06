@@ -6571,5 +6571,17 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1131558778
+  },
+  {
+    "id": 939,
+    "name": "MonitorFromPoint",
+    "convention": "stdcall",
+    "hash": 2244900717
+  },
+  {
+    "id": 940,
+    "name": "GetPrivateProfileStructA",
+    "convention": "stdcall",
+    "hash": 978286525
   }
 ]
