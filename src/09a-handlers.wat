@@ -890,10 +890,15 @@
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Set quit_flag when destroying main or dialog window.
-    ;; For mode switches (e.g. calc Scientific), CreateDialogParamA clears quit_flag.
-    (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
-    (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+    ;; When destroying main_hwnd, promote to next window if it exists.
+    ;; Apps like Pinball destroy a frame window during init while keeping the game window.
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+    (then
+      (if (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1)))
+        (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
+        (else (global.set $quit_flag (i32.const 1))))))
+    ;; Dialog window destruction sets quit (CreateDialogParamA clears it on recreation)
+    (if (i32.eq (local.get $arg0) (global.get $dlg_hwnd))
     (then (global.set $quit_flag (i32.const 1))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
@@ -7000,6 +7005,19 @@
   (func $handle_MonitorFromWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x00010000))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; MonitorFromPoint(pt.x, pt.y, dwFlags) — POINT passed by value (2 dwords) + dwFlags = 3 args stdcall
+  (func $handle_MonitorFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00010000))  ;; same fake monitor handle as MonitorFromRect
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; GetPrivateProfileStructA(appName, keyName, lpStruct, nSize, fileName) — 5 args stdcall
+  (func $handle_GetPrivateProfileStructA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return 0 (failure) — struct not found in INI
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 917: CoCreateGuid(pguid) — 1 arg stdcall
