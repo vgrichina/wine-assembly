@@ -3790,8 +3790,12 @@
   )
 
   ;; 409: ResumeThread — STUB: unimplemented
+  ;; ResumeThread(hThread) — 1 arg stdcall, return previous suspend count
+  ;; Threads are never actually suspended in our implementation, so return 1
+  ;; (was suspended once via CREATE_SUSPENDED, now running).
   (func $handle_ResumeThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 410: SetLastError(dwErrCode) — ignore, just clean up stack
@@ -5154,8 +5158,10 @@
   )
 
   ;; 540: SuspendThread — STUB: unimplemented
+  ;; SuspendThread(hThread) — 1 arg stdcall, return previous suspend count (0 = not suspended)
   (func $handle_SuspendThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 541: GetPrivateProfileIntW — STUB: unimplemented
@@ -7188,6 +7194,32 @@
   (func $handle_CopyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 953: PrintDlgA(lppd) — 1 arg stdcall, return FALSE (user cancelled)
+  (func $handle_PrintDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 954: CoFreeUnusedLibraries() — no args, no-op
+  (func $handle_CoFreeUnusedLibraries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; 952: CoRevokeClassObject(dwRegister) — 1 arg stdcall, return S_OK
+  (func $handle_CoRevokeClassObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 951: CoRegisterClassObject(rclsid, pUnk, dwClsContext, flags, lpdwRegister)
+  ;; 5 args stdcall. Write a fake registration cookie, return S_OK.
+  (func $handle_CoRegisterClassObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 0xC0010001))))
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 950: DrawFrameControl(hdc, lprc, uType, uState) — 4 args stdcall

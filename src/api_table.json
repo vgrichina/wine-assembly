@@ -6653,5 +6653,33 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 871044429
+  },
+  {
+    "id": 951,
+    "name": "CoRegisterClassObject",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3297787537
+  },
+  {
+    "id": 952,
+    "name": "CoRevokeClassObject",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 850715492
+  },
+  {
+    "id": 953,
+    "name": "PrintDlgA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1722780324
+  },
+  {
+    "id": 954,
+    "name": "CoFreeUnusedLibraries",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3732763350
   }
 ]
