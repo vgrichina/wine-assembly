@@ -89,7 +89,7 @@
                 (global.set $ebp (local.get $frame_ebp))
                 (global.set $esp (local.get $seh_rec))
                 ;; Update trylevel to enclosingLevel for this scope
-                (call $gs32 (call $g2w (i32.sub (local.get $frame_ebp) (i32.const 4)))
+                (call $gs32 (i32.sub (local.get $frame_ebp) (i32.const 4))
                   (call $gl32 (local.get $entry))) ;; entry[+0] = enclosingLevel
                 ;; Jump to __except block body
                 (global.set $eip (local.get $except_body))
@@ -101,7 +101,7 @@
             (call $gs32 (global.get $fs_base) (call $gl32 (local.get $seh_rec)))
             (global.set $ebp (local.get $frame_ebp))
             (global.set $esp (local.get $seh_rec))
-            (call $gs32 (call $g2w (i32.sub (local.get $frame_ebp) (i32.const 4)))
+            (call $gs32 (i32.sub (local.get $frame_ebp) (i32.const 4))
               (call $gl32 (local.get $entry)))
             (global.set $eip (local.get $except_body))
             (return)))

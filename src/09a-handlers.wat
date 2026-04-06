@@ -356,16 +356,32 @@
     ;; _lread(hFile, lpBuffer, uBytes) — 3 args stdcall
     ;; host_fs_read_file(handle, bufferWA, nBytes, lpBytesRead_WA) -> bool
     ;; We use a scratch area on the stack for bytesRead
-    (local $bytes_read_wa i32)
-    (local.set $bytes_read_wa (call $g2w (i32.sub (global.get $esp) (i32.const 4))))
+    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     (i32.store (local.get $bytes_read_wa) (i32.const 0))
     (drop (call $host_fs_read_file
       (local.get $arg0)
-      (call $g2w (local.get $arg1))
+      (local.get $arg1)
       (local.get $arg2)
-      (local.get $bytes_read_wa)))
+      (local.get $bytes_read_ga)))
     (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
+  )
+
+  ;; 938: _hread — identical to _lread
+  (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
+    (i32.store (local.get $bytes_read_wa) (i32.const 0))
+    (drop (call $host_fs_read_file
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $bytes_read_ga)))
+    (global.set $eax (i32.load (local.get $bytes_read_wa)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 25: Sleep — STUB: unimplemented
@@ -1787,7 +1803,7 @@
     ;; Find first non-NULL entry and call it
     (block $done (loop $scan
       (br_if $done (i32.ge_u (global.get $initterm_ptr) (global.get $initterm_end)))
-      (local.set $fn (call $gl32 (call $g2w (global.get $initterm_ptr))))
+      (local.set $fn (call $gl32 (global.get $initterm_ptr)))
       (global.set $initterm_ptr (i32.add (global.get $initterm_ptr) (i32.const 4)))
       (if (local.get $fn)
         (then
@@ -3104,6 +3120,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; 937: SetPriorityClass(hProcess, dwPriorityClass) — no-op, return TRUE
+  (func $handle_SetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 346: IsDebuggerPresent — return 0 — STUB: unimplemented
   (func $handle_IsDebuggerPresent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
@@ -3191,9 +3213,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 356: GlobalHandle — STUB: unimplemented
+  ;; 356: GlobalHandle — our GlobalLock returns ptr as-is, so GlobalHandle returns same value
   (func $handle_GlobalHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 357: CreatePatternBrush(hBitmap) — 1 arg stdcall
@@ -4605,10 +4628,10 @@
   ;; 483: GetDiskFreeSpaceA(lpRoot, lpSectorsPerCluster, lpBytesPerSector, lpFreeClusters, lpTotalClusters)
   (func $handle_GetDiskFreeSpaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Report ~2GB free on a ~4GB disk (8 sectors/cluster, 512 bytes/sector)
-    (if (local.get $arg1) (then (call $gs32 (call $g2w (local.get $arg1)) (i32.const 8))))     ;; SectorsPerCluster
-    (if (local.get $arg2) (then (call $gs32 (call $g2w (local.get $arg2)) (i32.const 512))))   ;; BytesPerSector
-    (if (local.get $arg3) (then (call $gs32 (call $g2w (local.get $arg3)) (i32.const 524288)))) ;; FreeClusters (~2GB)
-    (if (local.get $arg4) (then (call $gs32 (call $g2w (local.get $arg4)) (i32.const 1048576)))) ;; TotalClusters (~4GB)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 8))))     ;; SectorsPerCluster
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 512))))   ;; BytesPerSector
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 524288)))) ;; FreeClusters (~2GB)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 1048576)))) ;; TotalClusters (~4GB)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )

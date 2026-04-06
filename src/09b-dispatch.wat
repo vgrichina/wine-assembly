@@ -18,12 +18,13 @@
       (then (global.set $eip (global.get $eax)) (return)))
 
     ;; CreateWindowEx continuation — WndProc(WM_CREATE) returned
+    ;; Stack layout: [ESP] = saved_ret, [ESP+4] = saved_hwnd (pushed before WndProc args)
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))
       (then
-        ;; Return hwnd to caller of CreateWindowExA
-        (global.set $eax (global.get $createwnd_saved_hwnd))
-        ;; Resume at saved return address
-        (global.set $eip (global.get $createwnd_saved_ret))
+        ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA)
+        (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
 
     ;; CBT hook continuation — hook returned, now dispatch WM_CREATE
@@ -31,7 +32,7 @@
       (then
         ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0x400100))
+        (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -115,7 +116,7 @@
         ;; Find next non-NULL entry
         (block $done (loop $scan
           (br_if $done (i32.ge_u (global.get $initterm_ptr) (global.get $initterm_end)))
-          (local.set $arg0 (call $gl32 (call $g2w (global.get $initterm_ptr))))
+          (local.set $arg0 (call $gl32 (global.get $initterm_ptr)))
           (global.set $initterm_ptr (i32.add (global.get $initterm_ptr) (i32.const 4)))
           (if (local.get $arg0)
             (then

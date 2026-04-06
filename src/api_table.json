@@ -6557,5 +6557,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2151917855
+  },
+  {
+    "id": 937,
+    "name": "SetPriorityClass",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1620655005
+  },
+  {
+    "id": 938,
+    "name": "_hread",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1131558778
   }
 ]
