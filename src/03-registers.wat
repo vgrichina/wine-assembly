@@ -104,9 +104,9 @@
     (global.set $flag_op (i32.const 2)) (global.set $flag_sign_shift (i32.const 31))
     (global.set $flag_a (local.get $a)) (global.set $flag_b (local.get $b)) (global.set $flag_res (local.get $r)))
   (func $set_flags_logic (param $r i32)
-    (global.set $flag_op (i32.const 3)) (global.set $flag_res (local.get $r)))
+    (global.set $flag_op (i32.const 3)) (global.set $flag_sign_shift (i32.const 31)) (global.set $flag_res (local.get $r)))
   (func $set_flags_shift (param $r i32) (param $cf i32)
-    (global.set $flag_op (i32.const 7)) (global.set $flag_res (local.get $r))
+    (global.set $flag_op (i32.const 7)) (global.set $flag_sign_shift (i32.const 31)) (global.set $flag_res (local.get $r))
     (global.set $flag_b (local.get $cf)))
   (func $set_flags_inc (param $a i32) (param $r i32)
     (global.set $saved_cf (call $get_cf))  ;; INC preserves CF

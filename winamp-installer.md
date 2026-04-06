@@ -442,6 +442,20 @@ The NSIS installer successfully decompresses and extracts files to the virtual f
 
 **Current limitation:** Inflate decompression through x86 emulation is very slow for large files. The extraction thread needs millions of batches to decompress all files.
 
+### Bug: $INSTDIR Empty — set_flags_logic Missing flag_sign_shift (FIXED)
+
+**Symptom:** `$INSTDIR` (install directory) was empty. Files extracted to `C:\` instead of `C:\Program Files\Winamp`.
+
+**Root cause:** `$set_flags_logic` in `03-registers.wat` did not set `$flag_sign_shift`. Logic operations (TEST, AND, OR, XOR) left `flag_sign_shift` stale from whatever previous instruction had set it. When a 32-bit `test eax, eax` followed an 8-bit operation (which sets `flag_sign_shift = 7`), the subsequent `jge` check computed SF from bit 7 instead of bit 31.
+
+**Specific failure:** In `get_nsis_string_ptr` at `0x403dc2`, `test eax, eax; jge +0x11` should take the positive path for EAX=0x26d7. But with `flag_sign_shift = 7` (stale from a prior 8-bit op), SF was computed as `(0x26d7 >> 7) & 1 = 1` (bit 7 of 0xD7 is set), so `jge` (SF==OF → 1==0 → false) fell through to the negative index path, producing a garbage string pointer.
+
+**Fix:** Added `(global.set $flag_sign_shift (i32.const 31))` to both `$set_flags_logic` and `$set_flags_shift` in `03-registers.wat`. Also added `(global.set $flag_sign_shift (i32.const 7))` to standalone 8-bit TEST handlers (`$th_test_r8_r8`, `$th_test_m8_r`, `$th_test_m8_r_ro`) which call `set_flags_logic` directly without the 8-bit ALU epilog that normally overrides the shift.
+
+**Result:** Installation Folder page now correctly shows `C:\Program Files\Winamp`. The \xF5 ($PROGRAMFILES) escape code in GetNSISString now resolves via `RegQueryValueExA(HKLM\Software\Microsoft\Windows\CurrentVersion, ProgramFilesDir)`.
+
+**Breakpoint improvement:** Added WASM-level breakpoint support to test runner (uses `set_bp` export for per-block EIP checking inside `$run`, instead of JS-level per-batch checking).
+
 Test commands:
 - Quick (skip extraction): `node test/run.js --exe=/private/tmp/Winamp291/winamp291.exe --max-batches=50000 --batch-size=5000 --buttons=1,1,1,1,1,1`
 - With extraction: `node test/run.js --exe=/private/tmp/Winamp291/winamp291.exe --max-batches=500000 --batch-size=10000 --buttons=1,1,1 --no-close`

@@ -908,13 +908,16 @@
   (func $th_test_r8_r8 (param $op i32)
     (call $set_flags_logic (i32.and
       (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4)))
-      (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF))))) (return_call $next))
+      (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
   (func $th_test_m8_r (param $op i32)
-    (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (call $get_reg8 (local.get $op)))) (return_call $next))
+    (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (call $get_reg8 (local.get $op))))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
   (func $th_test_m8_r_ro (param $op i32)
     (local $addr i32)
     (local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
-    (call $set_flags_logic (i32.and (call $gl8 (local.get $addr)) (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4))))) (return_call $next))
+    (call $set_flags_logic (i32.and (call $gl8 (local.get $addr)) (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4)))))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
 
   ;; --- Byte register-register ALU (op = alu_op<<8 | dst<<4 | src) ---
   (func $th_alu_r8_r8 (param $op i32)

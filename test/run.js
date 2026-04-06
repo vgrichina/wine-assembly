@@ -689,7 +689,11 @@ async function main() {
       continue;
     }
 
-    // Breakpoint check (EIP)
+    // WASM-level breakpoint: set once
+    if (breakAddrs.length === 1 && batch === 0 && instance.exports.set_bp) {
+      instance.exports.set_bp(breakAddrs[0]);
+    }
+    // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
       console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
       stepping = true;
@@ -724,6 +728,18 @@ async function main() {
         frames.slice(0, 8).forEach(f => console.log('    ' + f.trim()));
       }
       process.exit(1);
+    }
+
+    // WASM-level breakpoint check (after run returns)
+    {
+      const eipNow = instance.exports.get_eip();
+      if (breakAddrs.length && breakAddrs.includes(eipNow) && eipNow !== eipBefore) {
+        console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
+        console.log('  ' + regs());
+        dumpStack();
+        // Clear WASM bp after hit to avoid infinite re-fire
+        if (instance.exports.clear_bp) instance.exports.clear_bp();
+      }
     }
 
     // Handle COM DLL loading yield (synchronous in Node.js)
