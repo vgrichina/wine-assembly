@@ -105,6 +105,9 @@
   (func $heap_free (param $guest_ptr i32)
     (local $block i32) (local $w i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
+    ;; Only free blocks in our heap range (0x01D12000+) — ignore foreign blocks
+    ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list)
+    (if (i32.lt_u (local.get $guest_ptr) (i32.const 0x01D12000)) (then (return)))
     ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
     (local.set $w (call $g2w (local.get $block)))
