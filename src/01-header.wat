@@ -60,6 +60,10 @@
   ;; send_ctrl_msg(ctrl_hwnd, msg, wParam, lParam) — forward control messages to renderer
   (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
   ;; check_radio_button(hwnd, first_id, last_id, check_id)
+  (import "host" "get_dlg_item_text" (func $host_get_dlg_item_text (param i32 i32 i32 i32) (result i32)))
+  ;; get_dlg_item_text(hwnd, ctrl_id, bufWA, maxLen) → chars copied
+  (import "host" "get_window_text" (func $host_get_window_text (param i32 i32 i32) (result i32)))
+  ;; get_window_text(hwnd, bufWA, maxLen) → chars copied
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
@@ -357,6 +361,7 @@
   ;; Window system state
   (global $wndproc_addr (mut i32) (i32.const 0))    ;; WndProc for main window (guest VA)
   (global $wndproc_addr2 (mut i32) (i32.const 0))   ;; WndProc for child/status window
+  (global $last_registered_wndproc (mut i32) (i32.const 0)) ;; most recent RegisterClassA wndproc
   (global $wndclass_bg_brush (mut i32) (i32.const 0)) ;; hbrBackground from first RegisterClass
   (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
   ;; (removed: $window_dc_hwnd — hwnd is now encoded in DC handle)

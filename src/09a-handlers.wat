@@ -1060,12 +1060,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 92: GetWindowTextA
+  ;; 92: GetWindowTextA(hwnd, lpString, nMaxCount) → int
   (func $handle_GetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return empty string
-    (if (i32.gt_u (local.get $arg2) (i32.const 0))
-    (then (call $gs8 (local.get $arg1) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_get_window_text
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
@@ -1084,11 +1082,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 95: GetDlgItemTextA
+  ;; 95: GetDlgItemTextA(hDlg, nIDDlgItem, lpString, nMaxCount) → int
   (func $handle_GetDlgItemTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.gt_u (local.get $arg3) (i32.const 0))
-    (then (call $gs8 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_get_dlg_item_text
+      (local.get $arg0) (local.get $arg1) (call $g2w (local.get $arg2)) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
