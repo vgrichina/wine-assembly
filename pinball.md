@@ -62,6 +62,12 @@ Title screen renders correctly (table bitmap, palette, menu chrome) in both CLI 
 
 Blocker: **`# walls doesn't match data size`** fires 4× during PINBALL.DAT loading from a `loader_query_visual()` context. File reads return correct byte counts — the bug is somewhere subtler (struct size mismatch, alignment, or arithmetic on values read from the file).
 
+### Version-mismatch hypothesis DISPROVED (2026-04-08)
+
+Staged the original Microsoft Plus! 95 (1996) version under `test/binaries/pinball-plus95/` from `https://archive.org/details/SpaceCadet_Plus95`. This is a fully matched 1996 exe + DAT pair (different content from the XP set: PINBALL.EXE 351,744 vs 281,088, PINBALL.DAT same 928,700 size but different bytes). After implementing trivial stubs for `GetProcessAffinityMask` and `SetThreadAffinityMask` (Plus! 95's older statically-linked CRT calls them during init), the Plus! 95 build runs and **hits the exact same `# walls doesn't match data size` error from `loader_query_visual()`** — 5 occurrences instead of XP's 4.
+
+**Conclusion:** Two independent Microsoft pinball binaries (1996 and 2008), each with their own matched DAT, fail in the same wall-loader. The bug is in our emulator, not in any version skew. The previous "tags 407/408 unhandled" theory is wrong — Plus! 95 binary almost certainly handles different tag ranges than XP's, yet still fails. Focus future investigation on emulator-side bugs in the FPU path or integer arithmetic used by the wall sub-loader at `0x01009349` (XP) / equivalent in Plus! 95.
+
 ### msvcrt `floor` traced (this session)
 
 Hand-decoded `msvcrt.dll!floor` (file 0x2c7a1, RVA 0x2b7a1, default load 0x7802b7a1) — the disasm tool was mangling FPU bytes so I read raw bytes:

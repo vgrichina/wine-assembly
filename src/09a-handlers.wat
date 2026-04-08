@@ -5198,6 +5198,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; GetProcessAffinityMask(hProcess, *processMask, *systemMask) → BOOL
+  ;; Single-CPU emulator: report mask = 0x1 for both. Returns TRUE.
+  (func $handle_GetProcessAffinityMask (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 1))))
+    (if (local.get $arg2)
+      (then (i32.store (call $g2w (local.get $arg2)) (i32.const 1))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; SetThreadAffinityMask(hThread, dwAffinityMask) → previous mask (DWORD_PTR)
+  ;; Single-CPU emulator: always return 0x1 (the only valid mask). Nonzero = success.
+  (func $handle_SetThreadAffinityMask (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 536: GlobalFlags — STUB: unimplemented
   (func $handle_GlobalFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))

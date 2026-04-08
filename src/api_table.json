@@ -6681,5 +6681,19 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 3732763350
+  },
+  {
+    "id": 955,
+    "name": "GetProcessAffinityMask",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 375417328
+  },
+  {
+    "id": 956,
+    "name": "SetThreadAffinityMask",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 582019215
   }
 ]
