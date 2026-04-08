@@ -44,8 +44,17 @@ File: `Classic Windows Apps.7z`
 
 ## Pinball
 
+Two versions are staged locally (gitignored) for cross-comparison:
+
+**`pinball/`** — Windows XP version
 Source: `https://archive.org/details/pinball_202110`
 File: `Pinball.zip` — 3D Space Cadet Pinball from Windows XP.
+Note: data files dated 2004-08-10, but `pinball.exe` dated 2008-04-13 (later hotfix) — not a pristine matched set.
+
+**`pinball-plus95/`** — Microsoft Plus! 95 version (1996, original release)
+Source: `https://archive.org/details/SpaceCadet_Plus95`
+File: `Space_Cadet.rar` — extracted with `unar` (rar5 compression filter, p7zip/bsdtar can't handle it).
+Matched 1996 exe + DAT pair. `PINBALL.DAT` is the same size (928,700 B) as the XP version but bytewise different. `pinball.exe` is 351,744 B (vs XP's 281,088 B).
 
 ## Installers
 

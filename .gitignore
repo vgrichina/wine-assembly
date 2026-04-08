@@ -12,6 +12,7 @@ node_modules/
 *.DAT
 *.bmp
 test/binaries/pinball/
+test/binaries/pinball-plus95/
 test/binaries/dlls/
 !test/binaries/dlls/SOURCES.md
 !test/binaries/SOURCES.md
