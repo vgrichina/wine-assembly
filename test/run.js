@@ -69,16 +69,31 @@ async function main() {
   let inputQueue = null;   // button ID sequence to inject
   let crossThreadMsgs = []; // messages from worker threads to deliver via check_input
 
-  // Parse --input=batch:msg:wParam[:lParam],... into scheduled events
+  // Parse --input=batch:msg:wParam[:lParam],... into scheduled events.
+  // Also supports UI-level events that go through renderer handlers:
+  //   B:focus-find          — set focus on find dialog edit ctrl
+  //   B:keypress:CODE       — call renderer.handleKeyPress(CODE)
+  //   B:keydown:VK          — call renderer.handleKeyDown(VK)
+  //   B:click:X:Y           — handleMouseDown+Up at canvas (X,Y)
+  //   B:dump-find           — log current find dialog edit state
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
       const parts = spec.split(':');
       const batch = parseInt(parts[0]);
-      const msg = parseInt(parts[1]);
-      const wParam = parseInt(parts[2]) || 0;
-      const lParam = parseInt(parts[3]) || 0;
-      scheduledInput.push({ batch, msg, wParam, lParam });
+      const kind = parts[1];
+      if (kind === 'focus-find' || kind === 'dump-find') {
+        scheduledInput.push({ batch, action: kind });
+      } else if (kind === 'keypress' || kind === 'keydown') {
+        scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'click') {
+        scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else {
+        const msg = parseInt(parts[1]);
+        const wParam = parseInt(parts[2]) || 0;
+        const lParam = parseInt(parts[3]) || 0;
+        scheduledInput.push({ batch, msg, wParam, lParam });
+      }
     }
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
@@ -171,7 +186,25 @@ async function main() {
       }
 
       lastApiName = t;
-      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}`);
+      let retInfo = '';
+      if (t === 'MessageBoxA') {
+        try {
+          const ret = dv.getUint32(g2w(esp), true);
+          retInfo = ` ret=${hex(ret)}`;
+          // Walk EBP frame chain to get caller stack
+          let ebp = e.get_ebp();
+          const chain = [];
+          for (let depth = 0; depth < 12 && ebp; depth++) {
+            const callerRet = dv.getUint32(g2w(ebp + 4), true);
+            const prevEbp = dv.getUint32(g2w(ebp), true);
+            chain.push(`${hex(callerRet)}`);
+            if (prevEbp <= ebp || prevEbp - ebp > 0x10000) break;
+            ebp = prevEbp;
+          }
+          retInfo += ` frames=[${chain.join(' <- ')}]`;
+        } catch (_) {}
+      }
+      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}`);
       // Dump MSG struct contents for DispatchMessageA
       if (t.includes('DispatchMessage') && apiCount <= 100) {
         try {
@@ -239,8 +272,10 @@ async function main() {
   h.show_window = (hwnd, cmd) => {
     logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
     if (renderer) renderer.showWindow(hwnd, cmd);
-    // Inject button sequence if --buttons provided, else WM_CLOSE
-    if (!inputEvent && !inputQueue) {
+    // Inject button sequence if --buttons provided, else WM_CLOSE.
+    // Skip auto-WM_CLOSE when --input is in use — the test is orchestrating
+    // its own event timeline and shouldn't be killed prematurely.
+    if (!inputEvent && !inputQueue && !INPUT_SPEC) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
@@ -291,7 +326,10 @@ async function main() {
       if (installingFiles) return 0;
       const id = inputQueue.shift();
       if (typeof id === 'object') { evt = id; } // allow full event objects in queue
-      else evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0x10002 };
+      // Button-id form: WM_COMMAND from a menu, hwnd=0 → WAT routes to main_hwnd.
+      // Previously hard-coded 0x10002 (edit child), which silently swallowed
+      // menu commands because the edit child's wndproc is WNDPROC_BUILTIN.
+      else evt = { msg: 0x0111, wParam: id, lParam: 0, hwnd: 0 };
     } else if (renderer) {
       evt = renderer.checkInput();
     }
@@ -301,7 +339,18 @@ async function main() {
     logs.push(`[check_input] msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
     return packed;
   };
-  h.check_input_hwnd = () => (lastInputEvent ? (lastInputEvent.hwnd || 0x10002) : 0x10002);
+  // Default hwnd routing: keyboard messages (WM_KEYDOWN..WM_SYSCHAR, 0x100-0x108)
+  // need to land in the edit child (0x10002) since we don't track focus from
+  // outside WAT. Anything else (menu commands, mouse, etc.) returns 0 so the
+  // WAT side defaults to main_hwnd.
+  h.check_input_hwnd = () => {
+    if (!lastInputEvent) return 0;
+    if (lastInputEvent.hwnd) { logs.push(`[check_input_hwnd] explicit hwnd=0x${lastInputEvent.hwnd.toString(16)}`); return lastInputEvent.hwnd; }
+    const m = lastInputEvent.msg;
+    if (m >= 0x100 && m <= 0x108) { logs.push(`[check_input_hwnd] keyboard → 0x10002`); return 0x10002; }
+    logs.push(`[check_input_hwnd] msg=0x${m.toString(16)} → 0 (main_hwnd)`);
+    return 0;
+  };
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
 
   // Create shared memory externally (WASM module imports it)
@@ -683,11 +732,50 @@ async function main() {
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
-      if (renderer) {
-        renderer.inputQueue.push({ type: 'command', hwnd: 0x10001, msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam });
+      // UI-level events go through renderer handlers (mouse/keyboard pump),
+      // raw events go directly into inputQueue.
+      if (ev.action === 'focus-find' && renderer) {
+        // Find the find dialog and set focus on its edit ctrl, bypassing
+        // the click hit-test (we don't know exact canvas coords).
+        const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
+        if (findDlg) {
+          const editCtrl = (findDlg.controls || []).find(c => c.className === 'Edit');
+          if (editCtrl) {
+            renderer._focusedDialogEdit = editCtrl;
+            renderer._focusedDialogEditWin = findDlg;
+            if (editCtrl.editText == null) editCtrl.editText = editCtrl.text || '';
+            editCtrl._cursor = editCtrl.editText.length;
+            editCtrl._selStart = editCtrl._cursor;
+            logs.push(`[input] focus-find: hwnd=0x${findDlg.hwnd.toString(16)} editText=${JSON.stringify(editCtrl.editText)} at batch ${batch}`);
+          } else {
+            logs.push(`[input] focus-find: NO EDIT CTRL in find dialog at batch ${batch}`);
+          }
+        } else {
+          logs.push(`[input] focus-find: NO FIND DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-find' && renderer) {
+        const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
+        if (findDlg) {
+          const editCtrl = (findDlg.controls || []).find(c => c.className === 'Edit');
+          logs.push(`[input] dump-find: hwnd=0x${findDlg.hwnd.toString(16)} focused=${renderer._focusedDialogEdit === editCtrl} editText=${JSON.stringify(editCtrl ? editCtrl.editText : null)} text=${JSON.stringify(editCtrl ? editCtrl.text : null)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-find: NO FIND DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'keypress' && renderer && renderer.handleKeyPress) {
+        renderer.handleKeyPress(ev.code);
+        logs.push(`[input] keypress code=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'keydown' && renderer && renderer.handleKeyDown) {
+        renderer.handleKeyDown(ev.code);
+        logs.push(`[input] keydown vk=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
+        renderer.handleMouseDown(ev.x, ev.y, 1);
+        if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
+        logs.push(`[input] click ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (renderer) {
+        renderer.inputQueue.push({ type: 'key', hwnd: 0, msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam });
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       } else {
-        inputEvent = { msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam, hwnd: 0x10001 };
+        inputEvent = { msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam, hwnd: 0 };
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       }
     }
@@ -752,8 +840,8 @@ async function main() {
         console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
         console.log('  ' + regs());
         dumpStack();
-        // Clear WASM bp after hit to avoid infinite re-fire
-        if (instance.exports.clear_bp) instance.exports.clear_bp();
+        // Re-arm WASM bp so subsequent hits also fire
+        if (instance.exports.set_bp) instance.exports.set_bp(breakAddrs[0]);
       }
     }
 
@@ -852,6 +940,25 @@ if (VERBOSE) {
     console.log(regs());
     if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
     if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
+  }
+
+  // --peek=ADDR[:LEN],... — dump memory at end. Addrs >= image_base treated as
+  // guest VA (translated via g2w); addrs below GUEST_BASE treated as raw WASM linear.
+  const peekArg = args.find(a => a.startsWith('--peek='));
+  if (peekArg) {
+    const dv = new DataView(memory.buffer);
+    const imgBase = instance.exports.get_image_base();
+    for (const spec of peekArg.split('=')[1].split(',')) {
+      const [a, l] = spec.split(':');
+      const addr = parseInt(a, 16);
+      const len = parseInt(l) || 4;
+      const wa = (addr >= imgBase) ? g2w(addr) : addr;
+      let line = `[peek] ${hex(addr)} (wa=${hex(wa)}): `;
+      for (let i = 0; i < len; i += 4) {
+        line += hex(dv.getUint32(wa + i, true)) + ' ';
+      }
+      console.log(line.trim());
+    }
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);

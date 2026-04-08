@@ -936,16 +936,24 @@
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; When destroying main_hwnd, promote to next window if it exists.
-    ;; Apps like Pinball destroy a frame window during init while keeping the game window.
+    ;; When destroying main_hwnd, promote to next window only if it's a sibling
+    ;; top-level window — NOT a child of the destroyed window. Apps like Pinball
+    ;; destroy a frame window during init while keeping the game window. But for
+    ;; normal apps like notepad, the next hwnd is a child control of main_hwnd —
+    ;; promoting it would silently swallow all subsequent messages.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-      (if (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1)))
+      (if (i32.and
+            (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1)))
+            (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
+                    (global.get $main_hwnd)))
         (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
         (else (global.set $quit_flag (i32.const 1))))))
     ;; Dialog window destruction sets quit (CreateDialogParamA clears it on recreation)
     (if (i32.eq (local.get $arg0) (global.get $dlg_hwnd))
     (then (global.set $quit_flag (i32.const 1))))
+    ;; Notify renderer to remove window from its table
+    (call $host_destroy_window (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -3617,8 +3625,63 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; SystemParametersInfoA — return TRUE, 4 args stdcall
+  ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
   (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $i i32)
+    ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
+    ;; arg0=0x29, arg1=cbSize, arg2=pvParam (struct ptr)
+    (if (i32.eq (local.get $arg0) (i32.const 0x29))
+      (then
+        (if (local.get $arg2)
+          (then
+            (local.set $buf (call $g2w (local.get $arg2)))
+            ;; Zero the entire buffer first (caller's cbSize at [buf+0])
+            (local.set $i (i32.const 0))
+            (block $z (loop $zl
+              (br_if $z (i32.ge_u (local.get $i) (local.get $arg1)))
+              (i32.store8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $zl)))
+            ;; cbSize, iBorderWidth, iScrollWidth, iScrollHeight, iCaptionWidth, iCaptionHeight
+            (i32.store        (local.get $buf)                       (local.get $arg1))  ;; cbSize
+            (i32.store offset=4  (local.get $buf) (i32.const 1))    ;; iBorderWidth
+            (i32.store offset=8  (local.get $buf) (i32.const 16))   ;; iScrollWidth
+            (i32.store offset=12 (local.get $buf) (i32.const 16))   ;; iScrollHeight
+            (i32.store offset=16 (local.get $buf) (i32.const 18))   ;; iCaptionWidth
+            (i32.store offset=20 (local.get $buf) (i32.const 18))   ;; iCaptionHeight
+            ;; lfCaptionFont (LOGFONT, 60 bytes) at offset 24
+            ;;   lfHeight (i32) = -11, then defaults; lfFaceName (32 bytes) = "MS Sans Serif"
+            (i32.store offset=24 (local.get $buf) (i32.const -11))  ;; lfHeight
+            (i32.store offset=40 (local.get $buf) (i32.const 400))  ;; lfWeight
+            ;; faceName at offset 24+28 = 52: "MS Sans Serif\0"
+            (i32.store8 offset=52 (local.get $buf) (i32.const 0x4D)) ;; M
+            (i32.store8 offset=53 (local.get $buf) (i32.const 0x53)) ;; S
+            (i32.store8 offset=54 (local.get $buf) (i32.const 0x20))
+            (i32.store8 offset=55 (local.get $buf) (i32.const 0x53)) ;; S
+            (i32.store8 offset=56 (local.get $buf) (i32.const 0x61))
+            (i32.store8 offset=57 (local.get $buf) (i32.const 0x6E))
+            (i32.store8 offset=58 (local.get $buf) (i32.const 0x73))
+            (i32.store8 offset=59 (local.get $buf) (i32.const 0x20))
+            (i32.store8 offset=60 (local.get $buf) (i32.const 0x53)) ;; S
+            (i32.store8 offset=61 (local.get $buf) (i32.const 0x65))
+            (i32.store8 offset=62 (local.get $buf) (i32.const 0x72))
+            (i32.store8 offset=63 (local.get $buf) (i32.const 0x69))
+            (i32.store8 offset=64 (local.get $buf) (i32.const 0x66))
+            ;; Repeat the LOGFONT defaults at the other 4 font offsets:
+            ;; lfSmCaptionFont @ +84+offset, lfMenuFont @ +148, lfStatusFont @ +212, lfMessageFont @ +276
+            ;; (Each LOGFONT is 60 bytes; use the same minimal pattern.)
+            (i32.store offset=84  (local.get $buf) (i32.const -11))
+            (i32.store offset=100 (local.get $buf) (i32.const 400))
+            (i32.store8 offset=112 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=113 (local.get $buf) (i32.const 0x53))
+            (i32.store offset=148 (local.get $buf) (i32.const -11))
+            (i32.store offset=164 (local.get $buf) (i32.const 400))
+            (i32.store8 offset=176 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=177 (local.get $buf) (i32.const 0x53))
+            (i32.store offset=212 (local.get $buf) (i32.const -11))
+            (i32.store offset=228 (local.get $buf) (i32.const 400))
+            (i32.store8 offset=240 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=241 (local.get $buf) (i32.const 0x53))
+            (i32.store offset=276 (local.get $buf) (i32.const -11))
+            (i32.store offset=292 (local.get $buf) (i32.const 400))
+            (i32.store8 offset=304 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=305 (local.get $buf) (i32.const 0x53))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
