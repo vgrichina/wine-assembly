@@ -58,12 +58,77 @@
 
 ## Current State
 
-The game window renders with title bar "3D Pinball for Windows - Space Cadet" and menu (Game, Options, Help). The client area shows teal background — the table bitmap (loaded from PINBALL.DAT) needs to be properly blitted. StretchDIBits is being called for sprite rendering but the main table background via BitBlt/CreateDIBitmap path may need work.
+Title screen renders correctly (table bitmap, palette, menu chrome) in both CLI and browser. F2 (New Game) is received and game state advances (1 ball → 2 balls in score panel), but no physics/animation: ball can't bounce because the wall collision data fails to load for 4 visuals.
+
+Blocker: **`# walls doesn't match data size`** fires 4× during PINBALL.DAT loading from a `loader_query_visual()` context. File reads return correct byte counts — the bug is somewhere subtler (struct size mismatch, alignment, or arithmetic on values read from the file).
+
+### msvcrt `floor` traced (this session)
+
+Hand-decoded `msvcrt.dll!floor` (file 0x2c7a1, RVA 0x2b7a1, default load 0x7802b7a1) — the disasm tool was mangling FPU bytes so I read raw bytes:
+
+- `floor()` prologue: saves FPU CW, calls a helper that does `fnstcw + or RC=01 + fldcw` (sets round-down mode)
+- Loads input via `fld qword [ebp+8]`, checks high word for NaN/Inf via `and ax, 0x7ff0; cmp ax, 0x7ff0`
+- Normal path: `call 0x7802e20e` — and **this helper is exactly**:
+  ```
+  7802e20e  55              push ebp
+  7802e20f  8b ec           mov ebp, esp
+  7802e211  51 51           push ecx; push ecx     ; reserve [ebp-8]
+  7802e213  dd 45 08        fld qword [ebp+8]
+  7802e216  d9 fc           frndint                ; ← rounds per current CW
+  7802e218  dd 5d f8        fstp qword [ebp-8]
+  7802e21b  dd 45 f8        fld qword [ebp-8]
+  7802e21e  c9              leave
+  7802e21f  c3              ret
+  ```
+
+So `floor()` **does** depend on `frndint` honoring the FPU control word's RC bits — which is exactly the bug I fixed in `06-fpu.wat`.
+
+Verified the fix is being exercised: instrumented `$fpu_round` with `host_log_i32` to log `(fpu_cw, value*1000)`. Saw consistent CW = `0x173F` (RC = 01 = round-down) and many distinct values flowing through. All tag-range floats appearing in `floor` inputs are exact integers: 401.0, 402.0, 403.0, 404.0, 405.0, 406.0, **407.0**, **408.0**.
+
+**New mystery**: the wall sub-loader at `0x01009349` only handles tags `0x191..0x196` (401..406). Tags 407 and 408 fall through the `dec eax` chain to the unknown-tag error path at `0x01009478`. But:
+- 407 appears in `floor` inputs as early as batch ~752 (before the first wall error at batch 755)
+- 4 wall errors fire total but values 401-407 appear repeatedly throughout the run
+- So either 407 is being processed by a *different* function (one of the 44 `floor` call sites in pinball.exe, not just the wall sub-loader), or our pinball.exe simply doesn't handle tags 407/408 at all and the failing visuals contain them
+
+The fix to `frndint` is **correct** but **does not** resolve pinball — `floor` was already working correctly in our emulator for integer-valued floats (which it produces correctly with any rounding mode). The wall errors have a different root cause: probably pinball.exe + PINBALL.DAT version mismatch where the data uses tags 407/408 not in the binary's switch table, OR there's a different code path that handles 407+ via a function I haven't yet identified.
+
+### FPU `frndint` correctness fix (this session)
+
+While investigating the wall hypothesis, found and fixed a real x87 bug in `src/06-fpu.wat`: `frndint` (`D9 FC`) was hardcoded to `f64.nearest`, ignoring the FPU control word's RC bits. Added a `$fpu_round` helper that switches on `(fpu_cw >> 10) & 3` → `f64.nearest` / `f64.floor` / `f64.ceil` / `f64.trunc`, and routed `frndint` through it. **This is a correctness fix but did NOT resolve the pinball wall errors** — msvcrt's `floor()` evidently doesn't reach `frndint` in our run, so the wall-decode failure has another root cause (still TBD; see below). `fistp` paths still use `i32.trunc_sat_f64_s` unconditionally; that's correct for `_ftol` (which sets RC=11 truncate before calling) but wrong for direct `fist`/`fistp` from generic code. Left for a follow-up.
+
+### Investigation so far (wall validation)
+
+- All 4 MessageBoxA calls share return address `0x01008fd2` → single error-reporter helper at `0x01008f7a`. The helper does `or eax, -1` before returning, so it always returns -1 to its caller.
+- Disasm of helper confirms it takes `(msg_id, caption_id)`, looks up text/caption pointers in a table at `0x010235f8` (entries `{key, ptr}` terminated by negative key). Caption=0x12 maps to "loader_query_visual()".
+- Disasm of `loader::query_visual` at `0x0100950c`: it's a switch on visual-tag values read as 16-bit words from `[esi]`. Cases for tags 100, 300, 304, 400, 406. The case for **tag 400 (`0x190` = RECTLIST)** is the only place that pushes `(msg_id=0xe, caption=0x12)`:
+  ```
+  010095eb  lea eax, [edi+0x14]      ; &visual->walls
+  010095ee  push eax
+  010095ef  movsx eax, word [esi]    ; sub-visual index
+  010095f2  push eax
+  010095f3  call 0x1009349           ; sub-loader
+  010095f8  test eax, eax
+  010095fa  jz .ok
+  01009600  push 0x12; push 0x0e     ; "# walls doesn't match data size"
+  01009604  call 0x1008f7a
+  ```
+- **Sub-loader `0x01009349`** (~250 bytes): Loads two group-data blobs by index — type-0 (must start with `word 0x190`) and type-0xb (a list of records). Each record's tag is decoded as: `fld dword [esi]; sub esp,8; fstp qword [esp]; call [floor]; call _ftol; movsx eax, ax`. So tags are stored as **single-precision floats** (e.g. 401.0..406.0) and converted via msvcrt's `floor` + `_ftol`. Switch jumps on tags `0x191..0x196`; unknown → inner error path which **also** calls the same helper (caption 0x14, msg_id varies).
+- **Mystery**: Trace shows exactly **4** MessageBoxA calls, all caption=0x010017ec, all msg_id=0xe (text "# walls doesn't match data size"). Inner error paths in `0x01009349` should fire MessageBox with caption=0x14 BEFORE the outer fires with 0x12, but no such inner messages are observed. So either: (a) the inner function returns -1 via some path I haven't found that doesn't fire MessageBox; (b) the table lookup degenerates and the helper's caption arg actually maps both 0x12 and 0x14 to the same pointer 0x010017ec, hiding the inner errors as duplicates of the outer text — but text is selected by msg_id and only id=0xe gives "walls doesn't match"; (c) some path I'm not seeing.
+- `--break` is unreliable here: it only fires at WASM batch boundaries, so most in-block addresses report "0 hits" even when executed. This invalidated my earlier confidence in "inner error sites are not hit". Need a different debugging mechanism (host_log injection or deeper instrumentation) to actually trace the path through `0x01009349`.
+- EBP chain (12 deep) from each MessageBoxA call shows 3 distinct loader entry points hitting it:
+  - `0x01017c6f` — 1× failure (first)
+  - `0x010190b5` — 3× failures, via `0x0101c59f` / `0x01019bd7` / `0x0101a2d1` (different visual-loader sub-paths)
+  - All under `0x0101aaf5` → `0x01015426` (loader-root, likely `loader::loadfrom`)
+- Tooling improvement: `test/run.js` `--trace-api` now prints MessageBoxA return address + 12-deep EBP frame chain. This is what made it possible to localize the failures in one run.
 
 ### Next Steps
-1. **Table bitmap rendering** — Investigate why BitBlt to hwnd=0x10002 shows empty background. The game creates a DIB bitmap (CreateDIBitmap), selects it into a compatible DC, and blits the table. May need CreateDIBitmap or BitBlt improvements.
-2. **Sound playback** — WAV files are loaded into memory but waveOutWrite just marks buffers as done. Could add Web Audio API playback.
-3. **Input handling** — Mouse/keyboard events need to reach the game's PeekMessageA loop.
+1. **Trace the actual path through `0x01009349`** — `--break` is unreliable for in-block addresses; need either (a) `$host_log_i32` injection at the inner function's tag-switch, (b) a temporary x87-op trace in `06-fpu.wat` to log values returned by `floor`/`_ftol` during PINBALL.DAT loading, or (c) a `--trace-block` mode in run.js that logs every block-decode boundary by EIP.
+2. **Verify `getGroup_data` returns the right pointer** for the failing indices — could be a PINBALL.DAT parsing issue rather than FPU. The data format ("PARTOUT(4.0)RESOURCE.3D-Pinball" header) needs to be cross-referenced with the SpaceCadetPinball decomp.
+3. **Cross-reference msvcrt `floor` disassembly** — the disasm tool mangles FPU opcodes; need to hand-decode the bytes at `msvcrt.dll!floor` (file offset 0x2c7a1, RVA 0x2b7a1, runtime VA depends on load) to confirm whether it actually uses `frndint` or some other mechanism. `_ftol` is already confirmed to be `fstcw + or RC=11 + fldcw + fistp m64 + restore`, which works correctly with our truncate-always `fistp`.
+2. **STUCK detection default** — Pinball has a long row-by-row blit loop at `0x010048c2` (~0xCB × 0x18A bytes) that false-trips `--stuck-after=10`. Need `--stuck-after=2000` and ~5000 batches to reach the message loop now. Bump default, or count instructions instead of batches.
+3. **Perf regression?** — `pinball.md` previously said "~54K API calls across 500 batches"; current run needs ~5000 batches for ~45K calls. Worth investigating whether init genuinely got longer or block-cache/decoder regressed.
+4. **Sound playback** — WAV files loaded but `waveOutWrite` just marks buffers done. Could add Web Audio playback.
+5. **Input handling** — Mouse/keyboard events past F2 need to reach the game's PeekMessageA loop reliably.
 
 ## Architecture Notes
 

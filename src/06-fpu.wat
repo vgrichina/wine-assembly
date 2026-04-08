@@ -51,6 +51,16 @@
             (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))
             (global.set $flag_res (i32.const 0)))))))))
 
+  ;; Apply current FPU rounding-control (CW bits 10-11) to an f64.
+  ;; 00 = nearest-even, 01 = round down, 10 = round up, 11 = truncate.
+  (func $fpu_round (param $v f64) (result f64)
+    (local $rc i32)
+    (local.set $rc (i32.and (i32.shr_u (global.get $fpu_cw) (i32.const 10)) (i32.const 3)))
+    (if (result f64) (i32.eq (local.get $rc) (i32.const 1)) (then (f64.floor (local.get $v)))
+    (else (if (result f64) (i32.eq (local.get $rc) (i32.const 2)) (then (f64.ceil (local.get $v)))
+    (else (if (result f64) (i32.eq (local.get $rc) (i32.const 3)) (then (f64.trunc (local.get $v)))
+    (else (f64.nearest (local.get $v)))))))))
+
   (func $fpu_arith (param $a f64) (param $b f64) (param $op i32) (result f64)
     (if (result f64) (i32.eq (local.get $op) (i32.const 0)) (then (f64.add (local.get $a) (local.get $b)))
     (else (if (result f64) (i32.eq (local.get $op) (i32.const 1)) (then (f64.mul (local.get $a) (local.get $b)))
@@ -234,7 +244,7 @@
                 (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0)))
                 (call $fpu_push (local.get $v)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 4))
-              (then (call $fpu_set (i32.const 0) (f64.nearest (local.get $st0))) (return)))
+              (then (call $fpu_set (i32.const 0) (call $fpu_round (local.get $st0))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6))
               (then (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0))) (return))) ;; FSIN
             (if (i32.eq (local.get $rm) (i32.const 7))
