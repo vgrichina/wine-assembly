@@ -105,8 +105,11 @@ async function main() {
         // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
         // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
         scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
-      } else if (kind === 'keypress' || kind === 'keydown') {
+      } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'png') {
+        // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
+        scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else {
@@ -914,6 +917,18 @@ async function main() {
       } else if (ev.action === 'keydown' && renderer && renderer.handleKeyDown) {
         renderer.handleKeyDown(ev.code);
         logs.push(`[input] keydown vk=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'keyup' && renderer && renderer.handleKeyUp) {
+        renderer.handleKeyUp(ev.code);
+        logs.push(`[input] keyup vk=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'png' && renderer && renderer.canvas) {
+        try {
+          if (typeof renderer.repaint === 'function') renderer.repaint();
+          const buf = renderer.canvas.toBuffer('image/png');
+          fs.writeFileSync(ev.path, buf);
+          logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
       } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
