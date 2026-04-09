@@ -102,6 +102,38 @@ The fix to `frndint` is **correct** but **does not** resolve pinball — `floor`
 
 While investigating the wall hypothesis, found and fixed a real x87 bug in `src/06-fpu.wat`: `frndint` (`D9 FC`) was hardcoded to `f64.nearest`, ignoring the FPU control word's RC bits. Added a `$fpu_round` helper that switches on `(fpu_cw >> 10) & 3` → `f64.nearest` / `f64.floor` / `f64.ceil` / `f64.trunc`, and routed `frndint` through it. **This is a correctness fix but did NOT resolve the pinball wall errors** — msvcrt's `floor()` evidently doesn't reach `frndint` in our run, so the wall-decode failure has another root cause (still TBD; see below). `fistp` paths still use `i32.trunc_sat_f64_s` unconditionally; that's correct for `_ftol` (which sets RC=11 truncate before calling) but wrong for direct `fist`/`fistp` from generic code. Left for a follow-up.
 
+### Wall error site is a SHARED CALL — not the JZ fall-through (2026-04-08)
+
+Spent a session chasing a phantom decoder bug. Decisive instrumentation:
+
+- Hooked `$th_jcc` to log the JZ at `0x010095fa`. It fires **112 times, taken every single time**. The fall-through path to `0x01009600` (`push 0x12; push 0x0e; call 0x01008f7a`) is **never executed in our run**.
+- Hooked the `$run` loop to log eip transitions into `0x01009604`. The 4 wall-error fires all come from `prev_eip = 0x0100974f`.
+- Disasm of `0x0100974f`:
+  ```
+  0100973c  cmp ax, 0x1
+  01009740  jnz short 0x1009747
+  01009742  mov [edi+0x8], ebx
+  01009745  jmp short 0x1009727        ; success
+  01009747  movsx eax, ax
+  0100974a  cmp eax, [edi+0x8]
+  0100974d  jz short 0x1009727         ; success
+  0100974f  push 0x12
+  01009751  push 0x8                   ; ← msg_id=8 = "# walls doesn't match data size"
+  01009753  jmp 0x1009604              ; jumps INTO the previous error_reporter call site
+  ```
+- The compiler emitted a JMP into the middle of the previous (`0x01009600..0x01009609`) error sequence, **reusing only its `call 0x01008f7a; jmp 0x0100972c` tail**. So the disasm of `0x01009600` (`push 0x12; push 0x0e`) is the source-level error site for tag 400, but the **runtime error site is `0x0100974f`** with msg_id=8 (a count-mismatch check unrelated to the tag-400 path).
+- Earlier "msg_id mismatch" finding (push trace showed `last_push0=8, last_push1=0x12`) was correct — those are pushed at `0x0100974f-51` by the shared-call site. There is no decoder bug. The decoder, cache, JCC fall-through, and call_rel emit are all correct.
+
+So the **real bug** is in the count-mismatch check at `0x0100974a`: `eax (movsx ax)` does not equal `[edi+8]`. One side is wrong.
+
+Context for `[edi+8]` and `ax`:
+- The block lives in some loader function around `0x010096a4..0x01009753`. It calls `0x0100905b` (a sub-loader) at `0x01009612` and processes results in a loop that ends at `0x0100971b: test ax, ax / jnz 0x0100973c`.
+- `[edi+8]` is the **expected wall count** stored on the visual record by an earlier code path.
+- `ax` is the **actual count** returned/computed somewhere.
+- They mismatch in 4 visuals.
+
+**Next investigation step**: instrument around `0x0100974a` to log `eax` and `[edi+8]` for each of the 4 failures, then trace back which load wrote each side wrong. The previous wall sub-loader (`0x01009349`) is **not** the failing function — it returns success on this path; the failure is in a different sub-loader (probably `0x0100905b`) or the count comparison itself.
+
 ### Investigation so far (wall validation)
 
 - All 4 MessageBoxA calls share return address `0x01008fd2` → single error-reporter helper at `0x01008f7a`. The helper does `or eax, -1` before returning, so it always returns -1 to its caller.
