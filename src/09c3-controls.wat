@@ -193,9 +193,115 @@
     ;; Class 3 = Static
     (if (i32.eq (local.get $class) (i32.const 3))
       (then (return (call $static_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 10 = Find/Replace dialog parent (WAT-built)
+    (if (i32.eq (local.get $class) (i32.const 10))
+      (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
+
+  ;; ---- Find/Replace dialog parent wndproc ----
+  ;;
+  ;; Handles WM_COMMAND posted by child buttons (Find Next id=1, Cancel id=2).
+  ;; Reads the FINDREPLACE struct guest ptr from the dialog's userdata
+  ;; (stashed by $create_findreplace_dialog), populates the buffer + flags
+  ;; the way commdlg's real find dialog does, and posts the registered
+  ;; message (matching the JS-side _handleFindDialogButton path) to the
+  ;; owner. Owner is typically notepad's main window — so $wnd_send_message
+  ;; will queue this via post_queue and notepad's GetMessage loop picks it
+  ;; up just like a PostMessage.
+  ;;
+  ;; FINDREPLACE struct (offsets we touch):
+  ;;   +0x04  hwndOwner
+  ;;   +0x0C  Flags          (read-modify-write)
+  ;;   +0x10  lpstrFindWhat  (guest ptr)
+  ;;   +0x18  wFindWhatLen   (u16, max chars in lpstrFindWhat buffer)
+  ;;
+  ;; Flags constants:
+  ;;   FR_DOWN        = 0x0001
+  ;;   FR_MATCHCASE   = 0x0004
+  ;;   FR_FINDNEXT    = 0x0008
+  ;;   FR_DIALOGTERM  = 0x0040
+  (func $findreplace_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $fr i32) (local $fr_w i32)
+    (local $owner i32) (local $flags i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $text_src_w i32) (local $text_len i32) (local $max_len i32)
+    (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
+    (local $mc_h i32) (local $rd_h i32)
+
+    ;; WM_COMMAND only
+    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
+    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+    ;; Recover FR ptr stashed at userdata, owner from FR+4.
+    (local.set $fr (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $fr)) (then (return (i32.const 0))))
+    (local.set $fr_w (call $g2w (local.get $fr)))
+    (local.set $owner (i32.load offset=4 (local.get $fr_w)))
+
+    ;; ---- Cancel (id=2) ----
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then
+        (local.set $flags (i32.load offset=12 (local.get $fr_w)))
+        ;; clear FR_FINDNEXT(0x08), set FR_DIALOGTERM(0x40)
+        (local.set $flags (i32.or (i32.and (local.get $flags) (i32.const 0xFFFFFFB7))
+                                  (i32.const 0x40)))
+        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        (drop (call $wnd_send_message (local.get $owner)
+                (i32.const 0xC000) (i32.const 0) (local.get $fr)))
+        (return (i32.const 0))))
+
+    ;; ---- Find Next (id=1) ----
+    (if (i32.eq (local.get $cmd) (i32.const 1))
+      (then
+        ;; Build flags = FR_FINDNEXT | (matchCase ? FR_MATCHCASE : 0) | (down ? FR_DOWN : 0)
+        (local.set $flags (i32.const 0x08))
+        (local.set $mc_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x411)))
+        (if (local.get $mc_h)
+          (then (if (i32.and (call $button_get_flags_internal (local.get $mc_h)) (i32.const 0x02))
+                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04)))))))
+        (local.set $rd_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x421)))
+        (if (local.get $rd_h)
+          (then (if (i32.and (call $button_get_flags_internal (local.get $rd_h)) (i32.const 0x02))
+                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x01)))))))
+        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        ;; Copy edit text into FR.lpstrFindWhat (clamped to wFindWhatLen-1).
+        (local.set $edit_h (global.get $findreplace_edit_hwnd))
+        (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
+        (if (local.get $edit_state)
+          (then
+            (local.set $edit_sw (call $g2w (local.get $edit_state)))
+            (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+            (local.set $find_buf_g (i32.load offset=16 (local.get $fr_w)))
+            (local.set $max_len (i32.load16_u offset=24 (local.get $fr_w)))
+            (if (i32.and (local.get $find_buf_g) (i32.gt_u (local.get $max_len) (i32.const 0)))
+              (then
+                (local.set $find_buf_w (call $g2w (local.get $find_buf_g)))
+                (if (i32.ge_u (local.get $text_len) (local.get $max_len))
+                  (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
+                (if (i32.load (local.get $edit_sw))
+                  (then
+                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (if (local.get $text_len)
+                      (then (call $memcpy (local.get $find_buf_w)
+                                          (local.get $text_src_w)
+                                          (local.get $text_len))))))
+                (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))
+        (drop (call $wnd_send_message (local.get $owner)
+                (i32.const 0xC000) (i32.const 0) (local.get $fr)))
+        (return (i32.const 0))))
+
+    (i32.const 0)
+  )
+
+  ;; Internal helper for $findreplace_wndproc — reads ButtonState.flags
+  ;; without the export-layer wrapping.
+  (func $button_get_flags_internal (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=8 (call $g2w (local.get $s))))
 
   ;; ---- Shared text-buffer helper for state structs ----
   ;;
@@ -1014,6 +1120,10 @@
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    ;; Tag the parent dialog as control class 10 so $control_wndproc_dispatch
+    ;; routes WM_COMMAND from child buttons to $findreplace_wndproc.
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 10) (i32.const 0))
     ;; Static "Find what:"
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
