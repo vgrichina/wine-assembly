@@ -22,6 +22,7 @@ const hasFlag = name => args.includes(`--${name}`);
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
+const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
@@ -100,6 +101,10 @@ async function main() {
         // tests to drive OK/Cancel without a per-class hwnd export.
         scheduledInput.push({ batch, action: 'class-cmd',
           ctrlClass: parseInt(parts[2]), cmdId: parseInt(parts[3]) });
+      } else if (kind === 'open-dlg-pick') {
+        // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
+        // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
+        scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
       } else if (kind === 'keypress' || kind === 'keydown') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'click') {
@@ -145,6 +150,7 @@ async function main() {
     verbose: VERBOSE,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
+    dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     readFile: (name) => {
       // Try to find file relative to exe directory
       const exeDir = path.dirname(EXE_PATH);
@@ -818,6 +824,42 @@ async function main() {
         const used = we.wnd_count_used ? we.wnd_count_used() : -1;
         const tag = ev.label ? ` ${ev.label}` : '';
         logs.push(`[input] slot-count${tag}: used=${used} dlg=0x${(dlg||0).toString(16)} at batch ${batch}`);
+      } else if (ev.action === 'open-dlg-pick') {
+        // Walk slots for a class-12 (Open/Save) dialog parent, find its
+        // filename edit child (ctrl id 0x442), WM_SETTEXT a heap-alloc'd
+        // filename, then post WM_COMMAND id=IDOK=1 to the dialog.
+        const we = instance.exports;
+        let dlg = 0;
+        for (let s = 0; s < 256; s++) {
+          const h = we.wnd_slot_hwnd(s);
+          if (h && we.ctrl_get_class(h) === 12) { dlg = h; break; }
+        }
+        if (!dlg) {
+          logs.push(`[input] open-dlg-pick: no class-12 dialog at batch ${batch}`);
+        } else {
+          // Find filename edit by walking parent's children
+          let edit = 0;
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const h = we.wnd_slot_hwnd(s);
+            if (we.ctrl_get_class(h) === 2 && we.ctrl_get_id(h) === 0x442) { edit = h; break; }
+            s++;
+          }
+          if (!edit) {
+            logs.push(`[input] open-dlg-pick: no filename edit at batch ${batch}`);
+          } else {
+            // Alloc the filename in guest memory + WM_SETTEXT it
+            const name = ev.filename;
+            const g = we.guest_alloc(name.length + 1);
+            const wa = g2w(g);
+            const u8 = new Uint8Array(memory.buffer);
+            for (let i = 0; i < name.length; i++) u8[wa + i] = name.charCodeAt(i);
+            u8[wa + name.length] = 0;
+            we.send_message(edit, 0x000C, 0, g);       // WM_SETTEXT
+            we.send_message(dlg, 0x0111, 1, 0);        // WM_COMMAND IDOK
+            logs.push(`[input] open-dlg-pick: ${name} at batch ${batch}`);
+          }
+        }
       } else if (ev.action === 'class-cmd') {
         // Walk WND_RECORDS, find first hwnd whose control class matches,
         // then send WM_COMMAND. Used to close About dialog (class 11) etc.
@@ -1112,6 +1154,16 @@ if (VERBOSE) {
     const pngBuf = renderer.canvas.toBuffer('image/png');
     fs.writeFileSync(PNG_OUT, pngBuf);
     console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
+    // DEBUG: also dump every window's _backCanvas so we can see what's
+    // accumulated independent of the compositor.
+    for (const [hwnd, win] of Object.entries(renderer.windows)) {
+      if (win && win._backCanvas) {
+        const back = win._backCanvas.toBuffer('image/png');
+        const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);
+        fs.writeFileSync(out, back);
+        console.log(`  Wrote ${out} (${back.length} bytes, ${win._backW}x${win._backH})`);
+      }
+    }
   }
 
   // Dump all GDI bitmaps as PNGs
@@ -1141,6 +1193,24 @@ if (VERBOSE) {
       count++;
     }
     console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
+  }
+
+  // Dump StretchDIBits source DIBs and per-call log
+  if (DUMP_SDB && createCanvas && ctx.dumpSdb) {
+    fs.mkdirSync(DUMP_SDB, { recursive: true });
+    let imgCount = 0;
+    for (const [key, img] of ctx.dumpSdb.images) {
+      const c = createCanvas(img.w, img.h);
+      const cc = c.getContext('2d');
+      const id = cc.createImageData(img.w, img.h);
+      id.data.set(img.pixels);
+      cc.putImageData(id, 0, 0);
+      const outFile = path.join(DUMP_SDB, `sdb_${key}.png`);
+      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      imgCount++;
+    }
+    fs.writeFileSync(path.join(DUMP_SDB, 'calls.log'), ctx.dumpSdb.log.join('\n') + '\n');
+    console.log(`Dumped ${imgCount} StretchDIBits source DIBs and ${ctx.dumpSdb.log.length} call records to ${DUMP_SDB}/`);
   }
 }
 

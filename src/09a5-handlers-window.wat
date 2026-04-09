@@ -388,20 +388,31 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $main_hwnd)) ;; lParam (non-zero)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 1: send WM_ERASEBKGND (wParam = hdc)
+    ;; Phase 1: send WM_SETFOCUS (pinball gates its game-running flag on this;
+    ;; without it the game sits in a modal GetMessage loop and never animates)
     (if (i32.eq (global.get $msg_phase) (i32.const 1))
     (then
     (global.set $msg_phase (i32.const 2))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0007)) ;; WM_SETFOCUS
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; hwndLoseFocus
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Phase 2: send WM_ERASEBKGND (wParam = hdc)
+    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    (then
+    (global.set $msg_phase (i32.const 3))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000))) ;; wParam = hdc
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 2: send WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    ;; Phase 3: send WM_PAINT
+    (if (i32.eq (global.get $msg_phase) (i32.const 3))
     (then
-    (global.set $msg_phase (i32.const 3))
+    (global.set $msg_phase (i32.const 4))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))

@@ -3,7 +3,92 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, reaches game loop (PeekMessageA), renders window with title bar and menu. Table bitmap rendering via StretchDIBits needs work. Clean exit (ExitProcess code=0). ~54K API calls across 500 batches.
+**Status:** Game initializes fully, **enters active gameplay loop on its own** (PeekMessageA polling, sprites animating). The wall-loader investigation below was barking up the wrong tree — the actual blocker was that pinball gates its game-running flag on `WM_SETFOCUS`, and our `GetMessageA` phase machine never delivered one. Fixed by inserting a WM_SETFOCUS phase between WM_ACTIVATE and WM_ERASEBKGND in `09a5-handlers-window.wat`.
+
+## Fix (2026-04-09): WM_SETFOCUS phase added to GetMessageA startup sequence
+
+Found by reading the game wndproc dispatch (`0x01007a3e`):
+
+- `01007ac7..01007ae3`: when `uMsg == WM_SETFOCUS (0x07)`, the game writes `[0x1024fec] = 1` and `[0x1024ff4] = 1` and runs three init calls.
+- `01007bdf..01007bf0`: when `uMsg == WM_KILLFOCUS (0x08)`, it clears `[0x1024fec]`.
+
+The outer game loop (`0x01008940`) checks `[0x1024fec]` and `[0x1024fd8]` to decide between two message-loop functions:
+- `0x010082a9` — modal `GetMessageA`-only loop (used when `[0x1024fec] == 0`)
+- inline peek loop at `0x010087c0..0x010087f3` — `PeekMessageA(PM_REMOVE)` polled with a 2-second `timeGetTime` budget (used when `[0x1024fec] != 0`)
+
+Without ever receiving `WM_SETFOCUS`, the game stayed in the modal `GetMessageA` branch forever and the active gameplay code paths (`0x01004beb`+ inner functions, sprite blits, ball physics) were never reached.
+
+Fix in `src/09a5-handlers-window.wat`: bumped the `$msg_phase` state machine from a 3-step (WM_ACTIVATE → WM_ERASEBKGND → WM_PAINT) startup sequence to a 4-step one with `WM_SETFOCUS (0x07)` inserted as phase 1. Phase indices renumbered 0..4. This matches what real Windows does: when a top-level window is shown and activated, it gets a focus message before its first paint.
+
+### Verification
+
+Before the fix (`--max-batches=10000`):
+- 733 PeekMessageA calls (early attract burst), then 7637 GetMessageA calls (modal idle).
+- ~61K API calls total.
+- Final EIP `0x0100830f` — sitting in the modal message-loop function.
+
+After the fix:
+- 3026 PeekMessageA calls, only 2 GetMessageA calls.
+- 8944 StretchDIBits calls (sprites animating continuously).
+- ~76K API calls total.
+- Final EIP `0x01004c02` — inside the inner game tick code (not the message loop).
+- Watchpoint on `0x01024fec` confirms the flag flips 0→1 at batch 2372 (when WM_SETFOCUS gets dispatched).
+
+Regression-checked notepad, calc, freecell, ski32 — all still reach clean exit.
+
+## In-progress (2026-04-09): StretchDIBits sub-rect blits render wrong
+
+After the WM_SETFOCUS fix above, pinball reaches active gameplay and issues ~8900 `StretchDIBits` calls per 10K batches. The rendered window has the table backdrop visible but **sprites, score-panel text, ball, lights, and digits all look wrong**. Investigation so far:
+
+### What we proved correct
+- **Single source bitmap.** All 8934 calls use the same `bits=0x63020c`, `bmi=0x62fde4`, `biW=600 biH=416` (bottom-up), `bpp=8`, `colorUse=DIB_PAL_COLORS`, `pal2`. Same `rop=SRCCOPY`. Same window DC `hdc=0x50002`. No `BitBlt`/`CreateDIBSection`/secondary DC anywhere.
+- **Source decode is correct.** When we re-decode the entire 600×416 source DIB from WASM memory, the resulting image is recognizable: at startup it's the bare table backdrop; later snapshots show pinball CPU-composing extra content into it ("Player 1", "Awaiting Deployment", score digits, ball graphics) at their visible screen positions. So the source pointer is right, the bottom-up Y handling is right, the palette (mirrored at WASM 0x6020 by `SelectPalette`) is right.
+- **The pixel buffer that the per-blit code generates is correct.** Dumping the per-call `pixels` array for the first 30 sub-rect blits gives recognizable sprites: "BALL 1" at 165×44, the "3D Pinball Space Cadet" header at 165×88, individual purple/orange/blue bumper sprites at 21×21, etc.
+- **Forcing every blit to copy the entire 600×416 buffer renders correctly.** Added `SDB_FULL_BLIT=1` env override in `lib/host-imports.js` (gdi_stretch_dib_bits) that, after the normal sub-rect draw, additionally re-blits the whole back-buffer to the window canvas. With this on, the screen looks correct end-to-end (table + score panel text + sprites). With it off, only the table backdrop is right and everything else is mangled.
+
+### Diagnostic infrastructure added
+- `test/run.js --dump-sdb=DIR` (new flag) — writes one PNG per call's source sub-rect (`sdb_subrect_NNN_srcXxY_WxH_dstXxY.png`), full-DIB snapshots at call indices `[0, 1, 5, 6, 100, 1000, 5000]` (`sdb_*_at<N>.png`), and a `calls.log` with every blit's parameters. Implemented in `lib/host-imports.js` `gdi_stretch_dib_bits` under `if (ctx.dumpSdb)`.
+- `test/run.js --png=...` now ALSO dumps each window's `_backCanvas` to `<png>_back_<hwnd>.png` so we can see the offscreen canvas independent of the compositor.
+- `SDB_FULL_BLIT=1` env var — debug-only override that overpaints the full back-buffer on every StretchDIBits call. Useful for confirming "is the bug in the small blits or in pixel decoding".
+- `SDB_DEBUG=1` env var — logs `bmi/bits/biW/biH/bpp/rowBytes/src/dst/canvas` for the first 12 blits.
+
+### What's still wrong
+With `SDB_FULL_BLIT` off, dumping `_backCanvas` directly (bypassing the compositor) shows:
+- Table backdrop is laid down correctly (from the 2 startup full-screen blits at calls #4/#5).
+- Right-side score panel area shows TWO stacked copies of the static "Space Cadet" panel, not the live score/text.
+- General visible content matches what you'd get if many sub-rect blits were copying *static portions of the source DIB* rather than the *current sprite content* pinball is supposed to have written into those positions.
+
+So the sub-rect blits ARE landing in `_backCanvas` (no canvas-clearing bug, no compositor bug), but they're reading **stale or wrong source pixels** at the moment of the blit — even though the snapshot we take at higher call indices clearly shows pinball does eventually write the right content into the buffer.
+
+### Top theories (untested)
+1. **Pinball uses two buffers and we're conflating them.** The `bits` pointer in StretchDIBits points to a sprite-cell scratch buffer; pinball CPU-renders the visible game state into a *different* framebuffer (which is what our snapshots are picking up because both addresses happen to land in the same WASM memory range). Need to add a heap-trace to see what allocator returns 0x63020c and whether pinball touches another nearby allocation.
+2. **Address-translation skew between CPU writes and StretchDIBits reads.** Pinball's CPU writes go through one address translation, our `gdi_stretch_dib_bits` reads through `g2w`-translated `bitsWA`. If the two land at different WASM offsets we'd read stale-ish bytes that drift over time.
+3. **`hdc=0x50002` isn't actually the window DC.** If our `_getDrawTarget` resolves it to the wrong target (e.g., a memory DC selected into something), the sub-rect blits paint to the right canvas but pinball *thinks* it painted somewhere else and never re-issues them. Less likely because the SDB_FULL_BLIT override hits the same `t.ctx` and looks correct.
+
+### Observed sub-rect call pattern
+First 12 calls (from `--dump-sdb` log):
+```
+#0  src=(553,242 15x22)  dst=(553,152 15x22)
+#1  src=(403,197 15x22)  dst=(403,197 15x22)   ← src == dst
+#2  src=(405,133 165x44) dst=(405,239 165x44)  ← src != dst, large rect
+#3  src=(405,25  165x88) dst=(405,303 165x88)  ← src != dst, large rect
+#4  src=(0,0    600x416) dst=(0,0   600x416)   ← full-screen
+#5  src=(0,0    600x416) dst=(0,0   600x416)   ← full-screen
+#6  src=(51,166  21x21)  dst=(51,229 21x21)
+#7  src=(41,190  21x20)  dst=(41,206 21x20)
+...
+```
+Mix of identity blits and src≠dst blits. Whatever architecture pinball is using, it's NOT a simple "compose at final coords + push changed regions" — there's at least one level of scratch-cell indirection, which is why the source DIB position read for a blit is *not* the visible-screen position pinball expects to update.
+
+### Files touched in this investigation
+- `lib/host-imports.js` — `gdi_stretch_dib_bits`: added `--dump-sdb` instrumentation, `SDB_DEBUG`/`SDB_FULL_BLIT` env hooks, fixed `SelectPalette` to mirror palette index at WASM 0x6020 so DIB_PAL_COLORS resolves the right table per blit.
+- `src/09a-handlers.wat` — `$handle_SelectPalette` writes resolved palette index (0..3) to memory 0x6020.
+- `test/run.js` — `--dump-sdb=DIR` flag, `_backCanvas` dump alongside `--png`.
+
+### Next steps to try
+1. Heap-trace to identify what allocator returns the 0x63020c region and whether pinball calls it once or twice (single buffer vs two buffers theory).
+2. Add a memory watchpoint on a few bytes inside 0x63020c+(553*600+242) (the source position of blit #0) and see whether pinball CPU-writes to that exact address before blit #0 fires. If yes, our address translation is fine and the bug is elsewhere. If no, pinball is writing somewhere else and we're reading the wrong place.
+3. If theories 1-2 don't pan out, hand-disasm the pinball routine that calls StretchDIBits (the EIP at the time of the call; visible in the trace) to see where it gets `lpBits` and `xSrc/ySrc` from.
 
 ## What Works
 
@@ -61,6 +146,46 @@
 Title screen renders correctly (table bitmap, palette, menu chrome) in both CLI and browser. F2 (New Game) is received and game state advances (1 ball → 2 balls in score panel), but no physics/animation: ball can't bounce because the wall collision data fails to load for 4 visuals.
 
 Blocker: **`# walls doesn't match data size`** fires 4× during PINBALL.DAT loading from a `loader_query_visual()` context. File reads return correct byte counts — the bug is somewhere subtler (struct size mismatch, alignment, or arithmetic on values read from the file).
+
+### Re-verification (2026-04-09): wall-error path is NOT exercised in current CLI run
+
+Re-ran CLI baseline (`node test/run.js --exe=test/binaries/pinball/pinball.exe --max-batches=10000 --stuck-after=5000`). Findings that contradict the notes above:
+
+- **Zero MessageBoxA calls.** Filtered the entire `--trace-api` log: no "walls doesn't match data size" fires.
+- **`loader_query_visual` (0x0100950c) is never reached.** `--break=0x0100950c` → no hit in 10K batches.
+- **`loader::loadfrom` root (0x01015426) is never reached.** `--break=0x01015426` → no hit either.
+- **Wall-loader sub-call (0x01009349) and the count-mismatch site (0x0100974f) both never hit.**
+
+So whatever path was producing the 4 wall errors in the previous session is no longer being executed at all. PINBALL.DAT *is* still being opened (CreateFileA + many `_lopen`/`_lread` calls trace through), but via a different loader entry that does not call `loader_query_visual`. The "wall validation" investigation in the sections below is operating on a code path the runtime no longer enters — chase this with fresh instrumentation before trusting any of the prior conclusions.
+
+### New blocker (2026-04-09): game switches from PeekMessageA loop to GetMessageA modal loop
+
+Trace shape after the title screen renders:
+
+1. PeekMessageA polling loop runs from API #25013..#27263 (~750 polls — this is the active game loop).
+2. At #27266 the game calls `EnableMenuItem(menu=0x80001, id=0x67)`, `EnableMenuItem(id=0x191)`, `CheckMenuItem(id=0x194)` — game-state menu sync, suggesting it just left an attract/intro state.
+3. Several rounds of `GetDC → SelectPalette → RealizePalette → StretchDIBits → ReleaseDC` paint sprites (score panel digits).
+4. Then a long, hot loop calls `GetLastError → TlsGetValue → SetLastError` ~30 000 times. The code site is `0x0100a482..0x0100a4d4`:
+   ```
+   0100a482  mov ebx, [0x1001304]   ; IAT slot — almost certainly msvcrt!rand
+   0100a488  call ebx               ; rand()
+   0100a48a  push 0x64; cdq; pop ecx; idiv ecx   ; eax % 100
+   0100a490  cmp edx, 0x46          ; <= 70 ? skip : do FPU branch
+   ...
+   0100a4a3  call ebx               ; rand() again on the "do" branch
+   0100a4d1  dec [ebp-0xc]; jnz 0x100a482   ; loop counter
+   0100a4d6  jmp 0x100a297          ; outer loop continuation
+   ```
+   The `db 0xdb 45 ec` / `db 0xdc` bytes the disassembler is choking on are FPU ops (`fild`/`fmul` etc.), so this loop is the game's randomized sound/animation pump. Each `call rand` expands to the GetLastError/TlsGetValue/SetLastError triple because msvcrt's `rand` touches `_errno`. Not necessarily wrong, but it's where the run spends most of its budget.
+5. Once the rand loop exits, pinball receives `WM_ACTIVATE` (DefWindowProcA msg=0x06 wParam=1), does one BeginPaint/EndPaint, and **switches to `GetMessageA` blocking loop** (#27810 onward, 7 600+ calls). It never returns to PeekMessageA.
+
+`GetMessageA` instead of `PeekMessageA` means the game's main loop branch decided "not currently running" and is now blocked waiting for input. In CLI we never deliver any, so it sits forever. This is the *current* blocker, not the wall-loader. To make progress: figure out what set the "not running" flag during the menu-sync transition (#27266) and whether the rand loop is supposed to terminate via a different exit (it currently runs ~30 K iterations before falling through).
+
+Suggested next steps:
+- Re-verify in browser whether the title screen still renders the same way and whether F2 → game start still works there. The browser path may behave differently because input is delivered.
+- Instrument `EnableMenuItem` / `CheckMenuItem` callers around #27266 to find which game-state setter ran. The id 0x191 = 401 is a menu cmd, not a wall tag — coincidence.
+- Add a one-shot host log around eip 0x0100a297 (outer loop head) to confirm the rand loop exits cleanly and to count outer iterations.
+- Inject `WM_KEYDOWN VK_F2` *after* the GetMessageA loop is reached and see if the game can start from there (CLI input injection at a fixed batch via `--input=`).
 
 ### Version-mismatch hypothesis DISPROVED (2026-04-08)
 

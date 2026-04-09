@@ -3416,11 +3416,16 @@
   )
 
   ;; 359: SelectPalette(hdc, hPalette, bForceBackground) — 3 args stdcall
-  ;; Store selected palette handle for this DC; return previous palette
+  ;; Store selected palette handle for this DC; return previous palette.
+  ;; Also mirror the resolved palette index (0-3) at memory 0x6020 so the JS
+  ;; StretchDIBits handler can resolve DIB_PAL_COLORS against the right table.
   (func $handle_SelectPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $prev i32)
+    (local $prev i32) (local $idx i32)
     (local.set $prev (global.get $selected_palette))
     (global.set $selected_palette (local.get $arg1))
+    (local.set $idx (i32.sub (local.get $arg1) (i32.const 0x000A0001)))
+    (if (i32.and (i32.ge_s (local.get $idx) (i32.const 0)) (i32.lt_u (local.get $idx) (i32.const 4)))
+      (then (i32.store (i32.const 0x6020) (local.get $idx))))
     (global.set $eax (local.get $prev))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
@@ -4165,7 +4170,8 @@
 
   ;; 439: GetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_GetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_gdi_get_dib_color_table
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 440: SetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
@@ -6332,6 +6338,18 @@
   ;; 655: AppendMenuW — STUB: unimplemented
   (func $handle_AppendMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; AppendMenuA(hMenu, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  (func $handle_AppendMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 656: DeleteMenu — STUB: unimplemented
