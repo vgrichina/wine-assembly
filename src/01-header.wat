@@ -278,7 +278,19 @@
   (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE)
-  (global $WND_TABLE     i32 (i32.const 0x00002000))  ;; 64 entries × 8 bytes (ends 0x2200)
+  ;; WND_RECORDS: unified per-window record. Replaces the parallel
+  ;; WND_TABLE / PARENT_TABLE / USERDATA_TABLE / STYLE_TABLE arrays.
+  ;;   +0   hwnd        (0 = empty slot)
+  ;;   +4   wndproc
+  ;;   +8   parent
+  ;;   +12  userdata    (GWL_USERDATA)
+  ;;   +16  style
+  ;;   +20  state_ptr   (heap ptr to per-class WndState; 0 if none)
+  ;; 64 entries × 24 bytes = 0x600 (0x2000..0x2600)
+  (global $WND_RECORDS   i32 (i32.const 0x00002000))
+  (global $MAX_WINDOWS   i32 (i32.const 64))
+  ;; (free 0x2600..0x2980)
+  (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
   ;;   +4  atom (assigned at registration)
@@ -286,11 +298,6 @@
   ;; 16 entries × 48 bytes = 0x300 (ends 0x3080)
   (global $CLASS_RECORDS i32 (i32.const 0x00002D80))
   (global $MAX_CLASSES   i32 (i32.const 16))
-  (global $PARENT_TABLE  i32 (i32.const 0x000022C0))  ;; 64 entries × 4 bytes (ends 0x23C0)
-  (global $USERDATA_TABLE i32 (i32.const 0x000023C0)) ;; 64 entries × 4 bytes (ends 0x24C0)
-  (global $STYLE_TABLE   i32 (i32.const 0x00002600))  ;; 64 entries × 4 bytes (ends 0x2700)
-  (global $MAX_WINDOWS   i32 (i32.const 64))
-  (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1

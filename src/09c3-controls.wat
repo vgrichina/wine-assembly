@@ -60,7 +60,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-        (local.set $addr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
+        (local.set $addr (call $wnd_record_addr (local.get $i)))
         (local.set $hwnd (i32.load (local.get $addr)))
         (if (i32.ne (local.get $hwnd) (i32.const 0))
           (then

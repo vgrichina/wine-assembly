@@ -1,42 +1,52 @@
   ;; ============================================================
   ;; WINDOW TABLE + HELP SYSTEM
   ;; ============================================================
-  ;; Window table at WASM 0x2000: maps hwnd → wndproc (max 64 entries)
-  ;; Each entry: [hwnd:i32, wndproc:i32] = 8 bytes, total 512 bytes (ends 0x2200)
-  ;; wndproc = guest VA for x86 wndproc, or 0xFFFFxxxx for WAT-native
+  ;; WND_RECORDS at WASM 0x2000: 64 entries × 24 bytes (ends 0x2600)
+  ;; Each record:
+  ;;   +0   hwnd       (0 = empty slot)
+  ;;   +4   wndproc    (guest VA, or 0xFFFFxxxx for WAT-native)
+  ;;   +8   parent     (parent hwnd, 0 if top-level)
+  ;;   +12  userdata   (GWL_USERDATA)
+  ;;   +16  style
+  ;;   +20  state_ptr  (heap ptr to per-class WndState, 0 if none)
   ;;
   ;; Class records at WASM 0x2D80: 16 entries × 48 bytes (ends 0x3080)
   ;; Each entry: [name_hash:i32, atom:i32, WNDCLASSA[40]]
   ;; lpfnWndProc lives at record+12 (offset 4 inside the embedded WNDCLASSA).
-  ;;
-  ;; Parent table at WASM 0x22C0: maps slot index → parent hwnd (max 64 entries)
-  ;; Each entry: [parent_hwnd:i32] = 4 bytes (ends 0x23C0)
 
-  ;; ---- Window table helpers ----
+  ;; ---- Window record helpers ----
 
-  ;; Add or update hwnd→wndproc mapping
+  ;; Address of window record N: WND_RECORDS + slot * 24
+  (func $wnd_record_addr (param $slot i32) (result i32)
+    (i32.add (global.get $WND_RECORDS) (i32.mul (local.get $slot) (i32.const 24))))
+
+  ;; Add or update hwnd→wndproc mapping. Allocates a fresh slot for a new
+  ;; hwnd, or updates the existing slot's wndproc field.
   (func $wnd_table_set (param $hwnd i32) (param $wndproc i32)
     (local $i i32) (local $ptr i32) (local $empty i32)
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
-      ;; Update existing entry
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (i32.store offset=4 (local.get $ptr) (local.get $wndproc)) (return)))
-      ;; Track first empty slot
       (if (i32.and (i32.eqz (i32.load (local.get $ptr)))
                    (i32.eq (local.get $empty) (i32.const -1)))
         (then (local.set $empty (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    ;; Insert in empty slot
     (if (i32.ne (local.get $empty) (i32.const -1))
       (then
-        (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $empty) (i32.const 8))))
-        (i32.store (local.get $ptr) (local.get $hwnd))
-        (i32.store offset=4 (local.get $ptr) (local.get $wndproc))))
+        (local.set $ptr (call $wnd_record_addr (local.get $empty)))
+        ;; Zero the entire 24-byte record so a recycled slot does not inherit
+        ;; stale parent/userdata/style/state_ptr from a previous window.
+        (i32.store         (local.get $ptr) (local.get $hwnd))
+        (i32.store offset=4  (local.get $ptr) (local.get $wndproc))
+        (i32.store offset=8  (local.get $ptr) (i32.const 0))
+        (i32.store offset=12 (local.get $ptr) (i32.const 0))
+        (i32.store offset=16 (local.get $ptr) (i32.const 0))
+        (i32.store offset=20 (local.get $ptr) (i32.const 0))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -45,7 +55,7 @@
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (return (i32.load offset=4 (local.get $ptr)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -53,17 +63,21 @@
     (i32.const 0)
   )
 
-  ;; Remove hwnd from window table
+  ;; Remove hwnd from window table — zeroes the whole record.
   (func $wnd_table_remove (param $hwnd i32)
     (local $i i32) (local $ptr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then
-          (i32.store (local.get $ptr) (i32.const 0))
-          (i32.store offset=4 (local.get $ptr) (i32.const 0))
+          (i32.store         (local.get $ptr) (i32.const 0))
+          (i32.store offset=4  (local.get $ptr) (i32.const 0))
+          (i32.store offset=8  (local.get $ptr) (i32.const 0))
+          (i32.store offset=12 (local.get $ptr) (i32.const 0))
+          (i32.store offset=16 (local.get $ptr) (i32.const 0))
+          (i32.store offset=20 (local.get $ptr) (i32.const 0))
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -75,7 +89,7 @@
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $WND_TABLE) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -83,13 +97,13 @@
     (i32.const -1)
   )
 
-  ;; Get per-window userdata (GWL_USERDATA table at 0x23C0)
+  ;; Get per-window userdata (record+12)
   (func $wnd_get_userdata (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (global.get $USERDATA_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load offset=12 (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set per-window userdata; returns old value
@@ -98,19 +112,19 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $ptr (i32.add (global.get $USERDATA_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
-    (local.set $old (i32.load (local.get $ptr)))
-    (i32.store (local.get $ptr) (local.get $value))
+    (local.set $ptr (call $wnd_record_addr (local.get $idx)))
+    (local.set $old (i32.load offset=12 (local.get $ptr)))
+    (i32.store offset=12 (local.get $ptr) (local.get $value))
     (local.get $old)
   )
 
-  ;; Get parent hwnd (parent table at 0x22C0)
+  ;; Get parent hwnd (record+8)
   (func $wnd_get_parent (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (global.get $PARENT_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load offset=8 (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set parent hwnd for a window
@@ -119,16 +133,16 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store (i32.add (global.get $PARENT_TABLE) (i32.shl (local.get $idx) (i32.const 2))) (local.get $parent))))
+        (i32.store offset=8 (call $wnd_record_addr (local.get $idx)) (local.get $parent))))
   )
 
-  ;; Get window style (style table at 0x2600)
+  ;; Get window style (record+16)
   (func $wnd_get_style (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (global.get $STYLE_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.load offset=16 (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set window style; returns old value
@@ -137,10 +151,29 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $ptr (i32.add (global.get $STYLE_TABLE) (i32.shl (local.get $idx) (i32.const 2))))
-    (local.set $old (i32.load (local.get $ptr)))
-    (i32.store (local.get $ptr) (local.get $style))
+    (local.set $ptr (call $wnd_record_addr (local.get $idx)))
+    (local.set $old (i32.load offset=16 (local.get $ptr)))
+    (i32.store offset=16 (local.get $ptr) (local.get $style))
     (local.get $old)
+  )
+
+  ;; Get per-window state pointer (record+20). Heap ptr to a class-specific
+  ;; WndState struct (EditState, ButtonState, ...). 0 = no state.
+  (func $wnd_get_state_ptr (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load offset=20 (call $wnd_record_addr (local.get $idx)))
+  )
+
+  ;; Set per-window state pointer
+  (func $wnd_set_state_ptr (param $hwnd i32) (param $value i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store offset=20 (call $wnd_record_addr (local.get $idx)) (local.get $value))))
   )
 
   ;; ---- Class table helpers ----
