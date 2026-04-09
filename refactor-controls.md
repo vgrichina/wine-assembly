@@ -1,11 +1,17 @@
 # Refactor: Controls as Real Windows, JS as Dumb Renderer
 
-Status: STEPs 1-6 done. STEP 7 (route guest CreateWindowExA EDIT/BUTTON/STATIC
-through WAT) next — high risk, see Risk register.
+Status: STEPs 1-6 done. STEP 8 partially done (find dialog only — first
+dialog with zero JS-side state mirroring). STEP 7 (route guest
+CreateWindowExA EDIT/BUTTON/STATIC through WAT) next — high risk, see
+Risk register. About / calc / NSIS dialogs still on the JS controls[]
+path; their migration is the rest of STEP 6.
 Owner: TBD.
-Test gate: `test/test-find-typing.js` (6/6, now driven through WAT-side
-EditState via new `get_edit_text` / `send_char_to_focus` exports as of
-STEP 6 in commit c3f8ecf).
+Test gates:
+- `test/test-find-typing.js` — 8/8 PASS (typing + click chain through WAT)
+- `test/test-find-cancel.js` — 11/11 PASS (Cancel teardown + slot accounting)
+Both drive the parallel WAT-side EditState/ButtonState via the
+`get_edit_text` / `send_char_to_focus` / `get_findreplace_dlg` /
+`get_findreplace_edit` / `wnd_count_used` exports.
 
 ## Goal
 
@@ -18,45 +24,60 @@ Move all control state and behavior into WAT wndprocs so that:
 
 This is **not** justified as a fix for the "Find dialog won't open" bug — that's a separate notepad x86 issue (see `project_notepad_find_dialog.md` memory). The refactor's value is architectural: one window model, real Win32 semantics for `GetDlgItem` / `EnumChildWindows` / `GetFocus`, and far less JS code.
 
-## Current state (snapshot, 2026-04-08, after Commits A+B)
+## Current state (snapshot, 2026-04-08, after STEP 8 find-dialog landing)
 
 Already in the tree:
 
-- **`WND_RECORDS`** at `0x00002000`, 64 entries × 24 bytes (ends `0x2600`). Single record per window with fields `hwnd`, `wndproc`, `parent`, `userdata`, `style`, `state_ptr`. Replaced the four parallel arrays `WND_TABLE` / `PARENT_TABLE` / `USERDATA_TABLE` / `STYLE_TABLE` (Commit B `9f1e921`).
-- **`CLASS_RECORDS`** at `0x00002D80`, 16 entries × 48 bytes (ends `0x3080`). Each record is `(name_hash, atom, WNDCLASSA[40])`. Replaced the parallel `CLASS_TABLE` + `WNDCLASSA_STORE` regions (Commit A `3761c6e`). `MAX_CLASSES = 16`.
-- `CONTROL_TABLE` at `0x00002980`, 64 entries × 16 bytes (`ctrl_class`, `ctrl_id`, `check_state`, reserved). Still parallel-indexed to `WND_RECORDS` slot. Slated for deletion: its fields move into the per-class state struct reached via `WND_RECORDS.state_ptr`.
+- **`WND_RECORDS`** at `0x00007000`, **256** entries × 24 bytes (ends `0x8800`). Single record per window with fields `hwnd`, `wndproc`, `parent`, `userdata`, `style`, `state_ptr`. Replaced the four parallel arrays `WND_TABLE` / `PARENT_TABLE` / `USERDATA_TABLE` / `STYLE_TABLE` (Commit B `9f1e921`). Bumped from 64 to 256 in `ab21e36` after pinball regressed against the cap. `MAX_WINDOWS = 256`.
+- **`CONTROL_TABLE`** at `0x00008800`, 256 × 16 bytes (`ctrl_class`, `ctrl_id`, `check_state`, reserved). Still parallel-indexed to `WND_RECORDS` slot. Slated for deletion: its fields move into the per-class state struct reached via `WND_RECORDS.state_ptr`.
+- **`CONTROL_GEOM`** at `0x00009800`, 256 × 8 bytes (`x, y, w, h` as 4 × i16 parent-relative). Populated by `$ctrl_create_child`, consumed by the renderer's WAT-child enumeration loop and by the find-dialog hit-test.
+- **`CLASS_RECORDS`** at `0x0000A000`, **64** entries × 48 bytes (ends `0xAC00`). Each record is `(name_hash, atom, WNDCLASSA[40])`. Replaced the parallel `CLASS_TABLE` + `WNDCLASSA_STORE` regions (Commit A `3761c6e`). Bumped from 16 to 64 in `ab21e36` because pinball registers exactly 17 classes (10 from comctl32 + 7 from the game) during init. `MAX_CLASSES = 64`.
 - `WNDPROC_WAT_NATIVE = 0xFFFF0001` (help wndproc).
-- `WNDPROC_CTRL_NATIVE = 0xFFFF0002` (built-in control dispatcher) — already wired in `$wat_wndproc_dispatch`.
-- `$button_wndproc` skeleton in `src/09c3-controls.wat` (BM_GETCHECK, BM_SETCHECK only).
-- `$ctrl_table_set`, `$ctrl_table_get_class`, `$ctrl_get_check_state`, `$ctrl_set_check_state`, `$ctrl_find_by_id`.
-- `$wnd_get_state_ptr` / `$wnd_set_state_ptr` in `src/09c-help.wat` — accessors for the new `state_ptr` field. Currently unused; first caller will be `$button_wndproc` in STEP 3.
+- `WNDPROC_CTRL_NATIVE = 0xFFFF0002` (built-in control dispatcher) — wired in `$wat_wndproc_dispatch`.
+- `$button_wndproc`, `$static_wndproc`, `$edit_wndproc`, `$findreplace_wndproc` in `src/09c3-controls.wat`. Each handles WM_CREATE / WM_DESTROY / WM_PAINT / WM_SETTEXT / WM_GETTEXT (plus class-specific messages: WM_LBUTTONDOWN/UP/WM_COMMAND-post for button, WM_CHAR/WM_KEYDOWN for edit, WM_COMMAND for find-dialog parent).
+- `$ctrl_create_child(parent, class, id, x, y, w, h, style, text_wa) → hwnd` — allocates a fresh hwnd, registers WNDPROC_CTRL_NATIVE, populates CONTROL_TABLE / CONTROL_GEOM, builds CREATESTRUCT on heap, delivers WM_CREATE.
+- `$wnd_destroy_tree(hwnd)` — depth-first WM_DESTROY sweep + slot release. Used by `$findreplace_wndproc`'s Cancel branch (`ddf61fe`). Free for the next dialog migration to reuse.
+- `$wnd_send_message(hwnd, msg, wParam, lParam)` — routes WAT-native targets synchronously through `$wat_wndproc_dispatch`; queues x86 targets via `post_queue` (PostMessage semantics, return value lost).
+- `$ctrl_table_set`, `$ctrl_table_get_class`, `$ctrl_get_check_state`, `$ctrl_set_check_state`, `$ctrl_find_by_id`, `$wnd_next_child_slot`, `$wnd_slot_hwnd`, `$ctrl_get_xy/wh/id/class` — full WAT-side enumeration API for the renderer to walk WAT-managed children without going through `$host_create_window`.
+- `$wnd_get_state_ptr` / `$wnd_set_state_ptr` in `src/09c-help.wat` — accessors for the `state_ptr` field. Used by every control wndproc.
 - `$heap_alloc` / `$heap_free` in `src/10-helpers.wat`. Free-list allocator with 4-byte size header. Returns guest pointers (use `$g2w` to get a WASM linear address).
-- `$host_show_find_dialog` host import → `lib/renderer.js: showFindDialog()` — JS-side fake, controls live as `win.controls[]` sub-objects with no hwnd.
-- `_focusedDialogEdit` / `_focusedDialogEditWin` in `lib/renderer-input.js` — special-case state used only by find/about dialogs.
-- Notepad's main edit area IS already a real child window (`parentHwnd: 0x10001`, `isEdit: true`). It receives focus, keys, scroll, selection — all via the same JS path. This proves the model works; we just need to extend it to dialog controls and move the logic into WAT.
+- `$create_findreplace_dialog(dlg, owner, fr_guest)` — builds the 8 children for the find dialog via `$ctrl_create_child`, tags the parent class 10. Called from `$handle_FindTextA` after `$host_show_find_dialog`.
+- `$host_show_find_dialog` host import → `lib/renderer.js: showFindDialog()` — still in use. Now creates a controls-empty parent window (`isFindDialog: true`); the children are drawn from the WAT side via `_drawWatChildren` and hit-tested via `wnd_next_child_slot`.
+- `_focusedDialogEdit` / `_focusedDialogEditWin` in `lib/renderer-input.js` — special-case state used only by **About** dialog now (find dialog deleted these references in STEP 8). Will go when the About dialog migrates.
+- Notepad's main edit area IS already a real child window (`parentHwnd: 0x10001`, `isEdit: true`). It receives focus, keys, scroll, selection — all via the JS path. This proves the model works; STEP 7 will extend it to use `$edit_wndproc` instead, with notepad as the regression target.
 
 ## Key design decisions (revisited)
 
 | Question | Answer |
 |---|---|
-| Where do per-window records live? | `WND_RECORDS` at `0x2000`, 64 × 24 bytes. Each record carries `state_ptr` directly — no parallel index tables. |
+| Where do per-window records live? | `WND_RECORDS` at `0x7000`, 256 × 24 bytes. Each record carries `state_ptr` directly — no parallel index tables. |
 | Where do "extra bytes" (per-class state) live? | `$heap_alloc` from the existing guest heap. The wndproc allocates a `WndState`-shaped struct in `WM_CREATE` and stores its pointer in `WND_RECORDS.state_ptr` via `$wnd_set_state_ptr`. Same allocator that serves guest `LocalAlloc` / `HeapAlloc` / `GlobalAlloc`. **No new heap region**, no `CONTROL_HEAP` constant. |
 | Where do control text buffers live? | Inside the per-window state struct: `state->text_ptr` is itself a `$heap_alloc`'d guest buffer. `SetWindowText` frees old, allocs new, copies, updates `state->text_ptr`. Matches real Win32 `USER32` semantics exactly. |
-| What if the guest stomps a control's heap block? | That happens in real Windows too (USER32 lives in process address space). Not a concern. `WND_RECORDS` itself at `0x00002000` is below `GUEST_BASE` (`0x00012000`) so the guest cannot reach it via image-relative pointers anyway. |
+| What if the guest stomps a control's heap block? | That happens in real Windows too (USER32 lives in process address space). Not a concern. `WND_RECORDS` itself at `0x00007000` is below `GUEST_BASE` (`0x00012000`) so the guest cannot reach it via image-relative pointers anyway. |
 | New host imports? | **No high-level draw_button-style imports.** JS exposes only GDI primitives (`gdi_rectangle`, `gdi_fill_rect`, `gdi_draw_edge`, `gdi_draw_text`, `gdi_move_to` / `gdi_line_to`, `gdi_create_pen` / `gdi_create_solid_brush` / `gdi_select_object`, `gdi_bitblt`, `measure_text`, `get_text_metrics`). WAT wndprocs **compose** buttons / edits / checkboxes from these in `WM_PAINT`. Same model as real USER32, which has no "draw button" syscall. Only add new `gdi_*` imports if a primitive is missing (e.g. `gdi_clip_rect` for scrolled edits — defer until needed). |
 | Focus tracking? | Single global in WAT: `$focused_hwnd`. `WM_SETFOCUS` / `WM_KILLFOCUS` go through normal dispatch. Delete JS-side `_focusedDialogEdit`. |
 | JS still drives input? | Yes: JS owns `<canvas>` events. `onMouseDown(x,y,btn) → wasm.exports.host_mouse_down(x,y,btn)`. `onChar(code) → wasm.exports.host_char(code)`. WAT does hit-test, focus assignment, message dispatch. JS is just a transport. |
 | What about WAT-native help window? | Already follows this model (sort of). Eventually fold `$help_wndproc` into the new framework as just another class. Out of scope for this refactor — it works today, leave it alone. |
 
-## Memory layout (current, after Commits A+B)
+## Memory layout (current, after `ab21e36` table relocation)
 
 ```
- 0x00002000  WND_RECORDS    64 × 24    ends 0x2600   (Commit B — unified per-window record)
- 0x00002600  (free)
- 0x00002980  CONTROL_TABLE  64 × 16    ends 0x2D80   (existing — slated for deletion into state_ptr)
- 0x00002D80  CLASS_RECORDS  16 × 48    ends 0x3080   (Commit A — merged class table + WNDCLASSA)
- 0x00003080  (free → 0x4000 API_HASH_TABLE)
+ 0x00004000  API_HASH_TABLE         12KB   (957 entries × 8 bytes today, headroom to ~1500)
+ 0x00007000  WND_RECORDS    256 × 24    ends 0x8800
+ 0x00008800  CONTROL_TABLE  256 × 16    ends 0x9800   (slated for deletion into state_ptr)
+ 0x00009800  CONTROL_GEOM   256 × 8     ends 0xA000   (parent-relative i16 quad per slot)
+ 0x0000A000  CLASS_RECORDS   64 × 48    ends 0xAC00
+ 0x0000AC00  TIMER_TABLE     16 × 20    ends 0xAD40
+ 0x0000AD40  PAINT_SCRATCH        16    ends 0xAD50
+ 0x0000AD50  (free → 0x12000 GUEST_BASE)
+ 0x00002000  (now free — old window/class table region)
 ```
+
+The four window/class/control tables were moved out of the cramped
+0x2000..0x4000 region in `ab21e36` to give MAX_WINDOWS room to grow to
+256 and to fix a latent overlap with TIMER_TABLE that would have stomped
+slots 41–63 had they been used. The old region is now free for future
+scratch use.
 
 Per-window record fields:
 ```
@@ -77,7 +98,9 @@ Per-class record fields:
 
 The pre-flight assumption that `0x2700–0x2980` was free was wrong — that
 region was being used by `RegisterClassA` to back `GetClassInfoA`, with no
-named global declared for it. Commit A reorganized that into `CLASS_RECORDS`.
+named global declared for it. Commit A reorganized that into `CLASS_RECORDS`,
+and `ab21e36` later moved the whole table cluster out to 0x7000+ to make
+room for 256/64 caps.
 
 ## Per-class state struct layouts (allocated via `$heap_alloc`)
 
@@ -328,21 +351,64 @@ the new `get_edit_text` export by nesting two single-arg `if`s instead.
 
 ### Batch D — Sweep the rest
 
-**STEP 6: Migrate other JS-fabricated dialogs.**
-- About dialog (`showAboutDialog`).
-- Calculator dialog (`_showCalculatorDialog`) — note: calc has special static id 403 (display field) which currently has hardcoded rendering in `drawWindow`. Move that into `$wndproc_static` with a flag, or handle via a calc-specific subclass.
-- NSIS installer dialogs.
-- Each migration deletes its `showXxxDialog` JS function and adds a `$create_xxx_dialog` WAT function.
+**STEP 6 (continuation): Migrate other JS-fabricated dialogs.**
+
+Find dialog already done — see STEP 8 below for what landed.
+Remaining:
+- About dialog (`showAboutDialog`). Smallest target: 1 OK button + 3 lines of text. The aboutLines are rendered via a special `if (win.isAboutDialog && win.aboutLines)` branch in `drawWindow`; migrating means turning each line into a `$ctrl_create_child` STATIC and deleting the special-case branch. The modal-block at `renderer-input.js:10` can stay (or move into a generic "modal flag in WAT").
+- Calculator dialog (`_showCalculatorDialog`) — note: calc has special static id 403 (display field) which currently has hardcoded rendering in `drawWindow`. Move that into `$static_wndproc` with a flag (e.g., `StaticState.style` bit), or handle via a calc-specific subclass.
+- NSIS installer dialogs. TreeView is a separate animal — needs a new control class beyond Button/Edit/Static.
+- Each migration adds a `$create_xxx_dialog` WAT function and (once visible-side rendering goes through `_drawWatChildren`) deletes the `showXxxDialog` JS body.
 
 **STEP 7: Route guest `CreateWindowExA` for EDIT/BUTTON/STATIC to WAT wndprocs.**
 - In `$handle_CreateWindowExA`, when `class_name` matches `EDIT` / `BUTTON` / `STATIC` (case-insensitive), set the wndproc to `WNDPROC_CTRL_NATIVE` and let `$control_wndproc_dispatch` route by class.
 - This unifies guest-side controls (e.g., notepad's main edit child, NSIS installer's textboxes) with builtin-dialog controls.
 - **This is the hottest path in the test suite** — notepad's main edit area is here. Verify with full notepad regression: type into the main edit, scroll, select, save, etc.
+- `$edit_wndproc` does NOT yet handle: vertical scrolling, mouse selection drag, double-click word selection, scrollbar hit-test, EM_GETSEL/EM_SETSEL, EM_LINESCROLL, multiline layout, word wrap. Notepad will need most of these. Mitigation: gate STEP 7 behind a flag (`$route_edit_to_wat`) or migrate BUTTON/STATIC first and leave EDIT for last.
 
-**STEP 8: Delete dead JS code.**
-- `lib/renderer-input.js`: remove `_focusedDialogEdit`, `_focusedDialogEditWin`, `_handleFindDialogButton`, `_editEnsureCursor`, `_editDeleteSelection`, `_hitTestEdit`, `handleKeyPress`'s edit-mutation branch, double-click word selection, drag-to-select. All of this becomes dead because input goes through `host_mouse_down` / `host_char` directly into WAT.
-- `lib/renderer.js`: remove `setDlgItemText`, `checkDlgButton`, `setWindowClass`, `controls[]` arrays, `isFindDialog` / `isAboutDialog` branches, the entire control-drawing loop in `drawWindow` (it becomes wndproc-driven), child enumeration.
-- Keep: `drawButton`, `drawEditArea`, `drawCheckbox`, `drawRadioButton`, `drawGroupBox`, `drawStaticText`, `drawTitleBar`, `drawMenuBar`, `drawWindowFrame`, color/font tables. These are the primitives the new host imports wrap.
+**STEP 8: Delete dead JS code.** (Find dialog half DONE 2026-04-08, commit `01d70cc`)
+
+The find dialog is now the first dialog with **zero** JS-side state mirroring.
+What landed for it:
+- Renderer draws find-dialog children entirely from WAT side via
+  `_drawWatChildren` (enumerates `wnd_next_child_slot`, reads
+  `ctrl_get_xy/wh/class/id`, dispatches to `drawButton` /
+  `drawEditArea` / `drawStaticText` / `drawGroupBox` /
+  `drawCheckBox` / `drawRadioButton` based on `ctrl_class` and
+  `wnd_get_style`). `controls[]` for the find dialog stays empty.
+- `lib/renderer-input.js`: find-dialog branch in mouse hit-test
+  enumerates WAT children and dispatches `WM_LBUTTONDOWN/UP` via
+  `send_message`. `_handleFindDialogButton` (~80 lines, mutated FR
+  struct from JS) deleted; logic now in `$findreplace_wndproc`.
+- `lib/renderer.js: showFindDialog`: drops the 8 `controls.push()` calls.
+- `test/run.js`: `focus-find` / `dump-find` / `find-click` / `dump-fr`
+  read directly from WAT via `get_findreplace_dlg` /
+  `get_findreplace_edit` / `wnd_next_child_slot` / `send_message` /
+  `get_edit_text`. No JS controls[] fallback.
+- `$findreplace_wndproc` Cancel branch (`ddf61fe`) calls
+  `$wnd_destroy_tree` + `$host_destroy_window`, freeing all 9 WAT
+  slots and the renderer window. `test/test-find-cancel.js` 11/11
+  asserts the slot accounting.
+
+Net deletion at STEP 8 landing: ~167 lines of JS dead code. The remaining
+JS dead code below stays alive only because About / calc / NSIS still use
+the JS controls[] path:
+- `lib/renderer-input.js`: `_focusedDialogEdit`, `_focusedDialogEditWin`,
+  `_editEnsureCursor`, `_editDeleteSelection`, `_hitTestEdit`,
+  `handleKeyPress`'s edit-mutation branch, double-click word selection,
+  drag-to-select.
+- `lib/renderer.js`: `setDlgItemText`, `checkDlgButton`,
+  `setWindowClass`'s edit-detection branch, the `controls[]` loop in
+  `drawWindow`, `isAboutDialog` branches, `showAboutDialog`.
+- `lib/host-imports.js`: `shell_about` (CLI stub) and the browser-side
+  `host.shell_about` in `host.js` keep working as the visual layer until
+  About migration; their bodies will collapse to a stub once
+  `$create_about_dialog` lands.
+
+Keep: `drawButton`, `drawEditArea`, `drawCheckbox`, `drawRadioButton`,
+`drawGroupBox`, `drawStaticText`, `drawTitleBar`, `drawMenuBar`,
+`drawWindowFrame`, color/font tables. These are the primitives the
+WAT-managed dialog path already calls into.
 
 ## Risk register
 
@@ -366,19 +432,20 @@ the new `get_edit_text` export by nesting two single-arg `if`s instead.
 
 ## Pre-flight checklist (resolved)
 
-- [x] **`0x2700–0x2980` was NOT free** — pre-flight assumption was wrong. The region was used by `RegisterClassA` to back `GetClassInfoA` (handler at `09a-handlers.wat:2187,2216,2896`), with no named global declared for it — that's why it didn't show up in any header grep. Resolved in Commit A by reorganizing into `CLASS_RECORDS` at `0x2D80`.
+- [x] **`0x2700–0x2980` was NOT free** — pre-flight assumption was wrong. The region was used by `RegisterClassA` to back `GetClassInfoA` (handler at `09a-handlers.wat:2187,2216,2896`), with no named global declared for it — that's why it didn't show up in any header grep. Resolved in Commit A by reorganizing into `CLASS_RECORDS` at `0x2D80`, then again in `ab21e36` by relocating the whole cluster to `0x7000+`.
 - [x] `$heap_alloc` returns guest pointers (verified `src/10-helpers.wat:60`).
-- [x] `MAX_WINDOWS` is 64. Deferred: bump to 256 in a separate commit (see Open questions).
+- [x] `MAX_WINDOWS` bumped to 256 (`ab21e36`). Triggered by pinball overflowing the cramped layout.
+- [x] `MAX_CLASSES` bumped to 64 (`ab21e36`). Triggered by pinball registering 17 classes during init (10 comctl32 + 7 game) and silently overflowing the old 16-cap.
 - [x] `WNDPROC_CTRL_NATIVE = 0xFFFF0002` wired in `$wat_wndproc_dispatch` at `09c-help.wat:234`.
-- [x] `test/test-find-typing.js` baseline is **6/6 PASS** (not 2/6 as the original draft said — the upstream notepad bug was fixed in commit `56ea4fe` between the doc being written and the work starting).
-- [x] Notepad regression: clean exit through `ExitProcess`. Calc: 3579 API calls clean. Mspaint: 1315 API calls clean.
+- [x] `test/test-find-typing.js` 8/8 PASS — typing + click-chain through WAT.
+- [x] `test/test-find-cancel.js` 11/11 PASS — Cancel teardown + slot accounting.
+- [x] Notepad / calc / mspaint smoke clean (132 / 687 / 1315 API calls).
 
 ## Open questions
 
-- Should `MAX_WINDOWS` get bumped to 256 to leave headroom for many controls per dialog? With the unified record, the cost is `256 × 24 = 6 KB` (was `256 × (8+4+4+4) = 5 KB` across the old four tables, plus state_ptr makes it `256 × 4 = 1 KB` more). Cheap. **Recommend yes** — but as its own commit, not bundled into the controls work. Verify nothing assumes 64 (grep for `MAX_WINDOWS` and the literal `64` near window code).
-- Should we add a `$wnd_create(parent, class_name, x, y, w, h, style, ctrl_id, text_ptr) → hwnd` helper now to centralize allocation, or keep call sites bespoke? **Recommend yes** — write it before STEP 5, use it from STEP 5 onward.
+- Should we add a `$wnd_create(parent, class_name, x, y, w, h, style, ctrl_id, text_ptr) → hwnd` helper now to centralize allocation, or keep call sites bespoke? `$ctrl_create_child` already does this for WAT-internal callers. STEP 7 will need a parallel for guest-side `CreateWindowExA`.
 - Font measurement: WAT needs `measure_text`. Do we want one font per text or always the same monospace dialog font? Probably the latter for now. Add a `font_id` parameter so it's extensible.
-- Should `CLASS_TABLE` ever grow beyond 16 entries? Notepad/calc/mspaint each register ≤ 3 classes, but a future heavy app (NSIS installer suite, mspaint-NT with MFC) may push this. Current latent overrun bound is now properly enforced (`MAX_CLASSES = 16`), so an overflow would hit the cap cleanly rather than corrupting `PARENT_TABLE` like the old code would have.
+- $handle_DestroyWindow at `src/09a-handlers.wat:938` still doesn't free WAT slots — only the find-dialog Cancel path does, via `$wnd_destroy_tree`. Wiring `$wnd_destroy_tree` into the systemic DestroyWindow handler is the right next followup but carries reentrancy risk for x86 wndprocs (WM_DESTROY queued via post_queue, wnd_table_remove zeros the slot before the dequeue). Needs careful audit of test apps that DestroyWindow + continue running.
 
 ## Meta
 
