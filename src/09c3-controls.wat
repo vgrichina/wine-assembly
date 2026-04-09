@@ -111,6 +111,9 @@
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 2 = Edit
+    (if (i32.eq (local.get $class) (i32.const 2))
+      (then (return (call $edit_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 3 = Static
     (if (i32.eq (local.get $class) (i32.const 3))
       (then (return (call $static_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -421,6 +424,392 @@
                     (i32.load offset=4 (local.get $state_w))
                     (global.get $PAINT_SCRATCH)
                     (local.get $fmt) (i32.const 0)))))
+        (return (i32.const 0))))
+
+    ;; Default
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; Edit WndProc
+  ;; ============================================================
+  ;; Status: STEP 4 — dormant. No path delivers WM_CREATE to an EDIT
+  ;; class hwnd today; the new code is unreachable until STEP 5 wires
+  ;; WAT-side dialog creation through $create_findreplace_dialog.
+  ;;
+  ;; EditState (32 bytes, allocated in WM_CREATE)
+  ;;   +0   text_buf_ptr   guest ptr (NUL-terminated)
+  ;;   +4   text_len       chars (excluding NUL)
+  ;;   +8   text_cap       allocated capacity (excluding NUL slot)
+  ;;   +12  cursor         char position
+  ;;   +16  sel_anchor     selection anchor (== cursor → no selection)
+  ;;   +20  scroll_top     reserved for multi-line (0 in single-line)
+  ;;   +24  flags          bit0=multiline bit1=password bit2=readonly bit3=focused
+  ;;   +28  max_length     0 = unlimited
+
+  ;; Right-shift n bytes by 1 (memmove src→src+1). Reverse copy so overlap is safe.
+  (func $edit_memmove_right (param $src i32) (param $n i32)
+    (local $i i32)
+    (local.set $i (local.get $n))
+    (block $done (loop $lp
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (i32.store8 (i32.add (i32.add (local.get $src) (local.get $i)) (i32.const 1))
+                  (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (br $lp)))
+  )
+
+  ;; Ensure EditState has capacity for at least $need_cap chars (excl NUL).
+  (func $edit_ensure_cap (param $state_w i32) (param $need_cap i32)
+    (local $cap i32) (local $new_cap i32) (local $old_buf i32) (local $new_buf i32) (local $len i32)
+    (local.set $cap (i32.load offset=8 (local.get $state_w)))
+    (if (i32.le_u (local.get $need_cap) (local.get $cap)) (then (return)))
+    (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
+    (if (i32.lt_u (local.get $new_cap) (local.get $need_cap))
+      (then (local.set $new_cap (local.get $need_cap))))
+    (if (i32.lt_u (local.get $new_cap) (i32.const 32))
+      (then (local.set $new_cap (i32.const 32))))
+    (local.set $new_buf (call $heap_alloc (i32.add (local.get $new_cap) (i32.const 1))))
+    (local.set $old_buf (i32.load (local.get $state_w)))
+    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (if (i32.and (local.get $old_buf) (local.get $len))
+      (then (call $memcpy (call $g2w (local.get $new_buf))
+                          (call $g2w (local.get $old_buf))
+                          (local.get $len))))
+    (i32.store8 (i32.add (call $g2w (local.get $new_buf)) (local.get $len)) (i32.const 0))
+    (if (local.get $old_buf) (then (call $heap_free (local.get $old_buf))))
+    (i32.store        (local.get $state_w) (local.get $new_buf))
+    (i32.store offset=8 (local.get $state_w) (local.get $new_cap))
+  )
+
+  (func $edit_sel_lo (param $state_w i32) (result i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (i32.load offset=12 (local.get $state_w)))
+    (local.set $b (i32.load offset=16 (local.get $state_w)))
+    (select (local.get $a) (local.get $b) (i32.lt_u (local.get $a) (local.get $b))))
+
+  (func $edit_sel_hi (param $state_w i32) (result i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (i32.load offset=12 (local.get $state_w)))
+    (local.set $b (i32.load offset=16 (local.get $state_w)))
+    (select (local.get $a) (local.get $b) (i32.gt_u (local.get $a) (local.get $b))))
+
+  ;; Delete characters in [lo..hi). Updates text_len, cursor, sel_anchor → lo.
+  (func $edit_delete_range (param $state_w i32) (param $lo i32) (param $hi i32)
+    (local $buf_w i32) (local $len i32) (local $tail i32)
+    (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
+    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (if (i32.gt_u (local.get $hi) (local.get $len)) (then (local.set $hi (local.get $len))))
+    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $tail (i32.sub (local.get $len) (local.get $hi)))
+    (if (local.get $tail)
+      (then (call $memcpy
+              (i32.add (local.get $buf_w) (local.get $lo))
+              (i32.add (local.get $buf_w) (local.get $hi))
+              (local.get $tail))))
+    (local.set $len (i32.sub (local.get $len) (i32.sub (local.get $hi) (local.get $lo))))
+    (i32.store offset=4  (local.get $state_w) (local.get $len))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
+    (i32.store offset=12 (local.get $state_w) (local.get $lo))
+    (i32.store offset=16 (local.get $state_w) (local.get $lo))
+  )
+
+  ;; Insert one byte at cursor (delete selection first).
+  (func $edit_insert_char (param $state_w i32) (param $ch i32)
+    (local $lo i32) (local $hi i32) (local $cur i32) (local $len i32) (local $buf_w i32) (local $tail i32) (local $maxlen i32)
+    (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+    (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+    (if (i32.ne (local.get $lo) (local.get $hi))
+      (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))))
+    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (local.set $maxlen (i32.load offset=28 (local.get $state_w)))
+    (if (i32.and (local.get $maxlen) (i32.ge_u (local.get $len) (local.get $maxlen)))
+      (then (return)))
+    (call $edit_ensure_cap (local.get $state_w) (i32.add (local.get $len) (i32.const 1)))
+    (local.set $cur (i32.load offset=12 (local.get $state_w)))
+    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $tail (i32.sub (local.get $len) (local.get $cur)))
+    (if (local.get $tail)
+      (then (call $edit_memmove_right
+              (i32.add (local.get $buf_w) (local.get $cur))
+              (local.get $tail))))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $cur)) (local.get $ch))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (local.set $len (i32.add (local.get $len) (i32.const 1)))
+    (i32.store offset=4  (local.get $state_w) (local.get $len))
+    (i32.store offset=12 (local.get $state_w) (local.get $cur))
+    (i32.store offset=16 (local.get $state_w) (local.get $cur))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
+  )
+
+  (func $edit_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $cs_w i32)
+    (local $name_ptr i32) (local $text_len i32) (local $hdc i32)
+    (local $sz i32) (local $w i32) (local $h i32) (local $buf i32)
+    (local $cur i32) (local $px i32) (local $lo i32) (local $hi i32)
+    (local $vk i32) (local $flags i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    ;; ---------- WM_CREATE (0x0001) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $cs_w (call $g2w (local.get $lParam)))
+        (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
+        (local.set $state (call $heap_alloc (i32.const 32)))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (i32.store         (local.get $state_w) (i32.const 0))
+        (i32.store offset=4  (local.get $state_w) (i32.const 0))
+        (i32.store offset=8  (local.get $state_w) (i32.const 0))
+        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (i32.store offset=20 (local.get $state_w) (i32.const 0))
+        (i32.store offset=24 (local.get $state_w) (i32.const 0))
+        (i32.store offset=28 (local.get $state_w) (i32.const 0))
+        (if (local.get $name_ptr)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+            (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
+            (if (local.get $text_len)
+              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                                  (call $g2w (local.get $name_ptr))
+                                  (local.get $text_len))))
+            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
+            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (if (i32.load (local.get $state_w))
+              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+                                (i32.const 0))))))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_DESTROY (0x0002) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (if (i32.load (local.get $state_w))
+              (then (call $heap_free (i32.load (local.get $state_w)))))
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+          (then (global.set $focus_hwnd (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETTEXT (0x000C) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000C))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (i32.store offset=4  (local.get $state_w) (i32.const 0))
+        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (if (local.get $lParam)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
+            (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
+            (if (local.get $text_len)
+              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                                  (call $g2w (local.get $lParam))
+                                  (local.get $text_len))))
+            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
+            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (if (i32.load (local.get $state_w))
+              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+                                (i32.const 0))))))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; ---------- WM_GETTEXT (0x000D) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000D))
+      (then
+        (if (i32.and (local.get $state) (i32.gt_u (local.get $wParam) (i32.const 0)))
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+            (if (i32.ge_u (local.get $text_len) (local.get $wParam))
+              (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
+            (if (i32.and (i32.load (local.get $state_w)) (local.get $text_len))
+              (then (call $memcpy (call $g2w (local.get $lParam))
+                                  (call $g2w (i32.load (local.get $state_w)))
+                                  (local.get $text_len))))
+            (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
+            (return (local.get $text_len))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_GETTEXTLENGTH (0x000E) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000E))
+      (then
+        (if (local.get $state)
+          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETFOCUS (0x0007) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0007))
+      (then
+        (global.set $focus_hwnd (local.get $hwnd))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (i32.store offset=24 (local.get $state_w)
+              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_KILLFOCUS (0x0008) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0008))
+      (then
+        (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+          (then (global.set $focus_hwnd (i32.const 0))))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (i32.store offset=24 (local.get $state_w)
+              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_CHAR (0x0102) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0102))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+          (then (return (i32.const 0))))
+        ;; VK_BACK = 0x08 — backspace
+        (if (i32.eq (local.get $wParam) (i32.const 0x08))
+          (then
+            (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+            (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+            (if (i32.ne (local.get $lo) (local.get $hi))
+              (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi)))
+              (else
+                (if (local.get $lo)
+                  (then (call $edit_delete_range (local.get $state_w)
+                          (i32.sub (local.get $lo) (i32.const 1))
+                          (local.get $lo))))))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
+          (then (return (i32.const 0))))
+        (call $edit_insert_char (local.get $state_w) (local.get $wParam))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_KEYDOWN (0x0100) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $vk (local.get $wParam))
+        (local.set $cur (i32.load offset=12 (local.get $state_w)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        ;; VK_LEFT 0x25
+        (if (i32.eq (local.get $vk) (i32.const 0x25))
+          (then
+            (if (local.get $cur)
+              (then
+                (local.set $cur (i32.sub (local.get $cur) (i32.const 1)))
+                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (call $host_invalidate (local.get $hwnd))))
+            (return (i32.const 0))))
+        ;; VK_RIGHT 0x27
+        (if (i32.eq (local.get $vk) (i32.const 0x27))
+          (then
+            (if (i32.lt_u (local.get $cur) (local.get $text_len))
+              (then
+                (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (call $host_invalidate (local.get $hwnd))))
+            (return (i32.const 0))))
+        ;; VK_HOME 0x24
+        (if (i32.eq (local.get $vk) (i32.const 0x24))
+          (then
+            (i32.store offset=12 (local.get $state_w) (i32.const 0))
+            (i32.store offset=16 (local.get $state_w) (i32.const 0))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        ;; VK_END 0x23
+        (if (i32.eq (local.get $vk) (i32.const 0x23))
+          (then
+            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        ;; VK_DELETE 0x2E
+        (if (i32.eq (local.get $vk) (i32.const 0x2E))
+          (then
+            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+              (then (return (i32.const 0))))
+            (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+            (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+            (if (i32.ne (local.get $lo) (local.get $hi))
+              (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi)))
+              (else
+                (if (i32.lt_u (local.get $cur) (local.get $text_len))
+                  (then (call $edit_delete_range (local.get $state_w)
+                          (local.get $cur)
+                          (i32.add (local.get $cur) (i32.const 1)))))))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (global.set $focus_hwnd (local.get $hwnd))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (i32.store offset=24 (local.get $state_w)
+              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_PAINT (0x000F) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        ;; 1) White background (WHITE_BRUSH stock obj 0 = 0x30010)
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x30010)))
+        ;; 2) Sunken edge: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A; BF_RECT = 0x0F
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x0A) (i32.const 0x0F)))
+        ;; 3) Text
+        (local.set $buf (i32.load (local.get $state_w)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (if (i32.and (local.get $buf) (local.get $text_len))
+          (then
+            (drop (call $host_gdi_text_out (local.get $hdc)
+                    (i32.const 4) (i32.const 4)
+                    (call $g2w (local.get $buf)) (local.get $text_len)))))
+        ;; 4) Caret (only if focused)
+        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+        (if (i32.and (local.get $flags) (i32.const 0x08))
+          (then
+            (local.set $cur (i32.load offset=12 (local.get $state_w)))
+            (local.set $px (i32.const 0))
+            (if (i32.and (local.get $buf) (local.get $cur))
+              (then (local.set $px (call $host_measure_text (local.get $hdc)
+                                          (call $g2w (local.get $buf)) (local.get $cur)))))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.add (local.get $px) (i32.const 4))
+                    (i32.const 4)
+                    (i32.add (local.get $px) (i32.const 5))
+                    (i32.const 16)
+                    (i32.const 0x30014))))) ;; BLACK_BRUSH
         (return (i32.const 0))))
 
     ;; Default
