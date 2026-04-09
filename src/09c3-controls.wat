@@ -209,6 +209,9 @@
     ;; Class 13 = Generic stub dialog (Page Setup / Print / Color / Font)
     (if (i32.eq (local.get $class) (i32.const 13))
       (then (return (call $stub_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 14 = Font (ChooseFont) dialog parent
+    (if (i32.eq (local.get $class) (i32.const 14))
+      (then (return (call $fontdlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -500,6 +503,159 @@
     ;; Cancel button
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 148) (i32.const 68) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+
+  ;; ============================================================
+  ;; Font (ChooseFont) dialog — control class 14
+  ;; ============================================================
+  ;;
+  ;; Three listboxes (face / style / size) + OK / Cancel. The CHOOSEFONT
+  ;; guest ptr is stashed in userdata so the IDOK handler can write the
+  ;; selected face/style/size back into CHOOSEFONT.lpLogFont. For V1 the
+  ;; write-back is a best-effort: we set lfHeight from the size index and
+  ;; zero out the face name since copying a variable face into LOGFONT
+  ;; requires the name string from the listbox and a 32-byte buffer.
+  ;;
+  ;; Listbox control IDs: face=0x450, style=0x451, size=0x452.
+  (func $fontdlg_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $cf i32) (local $cf_w i32)
+    (local $lf_g i32) (local $lf_w i32)
+    (local $face_h i32) (local $size_h i32)
+    (local $size_sel i32) (local $size_buf_g i32) (local $size_buf_w i32)
+    (local $size_val i32) (local $i i32) (local $c i32)
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
+    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+
+    ;; ---- Cancel ----
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+
+    ;; ---- OK: write size back to LOGFONT.lfHeight via helper ----
+    (if (i32.eq (local.get $cmd) (i32.const 1))
+      (then
+        (call $fontdlg_writeback_size (local.get $hwnd))
+        (call $modal_done (i32.const 1))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Helper: read selected size from the 0x452 listbox, parse to int,
+  ;; write negative value into CHOOSEFONT.lpLogFont[lfHeight=+0]. Split
+  ;; out from $fontdlg_wndproc so the latter stays stack-balanced.
+  (func $fontdlg_writeback_size (param $hwnd i32)
+    (local $cf i32) (local $cf_w i32) (local $lf_g i32) (local $lf_w i32)
+    (local $size_h i32) (local $size_sel i32)
+    (local $buf_g i32) (local $buf_w i32)
+    (local $val i32) (local $i i32) (local $c i32)
+    (local.set $cf (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $cf)) (then (return)))
+    (local.set $cf_w (call $g2w (local.get $cf)))
+    (local.set $lf_g (i32.load offset=12 (local.get $cf_w)))
+    (if (i32.eqz (local.get $lf_g)) (then (return)))
+    (local.set $lf_w (call $g2w (local.get $lf_g)))
+    (local.set $size_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x452)))
+    (if (i32.eqz (local.get $size_h)) (then (return)))
+    (local.set $size_sel (call $wnd_send_message (local.get $size_h) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $size_sel) (i32.const 0)) (then (return)))
+    (local.set $buf_g (call $heap_alloc (i32.const 16)))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    (drop (call $wnd_send_message (local.get $size_h) (i32.const 0x0189) (local.get $size_sel) (local.get $buf_g)))
+    (local.set $val (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $end (loop $digit
+      (local.set $c (i32.load8_u (i32.add (local.get $buf_w) (local.get $i))))
+      (br_if $end (i32.or (i32.lt_s (local.get $c) (i32.const 0x30))
+                          (i32.gt_s (local.get $c) (i32.const 0x39))))
+      (local.set $val (i32.add (i32.mul (local.get $val) (i32.const 10))
+                               (i32.sub (local.get $c) (i32.const 0x30))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $digit)))
+    (call $heap_free (local.get $buf_g))
+    (i32.store (local.get $lf_w) (i32.sub (i32.const 0) (local.get $val))))
+
+  (func $create_font_dialog (param $dlg i32) (param $owner i32) (param $cf i32)
+    (local $face_lb i32) (local $style_lb i32) (local $size_lb i32)
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (i32.const 0x258)   ;; "Font"
+      (i32.const 420) (i32.const 260)
+      (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 14) (i32.const 0))
+    (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cf)))
+
+    ;; Face label + listbox
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 8) (i32.const 40) (i32.const 14)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x25D) (i32.const 5))))
+    (local.set $face_lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x450)
+                          (i32.const 12) (i32.const 24) (i32.const 160) (i32.const 120)
+                          (i32.const 0x50810001) (i32.const 0)))
+    (drop (call $wnd_send_message (local.get $face_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x270) (i32.const 13))))
+    (drop (call $wnd_send_message (local.get $face_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x27E) (i32.const 5))))
+    (drop (call $wnd_send_message (local.get $face_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x284) (i32.const 11))))
+    (drop (call $wnd_send_message (local.get $face_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x290) (i32.const 15))))
+    (drop (call $wnd_send_message (local.get $face_lb) (i32.const 0x0186) (i32.const 0) (i32.const 0)))
+
+    ;; Style label + listbox
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 180) (i32.const 8) (i32.const 40) (i32.const 14)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x263) (i32.const 6))))
+    (local.set $style_lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x451)
+                           (i32.const 180) (i32.const 24) (i32.const 100) (i32.const 120)
+                           (i32.const 0x50810001) (i32.const 0)))
+    (drop (call $wnd_send_message (local.get $style_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2A0) (i32.const 7))))
+    (drop (call $wnd_send_message (local.get $style_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2A8) (i32.const 4))))
+    (drop (call $wnd_send_message (local.get $style_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2AD) (i32.const 6))))
+    (drop (call $wnd_send_message (local.get $style_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2B4) (i32.const 11))))
+    (drop (call $wnd_send_message (local.get $style_lb) (i32.const 0x0186) (i32.const 0) (i32.const 0)))
+
+    ;; Size label + listbox
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 288) (i32.const 8) (i32.const 40) (i32.const 14)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x26A) (i32.const 5))))
+    (local.set $size_lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x452)
+                          (i32.const 288) (i32.const 24) (i32.const 60) (i32.const 120)
+                          (i32.const 0x50810001) (i32.const 0)))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2C0) (i32.const 1))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2C2) (i32.const 2))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2C5) (i32.const 2))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2C8) (i32.const 2))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2CB) (i32.const 2))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x2CE) (i32.const 2))))
+    (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0186) (i32.const 1) (i32.const 0)))
+
+    ;; OK / Cancel
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 358) (i32.const 24) (i32.const 52) (i32.const 22)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 358) (i32.const 52) (i32.const 52) (i32.const 22)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
 

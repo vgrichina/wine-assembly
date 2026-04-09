@@ -303,6 +303,23 @@
   (data (i32.const 0x24C) "Print\00")          ;; +0xAC, len 5
   (data (i32.const 0x252) "Color\00")          ;; +0xB2, len 5
   (data (i32.const 0x258) "Font\00")           ;; +0xB8, len 4
+  (data (i32.const 0x25D) "Face:\00")          ;; +0xBD, len 5
+  (data (i32.const 0x263) "Style:\00")         ;; +0xC3, len 6
+  (data (i32.const 0x26A) "Size:\00")          ;; +0xCA, len 5
+  (data (i32.const 0x270) "MS Sans Serif\00")  ;; +0xD0, len 13
+  (data (i32.const 0x27E) "Arial\00")          ;; +0xDE, len 5
+  (data (i32.const 0x284) "Courier New\00")    ;; +0xE4, len 11
+  (data (i32.const 0x290) "Times New Roman\00");; +0xF0, len 15
+  (data (i32.const 0x2A0) "Regular\00")        ;; +0x100, len 7
+  (data (i32.const 0x2A8) "Bold\00")           ;; +0x108, len 4
+  (data (i32.const 0x2AD) "Italic\00")         ;; +0x10D, len 6
+  (data (i32.const 0x2B4) "Bold Italic\00")    ;; +0x114, len 11
+  (data (i32.const 0x2C0) "8\00")              ;; +0x120
+  (data (i32.const 0x2C2) "10\00")             ;; +0x122
+  (data (i32.const 0x2C5) "12\00")             ;; +0x125
+  (data (i32.const 0x2C8) "14\00")             ;; +0x128
+  (data (i32.const 0x2CB) "18\00")             ;; +0x12B
+  (data (i32.const 0x2CE) "24\00")             ;; +0x12E
 
   ;; ============================================================
   ;; MEMORY MAP

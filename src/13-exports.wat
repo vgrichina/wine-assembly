@@ -349,6 +349,19 @@
       (then (call $opendlg_populate_listbox (local.get $lb)
               (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))))
 
+  ;; Test helper: build a Font dialog standalone (no x86 caller). Needs
+  ;; a fake CHOOSEFONT guest ptr with at minimum lpLogFont at +0x0C so
+  ;; the IDOK handler doesn't NPE on write-back.
+  (func (export "test_create_font_dialog") (result i32)
+    (local $dlg i32) (local $cf i32) (local $lf i32)
+    (local.set $cf (call $heap_alloc (i32.const 64)))
+    (local.set $lf (call $heap_alloc (i32.const 60)))
+    (i32.store offset=12 (call $g2w (local.get $cf)) (local.get $lf))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_font_dialog (local.get $dlg) (i32.const 0) (local.get $cf))
+    (local.get $dlg))
+
   ;; Test helper: build an Open/Save dialog standalone (no x86 caller).
   ;; kind 0 = Open, 1 = Save As. Returns the dialog hwnd. Used by
   ;; scratch/render-open-dlg.js to render the dialog visually with

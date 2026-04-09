@@ -1847,13 +1847,14 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 201: ChooseFontA(lpCF) — show placeholder modal dialog
+  ;; 201: ChooseFontA(lpCF) — show the WAT-driven Font picker with face/
+  ;; style/size listboxes. On OK, writes chosen size back to LOGFONT.lfHeight.
   (func $handle_ChooseFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32) (local $owner i32)
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x258))   ;; "Font"
+    (call $create_font_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 202: FindTextA(lpFR) — create modeless Find dialog, return HWND
