@@ -952,11 +952,15 @@
         (if (i32.eqz (local.get $ofn))
           (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
         (local.set $ofn_w (call $g2w (local.get $ofn)))
-        (local.set $dst_g (i32.load offset=24 (local.get $ofn_w)))         ;; lpstrFile
-        (local.set $max_len (i32.load offset=28 (local.get $ofn_w)))       ;; nMaxFile
+        (local.set $dst_g (i32.load offset=28 (local.get $ofn_w)))         ;; lpstrFile
+        (local.set $max_len (i32.load offset=32 (local.get $ofn_w)))       ;; nMaxFile
         (local.set $edit_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x442)))
-        (if (i32.and (i32.and (local.get $dst_g) (i32.gt_u (local.get $max_len) (i32.const 0)))
-                     (local.get $edit_h))
+        ;; i32.and is bitwise: must coerce $dst_g and $edit_h pointers to 0/1
+        ;; (their bit 0 is normally clear and would zero the AND silently).
+        (if (i32.and
+              (i32.and (i32.ne (local.get $dst_g) (i32.const 0))
+                       (i32.gt_u (local.get $max_len) (i32.const 0)))
+              (i32.ne (local.get $edit_h) (i32.const 0)))
           (then
             (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
             (if (local.get $edit_state)
