@@ -206,6 +206,9 @@
     ;; Class 12 = Open / Save common dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 12))
       (then (return (call $opendlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 13 = Generic stub dialog (Page Setup / Print / Color / Font)
+    (if (i32.eq (local.get $class) (i32.const 13))
+      (then (return (call $stub_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -444,6 +447,61 @@
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+
+  ;; ============================================================
+  ;; Generic "stub" common-dialog parent (control class 13)
+  ;; ============================================================
+  ;;
+  ;; Placeholder dialog used by $handle_PageSetupDlgA / PrintDlgA /
+  ;; ChooseColorA / ChooseFontA until proper UIs are built. Shows the
+  ;; title + a "Not implemented yet" static + OK / Cancel buttons.
+  ;; Both buttons call $modal_done; OK records result=1 and Cancel 0.
+  ;; Apps that see result=1 typically act on the corresponding struct
+  ;; (e.g. PAGESETUPDLG.rtMargin) but these are already zero-initialized
+  ;; by the app, so returning 1 from an empty dialog is harmless for
+  ;; non-printing paths and lets us visually prove the modal mechanism
+  ;; without implementing the real form.
+  (func $stub_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
+    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+    (if (i32.eq (local.get $cmd) (i32.const 1))
+      (then (call $modal_done (i32.const 1)) (return (i32.const 0))))
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Build a minimal stub dialog with title + "Not implemented yet" static
+  ;; + OK / Cancel. Used by the four common-dialog API handlers below.
+  (func $create_stub_dialog (param $dlg i32) (param $owner i32) (param $title_wa i32)
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (local.get $title_wa)
+      (i32.const 260) (i32.const 140)
+      (i32.const 1))   ;; isAboutDialog modal flag
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 13) (i32.const 0))
+    ;; "Not implemented yet" static
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 20) (i32.const 236) (i32.const 20)
+            (i32.const 0x50000001)  ;; SS_CENTER
+            (call $wat_str_to_heap (i32.const 0x22D) (i32.const 19))))
+    ;; OK button
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 40) (i32.const 68) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
+    ;; Cancel button
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 148) (i32.const 68) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
 
   ;; ============================================================
   ;; Open / Save common dialog (control class 12)

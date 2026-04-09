@@ -298,6 +298,11 @@
   (data (i32.const 0x217) "..\00")             ;; +0x77, len 2  (parent dir entry)
   (data (i32.const 0x21A) "Upload...\00")      ;; +0x7A, len 9
   (data (i32.const 0x224) "Download\00")       ;; +0x84, len 8
+  (data (i32.const 0x22D) "Not implemented yet\00")  ;; +0x8D, len 19 (stub dialog msg)
+  (data (i32.const 0x241) "Page Setup\00")     ;; +0xA1, len 10
+  (data (i32.const 0x24C) "Print\00")          ;; +0xAC, len 5
+  (data (i32.const 0x252) "Color\00")          ;; +0xB2, len 5
+  (data (i32.const 0x258) "Font\00")           ;; +0xB8, len 4
 
   ;; ============================================================
   ;; MEMORY MAP

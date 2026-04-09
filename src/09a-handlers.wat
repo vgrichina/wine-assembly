@@ -1847,11 +1847,14 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 201: ChooseFontA(lpCF) — return 0 (user cancelled)
+  ;; 201: ChooseFontA(lpCF) — show placeholder modal dialog
   (func $handle_ChooseFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
-  )
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x258))   ;; "Font"
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 202: FindTextA(lpFR) — create modeless Find dialog, return HWND
   (func $handle_FindTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1868,11 +1871,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 203: PageSetupDlgA(lpPS) — return 0 (user cancelled)
+  ;; 203: PageSetupDlgA(lpPS) — show placeholder modal dialog
   (func $handle_PageSetupDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
-  )
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x241))   ;; "Page Setup"
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 204: CommDlgExtendedError() — return 0 (no error)
   (func $handle_CommDlgExtendedError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7313,11 +7319,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 953: PrintDlgA(lppd) — 1 arg stdcall, return FALSE (user cancelled)
+  ;; 953: PrintDlgA(lppd) — show placeholder modal dialog
   (func $handle_PrintDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x24C))   ;; "Print"
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 954: CoFreeUnusedLibraries() — no args, no-op
   (func $handle_CoFreeUnusedLibraries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
