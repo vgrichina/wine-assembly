@@ -17,7 +17,8 @@
   ;;       wndproc treats this control as fully owned by WAT.
   ;;
   ;; ctrl_class values: 0=not a control, 1=Button, 2=Edit, 3=Static,
-  ;;                    4=ListBox, 5=ComboBox
+  ;;                    4=ListBox, 5=ComboBox, 10=Find dialog parent,
+  ;;                    11=About dialog parent
 
   ;; ---- Per-class state struct layouts ----
   ;;
@@ -193,6 +194,9 @@
     ;; Class 3 = Static
     (if (i32.eq (local.get $class) (i32.const 3))
       (then (return (call $static_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 4 = ListBox
+    (if (i32.eq (local.get $class) (i32.const 4))
+      (then (return (call $listbox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -768,6 +772,224 @@
                     (i32.load offset=4 (local.get $state_w))
                     (global.get $PAINT_SCRATCH)
                     (local.get $fmt) (i32.const 0)))))
+        (return (i32.const 0))))
+
+    ;; Default
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; ListBox WndProc  (control class 4)
+  ;; ============================================================
+  ;;
+  ;; ListBoxState (28 bytes, allocated in WM_CREATE)
+  ;;   +0   items_buf_ptr    guest ptr to flat NUL-separated string buffer
+  ;;                         ("item1\0item2\0item3\0", or 0 if empty)
+  ;;   +4   items_used       bytes in items_buf actually used (incl. NULs)
+  ;;   +8   items_cap        bytes allocated for items_buf
+  ;;   +12  count            number of items
+  ;;   +16  cur_sel          current selection (-1 = none)
+  ;;   +20  top_index        first visible row (vertical scroll)
+  ;;   +24  ctrl_id          control id (notification target uses this)
+  ;;
+  ;; Items are stored as concatenated NUL-terminated strings. LB_ADDSTRING
+  ;; appends; LB_RESETCONTENT zeros count + items_used (keeps the buffer for
+  ;; reuse). LB_GETTEXT walks NULs to find item N. There's no per-item index
+  ;; array — for the workloads we care about (file dialogs, font picker)
+  ;; the count is small enough that linear walks are cheap.
+  ;;
+  ;; Click → set cur_sel + post WM_COMMAND (HIWORD=LBN_SELCHANGE=1, LOWORD=ctrl_id).
+  ;; Double-click → post WM_COMMAND (HIWORD=LBN_DBLCLK=2). Item height = 16px.
+  ;;
+  ;; Drawing is done by the renderer (lib/renderer.js _drawWatChildren) via
+  ;; the listbox_get_* exports. WM_PAINT here is a no-op (the WAT control
+  ;; pipeline doesn't go through WM_PAINT — drawing is GDI-bypass).
+  (func $listbox_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $cs_w i32)
+    (local $items i32) (local $items_w i32) (local $used i32) (local $cap i32)
+    (local $count i32) (local $idx i32) (local $i i32) (local $p i32)
+    (local $src_g i32) (local $src_w i32) (local $slen i32)
+    (local $need i32) (local $new_buf i32) (local $new_w i32)
+    (local $dest_g i32) (local $dest_w i32) (local $max i32)
+    (local $row i32) (local $parent i32) (local $notif i32) (local $sz i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    ;; ---------- WM_CREATE (0x0001) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $cs_w (call $g2w (local.get $lParam)))
+        (local.set $state (call $heap_alloc (i32.const 28)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store        (local.get $sw) (i32.const 0)) ;; items_buf_ptr
+        (i32.store offset=4  (local.get $sw) (i32.const 0)) ;; items_used
+        (i32.store offset=8  (local.get $sw) (i32.const 0)) ;; items_cap
+        (i32.store offset=12 (local.get $sw) (i32.const 0)) ;; count
+        (i32.store offset=16 (local.get $sw) (i32.const -1)) ;; cur_sel
+        (i32.store offset=20 (local.get $sw) (i32.const 0)) ;; top_index
+        (i32.store offset=24 (local.get $sw) (i32.load offset=8 (local.get $cs_w))) ;; ctrl_id from CREATESTRUCT.hMenu
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_DESTROY (0x0002) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $sw (call $g2w (local.get $state)))
+            (call $heap_free (i32.load (local.get $sw)))
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    ;; ---------- LB_ADDSTRING (0x0180) ----------
+    ;; lParam = guest ptr to NUL-terminated string. Returns new index, or
+    ;; LB_ERR(-1) on failure (we never fail here).
+    (if (i32.eq (local.get $msg) (i32.const 0x0180))
+      (then
+        (local.set $src_g (local.get $lParam))
+        (if (i32.eqz (local.get $src_g)) (then (return (i32.const -1))))
+        (local.set $src_w (call $g2w (local.get $src_g)))
+        (local.set $slen (call $strlen (local.get $src_w)))
+        (local.set $used (i32.load offset=4 (local.get $sw)))
+        (local.set $cap  (i32.load offset=8 (local.get $sw)))
+        (local.set $need (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
+        ;; Grow buffer if needed: alloc max(256, need*2), copy old, free old.
+        (if (i32.gt_u (local.get $need) (local.get $cap))
+          (then
+            (local.set $cap (i32.mul (local.get $need) (i32.const 2)))
+            (if (i32.lt_u (local.get $cap) (i32.const 256))
+              (then (local.set $cap (i32.const 256))))
+            (local.set $new_buf (call $heap_alloc (local.get $cap)))
+            (local.set $new_w (call $g2w (local.get $new_buf)))
+            (if (local.get $used)
+              (then (call $memcpy (local.get $new_w)
+                                  (call $g2w (i32.load (local.get $sw)))
+                                  (local.get $used))))
+            (call $heap_free (i32.load (local.get $sw)))
+            (i32.store       (local.get $sw) (local.get $new_buf))
+            (i32.store offset=8 (local.get $sw) (local.get $cap))))
+        ;; Append the new string + NUL at items[used].
+        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (call $memcpy (i32.add (local.get $items_w) (local.get $used))
+                      (local.get $src_w) (local.get $slen))
+        (i32.store8 (i32.add (i32.add (local.get $items_w) (local.get $used)) (local.get $slen))
+                    (i32.const 0))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (i32.store offset=4  (local.get $sw)
+          (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
+        (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (call $host_invalidate (local.get $hwnd))
+        (return (local.get $count))))  ;; index of newly inserted item
+
+    ;; ---------- LB_RESETCONTENT (0x0184) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0184))
+      (then
+        (i32.store offset=4  (local.get $sw) (i32.const 0))   ;; items_used
+        (i32.store offset=12 (local.get $sw) (i32.const 0))   ;; count
+        (i32.store offset=16 (local.get $sw) (i32.const -1))  ;; cur_sel
+        (i32.store offset=20 (local.get $sw) (i32.const 0))   ;; top_index
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- LB_GETCOUNT (0x018B) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x018B))
+      (then (return (i32.load offset=12 (local.get $sw)))))
+
+    ;; ---------- LB_GETCURSEL (0x0188) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0188))
+      (then (return (i32.load offset=16 (local.get $sw)))))
+
+    ;; ---------- LB_SETCURSEL (0x0186) ----------
+    ;; wParam = index (-1 to clear). Clamp to count-1 if out of range.
+    (if (i32.eq (local.get $msg) (i32.const 0x0186))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.ge_s (local.get $idx) (local.get $count))
+          (then (local.set $idx (i32.const -1))))
+        (i32.store offset=16 (local.get $sw) (local.get $idx))
+        (call $host_invalidate (local.get $hwnd))
+        (return (local.get $idx))))
+
+    ;; ---------- LB_GETTEXT (0x0189) ----------
+    ;; wParam = index, lParam = guest dest buffer. Returns chars copied (excl NUL),
+    ;; or LB_ERR(-1) if index out of range.
+    (if (i32.eq (local.get $msg) (i32.const 0x0189))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (local.get $count)))
+          (then (return (i32.const -1))))
+        ;; Walk NUL-separated buffer to item $idx.
+        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $p (local.get $items_w))
+        (local.set $i (i32.const 0))
+        (block $found (loop $skip
+          (br_if $found (i32.eq (local.get $i) (local.get $idx)))
+          (local.set $p (i32.add (local.get $p)
+                          (i32.add (call $strlen (local.get $p)) (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $skip)))
+        (local.set $slen (call $strlen (local.get $p)))
+        (local.set $dest_w (call $g2w (local.get $lParam)))
+        (call $memcpy (local.get $dest_w) (local.get $p) (local.get $slen))
+        (i32.store8 (i32.add (local.get $dest_w) (local.get $slen)) (i32.const 0))
+        (return (local.get $slen))))
+
+    ;; ---------- LB_GETTEXTLEN (0x018A) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x018A))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (local.get $count)))
+          (then (return (i32.const -1))))
+        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $p (local.get $items_w))
+        (local.set $i (i32.const 0))
+        (block $found2 (loop $skip2
+          (br_if $found2 (i32.eq (local.get $i) (local.get $idx)))
+          (local.set $p (i32.add (local.get $p)
+                          (i32.add (call $strlen (local.get $p)) (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $skip2)))
+        (return (call $strlen (local.get $p)))))
+
+    ;; ---------- WM_LBUTTONDOWN (0x0201) / WM_LBUTTONDBLCLK (0x0203) ----------
+    ;; lParam = MAKELPARAM(x, y) within the listbox client. Compute row =
+    ;; top_index + y/16, clamp to count-1, set cur_sel, post WM_COMMAND
+    ;; with notification = LBN_SELCHANGE (single click) or LBN_DBLCLK (dbl).
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
+                (i32.eq (local.get $msg) (i32.const 0x0203)))
+      (then
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+        ;; y from hi 16 bits of lParam
+        (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
+        (local.set $row (i32.div_s (local.get $row) (i32.const 16)))
+        (local.set $row (i32.add (local.get $row) (i32.load offset=20 (local.get $sw))))
+        (if (i32.lt_s (local.get $row) (i32.const 0))
+          (then (local.set $row (i32.const 0))))
+        (if (i32.ge_s (local.get $row) (local.get $count))
+          (then (local.set $row (i32.sub (local.get $count) (i32.const 1)))))
+        (i32.store offset=16 (local.get $sw) (local.get $row))
+        ;; Post WM_COMMAND to parent: HIWORD = notification, LOWORD = ctrl_id.
+        (local.set $notif (i32.const 1))  ;; LBN_SELCHANGE
+        (if (i32.eq (local.get $msg) (i32.const 0x0203))
+          (then (local.set $notif (i32.const 2))))  ;; LBN_DBLCLK
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (if (local.get $parent)
+          (then
+            (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                    (i32.or (i32.load offset=24 (local.get $sw))
+                            (i32.shl (local.get $notif) (i32.const 16)))
+                    (local.get $hwnd)))))
+        (call $host_invalidate (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; Default

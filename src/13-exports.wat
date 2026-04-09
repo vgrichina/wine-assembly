@@ -334,6 +334,78 @@
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (i32.load offset=8 (call $g2w (local.get $state))))
 
+  ;; Wrapper around $wnd_destroy_tree for tests that need to tear down a
+  ;; standalone dialog/control without going through find/about teardown.
+  (func (export "wnd_destroy_tree") (param $hwnd i32)
+    (call $wnd_destroy_tree (local.get $hwnd)))
+
+  ;; Test helper: create a parent dlg + listbox child, return listbox hwnd.
+  ;; The parent is registered as WNDPROC_CTRL_NATIVE with no class tag (so
+  ;; control_wndproc_dispatch returns 0 = DefWindowProc) and exists only so
+  ;; the listbox child has a real parent. Used by test/test-listbox.js.
+  (func (export "test_create_listbox")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (result i32)
+    (local $parent i32) (local $lb i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $lb (call $ctrl_create_child (local.get $parent) (i32.const 4) (i32.const 100)
+                     (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+                     (i32.const 0x50000000) (i32.const 0)))
+    (local.get $lb))
+
+  ;; ListBoxState readers — used by lib/renderer.js to draw the visible
+  ;; rows + selection highlight without round-tripping LB_GETTEXT for every
+  ;; row. State layout in $listbox_wndproc.
+  (func (export "listbox_get_count") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=12 (call $g2w (local.get $s))))
+  (func (export "listbox_get_cur_sel") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
+    (i32.load offset=16 (call $g2w (local.get $s))))
+  (func (export "listbox_get_top_index") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=20 (call $g2w (local.get $s))))
+  ;; Copy item $idx text into $dest_guest (NUL-terminated). Returns chars
+  ;; copied (excluding NUL), or 0 if out of range. Same shape as
+  ;; get_edit_text / button_get_text so the renderer can use the same
+  ;; readText helper.
+  (func (export "listbox_get_item_text")
+    (param $hwnd i32) (param $idx i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $s i32) (local $sw i32) (local $count i32) (local $items_w i32)
+    (local $p i32) (local $i i32) (local $slen i32) (local $dest_w i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $count (i32.load offset=12 (local.get $sw)))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+    (local.set $p (local.get $items_w))
+    (local.set $i (i32.const 0))
+    (block $found (loop $skip
+      (br_if $found (i32.eq (local.get $i) (local.get $idx)))
+      (local.set $p (i32.add (local.get $p)
+                      (i32.add (call $strlen (local.get $p)) (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $skip)))
+    (local.set $slen (call $strlen (local.get $p)))
+    (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $slen) (local.get $max))
+      (then (local.set $slen (i32.sub (local.get $max) (i32.const 1)))))
+    (local.set $dest_w (call $g2w (local.get $dest_guest)))
+    (call $memcpy (local.get $dest_w) (local.get $p) (local.get $slen))
+    (i32.store8 (i32.add (local.get $dest_w) (local.get $slen)) (i32.const 0))
+    (local.get $slen))
+
   ;; StaticState text reader (StaticState layout matches ButtonState for the
   ;; first two fields: text_buf_ptr / text_len).
   (func (export "static_get_text")
