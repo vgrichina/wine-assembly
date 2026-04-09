@@ -1843,7 +1843,7 @@
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     ;; Read hwndOwner from FINDREPLACE struct at offset +4
-    (local.set $owner (call $gl32 (i32.add (call $g2w (local.get $arg0)) (i32.const 4))))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     ;; Bare host log line for the [FindTextA] gate. All renderer state is
     ;; created from inside $create_findreplace_dialog via host_register_dialog_frame.
     (drop (call $host_show_find_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0)))
