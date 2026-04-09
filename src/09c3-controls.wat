@@ -275,7 +275,11 @@
             (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
             (local.set $find_buf_g (i32.load offset=16 (local.get $fr_w)))
             (local.set $max_len (i32.load16_u offset=24 (local.get $fr_w)))
-            (if (i32.and (local.get $find_buf_g) (i32.gt_u (local.get $max_len) (i32.const 0)))
+            ;; Nested ifs — do NOT use i32.and as logical AND on pointer/length
+            ;; pairs. find_buf_g typically has bit 0 = 0, so a bitwise AND with
+            ;; (max_len > 0) would silently zero out the guard.
+            (if (local.get $find_buf_g)
+              (then (if (i32.gt_u (local.get $max_len) (i32.const 0))
               (then
                 (local.set $find_buf_w (call $g2w (local.get $find_buf_g)))
                 (if (i32.ge_u (local.get $text_len) (local.get $max_len))
@@ -287,7 +291,7 @@
                       (then (call $memcpy (local.get $find_buf_w)
                                           (local.get $text_src_w)
                                           (local.get $text_len))))))
-                (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))
+                (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))))
         (drop (call $wnd_send_message (local.get $owner)
                 (i32.const 0xC000) (i32.const 0) (local.get $fr)))
         (return (i32.const 0))))

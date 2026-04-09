@@ -202,6 +202,15 @@
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
 
+  ;; Generic SendMessage entry point. Routes through $wnd_send_message:
+  ;; WAT-native targets dispatch synchronously via $wat_wndproc_dispatch;
+  ;; x86 targets queue via post_queue (PostMessage semantics, return 0).
+  (func (export "send_message")
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+    (result i32)
+    (call $wnd_send_message (local.get $hwnd) (local.get $msg)
+                            (local.get $wParam) (local.get $lParam)))
+
   ;; Send WM_CHAR to the currently-focused hwnd. Returns 1 if dispatched.
   (func (export "send_char_to_focus") (param $code i32) (result i32)
     (if (i32.eqz (global.get $focus_hwnd)) (then (return (i32.const 0))))

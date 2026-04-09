@@ -84,6 +84,13 @@ async function main() {
       const kind = parts[1];
       if (kind === 'focus-find' || kind === 'dump-find') {
         scheduledInput.push({ batch, action: kind });
+      } else if (kind === 'find-click') {
+        // B:find-click:CTRL_ID — click a find dialog button by ctrl id
+        // (1=Find Next, 2=Cancel, 0x411=Match case, 0x420=Up, 0x421=Down).
+        scheduledInput.push({ batch, action: 'find-click', ctrlId: parseInt(parts[2]) });
+      } else if (kind === 'dump-fr') {
+        // B:dump-fr — log current FINDREPLACE struct (Flags + lpstrFindWhat).
+        scheduledInput.push({ batch, action: 'dump-fr' });
       } else if (kind === 'keypress' || kind === 'keydown') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'click') {
@@ -803,6 +810,58 @@ async function main() {
             logs.push(`[input] dump-find: hwnd=0x${findDlg.hwnd.toString(16)} focused=${renderer._focusedDialogEdit === editCtrl} editText=${JSON.stringify(editCtrl ? editCtrl.editText : null)} text=${JSON.stringify(editCtrl ? editCtrl.text : null)} at batch ${batch}`);
           } else {
             logs.push(`[input] dump-find: NO FIND DIALOG at batch ${batch}`);
+          }
+        }
+      } else if (ev.action === 'find-click' && renderer) {
+        const we = instance.exports;
+        const dlg = we.get_findreplace_dlg && we.get_findreplace_dlg();
+        if (dlg) {
+          // Find the WAT-side child with this ctrl_id and dispatch
+          // WM_LBUTTONDOWN/UP through send_message — same path the
+          // renderer click handler now uses.
+          let s = 0, found = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (we.ctrl_get_id(ch) === ev.ctrlId) { found = ch; break; }
+            s++;
+          }
+          if (found) {
+            we.send_message(found, 0x0201, 0, 0);
+            we.send_message(found, 0x0202, 0, 0);
+            logs.push(`[input] find-click: id=0x${ev.ctrlId.toString(16)} hwnd=0x${found.toString(16)} at batch ${batch}`);
+          } else {
+            logs.push(`[input] find-click: id=0x${ev.ctrlId.toString(16)} NOT FOUND at batch ${batch}`);
+          }
+        } else {
+          logs.push(`[input] find-click: no find dialog at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-fr' && renderer) {
+        // Read the FR struct from the dialog's userdata via the WAT side.
+        // For find dialog the userdata holds the guest FR ptr; FR.Flags
+        // is at +0x0C, FR.lpstrFindWhat at +0x10.
+        const we = instance.exports;
+        const dlg = we.get_findreplace_dlg && we.get_findreplace_dlg();
+        if (dlg) {
+          // Walk the WND_RECORDS slot for dlg to read userdata. The
+          // wnd_get_userdata helper isn't exported, but the dialog's
+          // findDlg.frGuestAddr is mirrored on the JS side.
+          const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
+          const frG = findDlg && findDlg.frGuestAddr;
+          if (frG) {
+            const dv = new DataView(memory.buffer);
+            const wa = g2w(frG);
+            const flags = dv.getUint32(wa + 0x0C, true);
+            const findBufG = dv.getUint32(wa + 0x10, true);
+            const findBufLen = dv.getUint16(wa + 0x18, true);
+            const findBufWa = g2w(findBufG);
+            const m8 = new Uint8Array(memory.buffer);
+            let txt = '';
+            for (let i = 0; i < findBufLen && m8[findBufWa + i]; i++) {
+              txt += String.fromCharCode(m8[findBufWa + i]);
+            }
+            logs.push(`[input] dump-fr: flags=0x${flags.toString(16)} findWhat=${JSON.stringify(txt)} at batch ${batch}`);
+          } else {
+            logs.push(`[input] dump-fr: no FR ptr at batch ${batch}`);
           }
         }
       } else if (ev.action === 'keypress' && renderer && renderer.handleKeyPress) {

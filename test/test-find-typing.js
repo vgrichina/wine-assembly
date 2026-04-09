@@ -38,6 +38,8 @@ if (!fs.existsSync(EXE)) {
 //   batch 94  : type 'B'
 //   batch 96  : type 'C'
 //   batch 100 : dump dialog state
+//   batch 102 : click Find Next button (id=1) — exercises full WAT click chain
+//   batch 104 : dump FINDREPLACE struct (Flags + lpstrFindWhat)
 const inputSpec = [
   '50:0x111:3',
   '90:focus-find',
@@ -45,6 +47,8 @@ const inputSpec = [
   '94:keypress:66',
   '96:keypress:67',
   '100:dump-find',
+  '102:find-click:1',
+  '104:dump-fr',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=120`;
@@ -91,6 +95,14 @@ const checks = [
   {
     name: 'dump-find reports ABC',
     pass: /dump-find:.*editText="ABC"/.test(out),
+  },
+  {
+    name: 'find-click reached WAT button',
+    pass: /find-click: id=0x1 hwnd=/.test(out),
+  },
+  {
+    name: 'Find Next wrote findWhat="ABC" through WAT',
+    pass: /dump-fr: flags=0x[0-9a-f]*8 findWhat="ABC"/.test(out),
   },
   {
     name: 'no UNIMPLEMENTED API crash',
