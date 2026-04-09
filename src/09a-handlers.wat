@@ -936,6 +936,16 @@
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; If the destroyed window held focus, clear focus_hwnd. Win32 sends
+    ;; WM_KILLFOCUS in this situation; we just zero the global so the JS
+    ;; renderer's handleKeyDown stops trying to deliver keys directly to a
+    ;; dead hwnd. Pinball trips this: it SetFocus()es a temp 1×1 splash
+    ;; window during init then DestroyWindow()s it, leaving focus_hwnd
+    ;; pointing at a corpse — the flipper test caught it because Z keys
+    ;; were being sent to the splash window's wndproc instead of through
+    ;; the GetMessageA queue to the game window.
+    (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
+    (then (global.set $focus_hwnd (i32.const 0))))
     ;; When destroying main_hwnd, promote to next window only if it's a sibling
     ;; top-level window — NOT a child of the destroyed window. Apps like Pinball
     ;; destroy a frame window during init while keeping the game window. But for
