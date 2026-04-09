@@ -314,6 +314,10 @@
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
+    ;; Clear pressed flag, derive button kind from style&0xF (BS_*), toggle
+    ;; check state for checkbox/radio kinds, then post WM_COMMAND with
+    ;; BN_CLICKED to the parent so a future $wndproc_dialog (or an existing
+    ;; x86 dialog proc) can react.
     (if (i32.eq (local.get $msg) (i32.const 0x0202))
       (then
         (if (local.get $state)
@@ -322,15 +326,32 @@
             (local.set $flags (i32.load offset=8 (local.get $state_w)))
             ;; clear pressed
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFE)))
-            ;; toggle checked for checkbox (kind 1) / radio (kind 2)
+            ;; Toggle checked for BS_CHECKBOX(2)/BS_AUTOCHECKBOX(3)/
+            ;; BS_3STATE(5)/BS_AUTO3STATE(6)/BS_RADIOBUTTON(4)/
+            ;; BS_AUTORADIOBUTTON(9). Push buttons (0,1) and groupbox (7)
+            ;; never toggle.
+            (local.set $w (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
             (if (i32.or
-                  (i32.eq (i32.and (i32.shr_u (local.get $flags) (i32.const 4)) (i32.const 0x0F)) (i32.const 1))
-                  (i32.eq (i32.and (i32.shr_u (local.get $flags) (i32.const 4)) (i32.const 0x0F)) (i32.const 2)))
+                  (i32.or
+                    (i32.or (i32.eq (local.get $w) (i32.const 2))
+                            (i32.eq (local.get $w) (i32.const 3)))
+                    (i32.or (i32.eq (local.get $w) (i32.const 4))
+                            (i32.eq (local.get $w) (i32.const 5))))
+                  (i32.or (i32.eq (local.get $w) (i32.const 6))
+                          (i32.eq (local.get $w) (i32.const 9))))
               (then (local.set $flags (i32.xor (local.get $flags) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
             (call $host_invalidate (local.get $hwnd))
-            ;; TODO STEP 5: post WM_COMMAND(MAKEWPARAM(ctrl_id,BN_CLICKED), hwnd) to parent.
-            ;; Needs $wnd_send_message helper that handles WAT-native + x86 wndprocs.
+            ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
+            ;; to parent. Skip groupbox (kind 7) — it's not interactive.
+            (if (i32.ne (local.get $w) (i32.const 7))
+              (then
+                (drop (call $wnd_send_message
+                  (call $wnd_get_parent (local.get $hwnd))
+                  (i32.const 0x0111)  ;; WM_COMMAND
+                  ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
+                  (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
+                  (local.get $hwnd))))) ;; lParam = button hwnd
             ))
         (return (i32.const 0))))
 
