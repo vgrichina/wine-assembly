@@ -1,45 +1,50 @@
 # Code Review Report: Wine-Assembly x86 Emulator
 
 ## 1. Summary
-This report details the current state of the Wine-Assembly x86 emulator, focusing on API gaps, misimplementations, and the identification of "silent" stubs. A critical finding is that many Win32 APIs are implemented as minimal return-0/1 stubs, which hides implementation gaps and makes debugging guest applications difficult.
+This report details the current state of the Wine-Assembly x86 emulator, focusing on API gaps, misimplementations, and resource management issues. While many core CPU bugs have been fixed, several high-level system gaps and resource leaks remain.
 
-## 2. API Gaps & Silent Stubs (src/parts/09a-handlers.wat)
-A systemic review of the API handlers identified over 100 functions that fail silently.
+## 2. Resource Leaks & Lifetime Management
+A critical area of concern is the accumulation of leaked memory and table slots during standard application operations.
 
-### 2.1 Critical Unicode (W) Variants
-Most Unicode variants are currently non-functional stubs. Applications attempting to use NT-style Unicode APIs will fail immediately or behave unpredictably:
-*   **Windowing:** `RegisterClassW`, `RegisterClassExW`, `CreateWindowExW`, `SetWindowTextW`, `GetWindowTextW`.
+### 2.1 Memory Leaks in `wsprintf` (src/12-wsprintf.wat)
+*   **Decimal Formatting:** `write_uint` and `write_uint_w` allocate temporary 12 or 24-byte buffers on the heap via `$heap_alloc` every time they convert a number to a string. These buffers are never freed, causing a permanent leak on every numeric `wsprintf` call.
+
+### 2.2 Window Table & Control State Leaks (src/09a-handlers.wat, src/09c-help.wat)
+*   **`DestroyWindow` Slot Leak:** `$handle_DestroyWindow` fails to call `wnd_table_remove`. The window's mapping remains in the internal 256-slot table, leading to "Table Full" errors or incorrect message dispatching if `HWND`s are recycled.
+*   **Control State Leak:** `wnd_table_remove` zeroes the window record but does not free the `state_ptr`. Heap-allocated structures for `EditState`, `ButtonState`, etc., are never released when a control is destroyed.
+
+## 3. Implementation Gaps
+
+### 3.1 x86 Decoder Limitations (src/07-decoder.wat)
+*   **16-bit Addressing:** The `0x67` address-size override prefix is unimplemented. The decoder assumes all memory operands use 32-bit ModR/M encodings.
+*   **Far Control Flow:** `CALL far` and `JMP far` (inter-segment) are unimplemented.
+*   **Group 5 POP:** certain `POP r/m32` variants in the `0xFF` group are missing.
+
+### 3.2 Messaging & Windowing
+*   **Asynchronous `SendMessage`:** In `src/09c3-controls.wat`, `wnd_send_message` uses `PostMessage` semantics for x86 targets. This is a violation of the Win32 contract where `SendMessage` must be synchronous and block until the receiver processes the message.
+*   **Bridged UI Controls:** The newer "Controls as Windows" path only supports `Button`, `Edit`, and `Static`. Complex controls like `TreeView` are not yet bridged to the JS renderer.
+*   **Taskbar Sync:** `lib/renderer.js` filters the taskbar by `hasCaption`, which is only set during the first draw. Newly created or hidden windows are missing from the taskbar.
+
+### 3.3 Filesystem & Threading (lib/filesystem.js, lib/thread-manager.js)
+*   **`MapViewOfFile`:** Currently implemented as "Copy-on-Map". Changes to mapped memory are not reflected back to the virtual file, breaking apps that use memory-mapped I/O for persistence.
+*   **Synchronization:** No support for `WaitForMultipleObjects`. Lack of atomic primitives or locking in shared memory may lead to heap corruption if multiple threads allocate simultaneously.
+
+## 4. Win32 API Gaps & Silent Stubs
+Over 100 Win32 APIs remain stubbed or unimplemented.
+
+### 4.1 Critical Unicode (W) Variants
+Most Unicode variants are non-functional stubs:
+*   **Windowing:** `RegisterClassW`, `CreateWindowExW`, `SetWindowTextW`.
 *   **Messaging:** `SendMessageW`, `PostMessageW`.
-*   **Resources/Libraries:** `LoadLibraryW`, `LoadCursorW`, `LoadIconW`, `LoadMenuW`.
-*   **String/Utility:** `wsprintfW`, `wvsprintfW`, `lstrcatW`.
+*   **Resources:** `LoadLibraryW`, `LoadCursorW`, `LoadIconW`.
 
-### 2.2 System & Environment Stubs
-Several core system APIs return hardcoded "success" or "empty" values without performing any action:
-*   **Time:** `GetLocalTime` (returns zeroed structure), `GetTimeFormatA`, `GetDateFormatA`.
-*   **Profile/Registry:** `GetProfileStringA`, `GetProfileIntA`, `WriteProfileStringA`.
-*   **Locales:** `GetLocaleInfoA`, `GetUserDefaultLCID`, `GetACP`, `GetOEMCP`.
-*   **Filesystem (Wide):** `FindFirstFileW`, `GetFileAttributesW`, `GetCurrentDirectoryW`, `DeleteFileW`.
-*   **Critical Sections:** `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection` (implemented as no-ops).
+### 4.2 System & Environment Stubs
+*   **Time/Locales:** `GetLocalTime`, `GetLocaleInfoA`, `GetACP`.
+*   **Registry:** `GetProfileStringA`, `WriteProfileStringA`.
+*   **Clipboard:** Bridging to JS `navigator.clipboard` is incomplete.
 
-### 2.3 Misimplementations
-*   **`PatBlt`**: Incorrectly reads width and height from the guest stack (`esp+16`, `esp+20`) instead of using the `arg3`/`arg4` parameters passed by the dispatcher. This results in incorrect fill dimensions and stray "colored rectangles" on screen.
-*   **`MultiByteToWideChar` / `WideCharToMultiByte`**: Currently performs a direct 1:1 byte copy. It does not respect code pages or handle multi-byte sequences correctly.
-*   **`GetProcAddress`**: Leaks guest heap memory by creating a new thunk on every call, even for the same function. It also lacks support for ordinal lookups.
-*   **`GetModuleHandleA`**: Hardcoded to return the `image_base`, which breaks for applications expecting to load or query multiple DLLs.
-
-## 3. Host Import Gaps (lib/host-imports.js)
-*   **`read_file`**: Currently a hardcoded stub returning 0. File I/O is not yet bridged to the host filesystem.
-*   **GDI Text Baseline**: `gdi_text_out` fails to set `textBaseline = 'top'` for memory DCs. Since Win32 defaults to top-left text origins and Canvas defaults to alphabetic, this causes vertical misalignment and overlapping text in composed title areas.
-*   **GDI Text Font**: `gdi_text_out` uses a fixed 13px monospace font regardless of the font selected into the DC.
-*   **Window Styles**: Many `dwExStyle` and `dwStyle` flags are ignored in `create_window`.
-
-## 4. Policy: Transition to "Crash on Run"
-To improve debuggability, the project is moving away from silent stubs.
-*   **Mechanism**: All stubs should invoke `(call $crash_unimplemented (local.get $name_ptr))`.
-*   **Host Behavior**: The host implementation in `host-imports.js` logs the EIP, ESP, and the name of the missing API, then halts execution.
-*   **Exception**: Minimal functional stubs like `GetLastError` (returning a global error code) and `GetModuleHandleA` (returning the main base) should be retained until full implementations are ready, as they are often required for basic application startup.
-
-## 5. Confirmed Critical CPU Bugs
-*   **Decoder:** `0x8F` (POP [mem]) uses stale ESP; `SETcc` clobbers registers when targeting memory.
-*   **ALU:** `ADC`/`SBB` destroys `flag_res` on carry, corrupting subsequent flag checks.
-*   **PE Loader:** Fails to zero the BSS area, leading to non-deterministic behavior in global variables.
+## 5. CPU Bug Tracker
+*   **Fixed:** PE Loader now correctly zeroes the BSS area.
+*   **Fixed:** `ADC`/`SBB` now preserve `flag_res` correctly using raw mode.
+*   **Fixed:** `0x8F` (POP [mem]) correctly calculates the effective address before updating ESP.
+*   **Outstanding:** `SETcc` clobbers the full register when targeting memory (should only affect the byte).
