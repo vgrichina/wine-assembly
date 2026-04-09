@@ -713,6 +713,8 @@
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $x i32) (local $y i32) (local $col i32) (local $row i32)
     (local $idx i32) (local $parent i32) (local $ctrl_id i32)
+    (local $hdc i32) (local $sel i32) (local $brush i32)
+    (local $cx i32) (local $cy i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -735,6 +737,52 @@
 
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
+
+    ;; ---------- WM_PAINT (0x000F) ----------
+    ;; 8 cols × 3 rows of basic colors. Each cell is 24×20 with a 1-px black
+    ;; border and a 2-px white selection ring drawn over the picked cell.
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sel (i32.load (local.get $sw)))
+        (local.set $row (i32.const 0))
+        (block $rows_done (loop $rows
+          (br_if $rows_done (i32.ge_u (local.get $row) (i32.const 3)))
+          (local.set $col (i32.const 0))
+          (block $cols_done (loop $cols
+            (br_if $cols_done (i32.ge_u (local.get $col) (i32.const 8)))
+            (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
+            (local.set $cx (i32.mul (local.get $col) (i32.const 24)))
+            (local.set $cy (i32.mul (local.get $row) (i32.const 20)))
+            ;; 1-px black border = full cell painted black, then color fill 1px in
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (local.get $cx) (local.get $cy)
+                    (i32.add (local.get $cx) (i32.const 24))
+                    (i32.add (local.get $cy) (i32.const 20))
+                    (i32.const 0x30014)))  ;; BLACK_BRUSH
+            (local.set $brush (call $host_gdi_create_solid_brush
+                                (call $colorgrid_color_for_idx (local.get $idx))))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.add (local.get $cx) (i32.const 1))
+                    (i32.add (local.get $cy) (i32.const 1))
+                    (i32.add (local.get $cx) (i32.const 23))
+                    (i32.add (local.get $cy) (i32.const 19))
+                    (local.get $brush)))
+            (drop (call $host_gdi_delete_object (local.get $brush)))
+            ;; Selection: white ring 2 px in from the border
+            (if (i32.eq (local.get $idx) (local.get $sel))
+              (then
+                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                        (i32.add (local.get $cx) (i32.const 2))
+                        (i32.add (local.get $cy) (i32.const 2))
+                        (i32.add (local.get $cx) (i32.const 22))
+                        (i32.add (local.get $cy) (i32.const 18))
+                        (i32.const 0x05) (i32.const 0x0F)))))  ;; raised
+            (local.set $col (i32.add (local.get $col) (i32.const 1)))
+            (br $cols)))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $rows)))
+        (return (i32.const 0))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0201))   ;; WM_LBUTTONDOWN
       (then
@@ -1296,6 +1344,41 @@
     (local.get $buf)
   )
 
+  ;; Clear the "checked" bit on every BS_AUTORADIOBUTTON sibling of $hwnd
+  ;; (same parent), then set the checked bit on $hwnd itself. Win32 radio
+  ;; mutex behavior. Group boundaries (WS_GROUP) are not yet honored — we
+  ;; treat all sibling autoradios as one group, which is correct for every
+  ;; dialog with a single radio group and incorrect only when a parent
+  ;; contains two independent radio groups (none of our test apps do today).
+  (func $autoradio_clear_siblings (param $hwnd i32)
+    (local $parent i32) (local $i i32) (local $rec i32)
+    (local $other i32) (local $st i32) (local $stw i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $other (i32.load (local.get $rec)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $other) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+            ;; kind == BS_AUTORADIOBUTTON (9)
+            (i32.eq (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x0F))
+                    (i32.const 9)))
+        (then
+          (local.set $st (i32.load offset=20 (local.get $rec)))
+          (if (local.get $st)
+            (then
+              (local.set $stw (call $g2w (local.get $st)))
+              ;; Clear bit1 (checked) on every autoradio sibling — including
+              ;; $hwnd itself; the caller will re-set it after this returns.
+              (i32.store offset=8 (local.get $stw)
+                (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0xFFFFFFFD)))
+              (call $host_invalidate (local.get $other))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+  )
+
   ;; ---- Button WndProc ----
   ;;
   ;; Test path NOT YET WIRED: dialog buttons today receive only BM_GETCHECK
@@ -1311,6 +1394,7 @@
     (local $w i32) (local $h i32) (local $flags i32)
     (local $edge_flags i32) (local $text_w i32) (local $text_len i32)
     (local $brush i32) (local $name_ptr i32) (local $hmenu i32)
+    (local $kind i32) (local $box_y i32) (local $tw i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -1411,19 +1495,25 @@
             ;; clear pressed
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFE)))
             ;; Toggle checked for BS_CHECKBOX(2)/BS_AUTOCHECKBOX(3)/
-            ;; BS_3STATE(5)/BS_AUTO3STATE(6)/BS_RADIOBUTTON(4)/
-            ;; BS_AUTORADIOBUTTON(9). Push buttons (0,1) and groupbox (7)
-            ;; never toggle.
+            ;; BS_3STATE(5)/BS_AUTO3STATE(6). BS_AUTORADIOBUTTON(9) clears
+            ;; sibling autoradios then forces this one ON (radio mutex).
+            ;; Push buttons (0,1), plain BS_RADIOBUTTON(4) and groupbox (7)
+            ;; do not auto-toggle — the parent dialog code is expected to
+            ;; manage their state in response to BN_CLICKED.
             (local.set $w (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
             (if (i32.or
-                  (i32.or
-                    (i32.or (i32.eq (local.get $w) (i32.const 2))
-                            (i32.eq (local.get $w) (i32.const 3)))
-                    (i32.or (i32.eq (local.get $w) (i32.const 4))
-                            (i32.eq (local.get $w) (i32.const 5))))
-                  (i32.or (i32.eq (local.get $w) (i32.const 6))
-                          (i32.eq (local.get $w) (i32.const 9))))
+                  (i32.or (i32.eq (local.get $w) (i32.const 2))
+                          (i32.eq (local.get $w) (i32.const 3)))
+                  (i32.or (i32.eq (local.get $w) (i32.const 5))
+                          (i32.eq (local.get $w) (i32.const 6))))
               (then (local.set $flags (i32.xor (local.get $flags) (i32.const 0x02)))))
+            (if (i32.eq (local.get $w) (i32.const 9))
+              (then
+                (call $autoradio_clear_siblings (local.get $hwnd))
+                ;; $autoradio_clear_siblings cleared $hwnd's bit too — set it
+                ;; back on. Use the freshly-cleared flags from the state struct.
+                (local.set $flags
+                  (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
             (call $host_invalidate (local.get $hwnd))
             ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
@@ -1441,42 +1531,189 @@
 
     ;; ---------- WM_PAINT (0x000F) ----------
     ;; Compose a Win98 button face from GDI primitives. hdc encoding matches
-    ;; BeginPaint: hwnd + 0x40000.
+    ;; BeginPaint: hwnd + 0x40000. Dispatches by BS_* kind (style & 0x0F):
+    ;;   0,1     = push button / default push button
+    ;;   2,3,5,6 = checkbox-style (small box + check + label)
+    ;;   4,9     = radio-style (small circle + dot + label)
+    ;;   7       = groupbox (etched border + label notch)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $flags (i32.load offset=8 (local.get $state_w)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+        ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
+        ;; that have no JS-side window record).
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        ;; 1) Fill face with LTGRAY_BRUSH (stock object 1 = 0x30011)
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
-                (i32.const 0x30011)))
-        ;; 2) Bevel: BF_RECT(0x0F) | BDR_RAISEDOUTER(0x01)|BDR_RAISEDINNER(0x04) = 0x05
-        ;;          or pressed: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A
-        (local.set $edge_flags (select (i32.const 0x0A) (i32.const 0x05)
-                                       (i32.and (local.get $flags) (i32.const 0x01))))
-        (drop (call $host_gdi_draw_edge (local.get $hdc)
-                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
-                (local.get $edge_flags) (i32.const 0x0F)))
-        ;; 3) Centered text: gdi_draw_text needs a WASM-linear RECT (use PAINT_SCRATCH)
-        ;;    and a WASM-linear text pointer (g2w(text_buf_ptr)).
+        (local.set $kind (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
+
+        ;; Common DC setup: select DEFAULT_GUI_FONT and switch to TRANSPARENT
+        ;; bk mode so text glyphs don't get an opaque white background box.
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+
+        ;; Resolve text pointer/length once (used by every kind that has a label).
         (if (i32.load (local.get $state_w))
           (then
             (local.set $text_w (call $g2w (i32.load (local.get $state_w))))
-            (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-            (i32.store        (global.get $PAINT_SCRATCH) (i32.const 0))
-            (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-            (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-            (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
-            ;; DT_CENTER(0x01)|DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x25
-            (drop (call $host_gdi_draw_text (local.get $hdc)
-                    (local.get $text_w) (local.get $text_len)
-                    (global.get $PAINT_SCRATCH)
-                    (i32.const 0x25) (i32.const 0)))))
+            (local.set $text_len (i32.load offset=4 (local.get $state_w)))))
+
+        ;; ---- Push button (kinds 0, 1) ----
+        (if (i32.lt_u (local.get $kind) (i32.const 2))
+          (then
+            ;; Fill face with LTGRAY_BRUSH (stock object 1 = 0x30011)
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))
+            ;; Bevel: BF_RECT(0x0F) | BDR_RAISEDOUTER(0x01)|BDR_RAISEDINNER(0x04) = 0x05
+            ;;        or pressed: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A
+            (local.set $edge_flags (select (i32.const 0x0A) (i32.const 0x05)
+                                           (i32.and (local.get $flags) (i32.const 0x01))))
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (local.get $edge_flags) (i32.const 0x0F)))
+            (if (local.get $text_w)
+              (then
+                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
+                ;; DT_CENTER(0x01)|DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x25
+                (drop (call $host_gdi_draw_text (local.get $hdc)
+                        (local.get $text_w) (local.get $text_len)
+                        (global.get $PAINT_SCRATCH)
+                        (i32.const 0x25) (i32.const 0)))))
+            (return (i32.const 0))))
+
+        ;; ---- Checkbox-style (kinds 2, 3, 5, 6) ----
+        ;; 12x12 sunken white box, optional check glyph, label to the right.
+        (if (i32.or
+              (i32.or (i32.eq (local.get $kind) (i32.const 2))
+                      (i32.eq (local.get $kind) (i32.const 3)))
+              (i32.or (i32.eq (local.get $kind) (i32.const 5))
+                      (i32.eq (local.get $kind) (i32.const 6))))
+          (then
+            ;; Background — face color so a re-paint doesn't leave stale pixels
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))
+            (local.set $box_y (i32.div_u (i32.sub (local.get $h) (i32.const 12)) (i32.const 2)))
+            ;; White interior
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (local.get $box_y)
+                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
+                    (i32.const 0x30010)))
+            ;; Sunken edge — EDGE_SUNKEN = 0x0A, BF_RECT = 0x0F
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (local.get $box_y)
+                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
+                    (i32.const 0x0A) (i32.const 0x0F)))
+            ;; Check glyph if checked (flags bit 1)
+            (if (i32.and (local.get $flags) (i32.const 0x02))
+              (then
+                (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
+                (drop (call $host_gdi_move_to (local.get $hdc)
+                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 5))))
+                (drop (call $host_gdi_line_to (local.get $hdc)
+                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 8))))
+                (drop (call $host_gdi_line_to (local.get $hdc)
+                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 3))))
+                ;; Second pass 1px down for thickness
+                (drop (call $host_gdi_move_to (local.get $hdc)
+                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 6))))
+                (drop (call $host_gdi_line_to (local.get $hdc)
+                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 9))))
+                (drop (call $host_gdi_line_to (local.get $hdc)
+                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 4))))))
+            (if (local.get $text_w)
+              (then
+                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
+                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
+                ;; DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x24
+                (drop (call $host_gdi_draw_text (local.get $hdc)
+                        (local.get $text_w) (local.get $text_len)
+                        (global.get $PAINT_SCRATCH)
+                        (i32.const 0x24) (i32.const 0)))))
+            (return (i32.const 0))))
+
+        ;; ---- Radio-style (kinds 4, 9) ----
+        (if (i32.or (i32.eq (local.get $kind) (i32.const 4))
+                    (i32.eq (local.get $kind) (i32.const 9)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))
+            (local.set $box_y (i32.sub (i32.div_u (local.get $h) (i32.const 2)) (i32.const 6)))
+            ;; Outline circle: BLACK_PEN + WHITE_BRUSH
+            (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
+            (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30010)))
+            (drop (call $host_gdi_ellipse (local.get $hdc)
+                    (i32.const 0) (local.get $box_y)
+                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))))
+            (if (i32.and (local.get $flags) (i32.const 0x02))
+              (then
+                (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30014)))
+                (drop (call $host_gdi_ellipse (local.get $hdc)
+                        (i32.const 4) (i32.add (local.get $box_y) (i32.const 4))
+                        (i32.const 8) (i32.add (local.get $box_y) (i32.const 8))))))
+            (if (local.get $text_w)
+              (then
+                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
+                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
+                (drop (call $host_gdi_draw_text (local.get $hdc)
+                        (local.get $text_w) (local.get $text_len)
+                        (global.get $PAINT_SCRATCH)
+                        (i32.const 0x24) (i32.const 0)))))
+            (return (i32.const 0))))
+
+        ;; ---- Groupbox (kind 7) ----
+        ;; Etched rectangle with a label notched into the top stroke. The label
+        ;; width is measured via DT_CALCRECT so we know how wide a hole to clear.
+        (if (i32.eq (local.get $kind) (i32.const 7))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))
+            ;; EDGE_ETCHED = 0x06 (BDR_SUNKENOUTER|BDR_RAISEDINNER), BF_RECT = 0x0F.
+            ;; Top edge sits at y=6 so the label can overlap it.
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 6) (local.get $w) (local.get $h)
+                    (i32.const 0x06) (i32.const 0x0F)))
+            (if (local.get $text_w)
+              (then
+                ;; Measure with DT_CALCRECT(0x400) | DT_SINGLELINE(0x20) = 0x420
+                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 12))
+                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+                (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 13))
+                (drop (call $host_gdi_draw_text (local.get $hdc)
+                        (local.get $text_w) (local.get $text_len)
+                        (global.get $PAINT_SCRATCH)
+                        (i32.const 0x420) (i32.const 0)))
+                (local.set $tw (i32.sub
+                                 (i32.load offset=8 (global.get $PAINT_SCRATCH))
+                                 (i32.const 12)))
+                ;; Clear the slot under the label so the etched stroke is hidden
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 8) (i32.const 0)
+                        (i32.add (i32.const 16) (local.get $tw)) (i32.const 13)
+                        (i32.const 0x30011)))
+                ;; Real draw at left=12, y=0..13
+                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 12))
+                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+                (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 13))
+                (drop (call $host_gdi_draw_text (local.get $hdc)
+                        (local.get $text_w) (local.get $text_len)
+                        (global.get $PAINT_SCRATCH)
+                        (i32.const 0x20) (i32.const 0)))))
+            (return (i32.const 0))))
         (return (i32.const 0))))
 
     ;; ---------- BM_GETCHECK (0x00F0) ----------
@@ -1578,13 +1815,17 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+        ;; Geometry from CONTROL_GEOM (parent has already painted the
+        ;; dialog face background via WM_ERASEBKGND, so no fill here).
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        ;; Background: dialog face color via LTGRAY_BRUSH
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
-                (i32.const 0x30011)))
+        ;; Select DEFAULT_GUI_FONT (8pt MS Sans Serif) for the dialog look.
+        ;; TRANSPARENT bk mode so the label glyphs let the parent's face
+        ;; color show through instead of painting an opaque white box
+        ;; behind every word.
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         (if (i32.load (local.get $state_w))
           (then
             ;; Map SS_LEFT/CENTER/RIGHT (low 4 bits of style) → DT_LEFT(0)/CENTER(1)/RIGHT(2)
@@ -1643,6 +1884,9 @@
     (local $need i32) (local $new_buf i32) (local $new_w i32)
     (local $dest_g i32) (local $dest_w i32) (local $max i32)
     (local $row i32) (local $parent i32) (local $notif i32) (local $sz i32)
+    (local $w i32) (local $h i32) (local $hdc i32) (local $sel i32)
+    (local $top i32) (local $visible i32) (local $row_y i32) (local $row_h i32)
+    (local $brush i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -1821,6 +2065,77 @@
                             (i32.shl (local.get $notif) (i32.const 16)))
                     (local.get $hwnd)))))
         (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_PAINT (0x000F) ----------
+    ;; Draw inset frame, white interior, and visible item rows. Selected
+    ;; item is rendered with the system highlight (blue background +
+    ;; white text). Item height is fixed at 16 px.
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        ;; White interior + sunken edge
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x30010)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x0A) (i32.const 0x0F)))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $sel   (i32.load offset=16 (local.get $sw)))
+        (local.set $top   (i32.load offset=20 (local.get $sw)))
+        (local.set $row_h (i32.const 16))
+        (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (local.get $row_h)))
+        ;; Walk to the first visible item.
+        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $p (local.get $items_w))
+        (local.set $i (i32.const 0))
+        (block $skip_done (loop $skip
+          (br_if $skip_done (i32.ge_u (local.get $i) (local.get $top)))
+          (br_if $skip_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $p (i32.add (local.get $p)
+                          (i32.add (call $strlen (local.get $p)) (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $skip)))
+        ;; Render visible rows.
+        (local.set $row (i32.const 0))
+        (block $rows_done (loop $rows
+          (br_if $rows_done (i32.ge_u (local.get $row) (local.get $visible)))
+          (local.set $idx (i32.add (local.get $top) (local.get $row)))
+          (br_if $rows_done (i32.ge_u (local.get $idx) (local.get $count)))
+          (local.set $row_y (i32.add (i32.const 2) (i32.mul (local.get $row) (local.get $row_h))))
+          (local.set $slen (call $strlen (local.get $p)))
+          (if (i32.eq (local.get $idx) (local.get $sel))
+            (then
+              ;; Highlight bar (system blue) + white text. We use a fresh
+              ;; solid brush each time so we don't depend on COLOR_HIGHLIGHT
+              ;; being mapped in the stock-brush table.
+              (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (i32.const 2) (local.get $row_y)
+                      (i32.sub (local.get $w) (i32.const 2))
+                      (i32.add (local.get $row_y) (local.get $row_h))
+                      (local.get $brush)))
+              (drop (call $host_gdi_delete_object (local.get $brush)))
+              (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+              (if (local.get $slen)
+                (then (drop (call $host_gdi_text_out (local.get $hdc)
+                              (i32.const 4) (i32.add (local.get $row_y) (i32.const 2))
+                              (local.get $p) (local.get $slen)))))
+              (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000))))
+            (else
+              (if (local.get $slen)
+                (then (drop (call $host_gdi_text_out (local.get $hdc)
+                              (i32.const 4) (i32.add (local.get $row_y) (i32.const 2))
+                              (local.get $p) (local.get $slen)))))))
+          (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $rows)))
         (return (i32.const 0))))
 
     ;; Default
@@ -2175,9 +2490,15 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+        ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
+        ;; that have no JS-side window record).
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        ;; Default GUI font + transparent bk mode so glyphs don't paint over
+        ;; the white edit area with an opaque white box.
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; 1) White background (WHITE_BRUSH stock obj 0 = 0x30010)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)

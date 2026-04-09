@@ -395,6 +395,17 @@
     (call $create_open_dialog (local.get $dlg) (i32.const 0) (local.get $kind) (i32.const 0))
     (local.get $dlg))
 
+  ;; Test helper: build a Find/Replace dialog standalone (no x86 caller).
+  ;; FR struct guest ptr is allocated but unused by the dialog beyond
+  ;; SetWindowLongPtr stash.
+  (func (export "test_create_find_dialog") (result i32)
+    (local $dlg i32) (local $fr i32)
+    (local.set $fr (call $heap_alloc (i32.const 32)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr))
+    (local.get $dlg))
+
   ;; Test helper: create a parent dlg + listbox child, return listbox hwnd.
   ;; The parent is registered as WNDPROC_CTRL_NATIVE with no class tag (so
   ;; control_wndproc_dispatch returns 0 = DefWindowProc) and exists only so
