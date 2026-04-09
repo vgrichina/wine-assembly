@@ -233,4 +233,89 @@
                                   (local.get $len))))))
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
+
+  ;; ============================================================
+  ;; Child-window enumeration + control read-back exports
+  ;; ============================================================
+  ;; Used by the renderer to draw WAT-managed children without needing
+  ;; a parallel JS-side `controls[]` array.
+
+  ;; Find next child slot of $parent at or after $start. Returns -1 when
+  ;; no more children exist. Caller iterates: slot=0; while ((slot=next(p,slot))!=-1) { ... slot++; }
+  (func (export "wnd_next_child_slot") (param $parent i32) (param $start i32) (result i32)
+    (call $wnd_next_child_slot (local.get $parent) (local.get $start)))
+
+  (func (export "wnd_slot_hwnd") (param $slot i32) (result i32)
+    (call $wnd_slot_hwnd (local.get $slot)))
+
+  ;; Geometry getters: each returns x|y<<16 or w|h<<16 (i16 each).
+  (func (export "ctrl_get_xy") (param $hwnd i32) (result i32)
+    (call $ctrl_get_xy_packed (local.get $hwnd)))
+  (func (export "ctrl_get_wh") (param $hwnd i32) (result i32)
+    (call $ctrl_get_wh_packed (local.get $hwnd)))
+
+  ;; Control class (1=Button, 2=Edit, 3=Static; 0 if not a control).
+  (func (export "ctrl_get_class") (param $hwnd i32) (result i32)
+    (call $ctrl_table_get_class (local.get $hwnd)))
+
+  ;; Control id from CONTROL_TABLE.
+  (func (export "ctrl_get_id") (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load offset=4
+      (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
+
+  ;; Window style (also exposed for renderer drawing decisions).
+  (func (export "wnd_get_style_export") (param $hwnd i32) (result i32)
+    (call $wnd_get_style (local.get $hwnd)))
+
+  ;; ButtonState text reader (parallel to get_edit_text).
+  (func (export "button_get_text")
+    (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $state i32) (local $sw i32) (local $len i32) (local $src i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $src (i32.load (local.get $sw)))
+    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $len) (local.get $max))
+      (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
+    (if (local.get $src)
+      (then (if (local.get $len)
+              (then (call $memcpy (call $g2w (local.get $dest_guest))
+                                  (call $g2w (local.get $src))
+                                  (local.get $len))))))
+    (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
+    (local.get $len))
+
+  ;; ButtonState flags: bit0=pressed bit1=checked bit2=default bit3=focused
+  ;; bits 4..7 = button kind (0=push 1=checkbox 2=radio 3=groupbox).
+  (func (export "button_get_flags") (param $hwnd i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (i32.load offset=8 (call $g2w (local.get $state))))
+
+  ;; StaticState text reader (StaticState layout matches ButtonState for the
+  ;; first two fields: text_buf_ptr / text_len).
+  (func (export "static_get_text")
+    (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $state i32) (local $sw i32) (local $len i32) (local $src i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $src (i32.load (local.get $sw)))
+    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $len) (local.get $max))
+      (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
+    (if (local.get $src)
+      (then (if (local.get $len)
+              (then (call $memcpy (call $g2w (local.get $dest_guest))
+                                  (call $g2w (local.get $src))
+                                  (local.get $len))))))
+    (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
+    (local.get $len))
 )

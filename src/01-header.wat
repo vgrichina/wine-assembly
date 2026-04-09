@@ -297,6 +297,12 @@
   ;; cannot reach it via image-relative pointers.
   (global $PAINT_SCRATCH  i32 (i32.const 0x00002700))
   (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
+  ;; CONTROL_GEOM: parallel x/y/w/h table indexed by window slot.
+  ;; Stored as 4 × i16 (parent-relative pixels). Populated by
+  ;; $ctrl_create_child; consulted by the renderer to enumerate WAT-managed
+  ;; child controls without needing host_create_window for each.
+  ;; 64 entries × 8 bytes = 0x200, lives in the free region after CLASS_RECORDS.
+  (global $CONTROL_GEOM  i32 (i32.const 0x00003100))
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
   ;;   +4  atom (assigned at registration)

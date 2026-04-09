@@ -38,6 +38,39 @@
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
 
+  ;; ---- Control geometry table helpers (CONTROL_GEOM) ----
+  ;; Each entry: 8 bytes = (i16 x, i16 y, i16 w, i16 h), parent-relative.
+  ;; Indexed by window slot (same index as CONTROL_TABLE / WND_RECORDS).
+
+  (func $ctrl_geom_addr (param $slot i32) (result i32)
+    (i32.add (global.get $CONTROL_GEOM) (i32.mul (local.get $slot) (i32.const 8))))
+
+  (func $ctrl_geom_set
+    (param $slot i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $a i32)
+    (local.set $a (call $ctrl_geom_addr (local.get $slot)))
+    (i32.store16        (local.get $a) (local.get $x))
+    (i32.store16 offset=2 (local.get $a) (local.get $y))
+    (i32.store16 offset=4 (local.get $a) (local.get $w))
+    (i32.store16 offset=6 (local.get $a) (local.get $h)))
+
+  ;; Pack x|y<<16 / w|h<<16 for export to JS.
+  (func $ctrl_get_xy_packed (param $hwnd i32) (result i32)
+    (local $idx i32) (local $a i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $a (call $ctrl_geom_addr (local.get $idx)))
+    (i32.or (i32.load16_u (local.get $a))
+            (i32.shl (i32.load16_u offset=2 (local.get $a)) (i32.const 16))))
+
+  (func $ctrl_get_wh_packed (param $hwnd i32) (result i32)
+    (local $idx i32) (local $a i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $a (call $ctrl_geom_addr (local.get $idx)))
+    (i32.or (i32.load16_u offset=4 (local.get $a))
+            (i32.shl (i32.load16_u offset=6 (local.get $a)) (i32.const 16))))
+
   ;; ---- Control table helpers (legacy CONTROL_TABLE) ----
 
   ;; Set control class and ID for a window table slot
@@ -77,6 +110,31 @@
         (i32.store (i32.add (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 8))
           (local.get $state))))
   )
+
+  ;; Enumerate WAT-managed child windows of a parent. Caller starts with
+  ;; $start_slot=0 and gets back (hwnd, next_slot) packed: hwnd in low
+  ;; bits, but we use a single i32 hwnd return + a side-channel for the
+  ;; next slot via $ctrl_enum_next_slot. Simpler API: the caller passes
+  ;; a starting slot index, and the result is the next-occupied slot whose
+  ;; parent matches, or -1 if no more. The caller separately reads hwnd
+  ;; via $wnd_slot_hwnd. Cheap because slot iteration is O(MAX_WINDOWS).
+  (func $wnd_next_child_slot (param $parent i32) (param $start i32) (result i32)
+    (local $i i32) (local $addr i32) (local $hwnd i32)
+    (local.set $i (local.get $start))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (local.set $addr (call $wnd_record_addr (local.get $i)))
+        (local.set $hwnd (i32.load (local.get $addr)))
+        (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $addr)) (local.get $parent)))
+          (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)))
+    (i32.const -1))
+
+  (func $wnd_slot_hwnd (param $slot i32) (result i32)
+    (i32.load (call $wnd_record_addr (local.get $slot))))
 
   ;; Find child control hwnd by parent and control ID
   (func $ctrl_find_by_id (param $parent_hwnd i32) (param $ctrl_id i32) (result i32)
@@ -879,6 +937,9 @@
     (call $ctrl_table_set
       (call $wnd_table_find (local.get $hwnd))
       (local.get $ctrl_class) (local.get $ctrl_id))
+    (call $ctrl_geom_set
+      (call $wnd_table_find (local.get $hwnd))
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     ;; Build a minimal CREATESTRUCT on the heap and deliver WM_CREATE.
     (local.set $cs (call $heap_alloc (i32.const 48)))
     (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
