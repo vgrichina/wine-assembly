@@ -50,8 +50,21 @@
   ;; set_window_class(hwnd, class_name_ptr)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
-  (import "host" "shell_about" (func $host_shell_about (param i32 i32) (result i32)))
-  ;; shell_about(hwnd, szApp_ptr) → result
+  (import "host" "shell_about" (func $host_shell_about (param i32 i32 i32) (result i32)))
+  ;; shell_about(dlg_hwnd, owner_hwnd, szApp_ptr) → result
+  ;; Bare logging hook only — the actual dialog is built entirely in WAT
+  ;; by $handle_ShellAboutA → $create_about_dialog. JS just gets the call
+  ;; for diagnostic [ShellAbout] log lines and never touches dialog state.
+  (import "host" "register_dialog_frame"
+    (func $host_register_dialog_frame (param i32 i32 i32 i32 i32 i32)))
+  ;; register_dialog_frame(dlg_hwnd, owner_hwnd, title_wa, w, h, kind)
+  ;;   kind bit 0 = isAboutDialog (modal block flag)
+  ;;   kind bit 1 = isFindDialog
+  ;; Tells the JS renderer to add a windows[] entry for the dialog frame.
+  ;; Geometry origin is offset from owner's (x,y) by +40,+40. The dialog
+  ;; class style is hard-coded to 0x80C80000 (WS_CAPTION|WS_SYSMENU|WS_POPUP).
+  ;; controls[] stays empty — children come from $ctrl_create_child and
+  ;; are walked via the WAT child enumeration during paint and hit-test.
   (import "host" "set_dlg_item_text" (func $host_set_dlg_item_text (param i32 i32 i32)))
   ;; set_dlg_item_text(hwnd, control_id, text_ptr)
   (import "host" "richedit_stream" (func $host_richedit_stream (param i32 i32)))
@@ -253,6 +266,9 @@
   (data (i32.const 0x1C3) "Down\00")           ;; +0x23, len 4
   (data (i32.const 0x1C8) "Find Next\00")      ;; +0x28, len 9
   (data (i32.const 0x1D2) "Cancel\00")         ;; +0x32, len 6
+  (data (i32.const 0x1D9) "OK\00")             ;; +0x39, len 2  (ShellAbout dialog)
+  (data (i32.const 0x1DC) "About \00")         ;; +0x3C, len 6  (ShellAbout title prefix)
+  (data (i32.const 0x1E3) "Find\00")           ;; +0x43, len 4  (Find dialog title)
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -354,6 +370,7 @@
   (global $eip (mut i32) (i32.const 0))
   (global $dbg_last_push0 (mut i32) (i32.const 0))
   (global $dbg_last_push1 (mut i32) (i32.const 0))
+  (global $dbg_prev_eip (mut i32) (i32.const 0))
 
   ;; Direction flag for string ops (0=up, 1=down)
   (global $df (mut i32) (i32.const 0))

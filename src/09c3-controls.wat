@@ -196,6 +196,9 @@
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 11 = ShellAbout dialog parent (WAT-built)
+    (if (i32.eq (local.get $class) (i32.const 11))
+      (then (return (call $about_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -231,14 +234,25 @@
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
 
-    ;; WM_COMMAND only
-    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
-    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
-    ;; Recover FR ptr stashed at userdata, owner from FR+4.
+    ;; Recover FR ptr stashed at userdata, owner from FR+4. Both WM_CLOSE
+    ;; (title-bar X) and WM_COMMAND (Cancel/Find Next) need this.
     (local.set $fr (call $wnd_get_userdata (local.get $hwnd)))
     (if (i32.eqz (local.get $fr)) (then (return (i32.const 0))))
     (local.set $fr_w (call $g2w (local.get $fr)))
     (local.set $owner (i32.load offset=4 (local.get $fr_w)))
+
+    ;; ---- WM_CLOSE (0x0010) — title-bar X click ----
+    ;; Real commdlg routes a title-bar close through IDCANCEL; do the same.
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))
+      (then
+        (local.set $cmd (i32.const 2))))  ;; fall through into the Cancel branch below
+
+    ;; WM_COMMAND only past this point
+    (if (i32.and (i32.ne (local.get $msg) (i32.const 0x0111))
+                 (i32.ne (local.get $msg) (i32.const 0x0010)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
 
     ;; ---- Cancel (id=2) ----
     (if (i32.eq (local.get $cmd) (i32.const 2))
@@ -305,6 +319,124 @@
 
     (i32.const 0)
   )
+
+  ;; ---- ShellAbout dialog parent wndproc ----
+  ;;
+  ;; Handles WM_COMMAND posted by the OK button (id=IDOK=1) and WM_CLOSE
+  ;; from the title-bar X. Both close the dialog: free child WAT state,
+  ;; release the WND_RECORDS slots, drop the visible JS-side window.
+  ;; The About dialog has no struct-back-fill the way commdlg's find
+  ;; dialog does — it's purely informational, so close = teardown.
+  (func $about_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $close i32)
+    (local.set $close (i32.const 0))
+    ;; WM_CLOSE → close
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))
+      (then (local.set $close (i32.const 1))))
+    ;; WM_COMMAND with id=IDOK → close
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then
+        (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (if (i32.eq (local.get $cmd) (i32.const 1))
+          (then (local.set $close (i32.const 1))))))
+    (if (local.get $close)
+      (then
+        (call $wnd_destroy_tree (local.get $hwnd))
+        (call $host_destroy_window (local.get $hwnd))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Build the ShellAbout dialog. Called from $handle_ShellAboutA after
+  ;; allocating the dlg hwnd. All strings come from the original guest
+  ;; ShellAbout call:
+  ;;   $app_g   = arg1, "Notepad" or whatever the app passed for szApp
+  ;;   $other_g = arg2, free-form line(s) like "Version 4.10\nCopyright"
+  ;;              (may be 0)
+  ;; The title shown in the caption is "About <appname>", built in WAT
+  ;; via memcpy. Lines are: app, then up to two newline-split chunks of
+  ;; other_g.
+  (func $create_about_dialog
+    (param $dlg i32) (param $owner i32)
+    (param $app_g i32) (param $other_g i32)
+    (local $w i32) (local $h i32)
+    (local $title_w i32) (local $title_buf_w i32) (local $app_len i32)
+    (local $line1_w i32) (local $line2_w i32) (local $line3_w i32)
+    (local $other_w i32) (local $i i32) (local $nl i32)
+    (local.set $w (i32.const 260))
+    (local.set $h (i32.const 160))
+    ;; Title = "About " + app. Six chars from data segment 0x1DC, then
+    ;; the app string + NUL. Built in a fresh heap allocation; the
+    ;; renderer reads it once during host_register_dialog_frame and
+    ;; copies it into renderer.windows[].title — we own the buffer here.
+    (local.set $app_len (call $strlen (call $g2w (local.get $app_g))))
+    (local.set $title_buf_w
+      (call $g2w (call $heap_alloc (i32.add (local.get $app_len) (i32.const 7)))))
+    (call $memcpy (local.get $title_buf_w) (i32.const 0x1DC) (i32.const 6))
+    (call $memcpy (i32.add (local.get $title_buf_w) (i32.const 6))
+                  (call $g2w (local.get $app_g)) (local.get $app_len))
+    (i32.store8 (i32.add (local.get $title_buf_w) (i32.add (local.get $app_len) (i32.const 6)))
+                (i32.const 0))
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (local.get $title_buf_w)
+      (local.get $w) (local.get $h)
+      (i32.const 1))  ;; kind bit 0 = isAboutDialog
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    ;; Tag the parent dialog as control class 11 so $control_wndproc_dispatch
+    ;; routes WM_COMMAND from the OK button (and WM_CLOSE from the title-bar X)
+    ;; to $about_wndproc.
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 11) (i32.const 0))
+    ;; Line 1: appname static
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 10) (i32.const 236) (i32.const 18)
+            (i32.const 0x50000000) (local.get $app_g)))
+    ;; Lines 2 + 3: split other_g on the first '\n'. Real ShellAbout
+    ;; would also linewrap further; for now we cap at two lines because
+    ;; the dialog is only 160px tall.
+    (if (local.get $other_g)
+      (then
+        (local.set $other_w (call $g2w (local.get $other_g)))
+        ;; Find newline position. -1 if none.
+        (local.set $nl (i32.const -1))
+        (local.set $i (i32.const 0))
+        (block $done (loop $scan
+          (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $other_w) (local.get $i)))))
+          (if (i32.eq (i32.load8_u (i32.add (local.get $other_w) (local.get $i))) (i32.const 10))
+            (then (local.set $nl (local.get $i)) (br $done)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+        (if (i32.eq (local.get $nl) (i32.const -1))
+          (then
+            ;; Single line — render as line 2.
+            (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                    (i32.const 12) (i32.const 32) (i32.const 236) (i32.const 18)
+                    (i32.const 0x50000000) (local.get $other_g))))
+          (else
+            ;; Two lines — split on '\n' into two heap copies so each
+            ;; static_wndproc sees a clean NUL-terminated guest string.
+            (local.set $line2_w
+              (call $ctrl_text_dup (local.get $other_g) (local.get $nl)))
+            (local.set $line3_w
+              (call $ctrl_text_dup
+                (i32.add (local.get $other_g) (i32.add (local.get $nl) (i32.const 1)))
+                (call $strlen (i32.add (local.get $other_w) (i32.add (local.get $nl) (i32.const 1))))))
+            (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                    (i32.const 12) (i32.const 32) (i32.const 236) (i32.const 18)
+                    (i32.const 0x50000000) (local.get $line2_w)))
+            (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                    (i32.const 12) (i32.const 50) (i32.const 236) (i32.const 18)
+                    (i32.const 0x50000000) (local.get $line3_w)))))))
+    ;; OK button — id=IDOK=1, BS_DEFPUSHBUTTON style. Centered horizontally,
+    ;; near the bottom of the 160px dialog.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 90) (i32.sub (local.get $h) (i32.const 56))
+            (i32.const 80) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
 
   ;; Internal helper for $findreplace_wndproc — reads ButtonState.flags
   ;; without the export-layer wrapping.
@@ -1161,6 +1293,14 @@
   ;; messages to it via $control_wndproc_dispatch.
   (func $create_findreplace_dialog (param $dlg i32) (param $owner i32) (param $fr_guest i32)
     (local $edit i32)
+    ;; Frame (renderer.windows[] entry, isFindDialog flag for hit-test path).
+    ;; Same pattern as $create_about_dialog: WAT calls into JS via the
+    ;; bare host_register_dialog_frame import — JS does no Win32 logic.
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (i32.const 0x1E3)   ;; "Find" title constant
+      (i32.const 340) (i32.const 128)
+      (i32.const 2))      ;; kind bit 1 = isFindDialog
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))

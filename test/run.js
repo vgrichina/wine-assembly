@@ -94,6 +94,12 @@ async function main() {
       } else if (kind === 'slot-count') {
         // B:slot-count[:LABEL] — log live WND_RECORDS slot count.
         scheduledInput.push({ batch, action: 'slot-count', label: parts[2] || '' });
+      } else if (kind === 'class-cmd') {
+        // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
+        // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
+        // tests to drive OK/Cancel without a per-class hwnd export.
+        scheduledInput.push({ batch, action: 'class-cmd',
+          ctrlClass: parseInt(parts[2]), cmdId: parseInt(parts[3]) });
       } else if (kind === 'keypress' || kind === 'keydown') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'click') {
@@ -252,9 +258,12 @@ async function main() {
   // --- Override exit to also log ---
   h.exit = code => { logs.push('[Exit] code=' + code); stopped = true; };
 
-  // --- Override shell_about to log ---
-  h.shell_about = (h2, appPtr) => {
-    logs.push(`[ShellAbout] "${readStr(appPtr)}"`);
+  // --- Override shell_about to log; the WAT side ($handle_ShellAboutA →
+  // $create_about_dialog → $host_register_dialog_frame) drives all
+  // rendering state. JS only sees the [ShellAbout] log line and the
+  // subsequent register_dialog_frame callback.
+  h.shell_about = (dlgHwnd, ownerHwnd, appPtr) => {
+    logs.push(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} owner=0x${ownerHwnd.toString(16)} "${readStr(appPtr)}"`);
     return 1;
   };
 
@@ -809,6 +818,23 @@ async function main() {
         const used = we.wnd_count_used ? we.wnd_count_used() : -1;
         const tag = ev.label ? ` ${ev.label}` : '';
         logs.push(`[input] slot-count${tag}: used=${used} dlg=0x${(dlg||0).toString(16)} at batch ${batch}`);
+      } else if (ev.action === 'class-cmd') {
+        // Walk WND_RECORDS, find first hwnd whose control class matches,
+        // then send WM_COMMAND. Used to close About dialog (class 11) etc.
+        const we = instance.exports;
+        let found = 0;
+        for (let s = 0; s < 256; s++) {
+          const hwnd = we.wnd_slot_hwnd ? we.wnd_slot_hwnd(s) : 0;
+          if (!hwnd) continue;
+          const cls = we.ctrl_get_class ? we.ctrl_get_class(hwnd) : 0;
+          if (cls === ev.ctrlClass) { found = hwnd; break; }
+        }
+        if (found) {
+          we.send_message(found, 0x0111, ev.cmdId, 0);
+          logs.push(`[input] class-cmd: class=${ev.ctrlClass} cmd=${ev.cmdId} hwnd=0x${found.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] class-cmd: class=${ev.ctrlClass} NOT FOUND at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.
         // For find dialog the userdata holds the guest FR ptr; FR.Flags
@@ -816,11 +842,7 @@ async function main() {
         const we = instance.exports;
         const dlg = we.get_findreplace_dlg && we.get_findreplace_dlg();
         if (dlg) {
-          // Walk the WND_RECORDS slot for dlg to read userdata. The
-          // wnd_get_userdata helper isn't exported, but the dialog's
-          // findDlg.frGuestAddr is mirrored on the JS side.
-          const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
-          const frG = findDlg && findDlg.frGuestAddr;
+          const frG = we.wnd_get_userdata_export ? we.wnd_get_userdata_export(dlg) : 0;
           if (frG) {
             const dv = new DataView(memory.buffer);
             const wa = g2w(frG);

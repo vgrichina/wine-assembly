@@ -1769,8 +1769,23 @@
   )
 
   ;; 194: ShellAboutA(hwnd, szApp, szOtherStuff, hIcon) — show About dialog
+  ;; ShellAbout's strings come straight from the guest call (szApp = arg1
+  ;; = "Notepad", szOtherStuff = arg2 = "Version 4.10\nCopyright ...").
+  ;; No PE version-resource parsing needed; WAT can build the dialog
+  ;; entirely from the args. The host_shell_about import only logs (so the
+  ;; existing [ShellAbout] log gate keeps firing); all rendering state
+  ;; comes from $create_about_dialog → $host_register_dialog_frame +
+  ;; $ctrl_create_child.
   (func $handle_ShellAboutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_shell_about (local.get $arg0) (call $g2w (local.get $arg1))))
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (drop (call $host_shell_about
+      (local.get $dlg) (local.get $arg0) (call $g2w (local.get $arg1))))
+    (call $create_about_dialog
+      (local.get $dlg) (local.get $arg0)
+      (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -1825,20 +1840,14 @@
   ;; 202: FindTextA(lpFR) — create modeless Find dialog, return HWND
   (func $handle_FindTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hwnd i32) (local $owner i32)
-    ;; Allocate HWND
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     ;; Read hwndOwner from FINDREPLACE struct at offset +4
     (local.set $owner (call $gl32 (i32.add (call $g2w (local.get $arg0)) (i32.const 4))))
-    ;; Call host to show the find dialog (still creates the JS-rendered UI
-    ;; and emits the [FindTextA] log line the test gate looks for).
+    ;; Bare host log line for the [FindTextA] gate. All renderer state is
+    ;; created from inside $create_findreplace_dialog via host_register_dialog_frame.
     (drop (call $host_show_find_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0)))
-    ;; Build parallel WAT-side state: registers $hwnd as WAT-native control
-    ;; dispatch and creates ButtonState/EditState/StaticState for each child.
-    ;; Stashes the edit child hwnd in $findreplace_edit_hwnd for the test
-    ;; bridge to query via the get_findreplace_edit export.
     (call $create_findreplace_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0))
-    ;; Return HWND
     (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )

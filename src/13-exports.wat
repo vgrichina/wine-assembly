@@ -36,6 +36,13 @@
           (call $win32_dispatch (i32.div_u
             (i32.sub (global.get $eip) (global.get $thunk_guest_base)) (i32.const 8)))
           (br $main)))
+      ;; DEBUG: count entries into the wall-error call site (was diagnosing FUCOMPP bug)
+      (if (i32.eq (global.get $eip) (i32.const 0x01009604))
+        (then
+          (call $host_log_i32 (i32.const 0xDEC0DE19))
+          (call $host_log_i32 (global.get $eax))
+          (call $host_log_i32 (call $gl32 (i32.add (global.get $edi) (i32.const 8))))))
+      (global.set $dbg_prev_eip (global.get $eip))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -199,6 +206,12 @@
   ;; WAT-side find dialog state created by $create_findreplace_dialog.
   (func (export "get_findreplace_dlg")  (result i32) (global.get $findreplace_dlg_hwnd))
   (func (export "get_findreplace_edit") (result i32) (global.get $findreplace_edit_hwnd))
+  (func (export "wnd_get_userdata_export") (param $hwnd i32) (result i32)
+    (call $wnd_get_userdata (local.get $hwnd)))
+
+  ;; (No create_about_dialog export — $handle_ShellAboutA calls
+  ;; $create_about_dialog directly from inside the WAT-side handler.
+  ;; JS does not need to drive dialog construction.)
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
 

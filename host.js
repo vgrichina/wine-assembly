@@ -70,19 +70,14 @@ class WineAssembly {
         self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
       }
     };
-    h.shell_about = (hWnd, szAppPtr) => {
+    h.shell_about = (dlgHwnd, ownerHwnd, szAppPtr) => {
       const appName = self.readString(szAppPtr);
-      const versionInfo = self._getVersionInfo();
-      let text = appName;
-      if (versionInfo.FileVersion) text += '\nVersion ' + versionInfo.FileVersion;
-      if (versionInfo.LegalCopyright) text += '\n' + versionInfo.LegalCopyright;
-      console.log(`[ShellAbout] "${appName}"`);
+      console.log(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} "${appName}"`);
       self.logToUI(`[ShellAbout] ${appName}`);
-      if (self.renderer) {
-        self.renderer.showAboutDialog(hWnd, appName, versionInfo);
-      } else {
-        alert(text);
-      }
+      // The WAT side ($handle_ShellAboutA → $create_about_dialog) drives
+      // everything else: it calls host_register_dialog_frame to create
+      // the renderer entry, and $ctrl_create_child to populate the
+      // children. There is no JS-side dialog construction.
       return 1;
     };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {
