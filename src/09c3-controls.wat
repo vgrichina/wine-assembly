@@ -597,6 +597,22 @@
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
 
+    ;; ---- Upload (id 0x443) ----
+    ;; Trigger native file picker. The dialog stays open; on pick the JS
+    ;; side writes the file into VFS and calls $opendlg_refresh_listbox
+    ;; (exported below) to repopulate.
+    (if (i32.eq (local.get $cmd) (i32.const 0x443))
+      (then
+        (call $host_pick_file_upload (local.get $hwnd) (i32.const 0x213))   ;; "C:\"
+        (return (i32.const 0))))
+
+    ;; ---- Download (id 0x444) ----
+    ;; Read filename edit, build "C:\<name>", trigger Blob download.
+    (if (i32.eq (local.get $cmd) (i32.const 0x444))
+      (then
+        (call $opendlg_trigger_download (local.get $hwnd))
+        (return (i32.const 0))))
+
     ;; ---- Listbox notifications: id 0x441, LBN_SELCHANGE / LBN_DBLCLK ----
     (if (i32.eq (local.get $cmd) (i32.const 0x441))
       (then
@@ -639,6 +655,32 @@
             (i32.const 0)
             (i32.add (local.get $buf_g) (i32.sub (local.get $start) (local.get $buf_w)))))
     (call $heap_free (local.get $buf_g)))
+
+  ;; Trigger a Blob download for the current filename edit value (if any).
+  ;; Builds "C:\<filename>" in a heap buffer and hands the WASM addr to
+  ;; $host_file_download which reads the VFS bytes + creates the Blob.
+  (func $opendlg_trigger_download (param $dlg i32)
+    (local $edit i32) (local $state i32) (local $sw i32)
+    (local $name_len i32) (local $name_src_w i32)
+    (local $path_g i32) (local $path_w i32)
+    (local.set $edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x442)))
+    (if (i32.eqz (local.get $edit)) (then (return)))
+    (local.set $state (call $wnd_get_state_ptr (local.get $edit)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $name_len (i32.load offset=4 (local.get $sw)))
+    (if (i32.eqz (local.get $name_len)) (then (return)))
+    (local.set $name_src_w (call $g2w (i32.load (local.get $sw))))
+    ;; Buffer = "C:\" + name + "\0"
+    (local.set $path_g (call $heap_alloc (i32.add (local.get $name_len) (i32.const 4))))
+    (local.set $path_w (call $g2w (local.get $path_g)))
+    (i32.store8        (local.get $path_w) (i32.const 0x43))                  ;; 'C'
+    (i32.store8 offset=1 (local.get $path_w) (i32.const 0x3A))                 ;; ':'
+    (i32.store8 offset=2 (local.get $path_w) (i32.const 0x5C))                 ;; '\\'
+    (call $memcpy (i32.add (local.get $path_w) (i32.const 3)) (local.get $name_src_w) (local.get $name_len))
+    (i32.store8 (i32.add (local.get $path_w) (i32.add (local.get $name_len) (i32.const 3))) (i32.const 0))
+    (call $host_file_download (local.get $path_w))
+    (call $heap_free (local.get $path_g)))
 
   ;; ---- Build the open/save dialog ----
   ;;
@@ -706,6 +748,24 @@
             (i32.const 286) (i32.const 36) (i32.const 64) (i32.const 22)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))   ;; "Cancel"
+    ;; Upload (Open) / Download (Save As) button — only in browser mode.
+    ;; Open  → "Upload..." (id 0x443) which triggers a <input type="file">
+    ;;         picker, writes the chosen bytes into VFS, refreshes the listbox.
+    ;; Save  → "Download" (id 0x444) which writes the VFS bytes for the
+    ;;         filename to a Blob and clicks an <a download> link.
+    (if (call $host_has_dom)
+      (then
+        (if (i32.eq (local.get $kind) (i32.const 1))
+          (then
+            (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x444)
+                    (i32.const 286) (i32.const 80) (i32.const 64) (i32.const 22)
+                    (i32.const 0x50010000)
+                    (call $wat_str_to_heap (i32.const 0x224) (i32.const 8)))))   ;; "Download"
+          (else
+            (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x443)
+                    (i32.const 286) (i32.const 80) (i32.const 64) (i32.const 22)
+                    (i32.const 0x50010000)
+                    (call $wat_str_to_heap (i32.const 0x21A) (i32.const 9))))))))   ;; "Upload..."
 
     ;; Populate the listbox from the default pattern "C:\*".
     (call $opendlg_populate_listbox (local.get $lb)

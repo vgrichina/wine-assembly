@@ -57,6 +57,24 @@
   ;; for diagnostic [ShellAbout] log lines and never touches dialog state.
   (import "host" "register_dialog_frame"
     (func $host_register_dialog_frame (param i32 i32 i32 i32 i32 i32)))
+  ;; ---- Open / Save common-dialog web hooks ----
+  ;;
+  ;; pick_file_upload(dlg_hwnd, dest_dir_wa) — browser only. Triggers a
+  ;; native <input type="file"> picker. When the user selects a file, JS
+  ;; reads it as bytes, writes it into the VFS at "<dest_dir>\<picked_name>",
+  ;; then calls the upload_done(dlg_hwnd) export so WAT can refresh the
+  ;; listbox + auto-select the new entry. In headless mode this is a no-op.
+  (import "host" "pick_file_upload"
+    (func $host_pick_file_upload (param i32 i32)))
+  ;; file_download(path_wa) — browser only. Reads the VFS file at the given
+  ;; path and triggers a Blob download via <a download>. In headless mode
+  ;; this is a no-op.
+  (import "host" "file_download"
+    (func $host_file_download (param i32)))
+  ;; has_dom() → 1 in browser, 0 in headless. Used by $create_open_dialog
+  ;; to decide whether to render the Upload/Download buttons.
+  (import "host" "has_dom"
+    (func $host_has_dom (result i32)))
   ;; register_dialog_frame(dlg_hwnd, owner_hwnd, title_wa, w, h, kind)
   ;;   kind bit 0 = isAboutDialog (modal block flag)
   ;;   kind bit 1 = isFindDialog

@@ -339,6 +339,27 @@
   (func (export "wnd_destroy_tree") (param $hwnd i32)
     (call $wnd_destroy_tree (local.get $hwnd)))
 
+  ;; Open dialog: re-populate the listbox after a file upload completes.
+  ;; JS calls this from the <input type="file"> change handler once the
+  ;; new file has been written into the VFS, so the listbox shows it.
+  (func (export "opendlg_refresh_listbox") (param $dlg i32)
+    (local $lb i32)
+    (local.set $lb (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x441)))
+    (if (local.get $lb)
+      (then (call $opendlg_populate_listbox (local.get $lb)
+              (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))))
+
+  ;; Test helper: build an Open/Save dialog standalone (no x86 caller).
+  ;; kind 0 = Open, 1 = Save As. Returns the dialog hwnd. Used by
+  ;; scratch/render-open-dlg.js to render the dialog visually with
+  ;; has_dom=1 so the upload/download button is included.
+  (func (export "test_create_open_dialog") (param $kind i32) (result i32)
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_open_dialog (local.get $dlg) (i32.const 0) (local.get $kind) (i32.const 0))
+    (local.get $dlg))
+
   ;; Test helper: create a parent dlg + listbox child, return listbox hwnd.
   ;; The parent is registered as WNDPROC_CTRL_NATIVE with no class tag (so
   ;; control_wndproc_dispatch returns 0 = DefWindowProc) and exists only so

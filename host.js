@@ -70,14 +70,73 @@ class WineAssembly {
         self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
       }
     };
-    h.shell_about = (dlgHwnd, ownerHwnd, szAppPtr) => {
+    // Browser-only Open/Save common-dialog hooks. has_dom returns 1 so
+    // $create_open_dialog renders the Upload / Download button.
+    h.has_dom = () => 1;
+    h.pick_file_upload = (dlgHwnd, destDirWa) => {
+      // Native <input type="file"> picker. On selection, write the file
+      // bytes into the VFS at "<destDir>\<picked.name>", then call the
+      // opendlg_refresh_listbox export so WAT repopulates the listbox.
+      const destDir = self.readString(destDirWa) || 'C:\\';
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.style.display = 'none';
+      input.onchange = async (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const buf = new Uint8Array(await file.arrayBuffer());
+        const vfs = self._helpCtx && self._helpCtx.vfs;
+        if (vfs) {
+          const fullPath = destDir.replace(/\\$/, '') + '\\' + file.name;
+          vfs.files.set(fullPath.toLowerCase(), { data: buf, attrs: 0x20 });
+          console.log(`[upload] wrote ${fullPath} (${buf.length} bytes)`);
+        }
+        if (self.instance.exports.opendlg_refresh_listbox) {
+          self.instance.exports.opendlg_refresh_listbox(dlgHwnd);
+          if (self.renderer) self.renderer.invalidate(dlgHwnd);
+        }
+        document.body.removeChild(input);
+      };
+      document.body.appendChild(input);
+      input.click();
+    };
+    h.file_download = (pathWa) => {
+      const path = self.readString(pathWa);
+      if (!path) return;
+      const vfs = self._helpCtx && self._helpCtx.vfs;
+      if (!vfs) return;
+      const entry = vfs.files.get(path.toLowerCase());
+      if (!entry) {
+        console.log(`[download] no file at ${path}`);
+        return;
+      }
+      const blob = new Blob([entry.data], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = path.replace(/^.*\\/, '');
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+      console.log(`[download] ${path} (${entry.data.length} bytes)`);
+    };
+    h.shell_about = (hWnd, szAppPtr) => {
       const appName = self.readString(szAppPtr);
-      console.log(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} "${appName}"`);
+      const versionInfo = self._getVersionInfo();
+      let text = appName;
+      if (versionInfo.FileVersion) text += '\nVersion ' + versionInfo.FileVersion;
+      if (versionInfo.LegalCopyright) text += '\n' + versionInfo.LegalCopyright;
+      console.log(`[ShellAbout] "${appName}"`);
       self.logToUI(`[ShellAbout] ${appName}`);
-      // The WAT side ($handle_ShellAboutA → $create_about_dialog) drives
-      // everything else: it calls host_register_dialog_frame to create
-      // the renderer entry, and $ctrl_create_child to populate the
-      // children. There is no JS-side dialog construction.
+      if (self.renderer) {
+        self.renderer.showAboutDialog(hWnd, appName, versionInfo);
+      } else {
+        alert(text);
+      }
       return 1;
     };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {
@@ -85,7 +144,7 @@ class WineAssembly {
       const caption = self.readString(captionPtr);
       console.log(`[MessageBox] "${caption}": "${text}"`);
       self.logToUI(`[MessageBox] ${caption}: ${text}`);
-      if (caption.includes('Assertion') || caption.includes('loader_')) return 1;
+      if (caption.includes('Assertion')) return 1;
       alert(`${caption}\n\n${text}`);
       return 1;
     };
@@ -224,7 +283,7 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     if (compileEl) compileEl.style.display = 'block';
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=31').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=29').then(r => r.text()));
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
@@ -251,11 +310,12 @@ class WineAssembly {
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
     }
+    // Hand the renderer the wasm instance + memory so $drawWatChildren can
+    // walk WND_RECORDS and read CONTROL_GEOM / ButtonState / EditState /
+    // StaticState for WAT-driven dialogs (find, about, ...). Without this
+    // the renderer falls through to the (now-empty) win.controls[] loop and
+    // the dialog body renders as a blank grey rectangle.
     if (this.renderer) {
-      // Hand the renderer the wasm instance + memory so drawWindow can
-      // enumerate WAT-managed child controls and read their state
-      // (button text/flags, edit text, static text) instead of relying on
-      // a parallel JS controls[] array.
       this.renderer.wasm = this.instance;
       this.renderer.wasmMemory = this.memory;
     }
@@ -294,14 +354,6 @@ class WineAssembly {
       const tmpOff = staging; // reuse staging as scratch
       mem2.set(nameBytes, tmpOff);
       this.instance.exports.set_exe_name(tmpOff, nameBytes.length);
-    }
-
-    // Add EXE to VFS so the app can open itself
-    const vfs = this._helpCtx && this._helpCtx.vfs;
-    if (vfs) {
-      const lowerName = exeName.toLowerCase();
-      vfs.files.set('c:\\app.exe', { data: exeBytes, attrs: 0x20 });
-      vfs.files.set('c:\\' + lowerName, { data: exeBytes, attrs: 0x20 });
     }
 
     return entry;
