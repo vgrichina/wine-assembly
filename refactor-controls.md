@@ -1,6 +1,6 @@
 # Refactor: Controls as Real Windows, JS as Dumb Renderer
 
-Status: STEP 1 done (memory layout). STEP 2 in progress.
+Status: STEPs 1-3 done. STEP 4 (`$wndproc_edit`) next.
 Owner: TBD.
 Test gate: `test/test-find-typing.js` (6/6 baseline since commit 56ea4fe).
 
@@ -219,7 +219,40 @@ composition import.
 
 ### Batch B — First real wndproc
 
-**STEP 3: Flesh out `$button_wndproc`.**
+**STEP 3: Flesh out `$button_wndproc` + add `$static_wndproc`.** (DONE 2026-04-08)
+
+Done in a single commit. Test gate stayed at 6/6 (`test-find-typing.js`),
+plus notepad/calc/mspaint smoke clean. Code is dormant — no path delivers
+WM_CREATE to a button today, so the new state-based branches sit unused
+until STEP 5 wires WAT-side dialog creation.
+
+Implementation notes:
+- Added `PAINT_SCRATCH` global at WASM `0x2700` (16-byte RECT scratch
+  inside the free `0x2600..0x2980` zone, below `GUEST_BASE` so the guest
+  cannot reach it). `gdi_draw_text` needs a WASM-linear RECT pointer;
+  this is the cheapest way to satisfy that without adding a new
+  per-paint heap allocation.
+- `ButtonState` allocated in WM_CREATE (16 bytes), pointer parked in
+  `WND_RECORDS.state_ptr`. Text buffer is a separate `$heap_alloc`
+  block, freed in WM_DESTROY before the state struct itself.
+- `WM_LBUTTONUP` toggles checkbox/radio state via the button-kind nibble
+  in `flags` (bits 4..7). Posting `WM_COMMAND(MAKEWPARAM(ctrl_id,BN_CLICKED), hwnd)`
+  to the parent is left as a TODO — needs `$wnd_send_message` helper that
+  routes to either WAT or x86 wndprocs, scheduled for STEP 5.
+- `BM_GETCHECK` / `BM_SETCHECK` prefer the new `ButtonState.flags` bit 1
+  when `state_ptr != 0`, falling back to the legacy `CONTROL_TABLE`
+  `check_state` for the existing JS-side dialog path. This is what keeps
+  the test gate at 6/6: today's path is unchanged.
+- `$static_wndproc` mirrors the button shape (WM_CREATE / WM_DESTROY /
+  WM_SETTEXT / WM_PAINT) and maps `SS_LEFT/CENTER/RIGHT` (low 4 bits of
+  the style word stashed in `StaticState`) to
+  `DT_LEFT/DT_CENTER/DT_RIGHT`.
+- `$control_wndproc_dispatch` now routes class 3 → `$static_wndproc`
+  alongside the existing class 1 → `$button_wndproc`.
+- New helper `$ctrl_text_dup(src_guest, len) → guest_buf` centralizes
+  the "alloc + memcpy + null-terminate" pattern used by both wndprocs.
+
+**Original step description (kept for reference):**
 - Handle `WM_CREATE`: `$heap_alloc` a `ButtonState`, copy ctrl_id from `CONTROL_TABLE`, alloc + copy text from `CreateWindowEx` args, call `$wnd_set_state_ptr(hwnd, state)`.
 - Handle `WM_LBUTTONDOWN`: set `pressed=1`, `$host_invalidate(hwnd)`.
 - Handle `WM_LBUTTONUP`: clear `pressed`, post `WM_COMMAND(parent, ctrl_id)`, invalidate. For checkbox/radio, toggle `checked`.

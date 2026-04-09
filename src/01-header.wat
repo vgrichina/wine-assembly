@@ -36,6 +36,8 @@
   ;; erase_background(hwnd, hbrBackground) → 1
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h)
+  (import "host" "destroy_window" (func $host_destroy_window (param i32)))
+  ;; destroy_window(hwnd) — remove from renderer's window table
   (import "host" "draw_text" (func $host_draw_text (param i32 i32 i32 i32 i32)))
   ;; draw_text(x, y, text_ptr, text_len, color)
   (import "host" "check_input" (func $host_check_input (result i32)))
@@ -290,6 +292,10 @@
   (global $WND_RECORDS   i32 (i32.const 0x00002000))
   (global $MAX_WINDOWS   i32 (i32.const 64))
   ;; (free 0x2600..0x2980)
+  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call gdi_draw_text
+  ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
+  ;; cannot reach it via image-relative pointers.
+  (global $PAINT_SCRATCH  i32 (i32.const 0x00002700))
   (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
@@ -325,6 +331,8 @@
   (global $esi (mut i32) (i32.const 0))
   (global $edi (mut i32) (i32.const 0))
   (global $eip (mut i32) (i32.const 0))
+  (global $dbg_last_push0 (mut i32) (i32.const 0))
+  (global $dbg_last_push1 (mut i32) (i32.const 0))
 
   ;; Direction flag for string ops (0=up, 1=down)
   (global $df (mut i32) (i32.const 0))
