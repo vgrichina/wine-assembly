@@ -40,7 +40,7 @@ Already in the tree:
 | Where do "extra bytes" (per-class state) live? | `$heap_alloc` from the existing guest heap. The wndproc allocates a `WndState`-shaped struct in `WM_CREATE` and stores its pointer in `WND_RECORDS.state_ptr` via `$wnd_set_state_ptr`. Same allocator that serves guest `LocalAlloc` / `HeapAlloc` / `GlobalAlloc`. **No new heap region**, no `CONTROL_HEAP` constant. |
 | Where do control text buffers live? | Inside the per-window state struct: `state->text_ptr` is itself a `$heap_alloc`'d guest buffer. `SetWindowText` frees old, allocs new, copies, updates `state->text_ptr`. Matches real Win32 `USER32` semantics exactly. |
 | What if the guest stomps a control's heap block? | That happens in real Windows too (USER32 lives in process address space). Not a concern. `WND_RECORDS` itself at `0x00002000` is below `GUEST_BASE` (`0x00012000`) so the guest cannot reach it via image-relative pointers anyway. |
-| New host imports? | Yes — drawing primitives (`draw_button`, `draw_edit`, `draw_static`, `draw_groupbox`, `draw_radio`, `draw_checkbox`, `fill_rect`, `set_clip`). JS exposes them; WAT wndprocs call them from WM_PAINT. |
+| New host imports? | **No high-level draw_button-style imports.** JS exposes only GDI primitives (`gdi_rectangle`, `gdi_fill_rect`, `gdi_draw_edge`, `gdi_draw_text`, `gdi_move_to` / `gdi_line_to`, `gdi_create_pen` / `gdi_create_solid_brush` / `gdi_select_object`, `gdi_bitblt`, `measure_text`, `get_text_metrics`). WAT wndprocs **compose** buttons / edits / checkboxes from these in `WM_PAINT`. Same model as real USER32, which has no "draw button" syscall. Only add new `gdi_*` imports if a primitive is missing (e.g. `gdi_clip_rect` for scrolled edits — defer until needed). |
 | Focus tracking? | Single global in WAT: `$focused_hwnd`. `WM_SETFOCUS` / `WM_KILLFOCUS` go through normal dispatch. Delete JS-side `_focusedDialogEdit`. |
 | JS still drives input? | Yes: JS owns `<canvas>` events. `onMouseDown(x,y,btn) → wasm.exports.host_mouse_down(x,y,btn)`. `onChar(code) → wasm.exports.host_char(code)`. WAT does hit-test, focus assignment, message dispatch. JS is just a transport. |
 | What about WAT-native help window? | Already follows this model (sort of). Eventually fold `$help_wndproc` into the new framework as just another class. Out of scope for this refactor — it works today, leave it alone. |
@@ -116,39 +116,64 @@ Lifetime rule: the wndproc that allocates the state struct in `WM_CREATE`
 is responsible for freeing it AND any sub-allocations (text buffers) in
 `WM_DESTROY`, then calling `$wnd_set_state_ptr(hwnd, 0)`.
 
-## New host imports (the JS contract)
+## Host imports — what's there, what's needed
 
-Imports JS → WAT (input pump):
+**Rule:** controls are wndproc compositions, drawn via primitives. JS
+exposes only GDI primitives; WAT wndprocs compose buttons / edits /
+checkboxes by issuing primitive calls. There are **no** high-level
+`draw_button` / `draw_edit` / `draw_checkbox` imports — those would
+put look-and-feel in the renderer instead of in the wndprocs and break
+the "JS as dumb renderer" goal. (See feedback memory
+`feedback_compositions_in_wat.md`.)
 
-```
-host_mouse_down(x:i32, y:i32, btn:i32)
-host_mouse_up  (x:i32, y:i32, btn:i32)
-host_mouse_move(x:i32, y:i32)
-host_key_down  (vk:i32)
-host_key_up    (vk:i32)
-host_char      (code:i32)
-host_paint_tick()
-```
-
-Imports WAT → JS (drawing primitives):
+### Already in the tree (WAT → JS, the GDI primitives WAT will call)
 
 ```
-draw_window_frame(x,y,w,h, has_caption, active, title_ptr,title_len)
-draw_title_bar   (x,y,w, title_ptr,len, active)
-draw_button      (x,y,w,h, text_ptr,len, pressed, focused, default)
-draw_checkbox    (x,y,w,h, text_ptr,len, checked, focused)
-draw_radio       (x,y,w,h, text_ptr,len, checked, focused)
-draw_groupbox    (x,y,w,h, text_ptr,len)
-draw_edit        (x,y,w,h, text_ptr,len, cursor, sel_start, sel_end, focused, scroll_top, multiline)
-draw_static      (x,y,w,h, text_ptr,len, style)
-fill_rect        (x,y,w,h, color)
-set_clip         (x,y,w,h)
-reset_clip       ()
-measure_text     (text_ptr,len, font_id) → i32   (needed for cursor positioning)
-invalidate_done  ()
+gdi_rectangle      (hdc, l, t, r, b)              filled rect with current pen+brush
+gdi_fill_rect      (hdc, l, t, r, b, hbrush)      fill with given brush
+draw_rect          (x, y, w, h, color)            simple raw-color fill (legacy, ok to use)
+gdi_draw_edge      (hdc, l, t, r, b, edge, flags) ◄ THE button bevel: BF_RECT | BDR_RAISED*
+gdi_draw_text      (hdc, text_ptr, n_count, rect, format, isWide)  with DT_CENTER, DT_VCENTER, etc.
+draw_text          (x, y, text_ptr, len, color)   simple positioned text (no DC)
+gdi_move_to        (hdc, x, y)                    for checkmark glyphs, focus rect, etc.
+gdi_line_to        (hdc, x, y)
+gdi_ellipse        (hdc, l, t, r, b)              for the radio button dot
+gdi_arc            (hdc, l, t, r, b, xs, ys, xe, ye)
+gdi_create_pen     (style, width, color) → handle
+gdi_create_solid_brush (color) → handle
+gdi_select_object  (hdc, handle) → previous
+gdi_delete_object  (handle)
+gdi_bitblt         (dst, dx, dy, w, h, src, sx, sy, rop)  for icon buttons
+measure_text       (hdc, text_ptr, n_count) → pixel_width
+get_text_metrics   (hdc) → (height | (avg_char_width << 16))
 ```
 
-These wrap existing methods on `lib/renderer.js` (drawButton, drawEditArea, etc.). The JS side becomes a thin adapter — the existing draw methods stay, just exposed differently.
+These are sufficient to draw a Win98 button:
+1. `gdi_fill_rect` background with the face color brush.
+2. `gdi_draw_edge` with `BF_RECT | BDR_RAISEDOUTER | BDR_RAISEDINNER`
+   (or `BDR_SUNKENOUTER | BDR_SUNKENINNER` when pressed).
+3. `gdi_draw_text` with `DT_CENTER | DT_VCENTER | DT_SINGLELINE`.
+4. If focused: a 1px-inset dotted focus rectangle via `gdi_move_to` /
+   `gdi_line_to` with a stock `DC_PEN`-style alternating pen, or just
+   four short segments.
+
+Same template for checkbox (small box + edge + checkmark glyph + text),
+radio (ellipse + dot + text), groupbox (edge with text gap), edit
+(sunken-edge frame + text + caret line + selection rect).
+
+### Will likely need to add (small WAT → JS additions, judgment call)
+
+- `gdi_intersect_clip_rect(hdc, l, t, r, b)` and matching save/restore —
+  for clipping the visible row range of a scrolled multi-line edit.
+  Defer until `$wndproc_edit` actually needs it.
+
+### Already in the tree (JS → WAT, the input pump)
+
+JS already calls `host_check_input` / `host_check_input_lparam` /
+`host_check_input_hwnd` which WAT polls from the message loop. That
+covers mouse + keyboard + focus events through a single channel. No
+new mouse/keyboard imports needed — the existing event-poll pattern
+fits the new wndproc model fine.
 
 ## Step-by-step migration plan
 
@@ -170,29 +195,44 @@ test gate:
 
 `CONTROL_TABLE` at `0x2980` is unchanged; its fields (`ctrl_class`, `ctrl_id`, `check_state`) will move into the per-class state struct in a later step and the table will be deleted.
 
-**STEP 2: Add new draw_* host imports (JS side).**
-- In `lib/host-imports.js`, expose `draw_button`, `draw_edit`, `draw_static`, `draw_checkbox`, `draw_radio`, `draw_groupbox`, `fill_rect`, `set_clip`, `reset_clip`, `measure_text`, `invalidate_done` as host functions that delegate to the existing renderer methods (`drawButton`, `drawEditArea`, etc.).
-- Add corresponding `(import "host" ...)` declarations in `src/01-header.wat`.
-- Do **not** call them from WAT yet. They are dead until STEP 4.
+**STEP 2: Verify the existing GDI primitives are sufficient.**
 
-**Build gate:** `bash tools/build.sh && node test/test-find-typing.js`. Test must still report 2/6 (no regression in the existing JS path).
+No new high-level draw imports — see "Host imports" section above. The
+GDI primitives WAT will need (`gdi_rectangle`, `gdi_fill_rect`,
+`gdi_draw_edge`, `gdi_draw_text`, `gdi_move_to` / `gdi_line_to`,
+`gdi_create_pen` / `gdi_create_solid_brush` / `gdi_select_object`,
+`gdi_ellipse`, `gdi_bitblt`, `measure_text`, `get_text_metrics`) are
+all already in `src/01-header.wat` and `lib/host-imports.js`.
+
+Action: write a tiny prototype WAT function (in `09c3-controls.wat`,
+near the existing `$button_wndproc` skeleton) that draws a fake button
+at fixed coordinates as a sanity check that the primitives compose the
+right Win98 look. Call it from a debug entry point only — do not wire
+it to any wndproc yet. Once the look matches, delete the prototype and
+move on to STEP 3.
+
+If the prototype reveals a missing primitive (most likely candidate:
+clipping), add it as a new `gdi_*` import — never as a `draw_button`
+composition import.
+
+**Build gate:** `bash tools/build.sh && node test/test-find-typing.js`. Must still report 6/6 (no regression).
 
 ### Batch B — First real wndproc
 
 **STEP 3: Flesh out `$button_wndproc`.**
-- Handle `WM_CREATE`: alloc `ButtonState`, store ctrl_id from CONTROL_TABLE, copy text from CreateWindowEx args.
-- Handle `WM_LBUTTONDOWN`: set `pressed=1`, invalidate.
+- Handle `WM_CREATE`: `$heap_alloc` a `ButtonState`, copy ctrl_id from `CONTROL_TABLE`, alloc + copy text from `CreateWindowEx` args, call `$wnd_set_state_ptr(hwnd, state)`.
+- Handle `WM_LBUTTONDOWN`: set `pressed=1`, `$host_invalidate(hwnd)`.
 - Handle `WM_LBUTTONUP`: clear `pressed`, post `WM_COMMAND(parent, ctrl_id)`, invalidate. For checkbox/radio, toggle `checked`.
-- Handle `WM_PAINT`: call `draw_button` / `draw_checkbox` / `draw_radio` / `draw_groupbox` host import.
-- Handle `WM_DESTROY`: free text buf, free extra_ptr.
-- Add `$wndproc_static` (paint only, no input).
+- Handle `WM_PAINT`: call `$host_BeginPaint`-equivalent to get an hdc, then compose using `gdi_fill_rect` (face brush) + `gdi_draw_edge` (BF_RECT | BDR_RAISEDOUTER | BDR_RAISEDINNER, or sunken when pressed) + `gdi_draw_text` (DT_CENTER | DT_VCENTER | DT_SINGLELINE). For checkbox: small box on the left + checkmark glyph via `gdi_move_to` / `gdi_line_to` if checked + text on the right. For radio: `gdi_ellipse` + filled center dot if checked + text. For groupbox: edge-drawn rectangle with a text gap at the top.
+- Handle `WM_DESTROY`: free text buf, free state struct, `$wnd_set_state_ptr(hwnd, 0)`.
+- Add `$wndproc_static` (paint only, no input — `gdi_draw_text` with the appropriate `DT_*` style flags).
 - **Test path: not yet wired** — buttons in JS-side dialogs still go through the JS path.
 
 ### Batch C — Edit + first migrated dialog
 
 **STEP 4: `$wndproc_edit`.**
 - New file `src/09c4-wndproc-edit.wat` (or append to `09c3-controls.wat`).
-- Handle `WM_CREATE` (alloc EditState + initial text buf), `WM_CHAR` (insert char at cursor, grow buf via realloc-on-write pattern, invalidate), `WM_KEYDOWN` (backspace, delete, arrows, home, end), `WM_LBUTTONDOWN` (cursor positioning via `measure_text`), `WM_PAINT` (call `draw_edit`), `WM_SETFOCUS` / `WM_KILLFOCUS`, `WM_DESTROY`.
+- Handle `WM_CREATE` (alloc EditState + initial text buf, set state_ptr), `WM_CHAR` (insert char at cursor, grow buf via realloc-on-write pattern, invalidate), `WM_KEYDOWN` (backspace, delete, arrows, home, end), `WM_LBUTTONDOWN` (cursor positioning via `measure_text`), `WM_PAINT` (compose: `gdi_draw_edge` for the sunken frame, `gdi_fill_rect` for the white background, `gdi_draw_text` for each visible row, a 1px vertical line at the cursor pixel-X via `gdi_move_to` / `gdi_line_to`, a `gdi_fill_rect` for the selection highlight if any), `WM_SETFOCUS` / `WM_KILLFOCUS`, `WM_DESTROY`.
 - Add `$focused_hwnd` global. `WM_SETFOCUS` updates it.
 - Keypress dispatch: `host_char(code)` → look up `$focused_hwnd` → `$dispatch_message(focused, WM_CHAR, code, 0)` → routes via `$wat_wndproc_dispatch` → `$control_wndproc_dispatch` → `$wndproc_edit`.
 - Register class names `EDIT` / `BUTTON` / `STATIC` in `$class_table` so `CreateWindowExA` from WAT-side can use them.
