@@ -90,7 +90,7 @@ class WineAssembly {
       const caption = self.readString(captionPtr);
       console.log(`[MessageBox] "${caption}": "${text}"`);
       self.logToUI(`[MessageBox] ${caption}: ${text}`);
-      if (caption.includes('Assertion')) return 1;
+      if (caption.includes('Assertion') || caption.includes('loader_')) return 1;
       alert(`${caption}\n\n${text}`);
       return 1;
     };
@@ -229,7 +229,7 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     if (compileEl) compileEl.style.display = 'block';
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=29').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=31').then(r => r.text()));
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
@@ -255,6 +255,14 @@ class WineAssembly {
 
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
+    }
+    if (this.renderer) {
+      // Hand the renderer the wasm instance + memory so drawWindow can
+      // enumerate WAT-managed child controls and read their state
+      // (button text/flags, edit text, static text) instead of relying on
+      // a parallel JS controls[] array.
+      this.renderer.wasm = this.instance;
+      this.renderer.wasmMemory = this.memory;
     }
   }
 
@@ -291,6 +299,14 @@ class WineAssembly {
       const tmpOff = staging; // reuse staging as scratch
       mem2.set(nameBytes, tmpOff);
       this.instance.exports.set_exe_name(tmpOff, nameBytes.length);
+    }
+
+    // Add EXE to VFS so the app can open itself
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (vfs) {
+      const lowerName = exeName.toLowerCase();
+      vfs.files.set('c:\\app.exe', { data: exeBytes, attrs: 0x20 });
+      vfs.files.set('c:\\' + lowerName, { data: exeBytes, attrs: 0x20 });
     }
 
     return entry;

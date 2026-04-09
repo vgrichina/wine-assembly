@@ -376,6 +376,10 @@ async function main() {
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  if (renderer) {
+    renderer.wasm = instance;
+    renderer.wasmMemory = memory;
+  }
 
   // Create ThreadManager now that we have the main instance
   const makeWorkerImports = (tid) => {

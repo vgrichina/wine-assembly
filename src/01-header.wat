@@ -244,6 +244,15 @@
   (data (i32.const 0x100) "win.ini\00Help\00[Contents]\00[Back]\00")
   ;; EXE name buffer at 0x120 (max 128 bytes), default "app.exe"
   (data (i32.const 0x120) "app.exe\00")
+  ;; WAT-built find/replace dialog labels (consumed by $create_findreplace_dialog).
+  ;; All NUL-terminated, lengths recorded next to the offset constants below.
+  (data (i32.const 0x1A0) "Find what:\00")     ;; +0x00, len 10
+  (data (i32.const 0x1AB) "Match case\00")     ;; +0x0B, len 10
+  (data (i32.const 0x1B6) "Direction\00")      ;; +0x16, len 9
+  (data (i32.const 0x1C0) "Up\00")             ;; +0x20, len 2
+  (data (i32.const 0x1C3) "Down\00")           ;; +0x23, len 4
+  (data (i32.const 0x1C8) "Find Next\00")      ;; +0x28, len 9
+  (data (i32.const 0x1D2) "Cancel\00")         ;; +0x32, len 6
 
   ;; ============================================================
   ;; MEMORY MAP

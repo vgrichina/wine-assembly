@@ -38,6 +38,24 @@
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
 
+  ;; Copy a NUL-terminated string from a WASM-linear address into a fresh
+  ;; heap-allocated guest buffer. Returns the guest pointer (suitable for
+  ;; passing as $text_wa to $ctrl_create_child, which then ends up in
+  ;; CREATESTRUCT.lpszName for the wndproc to read in WM_CREATE).
+  ;; $len excludes NUL.
+  (func $wat_str_to_heap (param $wa i32) (param $len i32) (result i32)
+    (local $buf i32) (local $bw i32) (local $i i32)
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $bw (call $g2w (local.get $buf)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (local.get $bw) (local.get $i))
+        (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (local.get $bw) (local.get $len)) (i32.const 0))
+    (local.get $buf))
+
   ;; ---- Control geometry table helpers (CONTROL_GEOM) ----
   ;; Each entry: 8 bytes = (i16 x, i16 y, i16 w, i16 h), parent-relative.
   ;; Indexed by window slot (same index as CONTROL_TABLE / WND_RECORDS).
@@ -978,7 +996,8 @@
     ;; Static "Find what:"
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
-            (i32.const 0x50000000) (i32.const 0)))
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x1A0) (i32.const 10))))
     ;; Edit (the one the test cares about)
     (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x480)
                        (i32.const 74) (i32.const 8) (i32.const 164) (i32.const 18)
@@ -987,24 +1006,30 @@
     ;; Match case checkbox
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x411)
             (i32.const 8) (i32.const 38) (i32.const 80) (i32.const 14)
-            (i32.const 0x50010003) (i32.const 0)))
+            (i32.const 0x50010003)
+            (call $wat_str_to_heap (i32.const 0x1AB) (i32.const 10))))
     ;; Direction groupbox + radios
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x440)
             (i32.const 128) (i32.const 28) (i32.const 110) (i32.const 38)
-            (i32.const 0x50000007) (i32.const 0)))
+            (i32.const 0x50000007)
+            (call $wat_str_to_heap (i32.const 0x1B6) (i32.const 9))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x420)
             (i32.const 136) (i32.const 40) (i32.const 42) (i32.const 14)
-            (i32.const 0x50010009) (i32.const 0)))
+            (i32.const 0x50010009)
+            (call $wat_str_to_heap (i32.const 0x1C0) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x421)
             (i32.const 184) (i32.const 40) (i32.const 48) (i32.const 14)
-            (i32.const 0x50010009) (i32.const 0)))
+            (i32.const 0x50010009)
+            (call $wat_str_to_heap (i32.const 0x1C3) (i32.const 4))))
     ;; Find Next + Cancel buttons
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 248) (i32.const 6) (i32.const 80) (i32.const 24)
-            (i32.const 0x50010001) (i32.const 0)))
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1C8) (i32.const 9))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 248) (i32.const 34) (i32.const 80) (i32.const 24)
-            (i32.const 0x50010000) (i32.const 0)))
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
     ;; Stash FR struct ptr in dialog userdata for a future $wndproc_dialog.
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
