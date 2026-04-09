@@ -1824,10 +1824,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 199: GetOpenFileNameA(lpOFN) — return 0 (user cancelled)
+  ;; 199: GetOpenFileNameA(lpOFN) — show modal Open dialog
+  ;;
+  ;; Builds a WAT-driven Open dialog (class 12), parks EIP at the
+  ;; CACA0006 modal pump thunk via $modal_begin, and yields to JS.
+  ;; The dialog's wndproc writes the chosen filename back into
+  ;; OFN.lpstrFile and calls $modal_done(1/0) on OK/Cancel. The pump
+  ;; restores eax/eip/esp on the next interpreter pass after that.
   (func $handle_GetOpenFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; OPENFILENAME.hwndOwner at +4
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_open_dialog (local.get $dlg) (local.get $owner) (i32.const 0) (local.get $arg0))
+    ;; 1-arg stdcall: ret addr (4) + arg (4) = 8 bytes to pop on return.
+    (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
   ;; 200: GetFileTitleA — STUB: unimplemented
@@ -2293,10 +2305,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 248: GetSaveFileNameA(lpOFN) — return 0 (user cancelled)
+  ;; 248: GetSaveFileNameA(lpOFN) — show modal Save As dialog
+  ;; Same UI as GetOpenFileName, just kind=1 → "Save As" title + "Save" button.
   (func $handle_GetSaveFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_open_dialog (local.get $dlg) (local.get $owner) (i32.const 1) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
   ;; 249: SetViewportExtEx — STUB: unimplemented

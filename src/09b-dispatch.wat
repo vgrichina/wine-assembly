@@ -109,6 +109,30 @@
         (global.set $steps (i32.const 0))
         (return)))
 
+    ;; Modal common-dialog pump (marker 0xCACA0006)
+    ;; Set by $modal_begin. Each interpreter pass through this thunk:
+    ;;   - if $modal_dlg_hwnd != 0 (dialog still open): set yield_flag and
+    ;;     return — JS regains control, processes input via DOM events
+    ;;     which feed renderer.handleMouseDown → send_message into the
+    ;;     dialog's WAT children. The dialog's wndproc clears
+    ;;     $modal_dlg_hwnd on OK/Cancel via $modal_done_*.
+    ;;   - else (dialog destroyed): restore the saved EIP/ESP/EAX from
+    ;;     before the API call, advance ESP past the original args, and
+    ;;     return. EIP is now back in guest code, the API call has
+    ;;     "returned" with the chosen result.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0006))
+      (then
+        (if (global.get $modal_dlg_hwnd)
+          (then
+            (global.set $yield_flag (i32.const 1))
+            (return)))
+        ;; Modal complete — splice the API call back together.
+        (global.set $eax (global.get $modal_result))
+        (global.set $eip (global.get $modal_ret_addr))
+        (global.set $esp (i32.add (global.get $modal_saved_esp) (global.get $modal_esp_adjust)))
+        (global.set $yield_reason (i32.const 0))
+        (return)))
+
     ;; _initterm continuation — init function returned, call next entry
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0003))
       (then

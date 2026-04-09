@@ -269,6 +269,17 @@
   (data (i32.const 0x1D9) "OK\00")             ;; +0x39, len 2  (ShellAbout dialog)
   (data (i32.const 0x1DC) "About \00")         ;; +0x3C, len 6  (ShellAbout title prefix)
   (data (i32.const 0x1E3) "Find\00")           ;; +0x43, len 4  (Find dialog title)
+  ;; -- Open/Save common dialog labels --
+  (data (i32.const 0x1E8) "Open\00")           ;; +0x48, len 4  (title + button)
+  (data (i32.const 0x1ED) "Save As\00")        ;; +0x4D, len 7
+  (data (i32.const 0x1F5) "Save\00")           ;; +0x55, len 4  (Save button)
+  (data (i32.const 0x1FA) "File name:\00")     ;; +0x5A, len 10
+  (data (i32.const 0x205) "Look in:\00")       ;; +0x65, len 8
+  (data (i32.const 0x20E) "C:\\*\00")          ;; +0x6E, len 4  (default find pattern)
+  (data (i32.const 0x213) "C:\\\00")           ;; +0x73, len 3  (default initial dir)
+  (data (i32.const 0x217) "..\00")             ;; +0x77, len 2  (parent dir entry)
+  (data (i32.const 0x21A) "Upload...\00")      ;; +0x7A, len 9
+  (data (i32.const 0x224) "Download\00")       ;; +0x84, len 8
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -477,7 +488,7 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   ;; Thread yield state (for multi-instance threading)
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 6=modal_dialog
   (global $wait_handle  (mut i32) (i32.const 0))
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
@@ -495,6 +506,23 @@
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
+
+  ;; ---- Modal dialog (Open/Save/Color/Font/...) state ----
+  ;;
+  ;; When a WAT-driven modal API handler (e.g. $handle_GetOpenFileNameA)
+  ;; opens its dialog, it calls $modal_begin to redirect EIP into the
+  ;; CACA0006 modal_loop_thunk and yield to JS. JS pumps DOM input into
+  ;; the dialog's WAT children via send_message. The dialog's wndproc
+  ;; calls $modal_done_ok / $modal_done_cancel which clears
+  ;; $modal_dlg_hwnd. The next interpreter iteration sees the cleared
+  ;; flag, restores the saved eax/eip/esp via the CACA0006 case in
+  ;; $win32_dispatch, and the guest API call returns normally.
+  (global $modal_dlg_hwnd  (mut i32) (i32.const 0))  ;; 0 = no modal, else dialog hwnd
+  (global $modal_result    (mut i32) (i32.const 0))  ;; 1 = OK, 0 = Cancel
+  (global $modal_ret_addr  (mut i32) (i32.const 0))  ;; saved EIP to return to
+  (global $modal_saved_esp (mut i32) (i32.const 0))  ;; saved ESP at API entry
+  (global $modal_esp_adjust (mut i32) (i32.const 0)) ;; bytes to add to ESP on return
+  (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
 
   ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
   ;; calls $create_findreplace_dialog. Test bridge queries these via the

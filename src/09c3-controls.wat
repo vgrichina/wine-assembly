@@ -203,6 +203,9 @@
     ;; Class 11 = ShellAbout dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 11))
       (then (return (call $about_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 12 = Open / Save common dialog parent (WAT-built)
+    (if (i32.eq (local.get $class) (i32.const 12))
+      (then (return (call $opendlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -441,6 +444,272 @@
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+
+  ;; ============================================================
+  ;; Open / Save common dialog (control class 12)
+  ;; ============================================================
+  ;;
+  ;; Built by $create_open_dialog (called from $handle_GetOpenFileNameA
+  ;; and $handle_GetSaveFileNameA — same UI, different title + button
+  ;; label + IDOK semantics). Children:
+  ;;
+  ;;   id 0xFFFF "Look in:" static
+  ;;   id 0x440  current-directory edit (read-only, displays current path)
+  ;;   id 0x441  file listbox (LB_ADDSTRING-populated from fs_find_*)
+  ;;   id 0xFFFF "File name:" static
+  ;;   id 0x442  filename edit
+  ;;   id 1      Open / Save button (IDOK)
+  ;;   id 2      Cancel button (IDCANCEL)
+  ;;
+  ;; Userdata stores the guest OFN ptr so the OK handler can write back
+  ;; the chosen filename to OFN.lpstrFile.
+  ;;
+  ;; OPENFILENAME (offsets we touch):
+  ;;   +0x00  lStructSize
+  ;;   +0x04  hwndOwner
+  ;;   +0x0C  lpstrFilter
+  ;;   +0x18  lpstrFile        — guest ptr to writable buffer
+  ;;   +0x1C  nMaxFile         — capacity
+  ;;   +0x24  lpstrInitialDir
+  ;;   +0x28  lpstrTitle
+
+  ;; ---- Listbox population helper ----
+  ;;
+  ;; Walks fs_find_first_file/next from a given pattern (e.g. "C:\*"),
+  ;; LB_ADDSTRINGs each entry, prepending "[" and appending "]" for
+  ;; directories so they sort first visually. Adds ".." as the first
+  ;; entry unconditionally so the user can navigate up.
+  ;;
+  ;; Reuses PAINT_SCRATCH (above GUEST_BASE) for the WIN32_FIND_DATA
+  ;; (320 bytes) plus a temporary 280-byte string slot for the bracketed
+  ;; directory entry.
+  (func $opendlg_populate_listbox (param $lb i32) (param $pattern_g i32)
+    (local $find_handle i32) (local $fd_g i32) (local $fd_w i32)
+    (local $name_g i32) (local $name_w i32) (local $attrs i32)
+    (local $tmp_g i32) (local $tmp_w i32) (local $name_len i32)
+    ;; Reset listbox first.
+    (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0184) (i32.const 0) (i32.const 0)))
+    ;; Always add ".." as the first entry. Heap-alloc so the listbox sees a
+    ;; real guest pointer that its g2w can resolve.
+    (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+            (call $wat_str_to_heap (i32.const 0x217) (i32.const 2))))
+    ;; FIND_DATA buffer + tmp string buffer in heap.
+    (local.set $fd_g (call $heap_alloc (i32.const 320)))
+    (local.set $fd_w (call $g2w (local.get $fd_g)))
+    (local.set $tmp_g (call $heap_alloc (i32.const 280)))
+    (local.set $tmp_w (call $g2w (local.get $tmp_g)))
+    (local.set $find_handle (call $host_fs_find_first_file
+      (call $g2w (local.get $pattern_g)) (local.get $fd_g) (i32.const 0)))
+    (if (i32.eq (local.get $find_handle) (i32.const -1))
+      (then
+        (call $heap_free (local.get $tmp_g))
+        (call $heap_free (local.get $fd_g))
+        (return)))
+    (block $done (loop $next
+      ;; Skip "." and ".."
+      (local.set $name_w (i32.add (local.get $fd_w) (i32.const 44)))
+      (local.set $attrs (i32.load (local.get $fd_w)))
+      (if (i32.eqz (i32.and
+              (i32.eq (i32.load8_u (local.get $name_w)) (i32.const 46))   ;; '.'
+              (i32.or (i32.eqz (i32.load8_u (i32.add (local.get $name_w) (i32.const 1))))
+                      (i32.and (i32.eq (i32.load8_u (i32.add (local.get $name_w) (i32.const 1))) (i32.const 46))
+                               (i32.eqz (i32.load8_u (i32.add (local.get $name_w) (i32.const 2))))))))
+        (then
+          (if (i32.and (local.get $attrs) (i32.const 0x10))
+            (then
+              ;; Directory: render as "[name]" so it sorts/looks distinct.
+              (local.set $name_len (call $strlen (local.get $name_w)))
+              (i32.store8 (local.get $tmp_w) (i32.const 0x5B))  ;; '['
+              (call $memcpy (i32.add (local.get $tmp_w) (i32.const 1))
+                            (local.get $name_w) (local.get $name_len))
+              (i32.store8 (i32.add (local.get $tmp_w) (i32.add (local.get $name_len) (i32.const 1)))
+                          (i32.const 0x5D))  ;; ']'
+              (i32.store8 (i32.add (local.get $tmp_w) (i32.add (local.get $name_len) (i32.const 2)))
+                          (i32.const 0))
+              (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+                      (local.get $tmp_g))))
+            (else
+              ;; File: add as-is via the FIND_DATA's cFileName guest ptr.
+              (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+                      (i32.add (local.get $fd_g) (i32.const 44))))))))
+      (br_if $done (i32.eqz (call $host_fs_find_next_file
+                              (local.get $find_handle) (local.get $fd_g) (i32.const 0))))
+      (br $next)))
+    (drop (call $host_fs_find_close (local.get $find_handle)))
+    (call $heap_free (local.get $tmp_g))
+    (call $heap_free (local.get $fd_g)))
+
+  ;; ---- Open dialog wndproc ----
+  (func $opendlg_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $notif i32) (local $ofn i32) (local $ofn_w i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $text_len i32) (local $text_src_w i32)
+    (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
+
+    ;; ---- WM_CLOSE → Cancel ----
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))
+      (then
+        (call $modal_done (i32.const 0))
+        (return (i32.const 0))))
+
+    (if (i32.ne (local.get $msg) (i32.const 0x0111))  ;; only WM_COMMAND past here
+      (then (return (i32.const 0))))
+
+    (local.set $cmd   (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+    (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
+
+    ;; ---- Cancel ----
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then
+        (call $modal_done (i32.const 0))
+        (return (i32.const 0))))
+
+    ;; ---- OK / Open / Save: copy filename edit text into OFN.lpstrFile ----
+    (if (i32.eq (local.get $cmd) (i32.const 1))
+      (then
+        (local.set $ofn (call $wnd_get_userdata (local.get $hwnd)))
+        (if (i32.eqz (local.get $ofn))
+          (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+        (local.set $ofn_w (call $g2w (local.get $ofn)))
+        (local.set $dst_g (i32.load offset=24 (local.get $ofn_w)))         ;; lpstrFile
+        (local.set $max_len (i32.load offset=28 (local.get $ofn_w)))       ;; nMaxFile
+        (local.set $edit_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x442)))
+        (if (i32.and (i32.and (local.get $dst_g) (i32.gt_u (local.get $max_len) (i32.const 0)))
+                     (local.get $edit_h))
+          (then
+            (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
+            (if (local.get $edit_state)
+              (then
+                (local.set $edit_sw (call $g2w (local.get $edit_state)))
+                (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+                (local.set $dst_w (call $g2w (local.get $dst_g)))
+                (if (i32.ge_u (local.get $text_len) (local.get $max_len))
+                  (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
+                (if (i32.load (local.get $edit_sw))
+                  (then
+                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (if (local.get $text_len)
+                      (then (call $memcpy (local.get $dst_w)
+                                          (local.get $text_src_w)
+                                          (local.get $text_len))))))
+                (i32.store8 (i32.add (local.get $dst_w) (local.get $text_len)) (i32.const 0))))))
+        (call $modal_done (i32.const 1))
+        (return (i32.const 0))))
+
+    ;; ---- Listbox notifications: id 0x441, LBN_SELCHANGE / LBN_DBLCLK ----
+    (if (i32.eq (local.get $cmd) (i32.const 0x441))
+      (then
+        ;; On any selection change, copy the chosen item into the filename edit.
+        ;; LBN_DBLCLK additionally triggers IDOK.
+        (call $opendlg_copy_listbox_to_edit (local.get $hwnd))
+        (if (i32.eq (local.get $notif) (i32.const 2))   ;; LBN_DBLCLK
+          (then
+            (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0111) (i32.const 1) (i32.const 0)))))
+        (return (i32.const 0))))
+
+    (i32.const 0))
+
+  ;; Helper: read the listbox's currently-selected item and write it into
+  ;; the filename edit (id 0x442). Strips '[' / ']' from directory entries.
+  ;; Used by both LBN_SELCHANGE and the IDOK preview.
+  (func $opendlg_copy_listbox_to_edit (param $dlg i32)
+    (local $lb i32) (local $edit i32) (local $sel i32) (local $buf_g i32)
+    (local $buf_w i32) (local $n i32) (local $start i32)
+    (local.set $lb   (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x441)))
+    (local.set $edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x442)))
+    (if (i32.or (i32.eqz (local.get $lb)) (i32.eqz (local.get $edit))) (then (return)))
+    (local.set $sel (call $wnd_send_message (local.get $lb) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $sel) (i32.const 0)) (then (return)))
+    (local.set $buf_g (call $heap_alloc (i32.const 280)))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    (local.set $n (call $wnd_send_message (local.get $lb) (i32.const 0x0189)
+                    (local.get $sel) (local.get $buf_g)))
+    ;; Strip "[...]" wrapper for directory entries
+    (local.set $start (local.get $buf_w))
+    (if (i32.eq (i32.load8_u (local.get $buf_w)) (i32.const 0x5B))
+      (then
+        (local.set $start (i32.add (local.get $buf_w) (i32.const 1)))
+        (if (i32.gt_u (local.get $n) (i32.const 1))
+          (then (i32.store8 (i32.add (local.get $buf_w) (i32.sub (local.get $n) (i32.const 1)))
+                            (i32.const 0))))))
+    ;; Drop the edit's old text and reload via WM_SETTEXT — pass the
+    ;; (possibly start-shifted) buffer as a guest ptr.
+    (drop (call $wnd_send_message (local.get $edit) (i32.const 0x000C)
+            (i32.const 0)
+            (i32.add (local.get $buf_g) (i32.sub (local.get $start) (local.get $buf_w)))))
+    (call $heap_free (local.get $buf_g)))
+
+  ;; ---- Build the open/save dialog ----
+  ;;
+  ;;   $kind: 0 = Open, 1 = Save As (controls title + IDOK button label)
+  ;;   $ofn:  guest ptr to OPENFILENAME — stashed in dialog userdata so the
+  ;;          OK handler can write back lpstrFile.
+  (func $create_open_dialog (param $dlg i32) (param $owner i32) (param $kind i32) (param $ofn i32)
+    (local $w i32) (local $h i32) (local $title_wa i32) (local $btn_g i32)
+    (local $lb i32)
+    (local.set $w (i32.const 360))
+    (local.set $h (i32.const 240))
+    ;; Title goes to JS (WASM offset). Button text goes through
+    ;; $wat_str_to_heap → guest ptr that ctrl_create_child stores in
+    ;; CREATESTRUCT.lpszName for $button_wndproc to read in WM_CREATE.
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $title_wa (i32.const 0x1ED))                                 ;; "Save As"
+        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x1F5) (i32.const 4))))  ;; "Save"
+      (else
+        (local.set $title_wa (i32.const 0x1E8))                                 ;; "Open"
+        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x1E8) (i32.const 4))))) ;; "Open"
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (local.get $title_wa)
+      (local.get $w) (local.get $h)
+      (i32.const 1))  ;; isAboutDialog flag (modal indicator) — reused for now
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 12) (i32.const 0))
+    ;; Stash OFN ptr for the OK handler.
+    (drop (call $wnd_set_userdata (local.get $dlg) (local.get $ofn)))
+
+    ;; "Look in:" static
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 10) (i32.const 60) (i32.const 16)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x205) (i32.const 8))))
+    ;; Current directory display (read-only-ish edit at id 0x440)
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x440)
+            (i32.const 76) (i32.const 8) (i32.const 200) (i32.const 18)
+            (i32.const 0x50810000)
+            (call $wat_str_to_heap (i32.const 0x213) (i32.const 3))))  ;; "C:\"
+    ;; File listbox (id 0x441)
+    (local.set $lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x441)
+                     (i32.const 12) (i32.const 32) (i32.const 264) (i32.const 130)
+                     (i32.const 0x50810001) (i32.const 0)))
+    ;; "File name:" static
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 168) (i32.const 60) (i32.const 16)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x1FA) (i32.const 10))))
+    ;; Filename edit (id 0x442)
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x442)
+            (i32.const 76) (i32.const 166) (i32.const 200) (i32.const 18)
+            (i32.const 0x50810000) (i32.const 0)))
+    ;; Open / Save button (id IDOK = 1)
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 286) (i32.const 8) (i32.const 64) (i32.const 22)
+            (i32.const 0x50010001)
+            (local.get $btn_g)))
+    ;; Cancel button (id IDCANCEL = 2)
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 286) (i32.const 36) (i32.const 64) (i32.const 22)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))   ;; "Cancel"
+
+    ;; Populate the listbox from the default pattern "C:\*".
+    (call $opendlg_populate_listbox (local.get $lb)
+      (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))
 
   ;; Internal helper for $findreplace_wndproc — reads ButtonState.flags
   ;; without the export-layer wrapping.
@@ -1456,6 +1725,41 @@
     (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0002)
             (i32.const 0) (i32.const 0)))
     (call $wnd_table_remove (local.get $hwnd)))
+
+  ;; ============================================================
+  ;; Modal common-dialog scaffolding
+  ;; ============================================================
+  ;;
+  ;; Wraps the CACA0006 thunk pump from $win32_dispatch. Used by
+  ;; $handle_GetOpenFileNameA / GetSaveFileNameA / ChooseColorA / etc.
+  ;;
+  ;;   $modal_begin(dlg_hwnd, esp_adjust):
+  ;;     Save current ret addr ([esp]), esp, and the post-call esp delta.
+  ;;     Park EIP at the modal_loop_thunk so subsequent interpreter passes
+  ;;     hit the CACA0006 case until the dialog is destroyed.
+  ;;     $steps=0 prevents th_call_ind (or whatever called us) from
+  ;;     overriding our EIP redirect.
+  ;;
+  ;;   $modal_done_ok(result_hint) / $modal_done_cancel():
+  ;;     Called by the dialog's wndproc on OK or Cancel/X. Records the
+  ;;     result, tears the dialog down, and clears $modal_dlg_hwnd which
+  ;;     unblocks the CACA0006 pump on the next interpreter iteration.
+  (func $modal_begin (param $dlg i32) (param $esp_adjust i32)
+    (global.set $modal_dlg_hwnd  (local.get $dlg))
+    (global.set $modal_result    (i32.const 0))
+    (global.set $modal_ret_addr  (call $gl32 (global.get $esp)))
+    (global.set $modal_saved_esp (global.get $esp))
+    (global.set $modal_esp_adjust (local.get $esp_adjust))
+    (global.set $eip             (global.get $modal_loop_thunk))
+    (global.set $yield_flag      (i32.const 1))
+    (global.set $yield_reason    (i32.const 6))
+    (global.set $steps           (i32.const 0)))
+
+  (func $modal_done (param $result i32)
+    (global.set $modal_result (local.get $result))
+    (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))
+    (call $host_destroy_window (global.get $modal_dlg_hwnd))
+    (global.set $modal_dlg_hwnd (i32.const 0)))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
   ;; populate CONTROL_TABLE with class+id, set parent, then deliver
