@@ -339,7 +339,8 @@
   ;; 0x0000A000  3KB     CLASS_RECORDS  (64  entries × 48 bytes, ends 0xAC00)
   ;; 0x0000AC00  320B    TIMER_TABLE    (16  entries × 20 bytes, ends 0xAD40)
   ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
-  ;; 0x0000AD50  29KB    Free (up to GUEST_BASE)
+  ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
+  ;; 0x0000B160  28KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -397,6 +398,27 @@
   ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
   ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
   (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))
+  ;; MENU_DATA_TABLE — parallel to WND_RECORDS, indexed by window slot.
+  ;; Each entry is a guest heap pointer to that window's menu data blob
+  ;; (set via $menu_set, read by $menu_paint_bar / $menu_hittest_bar /
+  ;; $menu_paint_dropdown / $menu_hittest_dropdown). 0 = no menu.
+  ;; Blob layout (heap-resident, owned by WAT):
+  ;;   +0       i32  bar_count
+  ;;   +4       bar_items[bar_count] × 12 bytes:
+  ;;              +0  i32  text_offset (relative to blob base)
+  ;;              +4  i32  text_len
+  ;;              +8  i32  child_offset (offset to child header, 0 if none)
+  ;;   header per child group:
+  ;;     +0  i32  child_count
+  ;;     +4  child_items[child_count] × 24 bytes:
+  ;;              +0  i32 label_offset
+  ;;              +4  i32 label_len
+  ;;              +8  i32 shortcut_offset
+  ;;              +12 i32 shortcut_len
+  ;;              +16 i32 flags  (bit0=separator, bit1=grayed)
+  ;;              +20 i32 id
+  ;;   string bytes appended at the tail
+  (global $MENU_DATA_TABLE i32 (i32.const 0x0000AD60))
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
@@ -634,4 +656,18 @@
   ;; Palette management
   (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index
   (global $selected_palette (mut i32) (i32.const 0))  ;; Currently selected HPALETTE
+
+  ;; Menu loader scratch — used by $menu_load (09c5-menu.wat) while
+  ;; walking PE menu resource bytes (UTF-16 MENUITEMTEMPLATE) in two
+  ;; passes (count, then write). Single-instance, no recursion across
+  ;; menu_load invocations is needed.
+  (global $ml_pos          (mut i32) (i32.const 0))  ;; current PE walk pos (WASM addr)
+  (global $ml_end          (mut i32) (i32.const 0))  ;; PE walk end (WASM addr)
+  (global $ml_bar_count    (mut i32) (i32.const 0))
+  (global $ml_struct_size  (mut i32) (i32.const 0))
+  (global $ml_string_size  (mut i32) (i32.const 0))
+  (global $ml_blob_w       (mut i32) (i32.const 0))
+  (global $ml_struct_cur   (mut i32) (i32.const 0))
+  (global $ml_string_cur   (mut i32) (i32.const 0))
+  (global $ml_label_chars  (mut i32) (i32.const 0))  ;; out from $ml_load_label
 
