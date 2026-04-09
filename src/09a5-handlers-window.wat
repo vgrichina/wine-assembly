@@ -88,8 +88,9 @@
       (then
         (local.set $i (i32.const 0))
         (block $found3 (loop $scan3
-          (br_if $found3 (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-          (local.set $v (i32.load offset=4 (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12)))))
+          (br_if $found3 (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+          ;; Read WNDCLASSA.lpfnWndProc at class record + 12
+          (local.set $v (i32.load offset=12 (call $class_record_addr (local.get $i))))
           (if (i32.and
             (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
                      (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (i32.const 0x80000))))

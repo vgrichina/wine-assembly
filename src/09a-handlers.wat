@@ -2177,14 +2177,14 @@
     ;;   lpszClassName(+40) hIconSm(+44)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 40)))))
-    ;; Register in class table (hwnd→wndproc lookup for multi-window dispatch)
-    (global.set $eax (call $class_table_register (local.get $class_name_wa) (local.get $tmp)))
-    ;; Save as WNDCLASSA (40 bytes) at 0x2300 + slot*40 for GetClassInfoA
+    ;; Allocate class record (returns atom; WNDCLASSA filled in below)
+    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
     ;; Convert WNDCLASSEX(+4..+40) → WNDCLASSA(+0..+36) (skip cbSize, copy 9 dwords)
+    ;; into the embedded WNDCLASSA at class record + 8.
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
         (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
         (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
         ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
@@ -2207,13 +2207,13 @@
     ;;   lpszMenuName(+32) lpszClassName(+36)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
-    ;; Register in class table
-    (global.set $eax (call $class_table_register (local.get $class_name_wa) (local.get $tmp)))
-    ;; Save full WNDCLASS at 0x2300 + slot*40 for GetClassInfoA
+    ;; Allocate class record (returns atom; WNDCLASSA filled in below)
+    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
+    ;; Copy full WNDCLASSA into the embedded slot at class record + 8.
     (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $dst (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
+        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
         (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
     ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
@@ -2892,8 +2892,8 @@
     (local.set $slot (call $class_find_slot (call $g2w (local.get $arg1))))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        ;; Found — copy 40-byte WNDCLASS from storage to output buffer
-        (local.set $src (i32.add (i32.const 0x2700) (i32.mul (local.get $slot) (i32.const 40))))
+        ;; Found — copy 40-byte WNDCLASS from class record to output buffer
+        (local.set $src (call $class_wndclass_addr (local.get $slot)))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))

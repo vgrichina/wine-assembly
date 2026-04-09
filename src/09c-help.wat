@@ -5,8 +5,9 @@
   ;; Each entry: [hwnd:i32, wndproc:i32] = 8 bytes, total 512 bytes (ends 0x2200)
   ;; wndproc = guest VA for x86 wndproc, or 0xFFFFxxxx for WAT-native
   ;;
-  ;; Class table at WASM 0x2200: maps class_name_hash → wndproc (max 16 entries)
-  ;; Each entry: [name_hash:i32, wndproc:i32, extra_bytes:i32] = 12 bytes (ends 0x22C0)
+  ;; Class records at WASM 0x2D80: 16 entries × 48 bytes (ends 0x3080)
+  ;; Each entry: [name_hash:i32, atom:i32, WNDCLASSA[40]]
+  ;; lpfnWndProc lives at record+12 (offset 4 inside the embedded WNDCLASSA).
   ;;
   ;; Parent table at WASM 0x22C0: maps slot index → parent hwnd (max 64 entries)
   ;; Each entry: [parent_hwnd:i32] = 4 bytes (ends 0x23C0)
@@ -163,20 +164,28 @@
     (local.get $h)
   )
 
-  ;; Register class: store name_hash→wndproc; returns atom
-  (func $class_table_register (param $name_wa i32) (param $wndproc i32) (result i32)
+  ;; Address of class record N: CLASS_RECORDS + slot * 48
+  (func $class_record_addr (param $slot i32) (result i32)
+    (i32.add (global.get $CLASS_RECORDS) (i32.mul (local.get $slot) (i32.const 48))))
+
+  ;; Address of the embedded WNDCLASSA inside record N (record + 8)
+  (func $class_wndclass_addr (param $slot i32) (result i32)
+    (i32.add (call $class_record_addr (local.get $slot)) (i32.const 8)))
+
+  ;; Allocate or find a class slot for $name_wa. Returns the class atom.
+  ;; The caller is responsible for memcpy'ing the WNDCLASSA into
+  ;; $class_wndclass_addr(slot) immediately afterwards.
+  (func $class_table_register (param $name_wa i32) (result i32)
     (local $hash i32) (local $i i32) (local $ptr i32) (local $empty i32)
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
-      ;; Update existing class
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+      (local.set $ptr (call $class_record_addr (local.get $i)))
+      ;; Existing class — return its atom (caller will overwrite WNDCLASSA via memcpy)
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
-        (then
-          (i32.store offset=4 (local.get $ptr) (local.get $wndproc))
-          (return (i32.load offset=8 (local.get $ptr)))))
+        (then (return (i32.load offset=4 (local.get $ptr)))))
       ;; Track first empty
       (if (i32.and (i32.eqz (i32.load (local.get $ptr)))
                    (i32.eq (local.get $empty) (i32.const -1)))
@@ -186,42 +195,36 @@
     ;; Insert new class
     (if (i32.ne (local.get $empty) (i32.const -1))
       (then
-        (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $empty) (i32.const 12))))
+        (local.set $ptr (call $class_record_addr (local.get $empty)))
         (i32.store (local.get $ptr) (local.get $hash))
-        (i32.store offset=4 (local.get $ptr) (local.get $wndproc))
         (global.set $class_atom_counter (i32.add (global.get $class_atom_counter) (i32.const 1)))
-        (i32.store offset=8 (local.get $ptr) (global.get $class_atom_counter))
+        (i32.store offset=4 (local.get $ptr) (global.get $class_atom_counter))
         (return (global.get $class_atom_counter))))
     (i32.const 0)
   )
 
-  ;; Find class table slot index by name hash; returns slot (0-31) or -1
+  ;; Find class slot index by name hash; returns slot or -1
   (func $class_find_slot (param $name_wa i32) (result i32)
     (local $hash i32) (local $i i32) (local $ptr i32)
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+      (local.set $ptr (call $class_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const -1))
 
-  ;; Look up wndproc by class name (WASM addr); returns 0 if not found
+  ;; Look up wndproc by class name (WASM addr); returns 0 if not found.
+  ;; Reads WNDCLASSA.lpfnWndProc which lives at record + 12.
   (func $class_table_lookup (param $name_wa i32) (result i32)
-    (local $hash i32) (local $i i32) (local $ptr i32)
-    (local.set $hash (call $class_name_hash (local.get $name_wa)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $ptr (i32.add (global.get $CLASS_TABLE) (i32.mul (local.get $i) (i32.const 12))))
-      (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
-        (then (return (i32.load offset=4 (local.get $ptr)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (i32.const 0)
+    (local $slot i32)
+    (local.set $slot (call $class_find_slot (local.get $name_wa)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.load offset=12 (call $class_record_addr (local.get $slot)))
   )
 
   ;; ---- WAT-native WndProc dispatch ----
