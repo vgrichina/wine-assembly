@@ -1,8 +1,11 @@
 # Refactor: Controls as Real Windows, JS as Dumb Renderer
 
-Status: STEPs 1-3 done. STEP 4 (`$wndproc_edit`) next.
+Status: STEPs 1-6 done. STEP 7 (route guest CreateWindowExA EDIT/BUTTON/STATIC
+through WAT) next — high risk, see Risk register.
 Owner: TBD.
-Test gate: `test/test-find-typing.js` (6/6 baseline since commit 56ea4fe).
+Test gate: `test/test-find-typing.js` (6/6, now driven through WAT-side
+EditState via new `get_edit_text` / `send_char_to_focus` exports as of
+STEP 6 in commit c3f8ecf).
 
 ## Goal
 
@@ -270,15 +273,58 @@ Implementation notes:
 - Keypress dispatch: `host_char(code)` → look up `$focused_hwnd` → `$dispatch_message(focused, WM_CHAR, code, 0)` → routes via `$wat_wndproc_dispatch` → `$control_wndproc_dispatch` → `$wndproc_edit`.
 - Register class names `EDIT` / `BUTTON` / `STATIC` in `$class_table` so `CreateWindowExA` from WAT-side can use them.
 
-**STEP 5: `$create_findreplace_dialog` in WAT.**
-- New file `src/09c5-builtin-dialogs.wat`.
-- Replace `$handle_FindTextA` in `src/09a-handlers.wat` to call `$create_findreplace_dialog(owner, fr_ptr)` instead of `$host_show_find_dialog`.
-- `$create_findreplace_dialog` allocates the dialog window via the WAT window-table machinery, then calls `$create_window` for each child control (Edit, 2 Buttons, 3 Radios, Checkbox, Groupbox, Static label) with the same coordinates `lib/renderer.js: showFindDialog()` uses today.
-- Default wndproc for the dialog window is `$wndproc_dialog` which handles `WM_COMMAND` from its child buttons and translates "Find Next" / "Cancel" into the registered-message + FR struct write that `_handleFindDialogButton` does today.
-- Delete `lib/renderer.js: showFindDialog()` and the `host.show_find_dialog` import wiring.
-- Delete `_handleFindDialogButton` and the `_focusedDialogEdit` paths that exist solely for find dialog.
+**STEP 5: `$create_findreplace_dialog` in WAT.** (DONE 2026-04-08, dormant
+addition in commit `d95052b`, then activated in STEP 6)
 
-**Build gate:** `test/test-find-typing.js` should now reach the dialog via the WAT path. Once the upstream notepad-Find bug is fixed (separate work), it should report 6/6 PASS.
+Landed as additions to `src/09c3-controls.wat` rather than a new file:
+- `$wnd_send_message` — routes WAT-native wndprocs (>= 0xFFFF0000) through
+  `$wat_wndproc_dispatch`. x86 wndproc path is a TODO (returns 0); current
+  consumers are all WAT-side controls.
+- `$ctrl_create_child` — allocates a fresh hwnd, registers WNDPROC_CTRL_NATIVE,
+  populates CONTROL_TABLE, builds a 48-byte CREATESTRUCT on the heap, delivers
+  WM_CREATE so the wndproc allocates its state struct. Does NOT call
+  `$host_create_window` — WAT-internal state only. Visual rendering still
+  comes from the JS-side dialog created by `$host_show_find_dialog`.
+  Visual unification deferred to STEP 8.
+- `$create_findreplace_dialog(dlg, owner, fr_guest)` — caller provides
+  pre-allocated `dlg` hwnd (typically the same hwnd handed to the renderer).
+  Builds the 8 child controls with geometry mirroring `showFindDialog()`.
+  Stashes the edit child hwnd in `$findreplace_edit_hwnd` for the test
+  bridge.
+
+Did NOT delete `lib/renderer.js: showFindDialog()` or the
+`host.show_find_dialog` import — both still in use as the visual dialog
+and as the source of the `[FindTextA]` log line the test gate looks for.
+Visual deletion deferred to STEP 8 (requires renderer-side support for
+WAT-managed child windows).
+
+**STEP 6: Flip the test gate to read WAT-side EditState.** (DONE 2026-04-08,
+commit `c3f8ecf`)
+
+`$handle_FindTextA` now calls `$create_findreplace_dialog` after
+`$host_show_find_dialog`, so each find-dialog open creates parallel WAT
+state alongside the JS dialog. New WASM exports drive the test bridge:
+
+- `get_findreplace_dlg` / `get_findreplace_edit` — find-dialog hwnds
+- `get_focus_hwnd` / `set_focus_hwnd` — global `$focus_hwnd` accessors
+- `send_char_to_focus(code)` — dispatches WM_CHAR via `$wnd_send_message`
+- `get_edit_text(hwnd, dest_guest, max)` — copies EditState text into a
+  guest scratch buffer (NUL-terminated, clamped)
+
+`test/run.js` `focus-find` / `keypress` / `dump-find` event handlers
+prefer the WAT path when those exports are available and fall back to
+the legacy JS scan otherwise. The test gate stays at 6/6 but the
+"editText=ABC" assertion now reads from `$edit_wndproc`'s `EditState`,
+not from `editCtrl.editText` in JS.
+
+**Critical bug fixed during STEP 6:** STEPs 4-5 dormant code repeatedly
+used `i32.and` as a logical AND on pointer/length pairs (e.g.
+`(if (i32.and src len) ...)`). For `src=0x40e5c4, len=1` the bitwise
+AND is 0 because bit 0 of `0x40e5c4` is 0, so the guarded `memcpy` was
+silently skipped. Found via three rounds of debug instrumentation. Fixed
+across `$edit_ensure_cap`, `$edit_insert_char`, `$edit_wndproc`
+(WM_GETTEXT, WM_PAINT text + caret), `$button_wndproc` (WM_GETTEXT), and
+the new `get_edit_text` export by nesting two single-arg `if`s instead.
 
 ### Batch D — Sweep the rest
 
