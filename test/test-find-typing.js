@@ -85,12 +85,12 @@ const checks = [
     pass: /focus-find: hwnd=/.test(out) && !/NO EDIT CTRL/.test(out) && !/NO FIND DIALOG/.test(out),
   },
   {
-    name: 'keypress 65 accepted (focused=true)',
-    pass: /\[keypress\] 65 focused=\s*true/.test(out),
+    name: 'keypress dispatched to WAT EditState',
+    pass: /\[input\] keypress code=65/.test(out),
   },
   {
     name: 'editText accumulated to "ABC"',
-    pass: /editText="ABC"|editText=\\"ABC\\"/.test(out) || /\[keypress\] after: "ABC"/.test(out),
+    pass: /editText="ABC"|editText=\\"ABC\\"/.test(out),
   },
   {
     name: 'dump-find reports ABC',

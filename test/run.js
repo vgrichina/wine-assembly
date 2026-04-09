@@ -746,53 +746,24 @@ async function main() {
       // UI-level events go through renderer handlers (mouse/keyboard pump),
       // raw events go directly into inputQueue.
       if (ev.action === 'focus-find' && renderer) {
-        // STEP 6: prefer WAT-side state when available (find dialog now
-        // creates parallel WAT EditState via $create_findreplace_dialog).
-        // Falls back to the legacy JS-side renderer.windows path if the
-        // WAT exports aren't compiled in.
+        // Find dialog is now driven entirely from WAT — set focus on the
+        // WAT-side EditState directly. No JS controls[] mirroring needed.
         const watDlg = instance.exports.get_findreplace_dlg && instance.exports.get_findreplace_dlg();
         const watEdit = instance.exports.get_findreplace_edit && instance.exports.get_findreplace_edit();
         if (watDlg && watEdit) {
           instance.exports.set_focus_hwnd(watEdit);
-          // Read current EditState text via get_edit_text export
           const scratchG = instance.exports.guest_alloc(256);
           const n = instance.exports.get_edit_text(watEdit, scratchG, 255);
           const dv = new DataView(memory.buffer);
           let txt = '';
           for (let i = 0; i < n; i++) txt += String.fromCharCode(dv.getUint8(g2w(scratchG) + i));
-          // Mirror focus into JS side too so renderer.handleKeyPress still works.
-          const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
-          if (findDlg) {
-            const editCtrl = (findDlg.controls || []).find(c => c.className === 'Edit');
-            if (editCtrl) {
-              renderer._focusedDialogEdit = editCtrl;
-              renderer._focusedDialogEditWin = findDlg;
-              if (editCtrl.editText == null) editCtrl.editText = editCtrl.text || '';
-              editCtrl._cursor = editCtrl.editText.length;
-              editCtrl._selStart = editCtrl._cursor;
-            }
-          }
           logs.push(`[input] focus-find: hwnd=0x${watDlg.toString(16)} editText=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
-          const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
-          if (findDlg) {
-            const editCtrl = (findDlg.controls || []).find(c => c.className === 'Edit');
-            if (editCtrl) {
-              renderer._focusedDialogEdit = editCtrl;
-              renderer._focusedDialogEditWin = findDlg;
-              if (editCtrl.editText == null) editCtrl.editText = editCtrl.text || '';
-              editCtrl._cursor = editCtrl.editText.length;
-              editCtrl._selStart = editCtrl._cursor;
-              logs.push(`[input] focus-find: hwnd=0x${findDlg.hwnd.toString(16)} editText=${JSON.stringify(editCtrl.editText)} at batch ${batch}`);
-            } else {
-              logs.push(`[input] focus-find: NO EDIT CTRL in find dialog at batch ${batch}`);
-            }
-          } else {
-            logs.push(`[input] focus-find: NO FIND DIALOG at batch ${batch}`);
-          }
+          logs.push(`[input] focus-find: NO FIND DIALOG at batch ${batch}`);
         }
       } else if (ev.action === 'dump-find' && renderer) {
-        // STEP 6: prefer WAT-side state, fall back to JS.
+        // Read EditState text directly from WAT — find dialog has no JS
+        // controls[] mirror anymore.
         const watDlg = instance.exports.get_findreplace_dlg && instance.exports.get_findreplace_dlg();
         const watEdit = instance.exports.get_findreplace_edit && instance.exports.get_findreplace_edit();
         if (watDlg && watEdit) {
@@ -804,13 +775,7 @@ async function main() {
           const focusedNow = instance.exports.get_focus_hwnd() === watEdit;
           logs.push(`[input] dump-find: hwnd=0x${watDlg.toString(16)} focused=${focusedNow} editText=${JSON.stringify(txt)} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
-          const findDlg = Object.values(renderer.windows).find(w => w && w.isFindDialog);
-          if (findDlg) {
-            const editCtrl = (findDlg.controls || []).find(c => c.className === 'Edit');
-            logs.push(`[input] dump-find: hwnd=0x${findDlg.hwnd.toString(16)} focused=${renderer._focusedDialogEdit === editCtrl} editText=${JSON.stringify(editCtrl ? editCtrl.editText : null)} text=${JSON.stringify(editCtrl ? editCtrl.text : null)} at batch ${batch}`);
-          } else {
-            logs.push(`[input] dump-find: NO FIND DIALOG at batch ${batch}`);
-          }
+          logs.push(`[input] dump-find: NO FIND DIALOG at batch ${batch}`);
         }
       } else if (ev.action === 'find-click' && renderer) {
         const we = instance.exports;
@@ -865,10 +830,9 @@ async function main() {
           }
         }
       } else if (ev.action === 'keypress' && renderer && renderer.handleKeyPress) {
-        // STEP 6: drive both paths. WAT side via send_char_to_focus, JS
-        // side via the legacy renderer.handleKeyPress so the JS find
-        // dialog still updates in parallel. Either path's text is what
-        // dump-find reads back from.
+        // Drive WAT side first (find dialog and any other WAT-managed
+        // EditState consumers), then the legacy JS path so notepad's
+        // main-window edit child (still JS-side) keeps working.
         if (instance.exports.send_char_to_focus) {
           instance.exports.send_char_to_focus(ev.code);
         }
