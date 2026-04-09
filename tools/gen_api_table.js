@@ -200,6 +200,7 @@ const extra = [
   { name: 'UnhandledExceptionFilter', nargs: 1 },
   { name: 'SetUnhandledExceptionFilter', nargs: 1 },
   { name: 'IsDebuggerPresent', nargs: 0 },
+  { name: 'ChooseColorA', nargs: 1 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

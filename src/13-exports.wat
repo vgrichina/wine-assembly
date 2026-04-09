@@ -349,6 +349,28 @@
       (then (call $opendlg_populate_listbox (local.get $lb)
               (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))))
 
+  ;; Lookup the Nth basic color in the ChooseColor swatch grid. Used by
+  ;; the renderer's class-6 draw branch so the grid can be painted
+  ;; without duplicating the color table in JS.
+  (func (export "colorgrid_color") (param $idx i32) (result i32)
+    (call $colorgrid_color_for_idx (local.get $idx)))
+
+  ;; Current selection for a colorgrid hwnd (reads ColorGridState[0]).
+  (func (export "colorgrid_get_sel") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
+    (i32.load (call $g2w (local.get $s))))
+
+  ;; Test helper: build a Color dialog standalone (no x86 caller).
+  (func (export "test_create_color_dialog") (result i32)
+    (local $dlg i32) (local $cc i32)
+    (local.set $cc (call $heap_alloc (i32.const 36)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_color_dialog (local.get $dlg) (i32.const 0) (local.get $cc))
+    (local.get $dlg))
+
   ;; Test helper: build a Font dialog standalone (no x86 caller). Needs
   ;; a fake CHOOSEFONT guest ptr with at minimum lpLogFont at +0x0C so
   ;; the IDOK handler doesn't NPE on write-back.

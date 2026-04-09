@@ -6695,5 +6695,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 582019215
+  },
+  {
+    "id": 957,
+    "name": "ChooseColorA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2702924066
   }
 ]

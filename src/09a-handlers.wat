@@ -7429,3 +7429,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; 957: ChooseColorA(lpcc) — show the WAT-driven Color picker with a
+  ;; basic-colors swatch grid. On OK, writes chosen COLORREF into
+  ;; CHOOSECOLOR.rgbResult at +0x0C.
+  (func $handle_ChooseColorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_color_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
+

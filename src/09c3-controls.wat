@@ -197,6 +197,9 @@
     ;; Class 4 = ListBox
     (if (i32.eq (local.get $class) (i32.const 4))
       (then (return (call $listbox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 6 = ColorGrid (ChooseColor swatches)
+    (if (i32.eq (local.get $class) (i32.const 6))
+      (then (return (call $colorgrid_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -212,6 +215,9 @@
     ;; Class 14 = Font (ChooseFont) dialog parent
     (if (i32.eq (local.get $class) (i32.const 14))
       (then (return (call $fontdlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 15 = Color (ChooseColor) dialog parent
+    (if (i32.eq (local.get $class) (i32.const 15))
+      (then (return (call $colordlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -656,6 +662,163 @@
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 358) (i32.const 52) (i32.const 52) (i32.const 22)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+
+  ;; ============================================================
+  ;; ColorGrid control (class 6) + Color (ChooseColor) dialog (class 15)
+  ;; ============================================================
+  ;;
+  ;; ColorGrid is an 8x3 grid of Windows basic colors. 24 cells at a
+  ;; fixed cell size (24x20 by default) — the control window must be
+  ;; sized ≥ 192x60 to fit the grid. Clicks pick a cell and notify the
+  ;; parent via WM_COMMAND + LBN_SELCHANGE (we reuse notification code 1).
+  ;;
+  ;; ColorGridState (8 bytes, allocated in WM_CREATE)
+  ;;   +0   sel_idx       selected cell 0..23, -1 = none
+  ;;   +4   ctrl_id
+  ;;
+  ;; Cell colors are hardcoded — the real Windows basic color palette.
+  ;; Looked up by index via $colorgrid_color_for_idx.
+  (func $colorgrid_color_for_idx (param $idx i32) (result i32)
+    ;; 24 basic colors, row-major (8 cols × 3 rows). Values are 0x00BBGGRR
+    ;; (COLORREF) per standard Win32.
+    (if (i32.eq (local.get $idx) (i32.const  0)) (then (return (i32.const 0x00FFFFFF))))  ;; white
+    (if (i32.eq (local.get $idx) (i32.const  1)) (then (return (i32.const 0x00C0C0C0))))  ;; lt gray
+    (if (i32.eq (local.get $idx) (i32.const  2)) (then (return (i32.const 0x00808080))))  ;; gray
+    (if (i32.eq (local.get $idx) (i32.const  3)) (then (return (i32.const 0x00404040))))  ;; dk gray
+    (if (i32.eq (local.get $idx) (i32.const  4)) (then (return (i32.const 0x00000000))))  ;; black
+    (if (i32.eq (local.get $idx) (i32.const  5)) (then (return (i32.const 0x000000FF))))  ;; red
+    (if (i32.eq (local.get $idx) (i32.const  6)) (then (return (i32.const 0x000080FF))))  ;; orange
+    (if (i32.eq (local.get $idx) (i32.const  7)) (then (return (i32.const 0x0000FFFF))))  ;; yellow
+    (if (i32.eq (local.get $idx) (i32.const  8)) (then (return (i32.const 0x0000FF80))))  ;; lime
+    (if (i32.eq (local.get $idx) (i32.const  9)) (then (return (i32.const 0x0000FF00))))  ;; green
+    (if (i32.eq (local.get $idx) (i32.const 10)) (then (return (i32.const 0x0080FF00))))  ;; teal
+    (if (i32.eq (local.get $idx) (i32.const 11)) (then (return (i32.const 0x00FFFF00))))  ;; cyan
+    (if (i32.eq (local.get $idx) (i32.const 12)) (then (return (i32.const 0x00FF8000))))  ;; sky
+    (if (i32.eq (local.get $idx) (i32.const 13)) (then (return (i32.const 0x00FF0000))))  ;; blue
+    (if (i32.eq (local.get $idx) (i32.const 14)) (then (return (i32.const 0x00FF0080))))  ;; indigo
+    (if (i32.eq (local.get $idx) (i32.const 15)) (then (return (i32.const 0x00FF00FF))))  ;; magenta
+    (if (i32.eq (local.get $idx) (i32.const 16)) (then (return (i32.const 0x008000FF))))  ;; pink
+    (if (i32.eq (local.get $idx) (i32.const 17)) (then (return (i32.const 0x000000A0))))  ;; dk red
+    (if (i32.eq (local.get $idx) (i32.const 18)) (then (return (i32.const 0x000050A0))))  ;; brown
+    (if (i32.eq (local.get $idx) (i32.const 19)) (then (return (i32.const 0x00008080))))  ;; olive
+    (if (i32.eq (local.get $idx) (i32.const 20)) (then (return (i32.const 0x00008000))))  ;; dk grn
+    (if (i32.eq (local.get $idx) (i32.const 21)) (then (return (i32.const 0x00808000))))  ;; dk cyan
+    (if (i32.eq (local.get $idx) (i32.const 22)) (then (return (i32.const 0x00800000))))  ;; dk blue
+    (if (i32.eq (local.get $idx) (i32.const 23)) (then (return (i32.const 0x00800080))))  ;; dk magenta
+    (i32.const 0x00FFFFFF))
+
+  (func $colorgrid_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $cs_w i32)
+    (local $x i32) (local $y i32) (local $col i32) (local $row i32)
+    (local $idx i32) (local $parent i32) (local $ctrl_id i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $cs_w (call $g2w (local.get $lParam)))
+        (local.set $state (call $heap_alloc (i32.const 8)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store        (local.get $sw) (i32.const -1))                              ;; sel_idx
+        (i32.store offset=4 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))    ;; ctrl_id from hMenu
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then (call $heap_free (local.get $state))
+                (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))   ;; WM_LBUTTONDOWN
+      (then
+        (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $y (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (local.set $col (i32.div_s (local.get $x) (i32.const 24)))
+        (local.set $row (i32.div_s (local.get $y) (i32.const 20)))
+        (if (i32.or (i32.or (i32.lt_s (local.get $col) (i32.const 0))
+                            (i32.ge_s (local.get $col) (i32.const 8)))
+                    (i32.or (i32.lt_s (local.get $row) (i32.const 0))
+                            (i32.ge_s (local.get $row) (i32.const 3))))
+          (then (return (i32.const 0))))
+        (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
+        (i32.store (local.get $sw) (local.get $idx))
+        (call $host_invalidate (local.get $hwnd))
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
+        (if (local.get $parent)
+          (then
+            (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                    (i32.or (local.get $ctrl_id) (i32.const 0x10000))   ;; HIWORD=1 (LBN_SELCHANGE reused)
+                    (local.get $hwnd)))))
+        (return (i32.const 0))))
+
+    (i32.const 0))
+
+  (func $colordlg_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $cc i32) (local $cc_w i32) (local $grid i32)
+    (local $sw i32) (local $idx i32)
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
+    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+
+    (if (i32.eq (local.get $cmd) (i32.const 1))
+      (then
+        ;; Write selected color into CHOOSECOLOR.rgbResult (+0x0C).
+        (local.set $cc (call $wnd_get_userdata (local.get $hwnd)))
+        (if (local.get $cc)
+          (then
+            (local.set $cc_w (call $g2w (local.get $cc)))
+            (local.set $grid (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x460)))
+            (if (local.get $grid)
+              (then
+                (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
+                (if (local.get $sw)
+                  (then
+                    (local.set $idx (i32.load (call $g2w (local.get $sw))))
+                    (if (i32.ge_s (local.get $idx) (i32.const 0))
+                      (then
+                        (i32.store offset=12 (local.get $cc_w)
+                          (call $colorgrid_color_for_idx (local.get $idx)))))))))))
+        (call $modal_done (i32.const 1))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (i32.const 0x252)   ;; "Color"
+      (i32.const 260) (i32.const 160)
+      (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 15) (i32.const 0))
+    (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cc)))
+    ;; Swatch grid: 8 cols * 24px = 192, 3 rows * 20px = 60
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 6) (i32.const 0x460)
+            (i32.const 12) (i32.const 12) (i32.const 192) (i32.const 60)
+            (i32.const 0x50000000) (i32.const 0)))
+    ;; OK + Cancel
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 30) (i32.const 92) (i32.const 80) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 130) (i32.const 92) (i32.const 80) (i32.const 24)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
 
