@@ -458,6 +458,12 @@
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
+  ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
+  ;; calls $create_findreplace_dialog. Test bridge queries these via the
+  ;; get_findreplace_dlg / get_findreplace_edit exports.
+  (global $findreplace_dlg_hwnd  (mut i32) (i32.const 0))
+  (global $findreplace_edit_hwnd (mut i32) (i32.const 0))
+
   ;; Help system state
   (global $help_hwnd        (mut i32) (i32.const 0))  ;; Help window handle (0 = not open)
   (global $help_topic_wa    (mut i32) (i32.const 0))  ;; WASM ptr to current topic text

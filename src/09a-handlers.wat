@@ -1830,8 +1830,14 @@
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     ;; Read hwndOwner from FINDREPLACE struct at offset +4
     (local.set $owner (call $gl32 (i32.add (call $g2w (local.get $arg0)) (i32.const 4))))
-    ;; Call host to show the find dialog
+    ;; Call host to show the find dialog (still creates the JS-rendered UI
+    ;; and emits the [FindTextA] log line the test gate looks for).
     (drop (call $host_show_find_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0)))
+    ;; Build parallel WAT-side state: registers $hwnd as WAT-native control
+    ;; dispatch and creates ButtonState/EditState/StaticState for each child.
+    ;; Stashes the edit child hwnd in $findreplace_edit_hwnd for the test
+    ;; bridge to query via the get_findreplace_edit export.
+    (call $create_findreplace_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0))
     ;; Return HWND
     (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg

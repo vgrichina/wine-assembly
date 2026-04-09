@@ -191,4 +191,46 @@
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
+
+  ;; ============================================================
+  ;; STEP 6 — WAT-side find/replace + edit-state inspection exports
+  ;; ============================================================
+  ;; The test bridge in test/run.js uses these to drive the parallel
+  ;; WAT-side find dialog state created by $create_findreplace_dialog.
+  (func (export "get_findreplace_dlg")  (result i32) (global.get $findreplace_dlg_hwnd))
+  (func (export "get_findreplace_edit") (result i32) (global.get $findreplace_edit_hwnd))
+  (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
+  (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
+
+  ;; Send WM_CHAR to the currently-focused hwnd. Returns 1 if dispatched.
+  (func (export "send_char_to_focus") (param $code i32) (result i32)
+    (if (i32.eqz (global.get $focus_hwnd)) (then (return (i32.const 0))))
+    (drop (call $wnd_send_message
+            (global.get $focus_hwnd)
+            (i32.const 0x0102)  ;; WM_CHAR
+            (local.get $code)
+            (i32.const 0)))
+    (i32.const 1))
+
+  ;; Read the EditState text for an EDIT-class hwnd into a guest buffer.
+  ;; Returns chars copied (excluding NUL); 0 if no state or empty buffer.
+  ;; Caller is responsible for the destination buffer; we NUL-terminate.
+  (func (export "get_edit_text")
+    (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $len i32) (local $src i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $state_w (call $g2w (local.get $state)))
+    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (local.set $src (i32.load (local.get $state_w)))
+    (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $len) (local.get $max))
+      (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
+    (if (local.get $src)
+      (then (if (local.get $len)
+              (then (call $memcpy (call $g2w (local.get $dest_guest))
+                                  (call $g2w (local.get $src))
+                                  (local.get $len))))))
+    (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
+    (local.get $len))
 )
