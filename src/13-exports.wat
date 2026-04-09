@@ -202,6 +202,20 @@
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
 
+  ;; Count occupied WND_RECORDS slots (hwnd != 0). Used by the find dialog
+  ;; cancel/leak regression test to verify $wnd_destroy_tree actually
+  ;; releases child slots rather than letting them accumulate.
+  (func (export "wnd_count_used") (result i32)
+    (local $i i32) (local $n i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load (call $wnd_record_addr (local.get $i)))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
   ;; Generic SendMessage entry point. Routes through $wnd_send_message:
   ;; WAT-native targets dispatch synchronously via $wat_wndproc_dispatch;
   ;; x86 targets queue via post_queue (PostMessage semantics, return 0).

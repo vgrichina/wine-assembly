@@ -91,6 +91,9 @@ async function main() {
       } else if (kind === 'dump-fr') {
         // B:dump-fr — log current FINDREPLACE struct (Flags + lpstrFindWhat).
         scheduledInput.push({ batch, action: 'dump-fr' });
+      } else if (kind === 'slot-count') {
+        // B:slot-count[:LABEL] — log live WND_RECORDS slot count.
+        scheduledInput.push({ batch, action: 'slot-count', label: parts[2] || '' });
       } else if (kind === 'keypress' || kind === 'keydown') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'click') {
@@ -242,7 +245,7 @@ async function main() {
       logs.push(`  => ${hex(val)}`);
       lastApiName = null;
     } else {
-      if (logs.length < 10000) logs.push('[i32] ' + hex(val));
+      logs.push('[i32] ' + hex(val));
     }
   };
 
@@ -800,6 +803,12 @@ async function main() {
         } else {
           logs.push(`[input] find-click: no find dialog at batch ${batch}`);
         }
+      } else if (ev.action === 'slot-count') {
+        const we = instance.exports;
+        const dlg = we.get_findreplace_dlg && we.get_findreplace_dlg();
+        const used = we.wnd_count_used ? we.wnd_count_used() : -1;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        logs.push(`[input] slot-count${tag}: used=${used} dlg=0x${(dlg||0).toString(16)} at batch ${batch}`);
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.
         // For find dialog the userdata holds the guest FR ptr; FR.Flags

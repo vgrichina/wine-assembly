@@ -250,6 +250,13 @@
         (i32.store offset=12 (local.get $fr_w) (local.get $flags))
         (drop (call $wnd_send_message (local.get $owner)
                 (i32.const 0xC000) (i32.const 0) (local.get $fr)))
+        ;; Tear down the dialog: free child WAT state via WM_DESTROY,
+        ;; release the WND_RECORDS slots, drop the visible JS window,
+        ;; and clear the globals so the next FindTextA opens fresh state.
+        (call $wnd_destroy_tree (local.get $hwnd))
+        (call $host_destroy_window (local.get $hwnd))
+        (global.set $findreplace_dlg_hwnd  (i32.const 0))
+        (global.set $findreplace_edit_hwnd (i32.const 0))
         (return (i32.const 0))))
 
     ;; ---- Find Next (id=1) ----
@@ -1062,6 +1069,39 @@
         (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
     (i32.const 0)
   )
+
+  ;; Recursively destroy a window and all of its WAT-managed descendants.
+  ;; For each descendant (depth-first), sends WM_DESTROY so the wndproc
+  ;; can free its per-window state struct + sub-allocations, then clears
+  ;; the WND_RECORDS slot. The caller is responsible for calling
+  ;; $host_destroy_window if the window was visible to the renderer.
+  ;;
+  ;; The scan restarts after each recursive descend because slot indices
+  ;; can shift as $wnd_table_remove zeroes records — simpler than tracking
+  ;; a worklist, and MAX_WINDOWS is small enough that the O(N²) cost is
+  ;; irrelevant for the small subtrees this is currently used on
+  ;; (find dialog: 1 parent + 8 children).
+  (func $wnd_destroy_tree (param $hwnd i32)
+    (local $i i32) (local $addr i32) (local $child i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (block $outer
+      (loop $rescan
+        (local.set $i (i32.const 0))
+        (loop $scan
+          (br_if $outer (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+          (local.set $addr (call $wnd_record_addr (local.get $i)))
+          (local.set $child (i32.load (local.get $addr)))
+          (if (i32.and (i32.ne (local.get $child) (i32.const 0))
+                       (i32.eq (i32.load offset=8 (local.get $addr)) (local.get $hwnd)))
+            (then
+              (call $wnd_destroy_tree (local.get $child))
+              (br $rescan)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan))))
+    ;; All children gone — let the wndproc free per-window state, then drop the slot.
+    (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0002)
+            (i32.const 0) (i32.const 0)))
+    (call $wnd_table_remove (local.get $hwnd)))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
   ;; populate CONTROL_TABLE with class+id, set parent, then deliver
