@@ -828,13 +828,13 @@
 
   ;; Send a message to a window. Routes WAT-native wndprocs (wndproc >=
   ;; 0xFFFF0000) directly through $wat_wndproc_dispatch. For x86 wndprocs
-  ;; we don't have synchronous SendMessage from WAT yet — that path is a
-  ;; TODO and currently returns 0. STEP 7+8 will need this for guest
-  ;; child controls; until then the only consumers are the WAT-built
-  ;; dialogs whose children are all WNDPROC_CTRL_NATIVE.
+  ;; the message is queued via the existing PostMessage queue (PostMessage
+  ;; semantics, not synchronous SendMessage — return value is always 0).
+  ;; True synchronous WAT->x86 SendMessage would require a nested $run
+  ;; invocation; defer that until a consumer actually needs the return.
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $wp i32)
+    (local $wp i32) (local $slot i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     ;; WAT-native (>= 0xFFFF0000)
@@ -842,8 +842,17 @@
       (then (return (call $wat_wndproc_dispatch
                       (local.get $hwnd) (local.get $msg)
                       (local.get $wParam) (local.get $lParam)))))
-    ;; x86 wndproc — synchronous call from WAT context not yet implemented.
-    ;; For STEP 5 we just return 0; consumers handle this gracefully.
+    ;; x86 wndproc — queue via PostMessage (max 8 messages, 16 bytes each
+    ;; at WASM addr 0x400, same layout as $handle_PostMessageA).
+    (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+      (then
+        (local.set $slot (i32.add (i32.const 0x400)
+          (i32.mul (global.get $post_queue_count) (i32.const 16))))
+        (i32.store         (local.get $slot) (local.get $hwnd))
+        (i32.store offset=4  (local.get $slot) (local.get $msg))
+        (i32.store offset=8  (local.get $slot) (local.get $wParam))
+        (i32.store offset=12 (local.get $slot) (local.get $lParam))
+        (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
     (i32.const 0)
   )
 
