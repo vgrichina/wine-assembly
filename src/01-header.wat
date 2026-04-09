@@ -259,13 +259,15 @@
   ;; ============================================================
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
-  ;; 0x00002000  256B    Window table (32 entries × 8 bytes: hwnd, wndproc)
-  ;; 0x00002100  192B    Class table (16 entries × 12 bytes: name_hash, wndproc, atom)
-  ;; 0x00002200  128B    Window userdata table (32 entries × 4 bytes: GWL_USERDATA)
-  ;; 0x00002300  320B    Timer table (16 entries × 20 bytes: hwnd, id, interval, last_tick, callback)
-  ;; 0x00003000  4000B   Console char buffer (80×25×2, UTF-16 LE)
-  ;; 0x00003FA0  4000B   Console attr buffer (80×25×2)
-  ;; 0x00004000  8KB     API dispatch hash table (safe from guest writes via g2w)
+  ;; 0x00002000  8KB     Free (was old window/class/control tables — moved to 0x7000+)
+  ;; 0x00004000  12KB    API dispatch hash table (safe from guest writes via g2w)
+  ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
+  ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
+  ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
+  ;; 0x0000A000  3KB     CLASS_RECORDS  (64  entries × 48 bytes, ends 0xAC00)
+  ;; 0x0000AC00  320B    TIMER_TABLE    (16  entries × 20 bytes, ends 0xAD40)
+  ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
+  ;; 0x0000AD50  29KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -288,7 +290,10 @@
   (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
-  ;; Window/class/parent tables (below GUEST_BASE)
+  ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
+  ;; All four tables live in the 0x7000..0xC000 region; the old 0x2000..0x4000
+  ;; layout is now unused and free for future scratch use.
+  ;;
   ;; WND_RECORDS: unified per-window record. Replaces the parallel
   ;; WND_TABLE / PARENT_TABLE / USERDATA_TABLE / STYLE_TABLE arrays.
   ;;   +0   hwnd        (0 = empty slot)
@@ -297,28 +302,29 @@
   ;;   +12  userdata    (GWL_USERDATA)
   ;;   +16  style
   ;;   +20  state_ptr   (heap ptr to per-class WndState; 0 if none)
-  ;; 64 entries × 24 bytes = 0x600 (0x2000..0x2600)
-  (global $WND_RECORDS   i32 (i32.const 0x00002000))
-  (global $MAX_WINDOWS   i32 (i32.const 64))
-  ;; (free 0x2600..0x2980)
-  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call gdi_draw_text
-  ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
-  ;; cannot reach it via image-relative pointers.
-  (global $PAINT_SCRATCH  i32 (i32.const 0x00002700))
-  (global $CONTROL_TABLE i32 (i32.const 0x00002980))  ;; 64 entries × 16 bytes (ends 0x2D80)
+  ;; 256 entries × 24 bytes = 0x1800 (0x7000..0x8800)
+  (global $WND_RECORDS   i32 (i32.const 0x00007000))
+  (global $MAX_WINDOWS   i32 (i32.const 256))
+  ;; CONTROL_TABLE: per-slot control metadata, parallel-indexed to WND_RECORDS.
+  ;; 256 entries × 16 bytes = 0x1000 (0x8800..0x9800)
+  (global $CONTROL_TABLE i32 (i32.const 0x00008800))
   ;; CONTROL_GEOM: parallel x/y/w/h table indexed by window slot.
   ;; Stored as 4 × i16 (parent-relative pixels). Populated by
   ;; $ctrl_create_child; consulted by the renderer to enumerate WAT-managed
   ;; child controls without needing host_create_window for each.
-  ;; 64 entries × 8 bytes = 0x200, lives in the free region after CLASS_RECORDS.
-  (global $CONTROL_GEOM  i32 (i32.const 0x00003100))
+  ;; 256 entries × 8 bytes = 0x800 (0x9800..0xA000)
+  (global $CONTROL_GEOM  i32 (i32.const 0x00009800))
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
   ;;   +4  atom (assigned at registration)
   ;;   +8  WNDCLASSA[40]  (lpfnWndProc lives at record+12)
-  ;; 16 entries × 48 bytes = 0x300 (ends 0x3080)
-  (global $CLASS_RECORDS i32 (i32.const 0x00002D80))
-  (global $MAX_CLASSES   i32 (i32.const 16))
+  ;; 64 entries × 48 bytes = 0xC00 (0xA000..0xAC00)
+  (global $CLASS_RECORDS i32 (i32.const 0x0000A000))
+  (global $MAX_CLASSES   i32 (i32.const 64))
+  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call gdi_draw_text
+  ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
+  ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
+  (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
@@ -446,10 +452,10 @@
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
-  ;; Timer table at 0x24C0: 16 entries × 20 bytes each (ends 0x2600)
+  ;; Timer table at 0xAC00: 16 entries × 20 bytes each (ends 0xAD40)
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
-  ;; Entry with id=0 is unused
-  (global $TIMER_TABLE  i32 (i32.const 0x000024C0))
+  ;; Entry with id=0 is unused. Lives just past CLASS_RECORDS (see memory map).
+  (global $TIMER_TABLE  i32 (i32.const 0x0000AC00))
   (global $TIMER_MAX    i32 (i32.const 16))
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers

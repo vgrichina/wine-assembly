@@ -1,7 +1,7 @@
   ;; ============================================================
   ;; WINDOW TABLE + HELP SYSTEM
   ;; ============================================================
-  ;; WND_RECORDS at WASM 0x2000: 64 entries × 24 bytes (ends 0x2600)
+  ;; WND_RECORDS at WASM 0x7000: 256 entries × 24 bytes (ends 0x8800).
   ;; Each record:
   ;;   +0   hwnd       (0 = empty slot)
   ;;   +4   wndproc    (guest VA, or 0xFFFFxxxx for WAT-native)
@@ -10,9 +10,10 @@
   ;;   +16  style
   ;;   +20  state_ptr  (heap ptr to per-class WndState, 0 if none)
   ;;
-  ;; Class records at WASM 0x2D80: 16 entries × 48 bytes (ends 0x3080)
+  ;; Class records at WASM 0xA000: 64 entries × 48 bytes (ends 0xAC00).
   ;; Each entry: [name_hash:i32, atom:i32, WNDCLASSA[40]]
   ;; lpfnWndProc lives at record+12 (offset 4 inside the embedded WNDCLASSA).
+  ;; Both bases / counts are defined in 01-header.wat — see the memory map.
 
   ;; ---- Window record helpers ----
 
