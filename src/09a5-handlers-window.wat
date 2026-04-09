@@ -74,7 +74,7 @@
     (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
     (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
     (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
-    (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
+    (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
     (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
     ))
     ;; Pass className to host so it knows the window type (e.g. "Edit")

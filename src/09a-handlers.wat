@@ -943,8 +943,12 @@
     ;; promoting it would silently swallow all subsequent messages.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
+      ;; NOTE: must coerce wnd_table_get to 0/1 — bitwise i32.and with the
+      ;; raw wndproc address (which has low bit clear for any aligned function)
+      ;; would always yield 0 and silently set quit_flag, killing apps like
+      ;; pinball that destroy a frame window during init.
       (if (i32.and
-            (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1)))
+            (i32.ne (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1))) (i32.const 0))
             (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
                     (global.get $main_hwnd)))
         (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
