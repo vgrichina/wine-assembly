@@ -542,6 +542,11 @@
   (global $modal_esp_adjust (mut i32) (i32.const 0)) ;; bytes to add to ESP on return
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
 
+  ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
+  ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir
+  ;; which frees the old buffer first.
+  (global $opendlg_current_dir (mut i32) (i32.const 0))
+
   ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
   ;; calls $create_findreplace_dialog. Test bridge queries these via the
   ;; get_findreplace_dlg / get_findreplace_edit exports.

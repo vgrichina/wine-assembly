@@ -489,10 +489,13 @@
     (local $tmp_g i32) (local $tmp_w i32) (local $name_len i32)
     ;; Reset listbox first.
     (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0184) (i32.const 0) (i32.const 0)))
-    ;; Always add ".." as the first entry. Heap-alloc so the listbox sees a
-    ;; real guest pointer that its g2w can resolve.
-    (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
-            (call $wat_str_to_heap (i32.const 0x217) (i32.const 2))))
+    ;; Add ".." entry as the first row so the user can navigate up.
+    ;; Skipped at the C:\ root (where ".." has no meaningful target) so
+    ;; the listbox doesn't show a no-op entry.
+    (if (i32.gt_u (call $strlen (call $g2w (global.get $opendlg_current_dir))) (i32.const 3))
+      (then
+        (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+                (call $wat_str_to_heap (i32.const 0x217) (i32.const 2))))))
     ;; FIND_DATA buffer + tmp string buffer in heap.
     (local.set $fd_g (call $heap_alloc (i32.const 320)))
     (local.set $fd_w (call $g2w (local.get $fd_g)))
@@ -616,12 +619,18 @@
     ;; ---- Listbox notifications: id 0x441, LBN_SELCHANGE / LBN_DBLCLK ----
     (if (i32.eq (local.get $cmd) (i32.const 0x441))
       (then
-        ;; On any selection change, copy the chosen item into the filename edit.
-        ;; LBN_DBLCLK additionally triggers IDOK.
-        (call $opendlg_copy_listbox_to_edit (local.get $hwnd))
         (if (i32.eq (local.get $notif) (i32.const 2))   ;; LBN_DBLCLK
           (then
-            (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0111) (i32.const 1) (i32.const 0)))))
+            ;; If selection is a directory ([NAME]) or "..", navigate
+            ;; instead of triggering IDOK. $opendlg_try_navigate returns
+            ;; 1 when it consumed the dblclk by changing dirs.
+            (if (i32.eqz (call $opendlg_try_navigate (local.get $hwnd)))
+              (then
+                (call $opendlg_copy_listbox_to_edit (local.get $hwnd))
+                (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0111) (i32.const 1) (i32.const 0)))))
+            (return (i32.const 0))))
+        ;; Plain selection change → copy item text into filename edit.
+        (call $opendlg_copy_listbox_to_edit (local.get $hwnd))
         (return (i32.const 0))))
 
     (i32.const 0))
@@ -655,6 +664,115 @@
             (i32.const 0)
             (i32.add (local.get $buf_g) (i32.sub (local.get $start) (local.get $buf_w)))))
     (call $heap_free (local.get $buf_g)))
+
+  ;; If the current listbox selection is "[name]" (a directory) or "..",
+  ;; navigate the dialog into / out of that directory by updating
+  ;; $opendlg_current_dir + repopulating the listbox. Returns 1 if it
+  ;; navigated, 0 otherwise (e.g. selection is a regular file).
+  (func $opendlg_try_navigate (param $dlg i32) (result i32)
+    (local $lb i32) (local $sel i32) (local $buf_g i32) (local $buf_w i32)
+    (local $n i32) (local $cur_g i32) (local $cur_w i32) (local $cur_len i32)
+    (local $new_g i32) (local $new_w i32) (local $name_len i32) (local $i i32)
+    (local.set $lb (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x441)))
+    (if (i32.eqz (local.get $lb)) (then (return (i32.const 0))))
+    (local.set $sel (call $wnd_send_message (local.get $lb) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $sel) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $buf_g (call $heap_alloc (i32.const 280)))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    (local.set $n (call $wnd_send_message (local.get $lb) (i32.const 0x0189) (local.get $sel) (local.get $buf_g)))
+    (local.set $cur_g (global.get $opendlg_current_dir))
+    (local.set $cur_w (call $g2w (local.get $cur_g)))
+    (local.set $cur_len (call $strlen (local.get $cur_w)))
+    ;; Case 1: ".." → strip last component (if any). At "C:\" we already
+    ;; suppress this entry, so we don't need a special root guard here.
+    (if (i32.and (i32.eq (i32.load8_u (local.get $buf_w)) (i32.const 0x2E))
+                 (i32.eq (i32.load8_u offset=1 (local.get $buf_w)) (i32.const 0x2E)))
+      (then
+        ;; Walk back from end past trailing '\\', then strip until next '\\'.
+        (local.set $i (i32.sub (local.get $cur_len) (i32.const 1)))
+        (if (i32.and (i32.gt_s (local.get $i) (i32.const 0))
+                     (i32.eq (i32.load8_u (i32.add (local.get $cur_w) (local.get $i))) (i32.const 0x5C)))
+          (then (local.set $i (i32.sub (local.get $i) (i32.const 1)))))
+        (block $found (loop $scan
+          (br_if $found (i32.le_s (local.get $i) (i32.const 0)))
+          (br_if $found (i32.eq (i32.load8_u (i32.add (local.get $cur_w) (local.get $i))) (i32.const 0x5C)))
+          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+          (br $scan)))
+        ;; Build new dir = cur[0..i+1]   (keep the trailing '\\')
+        (local.set $new_g (call $heap_alloc (i32.add (local.get $i) (i32.const 2))))
+        (local.set $new_w (call $g2w (local.get $new_g)))
+        (call $memcpy (local.get $new_w) (local.get $cur_w) (i32.add (local.get $i) (i32.const 1)))
+        (i32.store8 (i32.add (local.get $new_w) (i32.add (local.get $i) (i32.const 1))) (i32.const 0))
+        (call $opendlg_set_dir (local.get $dlg) (local.get $new_g))
+        (call $heap_free (local.get $new_g))
+        (call $heap_free (local.get $buf_g))
+        (return (i32.const 1))))
+    ;; Case 2: "[name]" → enter subdir. Strip brackets, append "<name>\\".
+    (if (i32.eq (i32.load8_u (local.get $buf_w)) (i32.const 0x5B))
+      (then
+        ;; Trim trailing ']' (n was the count returned from LB_GETTEXT)
+        (local.set $name_len (i32.sub (local.get $n) (i32.const 2)))
+        ;; New dir = cur + ("\\" if !ends_with_slash) + name + "\\"
+        (local.set $new_g (call $heap_alloc (i32.add (i32.add (local.get $cur_len) (local.get $name_len)) (i32.const 3))))
+        (local.set $new_w (call $g2w (local.get $new_g)))
+        (call $memcpy (local.get $new_w) (local.get $cur_w) (local.get $cur_len))
+        (local.set $i (local.get $cur_len))
+        (if (i32.ne (i32.load8_u (i32.add (local.get $cur_w) (i32.sub (local.get $cur_len) (i32.const 1)))) (i32.const 0x5C))
+          (then
+            (i32.store8 (i32.add (local.get $new_w) (local.get $i)) (i32.const 0x5C))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+        (call $memcpy (i32.add (local.get $new_w) (local.get $i))
+                      (i32.add (local.get $buf_w) (i32.const 1))
+                      (local.get $name_len))
+        (local.set $i (i32.add (local.get $i) (local.get $name_len)))
+        (i32.store8 (i32.add (local.get $new_w) (local.get $i)) (i32.const 0x5C))
+        (i32.store8 (i32.add (local.get $new_w) (i32.add (local.get $i) (i32.const 1))) (i32.const 0))
+        (call $opendlg_set_dir (local.get $dlg) (local.get $new_g))
+        (call $heap_free (local.get $new_g))
+        (call $heap_free (local.get $buf_g))
+        (return (i32.const 1))))
+    (call $heap_free (local.get $buf_g))
+    (i32.const 0))
+
+  ;; Set $opendlg_current_dir to a new heap-allocated copy of the
+  ;; given guest string, freeing the old one. Updates the path edit
+  ;; (id 0x440) and re-populates the listbox via the "<dir>\*" pattern.
+  ;; Caller is responsible for the source string lifetime — we copy.
+  (func $opendlg_set_dir (param $dlg i32) (param $new_dir_g i32)
+    (local $len i32) (local $buf_g i32) (local $buf_w i32)
+    (local $pat_g i32) (local $pat_w i32)
+    (local $path_edit i32) (local $lb i32)
+    (local.set $len (call $strlen (call $g2w (local.get $new_dir_g))))
+    (local.set $buf_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    (call $memcpy (local.get $buf_w) (call $g2w (local.get $new_dir_g)) (local.get $len))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
+    (call $heap_free (global.get $opendlg_current_dir))
+    (global.set $opendlg_current_dir (local.get $buf_g))
+    ;; Update path edit
+    (local.set $path_edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x440)))
+    (if (local.get $path_edit)
+      (then (drop (call $wnd_send_message (local.get $path_edit) (i32.const 0x000C)
+              (i32.const 0) (local.get $buf_g)))))
+    ;; Build "<dir>\*" pattern for fs_find_first_file. If dir already ends
+    ;; with '\\' (root), just append '*'; else append "\\*".
+    (local.set $pat_g (call $heap_alloc (i32.add (local.get $len) (i32.const 4))))
+    (local.set $pat_w (call $g2w (local.get $pat_g)))
+    (call $memcpy (local.get $pat_w) (local.get $buf_w) (local.get $len))
+    (if (i32.eq (i32.load8_u (i32.add (local.get $buf_w) (i32.sub (local.get $len) (i32.const 1))))
+                (i32.const 0x5C))   ;; ends with '\\'
+      (then
+        (i32.store8 (i32.add (local.get $pat_w) (local.get $len)) (i32.const 0x2A))   ;; '*'
+        (i32.store8 (i32.add (local.get $pat_w) (i32.add (local.get $len) (i32.const 1))) (i32.const 0)))
+      (else
+        (i32.store8 (i32.add (local.get $pat_w) (local.get $len)) (i32.const 0x5C))   ;; '\\'
+        (i32.store8 (i32.add (local.get $pat_w) (i32.add (local.get $len) (i32.const 1))) (i32.const 0x2A))   ;; '*'
+        (i32.store8 (i32.add (local.get $pat_w) (i32.add (local.get $len) (i32.const 2))) (i32.const 0))))
+    (local.set $lb (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x441)))
+    (if (local.get $lb)
+      (then (call $opendlg_populate_listbox (local.get $lb) (local.get $pat_g))))
+    (call $heap_free (local.get $pat_g))
+    (call $host_invalidate (local.get $dlg)))
 
   ;; Trigger a Blob download for the current filename edit value (if any).
   ;; Builds "C:\<filename>" in a heap buffer and hands the WASM addr to
@@ -767,7 +885,10 @@
                     (i32.const 0x50010000)
                     (call $wat_str_to_heap (i32.const 0x21A) (i32.const 9))))))))   ;; "Upload..."
 
-    ;; Populate the listbox from the default pattern "C:\*".
+    ;; Initialize current dir to "C:\\" and populate the listbox via
+    ;; $opendlg_set_dir which builds the pattern + path edit too.
+    (call $heap_free (global.get $opendlg_current_dir))
+    (global.set $opendlg_current_dir (call $wat_str_to_heap (i32.const 0x213) (i32.const 3)))
     (call $opendlg_populate_listbox (local.get $lb)
       (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))
 
