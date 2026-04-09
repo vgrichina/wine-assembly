@@ -129,6 +129,9 @@
   ;; gdi_rectangle(hdc, left, top, right, bottom)
   (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_draw_edge" (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_gradient_fill_h(hdc, l, t, r, b, colorL, colorR) — horizontal linear gradient.
+  ;; Win32 equivalent: GdiGradientFill(GRADIENT_FILL_RECT_H). Used by defwndproc_ncpaint.
+  (import "host" "gdi_gradient_fill_h" (func $host_gdi_gradient_fill_h (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
@@ -177,6 +180,8 @@
   ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
   (import "host" "gdi_set_dib_bits" (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
+  (import "host" "gdi_get_dib_color_table" (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_get_dib_color_table(hdc, startIdx, numEntries, colorsGA) → count
   (import "host" "gdi_set_dib_to_device" (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
   (import "host" "gdi_stretch_dib_bits" (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
