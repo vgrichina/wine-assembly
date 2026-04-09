@@ -69,8 +69,8 @@ Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at i
 
 Key regions:
 - `0x00000100` — String constants (win.ini path, help strings, exe name buffer)
-- `0x00002000` — Window table (hwnd→wndproc, 32 entries), class table, userdata
-- `0x00004000` — API hash table (8KB, API_HASH_TABLE — below GUEST_BASE, safe from guest writes)
+- `0x00004000` — API hash table (12KB, API_HASH_TABLE — below GUEST_BASE, safe from guest writes)
+- `0x00007000` — WND_RECORDS (256 × 24 bytes), CONTROL_TABLE, CONTROL_GEOM, CLASS_RECORDS (64), TIMER_TABLE, PAINT_SCRATCH (all below GUEST_BASE, end at 0xAD50)
 - `0x00012000` — Guest memory (GUEST_BASE, maps guest addresses)
 - `0x00E12000` — Guest stack (grows down)
 - `0x01012000` — API thunk zone (256KB, THUNK_BASE)
