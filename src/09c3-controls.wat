@@ -816,3 +816,153 @@
     (i32.const 0)
   )
 
+  ;; ============================================================
+  ;; STEP 5 dormant additions: $wnd_send_message + $create_findreplace_dialog
+  ;; ============================================================
+  ;; Status: STEP 5 — dormant. The helpers below compile and are reachable
+  ;; only by future code. $handle_FindTextA still calls $host_show_find_dialog,
+  ;; the JS-side find dialog is unchanged, and the test gate is unaffected.
+  ;; STEP 8 will (a) flip $handle_FindTextA to $create_findreplace_dialog,
+  ;; (b) delete the JS path, and (c) rewire the test bridge.
+
+  ;; Send a message to a window. Routes WAT-native wndprocs (wndproc >=
+  ;; 0xFFFF0000) directly through $wat_wndproc_dispatch. For x86 wndprocs
+  ;; we don't have synchronous SendMessage from WAT yet — that path is a
+  ;; TODO and currently returns 0. STEP 7+8 will need this for guest
+  ;; child controls; until then the only consumers are the WAT-built
+  ;; dialogs whose children are all WNDPROC_CTRL_NATIVE.
+  (func $wnd_send_message
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $wp i32)
+    (local.set $wp (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
+    ;; WAT-native (>= 0xFFFF0000)
+    (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000))
+      (then (return (call $wat_wndproc_dispatch
+                      (local.get $hwnd) (local.get $msg)
+                      (local.get $wParam) (local.get $lParam)))))
+    ;; x86 wndproc — synchronous call from WAT context not yet implemented.
+    ;; For STEP 5 we just return 0; consumers handle this gracefully.
+    (i32.const 0)
+  )
+
+  ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
+  ;; populate CONTROL_TABLE with class+id, set parent, ask the host to
+  ;; create a corresponding renderer window, then deliver WM_CREATE to
+  ;; trigger the wndproc's state allocation.
+  ;;
+  ;; ctrl_class: 1=Button, 2=Edit, 3=Static (matches $control_wndproc_dispatch)
+  ;; The CREATESTRUCT laid out at $PAINT_SCRATCH is *only* the fields the
+  ;; control wndprocs read in WM_CREATE: hMenu(+8), lpszName(+36),
+  ;; style(+32). Other fields are zero.
+  (func $ctrl_create_child
+    (param $parent i32) (param $ctrl_class i32) (param $ctrl_id i32)
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (param $style i32) (param $text_wa i32) (result i32)
+    (local $hwnd i32) (local $cs i32) (local $name_guest i32) (local $tlen i32)
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $hwnd) (local.get $parent))
+    (drop (call $wnd_set_style (local.get $hwnd) (local.get $style)))
+    (call $ctrl_table_set
+      (call $wnd_table_find (local.get $hwnd))
+      (local.get $ctrl_class) (local.get $ctrl_id))
+    ;; Tell the renderer about it. We pass parent hwnd, style, x/y/w/h,
+    ;; title (WASM addr), and ctrl_id as menu_id (USER32 stashes the ctrl
+    ;; id in hMenu for child controls).
+    (drop (call $host_create_window
+      (local.get $hwnd) (local.get $style)
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+      (if (result i32) (local.get $text_wa)
+        (then (local.get $text_wa)) (else (i32.const 0)))
+      (local.get $ctrl_id)))
+    ;; Build a minimal CREATESTRUCT in PAINT_SCRATCH and deliver WM_CREATE.
+    ;; PAINT_SCRATCH is 16 bytes — too small for a real CREATESTRUCT (48
+    ;; bytes), so use the heap.
+    (local.set $cs (call $heap_alloc (i32.const 48)))
+    ;; Zero it
+    (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
+    (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
+    (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id)) ;; hMenu = ctrl_id
+    (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $parent))
+    (i32.store offset=16 (call $g2w (local.get $cs)) (local.get $h))
+    (i32.store offset=20 (call $g2w (local.get $cs)) (local.get $w))
+    (i32.store offset=24 (call $g2w (local.get $cs)) (local.get $y))
+    (i32.store offset=28 (call $g2w (local.get $cs)) (local.get $x))
+    (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $style))
+    ;; lpszName must be a guest pointer (control wndprocs do g2w on it).
+    ;; If text_wa is 0, store 0; otherwise we need the guest equivalent.
+    ;; Caller must pass a guest-space pointer in $text_wa or 0; we trust them.
+    (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_wa))
+    (i32.store offset=40 (call $g2w (local.get $cs)) (i32.const 0))
+    (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
+    (drop (call $wnd_send_message
+            (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+    (call $heap_free (local.get $cs))
+    (local.get $hwnd)
+  )
+
+  ;; Build the Find/Replace dialog and all its child controls in WAT.
+  ;; Returns the dialog hwnd. Geometry mirrors lib/renderer.js: showFindDialog().
+  ;; Dormant until STEP 8 wires it from $handle_FindTextA.
+  (func $create_findreplace_dialog (param $owner i32) (param $fr_guest i32) (result i32)
+    (local $dlg i32) (local $px i32) (local $py i32)
+    ;; Dialog hwnd
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Register dialog itself as WAT-native control dispatch (we'll add a
+    ;; dialog wndproc class later; for now use CTRL_NATIVE which routes to
+    ;; control_wndproc_dispatch and falls through to "DefWindowProc" / 0).
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    ;; Position relative to owner (defaults if owner not found)
+    (local.set $px (i32.const 60))
+    (local.set $py (i32.const 60))
+    (drop (call $host_create_window
+      (local.get $dlg) (i32.const 0x80C80000)
+      (local.get $px) (local.get $py)
+      (i32.const 340) (i32.const 128)
+      (i32.const 0)  ;; title — caller can set; we omit for dormant build
+      (i32.const 0)))
+    ;; Children: layout copied from showFindDialog
+    ;; Static "Find what:"  id=0xFFFF, x=8 y=10 w=64 h=14
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
+            (i32.const 0x50000000) (i32.const 0)))
+    ;; Edit              id=0x480, x=74 y=8 w=164 h=18
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x480)
+            (i32.const 74) (i32.const 8) (i32.const 164) (i32.const 18)
+            (i32.const 0x50810000) (i32.const 0)))
+    ;; Match case checkbox id=0x411, x=8 y=38 w=80 h=14
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x411)
+            (i32.const 8) (i32.const 38) (i32.const 80) (i32.const 14)
+            (i32.const 0x50010003) (i32.const 0)))
+    ;; Direction groupbox  id=0x440, x=128 y=28 w=110 h=38
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x440)
+            (i32.const 128) (i32.const 28) (i32.const 110) (i32.const 38)
+            (i32.const 0x50000007) (i32.const 0)))
+    ;; Up radio           id=0x420
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x420)
+            (i32.const 136) (i32.const 40) (i32.const 42) (i32.const 14)
+            (i32.const 0x50010009) (i32.const 0)))
+    ;; Down radio (default) id=0x421
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x421)
+            (i32.const 184) (i32.const 40) (i32.const 48) (i32.const 14)
+            (i32.const 0x50010009) (i32.const 0)))
+    ;; Find Next btn      id=1
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 248) (i32.const 6) (i32.const 80) (i32.const 24)
+            (i32.const 0x50010001) (i32.const 0)))
+    ;; Cancel btn         id=2
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 248) (i32.const 34) (i32.const 80) (i32.const 24)
+            (i32.const 0x50010000) (i32.const 0)))
+    ;; Stash fr_guest in dialog userdata so a future $wndproc_dialog can
+    ;; recover it on Find Next / Cancel.
+    (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
+    (local.get $dlg)
+  )
+
+
