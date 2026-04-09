@@ -468,8 +468,15 @@
     (call $set_reg (local.get $op) (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
   (func $th_push_i32 (param $op i32)
+    (local $v i32)
+    (local.set $v (call $read_thread_word))
+    ;; DEBUG: track last 2 small pushes globally so $th_call_rel can compare
+    (if (i32.le_u (local.get $v) (i32.const 0x20))
+      (then
+        (global.set $dbg_last_push1 (global.get $dbg_last_push0))
+        (global.set $dbg_last_push0 (local.get $v))))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $read_thread_word)) (return_call $next))
+    (call $gs32 (global.get $esp) (local.get $v)) (return_call $next))
   (func $th_pushad (param $op i32)
     (local $tmp i32) (local.set $tmp (global.get $esp))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 32)))
@@ -503,6 +510,18 @@
   ;; --- Control flow ---
   (func $th_call_rel (param $op i32)
     (local $target i32) (local.set $target (call $read_thread_word))
+    ;; DEBUG: trace pinball wall-loader interactions (BEFORE pushing ret addr)
+    (if (i32.eq (local.get $target) (i32.const 0x01008f7a))
+      (then
+        (call $host_log_i32 (i32.const 0xE220F7A0))   ;; sentinel
+        (call $host_log_i32 (call $gl32 (global.get $esp)))                            ;; stack [esp]   = msg
+        (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))    ;; stack [esp+4] = caption
+        (call $host_log_i32 (global.get $dbg_last_push0))                              ;; most recent push imm
+        (call $host_log_i32 (global.get $dbg_last_push1))                              ;; previous push imm
+        ;; live read of guest memory at the push imm bytes (0x01009601, 0x01009603)
+        (call $host_log_i32 (call $gl8 (i32.const 0x01009601)))                        ;; should be 0x12
+        (call $host_log_i32 (call $gl8 (i32.const 0x01009603)))                        ;; should be 0x0e
+        (call $host_log_i32 (local.get $op))))   ;; ret addr (caller post-call)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $op))
     (global.set $eip (local.get $target)))
@@ -532,9 +551,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op)))))
   (func $th_jmp (param $op i32) (global.set $eip (call $read_thread_word)))
   (func $th_jcc (param $op i32)
-    (local $fall i32) (local $target i32)
+    (local $fall i32) (local $target i32) (local $taken i32)
     (local.set $fall (call $read_thread_word)) (local.set $target (call $read_thread_word))
-    (if (call $eval_cc (local.get $op))
+    (local.set $taken (call $eval_cc (local.get $op)))
+    ;; DEBUG: log JCC firings whose fall is in our range
+    (if (i32.and (i32.ge_u (local.get $fall) (i32.const 0x010095f0))
+                 (i32.le_u (local.get $fall) (i32.const 0x01009620)))
+      (then
+        (call $host_log_i32 (i32.const 0xDEC0DEC1))
+        (call $host_log_i32 (local.get $fall))
+        (call $host_log_i32 (local.get $target))
+        (call $host_log_i32 (local.get $taken))))
+    (if (local.get $taken)
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall)))))
   (func $th_block_end (param $op i32) (global.set $eip (local.get $op)))
@@ -917,6 +945,10 @@
     (call $set_flags_logic (i32.and
       (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4)))
       (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
+  ;; 217: TEST r8, imm8 — operand=byte_reg index, imm in next word
+  (func $th_test_r8_i (param $op i32)
+    (call $set_flags_logic (i32.and (call $get_reg8 (local.get $op)) (call $read_thread_word)))
     (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
   (func $th_test_m8_r (param $op i32)
     (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (call $get_reg8 (local.get $op))))

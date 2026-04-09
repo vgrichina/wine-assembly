@@ -492,9 +492,25 @@
     (local $disp i32)
     (local $a i32)
 
+    ;; Proactive overflow check BEFORE capturing $tstart. If $te triggers a
+    ;; mid-decode reset of $thread_alloc, $tstart would still hold the pre-reset
+    ;; address, and $cache_store at the end would record a stale offset pointing
+    ;; into reused thread storage. Headroom of 16KB is far larger than any
+    ;; single block needs.
+    (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 16384)))
+      (then
+        (call $host_log_i32 (i32.const 0xCA00F10F))
+        (global.set $thread_alloc (global.get $THREAD_BASE))
+        (call $clear_cache)))
     (local.set $tstart (global.get $thread_alloc))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
+    ;; DEBUG: log decode_block calls in the wall sub-loader range
+    (if (i32.and (i32.ge_u (local.get $start_eip) (i32.const 0x010095f0))
+                 (i32.le_u (local.get $start_eip) (i32.const 0x01009620)))
+      (then
+        (call $host_log_i32 (i32.const 0xDEC0B10C))
+        (call $host_log_i32 (local.get $start_eip))))
 
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
@@ -789,7 +805,10 @@
                 (then (local.set $imm (call $d_fetch32)))
                 (else (local.set $imm (call $d_fetch8))))
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 73) (global.get $mr_val)) (call $te_raw (local.get $imm)))
+                (then
+                  (if (i32.eq (local.get $op) (i32.const 0xF6))
+                    (then (call $te (i32.const 217) (global.get $mr_val)) (call $te_raw (local.get $imm)))
+                    (else (call $te (i32.const 73) (global.get $mr_val)) (call $te_raw (local.get $imm)))))
                 (else
                   (if (i32.eq (local.get $op) (i32.const 0xF7))
                     (then (call $emit_test_m32_i (local.get $imm)))
@@ -921,7 +940,13 @@
             (then (call $te_raw (call $d_fetch16)))
             (else (call $te_raw (call $d_fetch32))))
           (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0x6A)) (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (call $sign_ext8 (call $d_fetch8))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0x6A))
+        (then
+          (call $host_log_i32 (i32.const 0xDEC0DE6A))
+          (call $host_log_i32 (global.get $d_pc))
+          (call $te (i32.const 34) (i32.const 0))
+          (call $te_raw (call $sign_ext8 (call $d_fetch8)))
+          (br $decode)))
 
       ;; ---- IMUL r32, r/m32, imm (0x69/0x6B) ----
       (if (i32.or (i32.eq (local.get $op) (i32.const 0x69)) (i32.eq (local.get $op) (i32.const 0x6B)))
@@ -1075,6 +1100,13 @@
           (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x80)) (i32.le_u (local.get $op) (i32.const 0x8F)))
             (then
               (local.set $disp (call $d_fetch32))
+              ;; DEBUG: log JCC emits in our range
+              (if (i32.and (i32.ge_u (global.get $d_pc) (i32.const 0x010095f0))
+                           (i32.le_u (global.get $d_pc) (i32.const 0x01009620)))
+                (then
+                  (call $host_log_i32 (i32.const 0xDEC0DECC))
+                  (call $host_log_i32 (global.get $d_pc))         ;; fall
+                  (call $host_log_i32 (i32.add (global.get $d_pc) (local.get $disp)))))
               (call $te (i32.const 44) (i32.and (local.get $op) (i32.const 0xF)))
               (call $te_raw (global.get $d_pc))
               (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))

@@ -251,7 +251,7 @@
               (then (call $fpu_set (i32.const 0) (call $host_math_cos (local.get $st0))) (return))) ;; FCOS
             (return)))
         (return)))
-    ;; Group 2 (DA): FCMOV
+    ;; Group 2 (DA): FCMOV / FUCOMPP
     (if (i32.eq (local.get $group) (i32.const 2))
       (then
         (if (i32.eq (local.get $reg) (i32.const 0))
@@ -260,6 +260,12 @@
           (then (if (call $get_zf) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then (if (i32.or (call $get_cf) (call $get_zf)) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
+        ;; DA E9 = FUCOMPP — unordered compare ST(0)<->ST(1), pop both
+        (if (i32.and (i32.eq (local.get $reg) (i32.const 5)) (i32.eq (local.get $rm) (i32.const 1)))
+          (then
+            (call $fpu_compare (local.get $st0) (call $fpu_get (i32.const 1)))
+            (drop (call $fpu_pop)) (drop (call $fpu_pop))
+            (return)))
         (return)))
     ;; Group 3 (DB): FCMOVN, FNINIT, FNCLEX, FUCOMI, FCOMI
     (if (i32.eq (local.get $group) (i32.const 3))
