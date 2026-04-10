@@ -2298,6 +2298,17 @@
                 (if (i32.load (local.get $state_w))
                   (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
                                     (i32.const 0))))))))
+        ;; Set flags from window style: ES_MULTILINE(0x04)→bit0, ES_PASSWORD(0x20)→bit1, ES_READONLY(0x800)→bit2
+        (local.set $flags (call $wnd_get_style (local.get $hwnd)))
+        (if (i32.and (local.get $flags) (i32.const 0x04))
+          (then (i32.store offset=24 (local.get $state_w)
+            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x01)))))
+        (if (i32.and (local.get $flags) (i32.const 0x0020))
+          (then (i32.store offset=24 (local.get $state_w)
+            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x02)))))
+        (if (i32.and (local.get $flags) (i32.const 0x0800))
+          (then (i32.store offset=24 (local.get $state_w)
+            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -2410,11 +2421,13 @@
                           (local.get $lo))))))
             (call $host_invalidate (local.get $hwnd))
             (return (i32.const 0))))
-        ;; CR (0x0D) — Enter key: insert newline for multiline edits
+        ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))
           (then
-            (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
-            (call $host_invalidate (local.get $hwnd))
+            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01))
+              (then
+                (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
+                (call $host_invalidate (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
@@ -2611,9 +2624,9 @@
                                         (i32.sub (local.get $cur) (local.get $lo))))))
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
-                    (i32.add (local.get $hi) (i32.const 4))
+                    (i32.add (local.get $hi) (i32.const 5))
                     (i32.add (local.get $px) (i32.const 5))
-                    (i32.add (local.get $hi) (i32.const 20))
+                    (i32.add (local.get $hi) (i32.const 18))
                     (i32.const 0x30014))))) ;; BLACK_BRUSH
         (return (i32.const 0))))
 
