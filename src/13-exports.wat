@@ -88,6 +88,12 @@
   (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
   (func (export "set_heap_ptr") (param i32) (global.set $heap_ptr (local.get 0)))
 
+  ;; Post queue exports for IPC injection
+  (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
+  (func (export "get_post_queue_count") (result i32) (global.get $post_queue_count))
+  (func (export "set_post_queue_count") (param i32) (global.set $post_queue_count (local.get 0)))
+  (func (export "wnd_table_set") (param i32) (param i32) (call $wnd_table_set (local.get 0) (local.get 1)))
+
   ;; Thread init — called by host after creating worker instance
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)

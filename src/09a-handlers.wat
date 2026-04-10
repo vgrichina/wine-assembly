@@ -1336,7 +1336,8 @@
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $dlg_ended (i32.const 1))
     (global.set $dlg_result (local.get $arg1))
-    (global.set $quit_flag (i32.const 1))
+    ;; Don't set quit_flag — that kills the main message loop.
+    ;; CACA0004 checks dlg_ended to exit the modal loop.
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )

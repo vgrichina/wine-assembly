@@ -288,11 +288,58 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=500 \
 
 Stats: 8241 API calls, all 4 windows skinned, plugins loaded, no crashes.
 
-### What's Needed Next for Audio
+## SESSION 5 PROGRESS — IPC Playback Injection
 
-1. **Trigger file playback** — `--args='C:\demo.mp3'` passes cmdline but no CreateFileA for the MP3 is observed. Winamp's cmdline parser at `0x41ab78` may not process filenames until after the message loop stabilizes, or the playlist code path requires more init steps. Need to trace where the cmdline filename goes after parsing. Alternative: use Winamp IPC (WM_COPYDATA or WM_USER+100 with IPC_PLAYFILE)
-2. **waveOut API implementation** — `out_wave.dll` calls waveOutOpen/Write/PrepareHeader via WINMM.dll thunks. Need real implementations piping PCM to Web Audio API
-3. **Plugin DllMain** — currently skipped because `callDllMain()` can trigger LoadLibrary yields during `run()`, corrupting state. Need either: (a) handle yield_reason inside callDllMain, or (b) defer DllMain to run during the normal batch loop
+### wvsprintfA Added
+
+`wvsprintfA(buf, fmt, arglist)` was crashing as unimplemented. It's the va_list variant of wsprintfA — stdcall 3 args, third arg is a guest pointer to the varargs. Calls `$wsprintf_impl(buf, fmt, g2w(arglist))` directly. Added to api_table.json as ID 963.
+
+### WM_USER IPC Message Injection
+
+Added `--input=B:winamp-play:FILENAME` command that posts Winamp IPC messages via the post queue:
+- IPC_DELETE (WM_USER lParam=101, wParam=0): clear playlist
+- IPC_PLAYFILE (WM_USER lParam=100, wParam=ptr-to-filename): add file
+- IPC_STARTPLAY (WM_USER lParam=102, wParam=0): start playback
+
+**Key finding: IPC_PLAYFILE dereferences wParam** — the handler reads `*(char**)wParam`, NOT `(char*)wParam`. Need to pass a pointer to a pointer.
+
+**Current blocker: memory placement.** Writing the filename string + pointer cell to guest memory is fragile:
+- BSS addresses (0x449000-0x46003C): overwritten by Winamp's own variables during IPC processing
+- Stack addresses (below ESP): overwritten by nested function calls during dispatch
+- Sub-GUEST_BASE addresses (WASM 0x300): conflicts with extra cmdline storage
+- Heap region addresses: need verification
+
+Writing to .rsrc section (0x461100) with `guest_write32` for the pointer cell successfully passes the address through the dereference chain, but `lstrcpynA` sees an empty string — the .rsrc data may overwrite the string bytes.
+
+### IPC_STARTPLAY Play Gate
+
+The play function `0x42fbcc` is only called when `[0x45caa4] != 0`. This byte is a "ready to play" flag, likely set during normal skin loading or INI processing. In our clean-slate init it's 0. Workaround: `--input=49:poke:0x45caa4:1`.
+
+When poked to 1, IPC_STARTPLAY does enter the play path (GlobalAlloc called for audio buffer), but since the filename isn't in the playlist correctly, no CreateFileA for the MP3 occurs.
+
+### Command-Line Args — ROOT CAUSE FOUND
+
+`--args=C:\demo.mp3` correctly sets `_acmdln` to `"winamp.exe C:\demo.mp3"` (verified in memory at 0x9b103c). However, the **cmdline parser at 0x41aaf8 is never reached**.
+
+**Root cause: `_acmdln` data import gets a code thunk instead of a variable address.**
+
+The CRT startup at 0x445095 does:
+```asm
+mov eax, [0x4462bc]    ; IAT entry for MSVCRT!_acmdln
+mov esi, [eax]          ; read the char* variable
+cmp byte [esi], 0x22    ; check if quoted
+```
+
+The EXE imports `_acmdln` as a **data symbol** (PE import hint=143, RVA=0x48ca6). The IAT entry should contain the address of MSVCRT's `_acmdln` variable. But our PE loader creates a function thunk for ALL imports, so `[0x4462bc]` contains a thunk address. `mov esi, [eax]` then reads thunk code bytes as a pointer, producing garbage.
+
+**Fix needed:** The PE/DLL import resolver must detect data exports (like `_acmdln`, `_environ`, `_commode`, `_fmode`) and store the actual variable address in the IAT instead of a thunk. The dll-loader.js already patches these variables via `__p__acmdln` etc., but the EXE's direct imports bypass this.
+
+### Remaining Issues for Audio
+
+1. **Fix IPC filename delivery** — need a memory region that survives from injection to dispatch without being overwritten. Options: (a) allocate via GlobalAlloc thunk, (b) write to a verified-unused BSS gap, (c) directly poke playlist data structure
+2. **Fix cmdline parsing** — verify CRT passes lpCmdLine to WinMain, or find why parser entry isn't reached
+3. **waveOut API implementation** — `out_wave.dll` calls waveOutOpen/Write/PrepareHeader via WINMM.dll thunks. Need real implementations piping PCM to Web Audio API
+4. **Plugin DllMain** — currently skipped because `callDllMain()` can trigger LoadLibrary yields during `run()`, corrupting state. Need either: (a) handle yield_reason inside callDllMain, or (b) defer DllMain to run during the normal batch loop
 
 ### Palette Plumbing Added (not on hot path for this exe but correct)
 
@@ -328,6 +375,7 @@ infrastructure for any other paletted-bitmap caller.
 | socket/connect/send/recv | Return INVALID_SOCKET / SOCKET_ERROR |
 | gethostbyname | Return NULL (no DNS) |
 | htons | Byte-swap 16-bit |
+| wvsprintfA | va_list variant of wsprintfA, calls $wsprintf_impl |
 
 ## Thread: Survey/Update (0x417d3b)
 

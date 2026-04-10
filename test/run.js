@@ -108,6 +108,9 @@ async function main() {
         scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
       } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'winamp-play') {
+        // B:winamp-play:FILENAME — write filename to guest mem, send Winamp IPC
+        scheduledInput.push({ batch, action: 'winamp-play', filename: parts.slice(2).join(':') });
       } else if (kind === 'poke') {
         // B:poke:GUEST_ADDR:VALUE — write a dword to guest memory
         scheduledInput.push({ batch, action: 'poke', addr: parseInt(parts[2]), value: parseInt(parts[3]) });
@@ -1016,6 +1019,44 @@ async function main() {
         } catch (e) {
           logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'winamp-play') {
+        // Winamp IPC: write filename to guest memory, send WM_USER messages
+        const we = instance.exports;
+        const nameLen = ev.filename.length;
+        // Write filename at guest address 0x461100 (past BSS end at 0x46003C,
+        // inside .rsrc section which is read-only for the app). Pointer cell at +0x100.
+        // Winamp IPC_PLAYFILE dereferences wParam: fn = *(char**)wParam.
+        const nameGA = 0x461100;
+        const ptrGA = 0x461200;
+        const mem8 = new Uint8Array(memory.buffer);
+        for (let i = 0; i < nameLen; i++) mem8[g2w(nameGA) + i] = ev.filename.charCodeAt(i);
+        mem8[g2w(nameGA) + nameLen] = 0;
+        // Write pointer cell using guest_write32 (goes through $gs32, same as x86 would)
+        we.guest_write32(ptrGA, nameGA);
+        const dv = new DataView(memory.buffer);
+        const mainHwnd = we.get_main_hwnd();
+        // Restore original WndProc so IPC reaches Winamp's handler
+        const origWndproc = we.get_wndproc();
+        if (we.wnd_table_set) {
+          we.wnd_table_set(mainHwnd, origWndproc);
+        }
+        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
+        const ipcMsgs = [
+          { hwnd: mainHwnd, msg: 0x400, wParam: 0, lParam: 101 },       // IPC_DELETE
+          { hwnd: mainHwnd, msg: 0x400, wParam: ptrGA, lParam: 100 },    // IPC_PLAYFILE (wParam -> ptr -> string)
+          { hwnd: mainHwnd, msg: 0x400, wParam: 0, lParam: 102 },       // IPC_STARTPLAY
+        ];
+        for (let i = 0; i < ipcMsgs.length && postCount + i < 8; i++) {
+          const off = 0x400 + (postCount + i) * 16;
+          dv.setUint32(off, ipcMsgs[i].hwnd, true);
+          dv.setUint32(off + 4, ipcMsgs[i].msg, true);
+          dv.setUint32(off + 8, ipcMsgs[i].wParam, true);
+          dv.setUint32(off + 12, ipcMsgs[i].lParam, true);
+        }
+        if (we.set_post_queue_count) {
+          we.set_post_queue_count(postCount + Math.min(ipcMsgs.length, 8 - postCount));
+        }
+        logs.push(`[input] winamp-play: "${ev.filename}" at GA=0x${nameGA.toString(16)} batch ${batch}`);
       } else if (ev.action === 'poke') {
         const wa = g2w(ev.addr);
         const dv = new DataView(memory.buffer);

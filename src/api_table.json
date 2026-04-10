@@ -6737,5 +6737,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2826154840
+  },
+  {
+    "id": 963,
+    "name": "wvsprintfA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3569695173
   }
 ]
