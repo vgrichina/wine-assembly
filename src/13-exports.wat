@@ -175,6 +175,8 @@
   ;; Allocate guest heap memory (returns guest address)
   (func (export "guest_alloc") (param $size i32) (result i32)
     (call $heap_alloc (local.get $size)))
+  (func (export "guest_free") (param $g i32)
+    (call $heap_free (local.get $g)))
 
   ;; Write 16-bit value to guest memory
   (func (export "guest_write16") (param $ga i32) (param $val i32)

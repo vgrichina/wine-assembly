@@ -1031,60 +1031,10 @@
       (i32.shl (i32.add (local.get $arg1) (i32.const 1)) (i32.const 16))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 89: GetSystemMenu
+  ;; 314: GetSystemMenu(hwnd, bRevert) — stdcall(2)
   (func $handle_GetSystemMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Could be GetSystemMenu or GetSystemMetrics — check w2
-    (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 9))) (i32.const 0x65)) ;; "e" in Menu
-    (then (global.set $eax (i32.const 0x40003))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; GetSystemMetrics(1) — return reasonable Win98 values for 640x480
-    ;; SM_CXSCREEN=0, SM_CYSCREEN=1, SM_CXFULLSCREEN=16, SM_CYFULLSCREEN=17
-    ;; SM_CXMAXIMIZED=61(0x3D), SM_CYMAXIMIZED=62(0x3E)
-    ;; SM_CXFRAME=32, SM_CYFRAME=33, SM_CYCAPTION=4, SM_CYMENU=15
-    (if (i32.eq (local.get $arg0) (i32.const 0))  ;; SM_CXSCREEN
-    (then (global.set $eax (i32.const 640))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 1))  ;; SM_CYSCREEN
-    (then (global.set $eax (i32.const 480))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 4))  ;; SM_CYCAPTION
-    (then (global.set $eax (i32.const 19))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 5))  ;; SM_CXBORDER
-    (then (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 6))  ;; SM_CYBORDER
-    (then (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 7))  ;; SM_CXFIXEDFRAME (SM_CXDLGFRAME)
-    (then (global.set $eax (i32.const 3))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 8))  ;; SM_CYFIXEDFRAME
-    (then (global.set $eax (i32.const 3))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 15)) ;; SM_CYMENU
-    (then (global.set $eax (i32.const 19))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 16)) ;; SM_CXFULLSCREEN
-    (then (global.set $eax (i32.const 640))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 17)) ;; SM_CYFULLSCREEN
-    (then (global.set $eax (i32.const 434))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 32)) ;; SM_CXFRAME (SM_CXSIZEFRAME)
-    (then (global.set $eax (i32.const 4))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 33)) ;; SM_CYFRAME
-    (then (global.set $eax (i32.const 4))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
-    (then (global.set $eax (i32.const 648))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
-    (then (global.set $eax (i32.const 488))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (global.set $eax (i32.const 0x40003))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
   ;; 90: GetSystemMetrics (actual slot used by imports)
@@ -6395,8 +6345,10 @@
   )
 
   ;; 662: GetAsyncKeyState — STUB: unimplemented
+  ;; GetAsyncKeyState(vKey) — stdcall(1). Reports current key state via host.
   (func $handle_GetAsyncKeyState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_get_async_key_state (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 663: MapDialogRect — STUB: unimplemented

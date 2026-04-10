@@ -258,9 +258,26 @@
     (local.set $d (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 20)))))
     (i32.add (global.get $rsrc_rva) (local.get $d)))
 
+  ;; Optional extra args appended after the exe name. JS sets these via
+  ;; (export "set_extra_cmdline") before the first GetCommandLineA call.
+  ;; Buffer lives in low scratch memory at 0x300 (256 bytes), separate from
+  ;; the exe_name buffer at $exe_name_wa.
+  (global $extra_cmdline_len (mut i32) (i32.const 0))
+  (func (export "set_extra_cmdline") (param $waddr i32) (param $len i32)
+    (local $i i32)
+    (if (i32.gt_u (local.get $len) (i32.const 200))
+      (then (local.set $len (i32.const 200))))
+    (global.set $extra_cmdline_len (local.get $len))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (i32.const 0x300) (local.get $i))
+        (i32.load8_u (i32.add (local.get $waddr) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
+
   (func $store_fake_cmdline
-    (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32)
-    (local.set $ptr (call $heap_alloc (i32.const 256)))
+    (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32) (local $extra i32)
+    (local.set $ptr (call $heap_alloc (i32.const 512)))
     (global.set $fake_cmdline_addr (local.get $ptr))
     ;; Copy exe name from $exe_name_wa buffer
     (local.set $dst (call $g2w (local.get $ptr)))
@@ -271,6 +288,20 @@
         (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
+    ;; If extra args were set via $set_extra_cmdline, append " <args>".
+    (local.set $extra (global.get $extra_cmdline_len))
+    (if (i32.gt_u (local.get $extra) (i32.const 0))
+      (then
+        (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0x20)) ;; ' '
+        (local.set $len (i32.add (local.get $len) (i32.const 1)))
+        (local.set $i (i32.const 0))
+        (block $done2 (loop $copy2
+          (br_if $done2 (i32.ge_u (local.get $i) (local.get $extra)))
+          (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $len) (local.get $i)))
+            (i32.load8_u (i32.add (i32.const 0x300) (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy2)))
+        (local.set $len (i32.add (local.get $len) (local.get $extra)))))
     (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0)))
   (func $guest_strlen (param $gp i32) (result i32)
     (local $len i32)

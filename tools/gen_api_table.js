@@ -201,6 +201,9 @@ const extra = [
   { name: 'SetUnhandledExceptionFilter', nargs: 1 },
   { name: 'IsDebuggerPresent', nargs: 0 },
   { name: 'ChooseColorA', nargs: 1 },
+  { name: 'CreateBrushIndirect', nargs: 1 },
+  { name: 'AppendMenuA', nargs: 4 },
+  { name: 'InsertMenuA', nargs: 5 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

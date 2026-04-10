@@ -272,7 +272,7 @@
   ;; 731: _ftol — cdecl, convert float on FPU stack to i32 (special: no stack args, reads ST(0))
   (func $handle__ftol (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Pop ST(0) and truncate to i32
-    (global.set $eax (i32.trunc_f64_s (call $fpu_pop)))
+    (global.set $eax (i32.trunc_sat_f64_s (call $fpu_pop)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

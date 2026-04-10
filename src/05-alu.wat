@@ -1305,8 +1305,16 @@
     (call $set_reg8 (local.get $reg) (call $eval_cc (local.get $op)))
     (return_call $next))
   (func $th_setcc_mem (param $op i32)
-    (local $addr i32) (local.set $addr (call $read_thread_word))
-    (call $gs8 (local.get $addr) (call $eval_cc (local.get $op)))
+    ;; SETcc [addr] — addr in next word, or SIB sentinel for indexed addressing
+    (call $gs8 (call $read_addr) (call $eval_cc (local.get $op)))
+    (return_call $next))
+  (func $th_setcc_mem_ro (param $op i32)
+    ;; SETcc [base+disp] — op = (cc<<4) | base, disp in next word
+    (local $disp i32)
+    (local.set $disp (call $read_thread_word))
+    (call $gs8
+      (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (local.get $disp))
+      (call $eval_cc (i32.shr_u (local.get $op) (i32.const 4))))
     (return_call $next))
 
   ;; --- SHLD/SHRD ---

@@ -1121,8 +1121,18 @@
                   (call $te (i32.const 102) (i32.and (local.get $op) (i32.const 0xF)))
                   (call $te_raw (global.get $mr_val)))
                 (else
-                  (call $te (i32.const 211) (i32.and (local.get $op) (i32.const 0xF)))
-                  (call $te_raw (global.get $mr_disp))))
+                  (call $apply_seg_override)
+                  (if (call $mr_simple_base)
+                    (then
+                      ;; SETcc [base+disp] — handler 218, op=(cc<<4)|base, disp in next word
+                      (call $te (i32.const 218)
+                            (i32.or (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 4))
+                                    (global.get $mr_base)))
+                      (call $te_raw (global.get $mr_disp)))
+                    (else
+                      ;; SETcc [absolute] or SIB — handler 211, op=cc, addr (or sentinel) in next word
+                      (call $te (i32.const 211) (i32.and (local.get $op) (i32.const 0xF)))
+                      (call $te_raw (call $emit_sib_or_abs))))))
               (br $decode)))
 
           ;; 0x0F 0xA3: BT r/m32, r32

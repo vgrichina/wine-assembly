@@ -44,6 +44,7 @@ const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
+const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
@@ -380,6 +381,8 @@ async function main() {
     return 0;
   };
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
+  // GetAsyncKeyState backing — delegate to renderer's stateful key map
+  h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
 
   // Create shared memory externally (WASM module imports it)
   const memory = new WebAssembly.Memory({ initial: 1024 });
@@ -460,6 +463,15 @@ async function main() {
     instance.exports.set_exe_name(staging, nameBytes.length);
   }
 
+  // Pass extra command-line arguments via the staging buffer (--args="...")
+  if (EXTRA_ARGS && instance.exports.set_extra_cmdline) {
+    const argBytes = Buffer.from(EXTRA_ARGS);
+    const staging = instance.exports.get_staging();
+    mem.set(argBytes, staging);
+    instance.exports.set_extra_cmdline(staging, argBytes.length);
+    console.log(`Extra cmdline args: ${JSON.stringify(EXTRA_ARGS)}`);
+  }
+
   // Set emulated Windows version
   if (WINVER && instance.exports.set_winver) {
     const versions = { 'win98': 0xC0000A04, 'nt4': 0x05650004, 'win2k': 0x05650005, 'winxp': 0x0A280105 };
@@ -496,7 +508,10 @@ async function main() {
     }
   }
   if (dlls.length > 0) {
-    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log);
+    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
+      exeName: path.basename(EXE_PATH),
+      extraArgs: EXTRA_ARGS || '',
+    });
     stopped = false;
     // Parse resources from DLLs and store by base address
     ctx.dllResources = {};

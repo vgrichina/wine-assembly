@@ -38,6 +38,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; CreateBrushIndirect(LOGBRUSH*) — read color from struct, delegate to solid brush
+  ;; LOGBRUSH = { UINT lbStyle; COLORREF lbColor; ULONG lbHatch; }
+  (func $handle_CreateBrushIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_create_solid_brush
+      (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 150: CreateCompatibleDC(hdc) — delegate to host GDI
   (func $handle_CreateCompatibleDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_create_compat_dc (local.get $arg0)))

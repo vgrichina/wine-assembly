@@ -982,4 +982,4 @@
               (return (i32.const 1))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (i32.const 0)))
+    (i32.const 0))

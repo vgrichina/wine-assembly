@@ -6702,5 +6702,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2702924066
+  },
+  {
+    "id": 958,
+    "name": "CreateBrushIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2143438409
+  },
+  {
+    "id": 959,
+    "name": "AppendMenuA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 221152021
+  },
+  {
+    "id": 960,
+    "name": "InsertMenuA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3555705674
   }
 ]

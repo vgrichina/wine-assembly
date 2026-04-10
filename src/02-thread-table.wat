@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 218 funcref)
+  (table $handlers 219 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -270,5 +270,6 @@
     $th_not_r8             ;; 215: NOT r8 (8-bit bitwise NOT)
     $th_jecxz              ;; 216: JECXZ — jump if ECX==0 (target+fall in next 2 words)
     $th_test_r8_i          ;; 217: TEST r8, imm8 (op=byte_reg, imm in next word)
+    $th_setcc_mem_ro       ;; 218: SETcc [base+disp] (op=cc<<4|base, disp in next word)
   )
 
