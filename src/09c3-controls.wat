@@ -2268,8 +2268,6 @@
     ;; ---------- WM_CREATE (0x0001) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
-        (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         (local.set $state (call $heap_alloc (i32.const 32)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store         (local.get $state_w) (i32.const 0))
@@ -2280,20 +2278,26 @@
         (i32.store offset=20 (local.get $state_w) (i32.const 0))
         (i32.store offset=24 (local.get $state_w) (i32.const 0))
         (i32.store offset=28 (local.get $state_w) (i32.const 0))
-        (if (local.get $name_ptr)
+        ;; Copy initial text from CREATESTRUCT if provided (lParam may be 0
+        ;; when WM_CREATE is delivered via pending_child_create from GetMessageA)
+        (if (local.get $lParam)
           (then
-            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-            (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
-            (if (local.get $text_len)
-              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
-                                  (call $g2w (local.get $name_ptr))
-                                  (local.get $text_len))))
-            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
-            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-            (if (i32.load (local.get $state_w))
-              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
-                                (i32.const 0))))))
+            (local.set $cs_w (call $g2w (local.get $lParam)))
+            (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
+            (if (local.get $name_ptr)
+              (then
+                (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+                (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
+                (if (local.get $text_len)
+                  (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                                      (call $g2w (local.get $name_ptr))
+                                      (local.get $text_len))))
+                (i32.store offset=4  (local.get $state_w) (local.get $text_len))
+                (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+                (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+                (if (i32.load (local.get $state_w))
+                  (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+                                    (i32.const 0))))))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -2406,6 +2410,12 @@
                           (local.get $lo))))))
             (call $host_invalidate (local.get $hwnd))
             (return (i32.const 0))))
+        ;; CR (0x0D) — Enter key: insert newline for multiline edits
+        (if (i32.eq (local.get $wParam) (i32.const 0x0D))
+          (then
+            (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
@@ -2487,6 +2497,48 @@
                           (i32.add (local.get $cur) (i32.const 1)))))))
             (call $host_invalidate (local.get $hwnd))
             (return (i32.const 0))))
+        ;; VK_UP 0x26
+        (if (i32.eq (local.get $vk) (i32.const 0x26))
+          (then
+            (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
+            (if (local.get $lo)  ;; not on first line
+              (then
+                ;; col = cur - line_start
+                (local.set $hi (i32.sub (local.get $cur) (local.get $lo)))
+                ;; find start of previous line
+                (local.set $lo (call $edit_line_start (local.get $state_w) (i32.sub (local.get $lo) (i32.const 1))))
+                ;; prev line length
+                (local.set $px (call $edit_line_len (local.get $state_w) (local.get $lo)))
+                ;; clamp col to prev line length
+                (if (i32.gt_u (local.get $hi) (local.get $px))
+                  (then (local.set $hi (local.get $px))))
+                (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
+                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (call $host_invalidate (local.get $hwnd))))
+            (return (i32.const 0))))
+        ;; VK_DOWN 0x28
+        (if (i32.eq (local.get $vk) (i32.const 0x28))
+          (then
+            ;; col = cur - line_start
+            (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
+            (local.set $hi (i32.sub (local.get $cur) (local.get $lo)))
+            ;; find end of current line (next \n or text_len)
+            (local.set $px (i32.add (local.get $lo) (call $edit_line_len (local.get $state_w) (local.get $lo))))
+            (if (i32.lt_u (local.get $px) (local.get $text_len))
+              (then
+                ;; next line starts after the \n
+                (local.set $lo (i32.add (local.get $px) (i32.const 1)))
+                ;; next line length
+                (local.set $px (call $edit_line_len (local.get $state_w) (local.get $lo)))
+                ;; clamp col
+                (if (i32.gt_u (local.get $hi) (local.get $px))
+                  (then (local.set $hi (local.get $px))))
+                (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
+                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (call $host_invalidate (local.get $hwnd))))
+            (return (i32.const 0))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
@@ -2524,35 +2576,222 @@
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x0A) (i32.const 0x0F)))
-        ;; 3) Text
+        ;; 3) Text — draw line by line, splitting on \n
         (local.set $buf (i32.load (local.get $state_w)))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-        (if (local.get $buf)
-          (then (if (local.get $text_len)
-                  (then (drop (call $host_gdi_text_out (local.get $hdc)
-                                (i32.const 4) (i32.const 4)
-                                (call $g2w (local.get $buf)) (local.get $text_len)))))))
+        (if (i32.and (local.get $buf) (i32.ne (local.get $text_len) (i32.const 0)))
+          (then
+            (local.set $lo (i32.const 0))    ;; line start offset
+            (local.set $px (i32.const 4))    ;; y position
+            (block $lines_done (loop $line_loop
+              (br_if $lines_done (i32.ge_u (local.get $lo) (local.get $text_len)))
+              ;; Find line length (until \n or end)
+              (local.set $hi (call $edit_line_len (local.get $state_w) (local.get $lo)))
+              (if (local.get $hi)
+                (then (drop (call $host_gdi_text_out (local.get $hdc)
+                              (i32.const 4) (local.get $px)
+                              (i32.add (call $g2w (local.get $buf)) (local.get $lo))
+                              (local.get $hi)))))
+              (local.set $lo (i32.add (local.get $lo) (i32.add (local.get $hi) (i32.const 1))))
+              (local.set $px (i32.add (local.get $px) (i32.const 16)))  ;; line height ~16px
+              (br $line_loop)))))
         ;; 4) Caret (only if focused — bit 3 of flags)
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
         (if (i32.and (local.get $flags) (i32.const 0x08))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
+            ;; Find which line the cursor is on and the offset within that line
+            (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
+            (local.set $hi (i32.mul (call $edit_line_from_char (local.get $state_w) (local.get $cur))
+                                     (i32.const 16)))
             (local.set $px (i32.const 0))
-            (if (local.get $buf)
-              (then (if (local.get $cur)
-                      (then (local.set $px (call $host_measure_text (local.get $hdc)
-                                                  (call $g2w (local.get $buf)) (local.get $cur)))))))
+            (if (i32.and (local.get $buf) (i32.gt_u (local.get $cur) (local.get $lo)))
+              (then (local.set $px (call $host_measure_text (local.get $hdc)
+                                        (i32.add (call $g2w (local.get $buf)) (local.get $lo))
+                                        (i32.sub (local.get $cur) (local.get $lo))))))
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
-                    (i32.const 4)
+                    (i32.add (local.get $hi) (i32.const 4))
                     (i32.add (local.get $px) (i32.const 5))
-                    (i32.const 16)
+                    (i32.add (local.get $hi) (i32.const 20))
                     (i32.const 0x30014))))) ;; BLACK_BRUSH
         (return (i32.const 0))))
+
+    ;; ---------- EM_GETSEL (0x00B0) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00B0))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+        (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+        (if (local.get $wParam)
+          (then (call $gs32 (local.get $wParam) (local.get $lo))))
+        (if (local.get $lParam)
+          (then (call $gs32 (local.get $lParam) (local.get $hi))))
+        (return (i32.or (i32.and (local.get $lo) (i32.const 0xFFFF))
+                        (i32.shl (local.get $hi) (i32.const 16))))))
+
+    ;; ---------- EM_SETSEL (0x00B1) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00B1))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        ;; wParam = start, lParam = end (-1 = end of text)
+        (local.set $lo (local.get $wParam))
+        (local.set $hi (local.get $lParam))
+        (if (i32.eq (local.get $hi) (i32.const -1))
+          (then (local.set $hi (local.get $text_len))))
+        (if (i32.gt_u (local.get $lo) (local.get $text_len))
+          (then (local.set $lo (local.get $text_len))))
+        (if (i32.gt_u (local.get $hi) (local.get $text_len))
+          (then (local.set $hi (local.get $text_len))))
+        (i32.store offset=16 (local.get $state_w) (local.get $lo))  ;; sel_anchor = start
+        (i32.store offset=12 (local.get $state_w) (local.get $hi))  ;; cursor = end
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- EM_REPLACESEL (0x00C2) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00C2))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        ;; Delete current selection
+        (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+        (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+        (if (i32.ne (local.get $lo) (local.get $hi))
+          (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))))
+        ;; Insert replacement text char by char
+        (if (local.get $lParam)
+          (then
+            (local.set $buf (call $g2w (local.get $lParam)))
+            (block $done (loop $ins
+              (local.set $vk (i32.load8_u (local.get $buf)))
+              (br_if $done (i32.eqz (local.get $vk)))
+              (call $edit_insert_char (local.get $state_w) (local.get $vk))
+              (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
+              (br $ins)))))
+        (call $host_invalidate (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- EM_LINEFROMCHAR (0x00C9) ----------
+    ;; wParam = char index (-1 = cursor). Returns 0-based line number.
+    (if (i32.eq (local.get $msg) (i32.const 0x00C9))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $cur (local.get $wParam))
+        (if (i32.eq (local.get $cur) (i32.const -1))
+          (then (local.set $cur (i32.load offset=12 (local.get $state_w)))))
+        (return (call $edit_line_from_char (local.get $state_w) (local.get $cur)))))
+
+    ;; ---------- EM_LINEINDEX (0x00BB) ----------
+    ;; wParam = line number (-1 = current line). Returns char index of line start.
+    (if (i32.eq (local.get $msg) (i32.const 0x00BB))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $lo (local.get $wParam))
+        (if (i32.eq (local.get $lo) (i32.const -1))
+          (then (local.set $lo (call $edit_line_from_char (local.get $state_w)
+                                 (i32.load offset=12 (local.get $state_w))))))
+        (return (call $edit_line_index (local.get $state_w) (local.get $lo)))))
+
+    ;; ---------- EM_GETLINECOUNT (0x00BA) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00BA))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 1))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (return (i32.add (call $edit_line_from_char (local.get $state_w)
+                           (i32.load offset=4 (local.get $state_w)))
+                         (i32.const 1)))))
+
+    ;; ---------- EM_LINELENGTH (0x00C1) ----------
+    ;; wParam = char index. Returns length of line containing that char.
+    (if (i32.eq (local.get $msg) (i32.const 0x00C1))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $wParam)))
+        (return (call $edit_line_len (local.get $state_w) (local.get $lo)))))
+
+    ;; ---------- EM_SCROLLCARET (0x00B7) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00B7))
+      (then (return (i32.const 0))))
+
+    ;; ---------- EM_GETFIRSTVISIBLELINE (0x00CE) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00CE))
+      (then (return (i32.const 0))))
 
     ;; Default
     (i32.const 0)
   )
+
+  ;; ---- Multiline edit helpers ----
+  ;; Find start of line containing char at $pos. Scans backward for \n.
+  (func $edit_line_start (param $state_w i32) (param $pos i32) (result i32)
+    (local $buf_w i32) (local $i i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (local.set $i (local.get $pos))
+    (block $done (loop $scan
+      (br_if $done (i32.le_s (local.get $i) (i32.const 0)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $buf_w) (i32.sub (local.get $i) (i32.const 1))))
+                  (i32.const 0x0A))
+        (then (return (local.get $i))))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Length of line starting at $line_start (chars until \n or end of text).
+  (func $edit_line_len (param $state_w i32) (param $line_start i32) (result i32)
+    (local $buf_w i32) (local $text_len i32) (local $i i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $i (local.get $line_start))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $text_len)))
+      (br_if $done (i32.eq (i32.load8_u (i32.add (local.get $buf_w) (local.get $i)))
+                           (i32.const 0x0A)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.sub (local.get $i) (local.get $line_start)))
+
+  ;; Return 0-based line number containing char at $pos.
+  (func $edit_line_from_char (param $state_w i32) (param $pos i32) (result i32)
+    (local $buf_w i32) (local $i i32) (local $line i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $pos)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $buf_w) (local.get $i))) (i32.const 0x0A))
+        (then (local.set $line (i32.add (local.get $line) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $line))
+
+  ;; Return char index of the first character on line $line_num (0-based).
+  (func $edit_line_index (param $state_w i32) (param $line_num i32) (result i32)
+    (local $buf_w i32) (local $text_len i32) (local $i i32) (local $line i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (if (i32.eqz (local.get $line_num)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $text_len)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $buf_w) (local.get $i))) (i32.const 0x0A))
+        (then
+          (local.set $line (i32.add (local.get $line) (i32.const 1)))
+          (if (i32.eq (local.get $line) (local.get $line_num))
+            (then (return (i32.add (local.get $i) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $text_len))
 
   ;; ============================================================
   ;; STEP 5 dormant additions: $wnd_send_message + $create_findreplace_dialog

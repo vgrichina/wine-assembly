@@ -116,7 +116,31 @@
           (br $scan3)))))
     (if (local.get $tmp)
       (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
-      (else (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))
+      (else
+        ;; Check for system "Edit" class: atom 0x0081 or string "Edit"/"edit"/"EDIT"
+        (if (i32.or
+              (i32.eq (local.get $arg1) (i32.const 0x0081))
+              (if (result i32) (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+                (then
+                  ;; Case-insensitive 4-byte compare: OR with 0x20202020 → "edit" (LE: 0x74696465)
+                  (i32.and
+                    (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                            (i32.const 0x74696465))
+                    (i32.eqz (i32.load8_u (i32.add (call $g2w (local.get $arg1)) (i32.const 4))))))
+                (else (i32.const 0))))
+          (then
+            ;; System Edit class → WAT-native edit control
+            (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+            (local.set $v (call $wnd_table_find (global.get $next_hwnd)))
+            (call $ctrl_table_set (local.get $v) (i32.const 2)   ;; class=2 (Edit)
+              (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; hMenu = ctrl_id for children
+            (call $ctrl_geom_set (local.get $v)
+              (local.get $arg4)                                          ;; x
+              (call $gl32 (i32.add (global.get $esp) (i32.const 24)))   ;; y
+              (call $gl32 (i32.add (global.get $esp) (i32.const 28)))   ;; cx
+              (call $gl32 (i32.add (global.get $esp) (i32.const 32))))) ;; cy
+          (else
+            (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))))
     ;; Store parent hwnd (hWndParent = [esp+36])
     (call $wnd_set_parent (global.get $next_hwnd)
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
@@ -383,7 +407,6 @@
     (then
     ;; Dequeue first message (shift queue down)
     (local.set $tmp (i32.const 0x400))
-    (call $host_log_i32 (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; DEBUG: drained msg
     (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))                        ;; hwnd
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; msg
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))  ;; wParam
@@ -565,7 +588,6 @@
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
-        (call $host_log_i32 (i32.load (i32.const 0x404))) ;; DEBUG: Peek drained msg
         ;; Dequeue into lpMsg
         (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))                        ;; hwnd
         (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))  ;; msg

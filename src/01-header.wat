@@ -34,8 +34,10 @@
   ;; invalidate(hwnd)
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
   ;; erase_background(hwnd, hbrBackground) → 1
-  (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32)))
-  ;; move_window(hwnd, x, y, w, h)
+  (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
+  ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
+  (import "host" "get_window_rect" (func $host_get_window_rect (param i32 i32)))
+  ;; get_window_rect(hwnd, wasmRectPtr) — writes left,top,right,bottom as i32s
   (import "host" "destroy_window" (func $host_destroy_window (param i32)))
   ;; destroy_window(hwnd) — remove from renderer's window table
   (import "host" "draw_text" (func $host_draw_text (param i32 i32 i32 i32 i32)))

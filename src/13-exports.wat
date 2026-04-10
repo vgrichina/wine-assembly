@@ -272,6 +272,27 @@
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
 
+  ;; EditState cursor position (offset+12).
+  (func (export "get_edit_cursor") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=12 (call $g2w (local.get $s))))
+
+  ;; EditState selection anchor (offset+16).
+  (func (export "get_edit_sel_start") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=16 (call $g2w (local.get $s))))
+
+  ;; EditState text length (offset+4).
+  (func (export "get_edit_text_len") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=4 (call $g2w (local.get $s))))
+
   ;; ============================================================
   ;; Child-window enumeration + control read-back exports
   ;; ============================================================
@@ -291,6 +312,14 @@
     (call $ctrl_get_xy_packed (local.get $hwnd)))
   (func (export "ctrl_get_wh") (param $hwnd i32) (result i32)
     (call $ctrl_get_wh_packed (local.get $hwnd)))
+
+  ;; Update geometry for a control (used by renderer to sync JS dimensions → WAT).
+  (func (export "ctrl_set_geom") (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (call $ctrl_geom_set (local.get $idx)
+              (local.get $x) (local.get $y) (local.get $w) (local.get $h)))))
 
   ;; Control class (1=Button, 2=Edit, 3=Static; 0 if not a control).
   (func (export "ctrl_get_class") (param $hwnd i32) (result i32)

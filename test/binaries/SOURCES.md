@@ -23,6 +23,23 @@ Source: `https://archive.org/details/BestOfWindowsEntertainmentPack64Bit`
 | cards.dll | Card drawing library |
 | aboutwep.dll | About dialog |
 
+### Missing WEP games (no 32-bit originals)
+
+The full WEP (Volumes 1-4) contained 29 games. The Best of WEP 32-bit port above only covers 11. The remaining 18 were never ported to 32-bit by Microsoft — the originals are 16-bit Windows 3.x (NE format, not PE):
+
+Chess, Chip's Challenge, Dr. Black Jack, Fuji Golf, Go Figure!, IdleWild, JezzBall, JigSawed, Klotski, LifeGenesis, Maxwell's Maniac, Pipe Dream, Rodent's Revenge, Stones, TetraVex, Tetris, Tic Tac Drop, TicTacToe, TriPeaks, Tut's Tomb, WordZap
+
+**Original 16-bit sources** (not usable, for reference):
+- WEP 1-4 floppies: `https://archive.org/details/microsoft-windows-entertainment-pack-1-3.5-720-k.-7z_202501`
+- Individual volumes: `https://archive.org/details/000777-WindowsEntertainmentPack1` (1-4)
+- Best of WEP floppy: `https://archive.org/details/wep_best-of`
+
+**Community 32-bit remakes** (third-party PE executables, untested):
+- Source: `https://archive.org/details/wep-32bit`
+- File: `wep32.7z`
+- Includes remakes: tworld (Chip's Challenge), Funtris (Tetris), Peaks (TriPeaks), Pyramid (Tut's Tomb), CWordZap (WordZap), Rodent2000 (Rodent's Revenge), QuickBlackjack (Dr. Black Jack), Pawn (Chess), JigSawedME (JigSawed), FourStones (Tic Tac Drop), EmPipe (Pipe Dream), bricks (Klotski), Tetravex (TetraVex), Runenlegen (Stones)
+- Note: some entries are Flash-based (JezzBall, Maxwell's Maniac, Fuji Golf) and won't work
+
 ## Win98 Apps
 
 Source: `https://archive.org/details/windows-1999-programs`

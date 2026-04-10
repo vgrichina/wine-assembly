@@ -1109,10 +1109,8 @@
 
   ;; 93: GetWindowRect
   (func $handle_GetWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg1) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 640))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 480))
+    ;; GetWindowRect(hwnd, lpRect) — fills RECT with screen coords
+    (call $host_get_window_rect (local.get $arg0) (call $g2w (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -1247,6 +1245,11 @@
   (func $handle_SetFocus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (global.get $focus_hwnd))  ;; return previous focus
     (global.set $focus_hwnd (local.get $arg0))
+    ;; Send WM_SETFOCUS to the new focus window (WAT-native controls need this
+    ;; to set their focused flag for caret rendering)
+    (if (i32.ge_u (call $wnd_table_get (local.get $arg0)) (i32.const 0xFFFF0000))
+      (then (drop (call $wat_wndproc_dispatch
+              (local.get $arg0) (i32.const 0x0007) (i32.const 0) (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1365,7 +1368,7 @@
 
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
+    (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
@@ -1608,15 +1611,14 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 141: SetWindowPos — STUB: unimplemented
+  ;; 141: SetWindowPos
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $cy i32) (local $uFlags i32)
     (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    ;; SWP_NOSIZE=0x0001, SWP_NOMOVE=0x0002 — update unless both are set
-    (if (i32.ne (i32.and (local.get $uFlags) (i32.const 0x0003)) (i32.const 0x0003))
-      (then (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy))))
+    ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
+    (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -5793,10 +5795,11 @@
   ;; 633: DeferWindowPos(hWinPosInfo, hWnd, hWndInsertAfter, x, y, cx, cy, uFlags) → HDWP
   (func $handle_DeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Apply position immediately (no batching needed)
-    ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y, cx=stack[24], cy=stack[28]
+    ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y, cx=stack[24], cy=stack[28], uFlags=stack[32]
     (call $host_move_window (local.get $arg1) (local.get $arg3) (local.get $arg4)
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
     (global.set $eax (local.get $arg0))  ;; return same HDWP handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
@@ -5835,7 +5838,8 @@
     ;; Move window to rcNormalPosition
     (call $host_move_window (local.get $arg0) (local.get $left) (local.get $top)
       (i32.sub (local.get $right) (local.get $left))
-      (i32.sub (local.get $bottom) (local.get $top)))
+      (i32.sub (local.get $bottom) (local.get $top))
+      (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
