@@ -54,7 +54,8 @@ const openPng   = path.join(TMP, 'notepad_menu_open.png');
 const hoverPng  = path.join(TMP, 'notepad_menu_hover.png');
 const closePng  = path.join(TMP, 'notepad_menu_close.png');
 const clickPng  = path.join(TMP, 'notepad_menu_click.png');
-for (const p of [beforePng, openPng, hoverPng, closePng, clickPng]) {
+const swapPng   = path.join(TMP, 'notepad_menu_swap.png');
+for (const p of [beforePng, openPng, hoverPng, closePng, clickPng, swapPng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
@@ -65,16 +66,15 @@ const VK_DOWN   = 40;
 const VK_MENU   = 18; // Alt
 const VK_F      = 70;
 
-// Notepad's main window comes up at (20, 20) 400x300 (cascade default
-// in renderer.createWindow). Menu bar y = winY + 3 + 18 = 41, h=18.
-// "File" item starts at winX+3+4=27 with ~36px width — pick 35,50.
+// Notepad's main window cascades to (20, 20) 600x400 in createWindow.
+// Menu bar starts at canvas x≈23, y=42 (h=18). The bar items are
+// File / Edit / Search / Help, but the actual widths come from
+// $bar_item_width (text-width + 12) and the default font is wide
+// enough that File ≈ 23..90, Edit ≈ 90..170, Search ≈ 170..230, Help ≈ 230..280.
+// Pick coords solidly inside each item.
 const FILE_X = 35, FILE_Y = 50;
+const EDIT_X = 140, EDIT_Y = 50;
 
-// NOTE: a follow-up test should also exercise click → click-on-other-bar-item
-// (e.g. click File then click Edit). Currently this re-enters repaint
-// recursively because gdi_draw_text → _getDrawTarget → scheduleRepaint
-// runs synchronously inside an in-flight paint. Tracked separately;
-// adding it here would just blow up the stack and tell us nothing new.
 const inputSpec = [
   `40:png:${beforePng}`,
   `42:keydown:${VK_MENU}`,    // Alt down
@@ -90,10 +90,16 @@ const inputSpec = [
   // Click-based path: hit-test the bar via $menu_hittest_bar
   `102:click:${FILE_X}:${FILE_Y}`,
   `120:png:${clickPng}`,
-  `122:keydown:${VK_ESCAPE}`,
+  // Click-swap: click File then click Edit — previously recursed into
+  // repaint() because gdi_draw_text → _getDrawTarget → scheduleRepaint
+  // ran synchronously inside an in-flight paint. Guarded by the
+  // re-entrancy check in scheduleRepaint/repaint.
+  `122:click:${EDIT_X}:${EDIT_Y}`,
+  `140:png:${swapPng}`,
+  `142:keydown:${VK_ESCAPE}`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=140`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=160`;
 console.log('$', cmd);
 
 let out = '';
@@ -140,8 +146,10 @@ async function diffPngs(aPath, bPath) {
   checks.push({ name: 'hover  snapshot written', pass: sizeOf(hoverPng) });
   checks.push({ name: 'close  snapshot written', pass: sizeOf(closePng) });
   checks.push({ name: 'click  snapshot written', pass: sizeOf(clickPng) });
+  checks.push({ name: 'swap   snapshot written', pass: sizeOf(swapPng) });
   checks.push({ name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) });
   checks.push({ name: 'no LinkError', pass: !/LinkError/.test(out) });
+  checks.push({ name: 'no repaint recursion stack overflow', pass: !/Maximum call stack|RangeError/.test(out) });
 
   if (sizeOf(beforePng) && sizeOf(openPng) && sizeOf(hoverPng) && sizeOf(closePng)) {
     const dOpen   = await diffPngs(beforePng, openPng);
@@ -184,6 +192,24 @@ async function diffPngs(aPath, bPath) {
         name: 'Click on File opened dropdown (>= 1500 px diff vs idle)',
         pass: dClick.diff >= 1500,
       });
+
+      // Click-swap: File dropdown → Edit dropdown. The swap must differ
+      // from the plain File-click image because a different bar item is
+      // now active AND a different dropdown body is drawn.
+      if (sizeOf(swapPng)) {
+        const dSwap = await diffPngs(clickPng, swapPng);
+        const dSwapIdle = await diffPngs(beforePng, swapPng);
+        console.log(`  swap   vs click : ${dSwap.diff}px`);
+        console.log(`  swap   vs before: ${dSwapIdle.diff}px`);
+        checks.push({
+          name: 'Click Edit after click File drew different dropdown (>= 500 px vs File)',
+          pass: dSwap.diff >= 500,
+        });
+        checks.push({
+          name: 'Click-swap dropdown visible (>= 1500 px vs idle)',
+          pass: dSwapIdle.diff >= 1500,
+        });
+      }
     }
   }
 
@@ -195,6 +221,6 @@ async function diffPngs(aPath, bPath) {
   }
   console.log('');
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
-  console.log(`Snapshots: ${beforePng}  ${openPng}  ${hoverPng}  ${closePng}  ${clickPng}`);
+  console.log(`Snapshots: ${beforePng}  ${openPng}  ${hoverPng}  ${closePng}  ${clickPng}  ${swapPng}`);
   process.exit(failed > 0 ? 1 : 0);
 })();
