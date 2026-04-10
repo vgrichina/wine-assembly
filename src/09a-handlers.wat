@@ -1311,7 +1311,12 @@
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then (global.set $paint_pending (i32.const 1)))
     (else (if (i32.ne (local.get $arg0) (i32.const 0))
-    (then (global.set $child_paint_hwnd (local.get $arg0))))))
+    (then
+      ;; Use slot 1 if empty or same hwnd, else overflow to slot 2
+      (if (i32.or (i32.eqz (global.get $child_paint_hwnd))
+                  (i32.eq (global.get $child_paint_hwnd) (local.get $arg0)))
+        (then (global.set $child_paint_hwnd (local.get $arg0)))
+        (else (global.set $child_paint_hwnd2 (local.get $arg0))))))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)

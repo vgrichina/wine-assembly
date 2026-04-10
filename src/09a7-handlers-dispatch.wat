@@ -72,8 +72,10 @@
             (call $guest_strcpy (local.get $a0) (local.get $a1))
             (global.set $eax (local.get $a0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-        ;; lstrcmpA(2) / lstrcmpiA(2) — byte-by-byte comparison
-        (global.set $eax (call $guest_stricmp (local.get $a0) (local.get $a1)))
+        ;; lstrcmpA(2) vs lstrcmpiA(2): name[7]='i' → case-insensitive
+        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 7))) (i32.const 0x69)) ;; 'i'
+          (then (global.set $eax (call $guest_stricmp (local.get $a0) (local.get $a1))))
+          (else (global.set $eax (call $guest_strcmp (local.get $a0) (local.get $a1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     ;; fallback
     (call $crash_unimplemented (local.get $name)))

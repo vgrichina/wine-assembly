@@ -435,6 +435,17 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  (func $guest_strcmp (param $s1 i32) (param $s2 i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $d (loop $l
+      (local.set $a (call $gl8 (i32.add (local.get $s1) (local.get $i))))
+      (local.set $b (call $gl8 (i32.add (local.get $s2) (local.get $i))))
+      (if (i32.ne (local.get $a) (local.get $b))
+        (then (return (i32.sub (local.get $a) (local.get $b)))))
+      (br_if $d (i32.eqz (local.get $a)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+    (i32.const 0))
+
   (func $guest_stricmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)
     (block $d (loop $l

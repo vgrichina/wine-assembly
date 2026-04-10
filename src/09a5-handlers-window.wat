@@ -155,13 +155,15 @@
         (i32.ne (local.get $tmp) (i32.const 0))))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
-    ;; Handle CW_USEDEFAULT (0x80000000) — use 2/3 screen as default
+    ;; Handle CW_USEDEFAULT (0x80000000) — use defaults matching renderer (400x300).
+    ;; When cx=CW_USEDEFAULT, Windows ignores cy and defaults both — so also default cy.
     (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (if (i32.eq (global.get $main_win_cx) (i32.const 0x80000000))
-      (then (global.set $main_win_cx (i32.const 427))))  ;; ~2/3 of 640
     (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (if (i32.eq (global.get $main_win_cx) (i32.const 0x80000000))
+      (then (global.set $main_win_cx (i32.const 400))
+            (global.set $main_win_cy (i32.const 300))))
     (if (i32.eq (global.get $main_win_cy) (i32.const 0x80000000))
-      (then (global.set $main_win_cy (i32.const 320))))  ;; ~2/3 of 480
+      (then (global.set $main_win_cy (i32.const 300))))
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
       (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
     (global.set $pending_wm_size (i32.or
@@ -343,6 +345,17 @@
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $host_show_window (local.get $arg0) (local.get $arg1))
+    ;; Showing a window should trigger WM_PAINT — invalidate it
+    ;; cmd != SW_HIDE (0) → mark for paint
+    (if (local.get $arg1)
+      (then
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 1)))
+          (else
+            (if (i32.or (i32.eqz (global.get $child_paint_hwnd))
+                        (i32.eq (global.get $child_paint_hwnd) (local.get $arg0)))
+              (then (global.set $child_paint_hwnd (local.get $arg0)))
+              (else (global.set $child_paint_hwnd2 (local.get $arg0))))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -487,14 +500,16 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver WM_PAINT to child window if pending
+    ;; Deliver WM_PAINT to child window if pending (slot 1, then slot 2)
     (if (global.get $child_paint_hwnd)
     (then
     (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $child_paint_hwnd (i32.const 0))
+    ;; Promote slot 2 → slot 1
+    (global.set $child_paint_hwnd (global.get $child_paint_hwnd2))
+    (global.set $child_paint_hwnd2 (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No paint — deliver WM_TIMER if any timer is due

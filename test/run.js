@@ -1207,12 +1207,6 @@ if (VERBOSE) {
       if (win) {
         console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
       }
-      if (win && win._fullBackCanvas) {
-        const full = win._fullBackCanvas.toBuffer('image/png');
-        const out = PNG_OUT.replace(/\.png$/, `_full_${hwnd}.png`);
-        fs.writeFileSync(out, full);
-        console.log(`  Wrote ${out} (${full.length} bytes, ${win._fullBackW}x${win._fullBackH})`);
-      }
       if (win && win._backCanvas) {
         const back = win._backCanvas.toBuffer('image/png');
         const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);
