@@ -356,6 +356,7 @@
 
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $packed i32) (local $wndproc i32)
     (call $host_show_window (local.get $arg0) (local.get $arg1))
     ;; Showing a window should trigger WM_PAINT — invalidate it
     ;; cmd != SW_HIDE (0) → mark for paint
@@ -364,6 +365,32 @@
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else (call $paint_queue_push (local.get $arg0))))))
+    ;; ShowWindow on main window delivers pending WM_SIZE synchronously,
+    ;; matching real Win32 where ShowWindow → SetWindowPos → WM_SIZE.
+    ;; Apps (e.g. Solitaire) compute layout in response to WM_SIZE, and
+    ;; assert if it hasn't been delivered before their init code runs.
+    (if (i32.and (local.get $arg1)
+                 (i32.and (i32.eq (local.get $arg0) (global.get $main_hwnd))
+                          (global.get $pending_wm_size)))
+      (then
+        (local.set $packed (global.get $pending_wm_size))
+        (global.set $pending_wm_size (i32.const 0))
+        (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
+        (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
+                     (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+          (then
+            ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; pop ShowWindow frame
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 20)))) ;; ret addr
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+            (global.set $eip (local.get $wndproc))
+            (global.set $eax (i32.const 1))
+            (global.set $steps (i32.const 0))
+            (return)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
