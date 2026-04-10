@@ -6303,9 +6303,22 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 652: InvertRect — STUB: unimplemented
+  ;; 652: InvertRect(hdc, lpRect) — 2 args stdcall
+  ;; Inverts pixels in the rectangle. Equivalent to BitBlt with DSTINVERT.
   (func $handle_InvertRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (local.set $left (i32.load (local.get $wa)))
+    (local.set $top (i32.load (i32.add (local.get $wa) (i32.const 4))))
+    (local.set $right (i32.load (i32.add (local.get $wa) (i32.const 8))))
+    (local.set $bottom (i32.load (i32.add (local.get $wa) (i32.const 12))))
+    (global.set $eax (call $host_gdi_bitblt
+      (local.get $arg0) (local.get $left) (local.get $top)
+      (i32.sub (local.get $right) (local.get $left))
+      (i32.sub (local.get $bottom) (local.get $top))
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0x00550009)))  ;; DSTINVERT
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args + ret
   )
 
   ;; 653: IsZoomed(hwnd) → BOOL — returns TRUE if window is maximized
