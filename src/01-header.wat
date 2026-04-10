@@ -137,6 +137,8 @@
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
+  (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
+  ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
   (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
   ;; gdi_line_to(hdc, x, y)

@@ -3596,7 +3596,8 @@
   ;; 384: GetWindowDC — STUB: unimplemented
   (func $handle_GetWindowDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetWindowDC(hwnd) → HDC. Like GetDC but includes non-client area. 1 arg stdcall
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))  ;; hdc = hwnd + 0x40000
+    ;; Use 0xC0000 offset (vs GetDC's 0x40000) so JS can detect whole-window drawing
+    (global.set $eax (i32.add (local.get $arg0) (i32.const 0xC0000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -4122,7 +4123,7 @@
   (func $handle_GetShortPathNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $len i32)
     (local.set $len (call $strlen (call $g2w (local.get $arg0))))
-    (if (i32.and (local.get $arg1) (i32.gt_u (local.get $arg2) (local.get $len)))
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.gt_u (local.get $arg2) (local.get $len)))
       (then (call $memcpy (call $g2w (local.get $arg1)) (call $g2w (local.get $arg0)) (i32.add (local.get $len) (i32.const 1)))))
     (global.set $eax (local.get $len))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -4332,9 +4333,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 48)))  ;; stdcall, 11 args
   )
 
-  ;; 451: Polygon — STUB: unimplemented
+  ;; 451: Polygon(hdc, lpPoints, nCount) — 3 args stdcall
   (func $handle_Polygon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_polygon
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args + ret
   )
 
   ;; 452: RoundRect — STUB: unimplemented
