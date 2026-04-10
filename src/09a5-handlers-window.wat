@@ -93,6 +93,8 @@
     (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
     (local.get $tmp)                                            ;; resolved menu
     ))
+    ;; Save resolved menu ID for nc_height calculation later ($tmp gets overwritten)
+    (local.set $v (local.get $tmp))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
@@ -146,13 +148,17 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
-    ;; Send WM_CREATE synchronously for main window OR any window with EXE-space wndproc
-    (if (i32.or
-      (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
-      (i32.and
-        (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-                 (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x200000))))
-        (i32.ne (local.get $tmp) (i32.const 0))))
+    ;; Send WM_CREATE synchronously for main window OR top-level windows with EXE-space wndproc.
+    ;; Child windows (hWndParent != 0) use the pending_child_create/size path instead,
+    ;; because the synchronous path overwrites pending_wm_size with child dimensions.
+    (if (i32.and
+      (i32.or
+        (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
+        (i32.and
+          (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+                   (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x200000))))
+          (i32.ne (local.get $tmp) (i32.const 0))))
+      (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
     ;; Handle CW_USEDEFAULT (0x80000000) — use defaults matching renderer (400x300).
@@ -164,8 +170,9 @@
             (global.set $main_win_cy (i32.const 300))))
     (if (i32.eq (global.get $main_win_cy) (i32.const 0x80000000))
       (then (global.set $main_win_cy (i32.const 300))))
+    ;; $v holds the resolved menu ID (from hMenu param or class lpszMenuName fallback)
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
-      (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
+      (i32.ne (local.get $v) (i32.const 0))))
     (global.set $pending_wm_size (i32.or
       (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
       (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
@@ -237,6 +244,7 @@
     (else
     ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
     (global.set $pending_child_create (global.get $next_hwnd))
+    (global.set $pending_child_size_hwnd (global.get $next_hwnd))
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
@@ -394,24 +402,15 @@
     (then
     (local.set $packed (global.get $pending_child_size))
     (global.set $pending_child_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_create))
+    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_size_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver pending WM_SIZE after WM_CREATE
-    (if (global.get $pending_wm_size)
-    (then
-    (local.set $packed (global.get $pending_wm_size))
-    (global.set $pending_wm_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Drain posted message queue first
+    ;; Drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire
+    ;; PostMessage(WM_COMMAND, Deal) during WM_CREATE to create game objects,
+    ;; and the subsequent WM_SIZE needs those objects to exist for layout.
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
     (then
     ;; Dequeue first message (shift queue down)
@@ -425,6 +424,17 @@
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
     (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
     (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Deliver pending WM_SIZE after posted messages are drained
+    (if (global.get $pending_wm_size)
+    (then
+    (local.set $packed (global.get $pending_wm_size))
+    (global.set $pending_wm_size (i32.const 0))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phase 0: send WM_ACTIVATE first (game needs activation before paint)
@@ -544,7 +554,7 @@
     (local.set $packed (global.get $pending_child_size))
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then (global.set $pending_child_size (i32.const 0))))
-    (call $gs32 (local.get $arg0) (global.get $pending_child_create))
+    (call $gs32 (local.get $arg0) (global.get $pending_child_size_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $packed))

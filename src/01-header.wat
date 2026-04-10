@@ -560,6 +560,7 @@
   (global $PAINT_QUEUE i32 (i32.const 0x0000B200))
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
+  (global $pending_child_size_hwnd (mut i32) (i32.const 0)) ;; Child hwnd for pending WM_SIZE
   ;; Timer table at 0xAC00: 16 entries × 20 bytes each (ends 0xAD40)
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
   ;; Entry with id=0 is unused. Lives just past CLASS_RECORDS (see memory map).
