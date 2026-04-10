@@ -44,9 +44,13 @@ class WineAssembly {
       },
       onExit: (code) => {
         self.running = false;
-        if (self.renderer && !self._multiApp) {
-          self.renderer._exited = true;
-          self.renderer.windows = {};
+        if (self.renderer) {
+          if (self._multiApp) {
+            self._removeAppWindows();
+          } else {
+            self.renderer._exited = true;
+            self.renderer.windows = {};
+          }
           self.renderer.repaint();
         }
       },
@@ -154,9 +158,13 @@ class WineAssembly {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
         self.running = false;
-        if (self.renderer && !self._multiApp) {
-          self.renderer._exited = true;
-          self.renderer.windows = {};
+        if (self.renderer) {
+          if (self._multiApp) {
+            self._removeAppWindows();
+          } else {
+            self.renderer._exited = true;
+            self.renderer.windows = {};
+          }
           self.renderer.repaint();
         }
       }
@@ -521,6 +529,18 @@ class WineAssembly {
     this.instance.exports.clear_yield();
   }
 
+  _removeAppWindows() {
+    if (!this.renderer || !this._hwndBase) return;
+    const lo = this._hwndBase;
+    const hi = lo + 0x10000;
+    for (const hwnd of Object.keys(this.renderer.windows)) {
+      const h = Number(hwnd);
+      if (h >= lo && h < hi) {
+        delete this.renderer.windows[hwnd];
+      }
+    }
+  }
+
   run(stepsPerSlice = 50000) {
     this.running = true;
     const self = this;
@@ -536,6 +556,10 @@ class WineAssembly {
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
           self.running = false;
+          if (self.renderer && self._multiApp) {
+            self._removeAppWindows();
+            self.renderer.repaint();
+          }
           return;
         }
         // Handle yield reasons
