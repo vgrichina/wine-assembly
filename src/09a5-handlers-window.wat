@@ -66,6 +66,22 @@
     ;; Allocate HWND; first top-level window becomes main_hwnd
     (if (i32.eqz (global.get $main_hwnd))
     (then (global.set $main_hwnd (global.get $next_hwnd))))
+    ;; Resolve menu: explicit hMenu arg wins; if 0, fall back to the class's
+    ;; lpszMenuName (WNDCLASSA+32) when it's a MAKEINTRESOURCE integer
+    ;; (high 16 bits zero). Real Win32 does the same fallback. Without it,
+    ;; the JS renderer used to guess "first menu resource" which was wrong
+    ;; for apps that have menu resources only for popup TrackPopupMenu use.
+    (local.set $tmp (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; explicit hMenu
+    (if (i32.eqz (local.get $tmp))
+      (then
+        (local.set $i (call $class_find_slot (call $g2w (local.get $arg1))))
+        (if (i32.ge_s (local.get $i) (i32.const 0))
+          (then
+            (local.set $v (i32.load offset=32 (call $class_wndclass_addr (local.get $i)))) ;; lpszMenuName
+            ;; MAKEINTRESOURCE has high 16 zero — treat as resource ID
+            (if (i32.and (local.get $v)
+                          (i32.eqz (i32.and (local.get $v) (i32.const 0xFFFF0000))))
+              (then (local.set $tmp (local.get $v))))))))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (global.get $next_hwnd)                                    ;; hwnd
@@ -75,7 +91,7 @@
     (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
     (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
     (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
-    (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
+    (local.get $tmp)                                            ;; resolved menu
     ))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
@@ -367,6 +383,7 @@
     (then
     ;; Dequeue first message (shift queue down)
     (local.set $tmp (i32.const 0x400))
+    (call $host_log_i32 (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; DEBUG: drained msg
     (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))                        ;; hwnd
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; msg
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))  ;; wParam
@@ -548,6 +565,7 @@
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
+        (call $host_log_i32 (i32.load (i32.const 0x404))) ;; DEBUG: Peek drained msg
         ;; Dequeue into lpMsg
         (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))                        ;; hwnd
         (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))  ;; msg

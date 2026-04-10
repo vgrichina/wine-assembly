@@ -60,6 +60,18 @@
     (local.set $fn (i32.load (global.get $ip)))
     (local.set $op (i32.load offset=4 (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
+    ;; Defensive: if cache is corrupted (bad handler index), drop the
+    ;; whole cache and restart at $eip. The fresh decode will produce
+    ;; valid threaded code. This recovers from rare corruption rather
+    ;; than trapping with wasm "table index out of bounds".
+    (if (i32.ge_u (local.get $fn) (i32.const 219))
+      (then
+        (call $host_log_i32 (i32.const 0xCAC4BAD0))
+        (call $host_log_i32 (local.get $fn))
+        (call $host_log_i32 (global.get $eip))
+        (global.set $thread_alloc (global.get $THREAD_BASE))
+        (call $clear_cache)
+        (return)))
     (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
 
   ;; Read next thread i32 and advance $ip

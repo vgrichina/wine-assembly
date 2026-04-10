@@ -337,9 +337,14 @@ async function main() {
     if (renderer) renderer.setMenu(hwnd, menuResId);
   };
 
-  // Speed up ticks so timers fire faster in tests
-  const tickStart = Date.now();
-  h.get_ticks = () => ((tickStart + (Date.now() - tickStart) * 200) & 0x7FFFFFFF);
+  // Deterministic tick: drive from the batch counter, not wall clock.
+  // Wall-clock ticks make pinball (and any timeGetTime-driven game) flake
+  // between runs because batches don't take a fixed wall-time. 1 tick per
+  // batch ≈ 1 simulated ms per batch which roughly matches our throughput.
+  // ~200 simulated ms per batch matches the throughput of the old wall-clock
+  // implementation (Date.now() * 200 with batches taking ~1ms wall time).
+  const tickState = { batch: 0 };
+  h.get_ticks = () => ((tickState.batch * 200) & 0x7FFFFFFF);
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -776,6 +781,7 @@ async function main() {
   };
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    tickState.batch = batch;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
@@ -830,6 +836,19 @@ async function main() {
             we.send_message(found, 0x0201, 0, 0);
             we.send_message(found, 0x0202, 0, 0);
             logs.push(`[input] find-click: id=0x${ev.ctrlId.toString(16)} hwnd=0x${found.toString(16)} at batch ${batch}`);
+            {
+              const dv = new DataView(memory.buffer);
+              const entries = [];
+              for (let i = 0; i < 8; i++) {
+                const h = dv.getUint32(0x400 + i*16, true);
+                const m = dv.getUint32(0x400 + i*16 + 4, true);
+                if (!h && !m) continue;
+                const wp = dv.getUint32(0x400 + i*16 + 8, true);
+                const lp = dv.getUint32(0x400 + i*16 + 12, true);
+                entries.push(`[${i}] h=0x${h.toString(16)} m=0x${m.toString(16)} wp=0x${wp.toString(16)} lp=0x${lp.toString(16)}`);
+              }
+              logs.push(`[input] post_queue after find-click: ${entries.length ? entries.join(' | ') : '(empty)'}`);
+            }
           } else {
             logs.push(`[input] find-click: id=0x${ev.ctrlId.toString(16)} NOT FOUND at batch ${batch}`);
           }
@@ -921,12 +940,10 @@ async function main() {
           }
         }
       } else if (ev.action === 'keypress' && renderer && renderer.handleKeyPress) {
-        // Drive WAT side first (find dialog and any other WAT-managed
-        // EditState consumers), then the legacy JS path so notepad's
-        // main-window edit child (still JS-side) keeps working.
-        if (instance.exports.send_char_to_focus) {
-          instance.exports.send_char_to_focus(ev.code);
-        }
+        // renderer.handleKeyPress already routes WM_CHAR to WAT when a
+        // WAT-managed edit has focus (see renderer-input.js), so don't
+        // also call send_char_to_focus here — that double-delivered
+        // each character to the find-dialog edit ("ABC" → "AABBCC").
         renderer.handleKeyPress(ev.code);
         logs.push(`[input] keypress code=${ev.code} at batch ${batch}`);
       } else if (ev.action === 'keydown' && renderer && renderer.handleKeyDown) {
@@ -1187,6 +1204,9 @@ if (VERBOSE) {
     // DEBUG: also dump every window's _backCanvas so we can see what's
     // accumulated independent of the compositor.
     for (const [hwnd, win] of Object.entries(renderer.windows)) {
+      if (win) {
+        console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
+      }
       if (win && win._backCanvas) {
         const back = win._backCanvas.toBuffer('image/png');
         const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);

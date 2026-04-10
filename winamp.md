@@ -168,6 +168,99 @@ After Sleep, the skin thread enters a msvcrt math function (likely `pow()` at 0x
 3. **Alternative: stub the msvcrt `pow()` function** — the skin thread calls `pow()` repeatedly for gamma correction. Intercepting `pow()` at WASM level (return fast approximation) would speed up the loop.
 4. **GetDIBColorTable** — currently returns 0 (stub). Should return palette entries for 8bpp bitmaps to enable the thread to properly convert colors.
 
+## SESSION 2 PROGRESS — Skin Actually Loads!
+
+### Findings
+
+- **Survey dialog is the gate**, not skin browser command. The first-run survey
+  (DialogBoxParamA #231 wrapping child #234) runs as a modal pump (`0xCACA0004`
+  thunk in `09b-dispatch.wat`). Until it is dismissed, all `host_check_input`
+  events are routed to the dialog proc — main wndproc never sees the injected
+  WM_COMMAND. Confirmed by tracing: with `--input=10:273:40041` (skin browser),
+  zero new APIs run; the modal pump just calls dispatch with WM_COMMAND 0x9c69
+  on the survey dialog (which returns FALSE).
+- **Dismiss survey with IDCANCEL**: `--input=10:273:2` (WM_COMMAND wParam=2)
+  closes the modal pump → survey thread spawns → control returns to main
+  WinMain init code → it proceeds into skin loading inline (not via separate
+  thread on this path).
+- **GDI skin pipeline runs in main thread** after survey dismissal. Calls
+  flow: GetPixel × N → SelectObject → GetNearestColor → CreateBrushIndirect →
+  ... per pixel color conversion. ~1900 API calls before first crash.
+
+### Fixes Made This Session
+
+1. **`_ftol` was using trapping `i32.trunc_f64_s`** → swapped to
+   `i32.trunc_sat_f64_s` (`src/09a6-handlers-crt.wat:275`). The skin color math
+   produces NaN/inf which previously crashed. (This wasn't the actual blocker
+   for this exe, but the trap was real and would bite eventually.)
+2. **`CreateBrushIndirect` was missing entirely** — added handler that reads
+   `lbColor` from the LOGBRUSH struct and delegates to
+   `host_gdi_create_solid_brush` (`src/09a4-handlers-gdi.wat`). Added to
+   `tools/gen_api_table.js`.
+3. **`AppendMenuA` / `InsertMenuA` were missing** — added no-op stubs
+   returning TRUE in `src/09a-handlers.wat` (matches the existing `DeleteMenu`
+   pattern). Winamp populates preset/playlist menus via these; visual skin
+   does not depend on menu state.
+
+### Current State: Skin Loaded in Back Buffer, Not Yet Blitted On-Screen
+
+`scratch/winamp_back_65537.png` (269×71) shows the **classic Winamp 2.91
+skin**: WINAMP header bar, transport buttons, time/visualization area — all
+correctly rendered into an offscreen DC. So `[0x450500]` is now being
+populated by the inline skin loader, and the back buffer has real pixels.
+
+The on-screen `winamp.png` is still teal (Win98 desktop) because the main
+window's WM_PAINT never blits the back buffer to the front buffer. After
+the inline skin load, main thread calls SetTimer then EIP→0 (return-into-NULL,
+likely a function-pointer table slot still uninitialized — needs investigation).
+
+### Test Command (current)
+
+```bash
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 \
+  --batch-size=5000 --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --stuck-after=5000 --input=10:273:2 --png=scratch/winamp.png
+```
+
+Stats: 2138 API calls, then EIP=0 stall.
+
+### Next Investigations
+
+1. **Why EIP=0 after SetTimer?** Trace the call site at `0x0041fe09 / 0x0041fe10`
+   region — likely an indirect call through an uninitialized function pointer
+   in BSS that should have been set during init we still skip.
+2. **WM_PAINT path needs to blit `[0x450500]` → window front buffer.** Even
+   with EIP=0 fixed, the renderer needs to know that this hwnd's contents
+   come from the offscreen DC at `[0x450500]`. Probably the wndproc's WM_PAINT
+   handler at `0x410060` does the BitBlt — confirm we route WM_PAINT here and
+   that BitBlt with the back-buffer DC works.
+3. **Garbled middle strips in destination skin buffer.** Compare
+   `scratch/winamp-gdi/gdi_2097169_275x116.png` (destination) vs
+   `gdi_2097173_280x186.png` (source PE bitmap, which is correct). The
+   destination's titlebar, volume slider, and button row are correct, but
+   the LCD area and visualizer band are noise. Winamp builds the destination
+   via per-pixel `GetPixel` → `CreateBrush` → `FillRect` (NOT `GetDIBits`),
+   so the bug is in `gdi_fill_rect` or the rect args computed by Winamp for
+   those specific bands. Suspect: width/height args from FPU math (now
+   `i32.trunc_sat_f64_s` after the `_ftol` fix) producing 0/negative for
+   some rows, which `gdi_fill_rect` then no-ops, leaving uninitialized pixels.
+
+### Palette Plumbing Added (not on hot path for this exe but correct)
+
+- `lib/resources.js`: 8bpp DIB parser now retains `indices` (raw palette
+  indices) and `paletteBGRA` (BMP-format palette) alongside the expanded
+  RGBA `pixels`.
+- `lib/host-imports.js`: `gdi_load_bitmap` propagates these to the GDI
+  object. `gdi_get_di_bits` 8bpp output path now copies palette indices
+  verbatim and writes the BMP palette into the BITMAPINFOHEADER. New
+  `gdi_get_dib_color_table` reads the selected bitmap's palette.
+- `src/01-header.wat`, `src/09a-handlers.wat`: import + wire
+  `GetDIBColorTable` to the host.
+
+Winamp doesn't actually call `GetDIBits` on the hot skin path (it uses
+`GetPixel`), so this didn't affect the rendering output, but it's correct
+infrastructure for any other paletted-bitmap caller.
+
 ## APIs Implemented for Winamp
 
 | API | Implementation |

@@ -465,8 +465,13 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (call $get_reg (local.get $op))) (return_call $next))
   (func $th_pop_r (param $op i32)
-    (call $set_reg (local.get $op) (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
+    ;; Read top-of-stack, advance esp, then assign — so `pop esp` ends up
+    ;; with the popped value (not popped_value + 4).
+    (local $v i32)
+    (local.set $v (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (call $set_reg (local.get $op) (local.get $v))
+    (return_call $next))
   (func $th_push_i32 (param $op i32)
     (local $v i32)
     (local.set $v (call $read_thread_word))

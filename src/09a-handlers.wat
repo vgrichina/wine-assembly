@@ -3847,9 +3847,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 407: RemoveMenu — STUB: unimplemented
+  ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
+  ;; AppendMenuA/InsertMenuA are no-ops in this build (the menu bar is parsed
+  ;; from the PE resource), so RemoveMenu has nothing real to remove either.
   (func $handle_RemoveMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 408: SetFilePointer — STUB: unimplemented
@@ -4404,9 +4407,23 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 460: GetUpdateRect — STUB: unimplemented
+  ;; 460: GetUpdateRect(hwnd, lpRect, bErase) — return TRUE with full client rect.
+  ;; This build does not track per-window dirty regions; BeginPaint always paints
+  ;; the whole client area, so any caller asking "what is dirty?" is told the
+  ;; entire client rect, matching what BeginPaint will hand them.
   (func $handle_GetUpdateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $cs i32)
+    (if (local.get $arg1)
+      (then
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
+          (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
+          (i32.shr_u (local.get $cs) (i32.const 16)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 461: IsMenu — STUB: unimplemented
@@ -6310,6 +6327,21 @@
   (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; RegisterDragDrop(hwnd, pDropTarget) — return S_OK.
+  ;; No real drag/drop path: there is no host OS drop source to deliver IDataObjects
+  ;; from, so tracking the IDropTarget would be pure bookkeeping. Return S_OK so
+  ;; callers (e.g. Winamp) proceed; any later drop events simply never arrive.
+  (func $handle_RegisterDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; RevokeDragDrop(hwnd) — return S_OK, matching the RegisterDragDrop no-op above.
+  (func $handle_RevokeDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 656: DeleteMenu — STUB: unimplemented

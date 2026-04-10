@@ -6723,5 +6723,19 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3555705674
+  },
+  {
+    "id": 961,
+    "name": "RegisterDragDrop",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2155858375
+  },
+  {
+    "id": 962,
+    "name": "RevokeDragDrop",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2826154840
   }
 ]
