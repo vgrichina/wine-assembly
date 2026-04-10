@@ -276,9 +276,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 732: sprintf — crash stub (use $wsprintf path for now)
+  ;; 732: sprintf(buf, fmt, ...) — cdecl, same as wsprintfA
   (func $handle_sprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $wsprintf_impl
+      (local.get $arg0) (local.get $arg1) (i32.add (global.get $esp) (i32.const 12))))
+    ;; cdecl: only pop return address
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 733: realloc(ptr, size) — cdecl
