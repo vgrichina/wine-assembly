@@ -1830,7 +1830,11 @@
           (then
             ;; Map SS_LEFT/CENTER/RIGHT (low 4 bits of style) → DT_LEFT(0)/CENTER(1)/RIGHT(2)
             (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
-            (local.set $fmt (i32.const 0x24)) ;; DT_VCENTER|DT_SINGLELINE
+            ;; SS_LEFT(0)/SS_CENTER(1)/SS_RIGHT(2) use DT_WORDBREAK for multi-line.
+            ;; SS_SIMPLE(0x0B), SS_LEFTNOWORDWRAP(0x0C) use DT_SINGLELINE.
+            (local.set $fmt (if (result i32) (i32.le_u (local.get $style) (i32.const 2))
+              (then (i32.const 0x10))    ;; DT_WORDBREAK
+              (else (i32.const 0x24))))  ;; DT_VCENTER|DT_SINGLELINE
             (if (i32.eq (local.get $style) (i32.const 1))
               (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x01))))) ;; DT_CENTER
             (if (i32.eq (local.get $style) (i32.const 2))
