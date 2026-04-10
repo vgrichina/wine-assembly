@@ -1311,12 +1311,7 @@
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then (global.set $paint_pending (i32.const 1)))
     (else (if (i32.ne (local.get $arg0) (i32.const 0))
-    (then
-      ;; Use slot 1 if empty or same hwnd, else overflow to slot 2
-      (if (i32.or (i32.eqz (global.get $child_paint_hwnd))
-                  (i32.eq (global.get $child_paint_hwnd) (local.get $arg0)))
-        (then (global.set $child_paint_hwnd (local.get $arg0)))
-        (else (global.set $child_paint_hwnd2 (local.get $arg0))))))))
+    (then (call $paint_queue_push (local.get $arg0))))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -2719,7 +2714,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (global.set $child_paint_hwnd (global.get $next_hwnd))
+    (call $paint_queue_push (global.get $next_hwnd))
     ))
     ;; Store parent hwnd (hWndParent = [esp+36])
     (call $wnd_set_parent (global.get $next_hwnd)
@@ -6183,7 +6178,7 @@
     (then
     (local.set $packed (global.get $pending_child_size))
     (global.set $pending_child_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_create))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))

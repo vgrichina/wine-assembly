@@ -240,7 +240,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (global.set $child_paint_hwnd (global.get $next_hwnd))
+    (call $paint_queue_push (global.get $next_hwnd))
     ))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -351,11 +351,7 @@
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
-          (else
-            (if (i32.or (i32.eqz (global.get $child_paint_hwnd))
-                        (i32.eq (global.get $child_paint_hwnd) (local.get $arg0)))
-              (then (global.set $child_paint_hwnd (local.get $arg0)))
-              (else (global.set $child_paint_hwnd2 (local.get $arg0))))))))
+          (else (call $paint_queue_push (local.get $arg0))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -398,7 +394,7 @@
     (then
     (local.set $packed (global.get $pending_child_size))
     (global.set $pending_child_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_create))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
@@ -500,16 +496,14 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver WM_PAINT to child window if pending (slot 1, then slot 2)
-    (if (global.get $child_paint_hwnd)
+    ;; Deliver WM_PAINT to child window from paint queue
+    (local.set $tmp (call $paint_queue_pop))
+    (if (local.get $tmp)
     (then
-    (call $gs32 (local.get $msg_ptr) (global.get $child_paint_hwnd))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    ;; Promote slot 2 → slot 1
-    (global.set $child_paint_hwnd (global.get $child_paint_hwnd2))
-    (global.set $child_paint_hwnd2 (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No paint — deliver WM_TIMER if any timer is due
@@ -550,7 +544,7 @@
     (local.set $packed (global.get $pending_child_size))
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then (global.set $pending_child_size (i32.const 0))))
-    (call $gs32 (local.get $arg0) (global.get $child_paint_hwnd))
+    (call $gs32 (local.get $arg0) (global.get $pending_child_create))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $packed))
@@ -659,12 +653,14 @@
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Child paint pending
-    (if (global.get $child_paint_hwnd)
+    ;; Child paint pending (from paint queue)
+    (if (global.get $paint_queue_count)
     (then
-    (local.set $tmp (global.get $child_paint_hwnd))
-    (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (global.set $child_paint_hwnd (i32.const 0))))
+    (local.set $tmp (if (result i32) (i32.and (local.get $arg4) (i32.const 1))
+      (then (call $paint_queue_pop))
+      (else (i32.load (global.get $PAINT_QUEUE)))))))  ;; peek without removing if PM_NOREMOVE
+    (if (local.get $tmp)
+    (then
     (call $gs32 (local.get $arg0) (local.get $tmp))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))

@@ -457,4 +457,41 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; Paint queue: 16-entry array at PAINT_QUEUE (0xAD50), count in $paint_queue_count
+  ;; $paint_queue_push(hwnd): add hwnd if not already in queue and queue not full
+  (func $paint_queue_push (param $hwnd i32)
+    (local $i i32) (local $addr i32)
+    ;; Skip if already in queue
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $paint_queue_count)))
+      (if (i32.eq (i32.load (i32.add (global.get $PAINT_QUEUE) (i32.mul (local.get $i) (i32.const 4))))
+                  (local.get $hwnd))
+        (then (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    ;; Add if room (max 16, at 0xB200 after MENU_DATA_TABLE)
+    (if (i32.lt_u (global.get $paint_queue_count) (i32.const 16))
+      (then
+        (i32.store (i32.add (global.get $PAINT_QUEUE) (i32.mul (global.get $paint_queue_count) (i32.const 4)))
+          (local.get $hwnd))
+        (global.set $paint_queue_count (i32.add (global.get $paint_queue_count) (i32.const 1))))))
+
+  ;; $paint_queue_pop() → hwnd (0 if empty)
+  (func $paint_queue_pop (result i32)
+    (local $hwnd i32) (local $i i32)
+    (if (i32.eqz (global.get $paint_queue_count)) (then (return (i32.const 0))))
+    ;; Take first entry
+    (local.set $hwnd (i32.load (global.get $PAINT_QUEUE)))
+    ;; Shift remaining entries down
+    (global.set $paint_queue_count (i32.sub (global.get $paint_queue_count) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $shift
+      (br_if $done (i32.ge_u (local.get $i) (global.get $paint_queue_count)))
+      (i32.store (i32.add (global.get $PAINT_QUEUE) (i32.mul (local.get $i) (i32.const 4)))
+        (i32.load (i32.add (global.get $PAINT_QUEUE) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $shift)))
+    (local.get $hwnd))
+
 
