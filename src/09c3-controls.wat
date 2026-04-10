@@ -2859,6 +2859,16 @@
   (func $wnd_destroy_tree (param $hwnd i32)
     (local $i i32) (local $addr i32) (local $child i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (call $wnd_destroy_children (local.get $hwnd))
+    ;; All children gone — let the wndproc free per-window state, then drop the slot.
+    (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0002)
+            (i32.const 0) (i32.const 0)))
+    (call $wnd_table_remove (local.get $hwnd)))
+
+  ;; Destroy all children of a window (depth-first) but not the window itself.
+  (func $wnd_destroy_children (export "wnd_destroy_children") (param $hwnd i32)
+    (local $i i32) (local $addr i32) (local $child i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
     (block $outer
       (loop $rescan
         (local.set $i (i32.const 0))
@@ -2872,11 +2882,7 @@
               (call $wnd_destroy_tree (local.get $child))
               (br $rescan)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan))))
-    ;; All children gone — let the wndproc free per-window state, then drop the slot.
-    (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0002)
-            (i32.const 0) (i32.const 0)))
-    (call $wnd_table_remove (local.get $hwnd)))
+          (br $scan)))))
 
   ;; ============================================================
   ;; Modal common-dialog scaffolding

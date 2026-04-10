@@ -52,13 +52,19 @@
     ;; DialogBoxParamA continuation — dialog proc returned, pump next message or finish
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0004))
       (then
-        ;; If EndDialog was called, return result to original caller
+        (local.set $arg4 (i32.const 0))  ;; reuse as wndproc temp
+        ;; If EndDialog was called, destroy dialog and return result
         (if (global.get $dlg_ended)
           (then
+            ;; Destroy WAT-managed child controls (sends WM_DESTROY to each)
+            ;; but not the dialog itself — its x86 dlg_proc would interpret
+            ;; WM_DESTROY as app shutdown and call PostQuitMessage.
+            (call $wnd_destroy_children (global.get $dlg_hwnd))
+            (call $wnd_table_remove (global.get $dlg_hwnd))
+            (call $host_destroy_window (global.get $dlg_hwnd))
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_ended (i32.const 0))
-            (global.set $quit_flag (i32.const 0))
             (return)))
         ;; Check post queue first
         (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
@@ -72,14 +78,26 @@
             (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
               (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
                 (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-            ;; Dispatch to dialog proc
+            ;; Dispatch by hwnd wndproc — WAT-native controls handle directly
+            (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+              (then
+                (drop (call $wat_wndproc_dispatch
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                ;; Re-enter dialog loop
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
+            ;; x86 wndproc or dialog proc — call via guest stack
+            (if (i32.eqz (local.get $arg4))
+              (then (local.set $arg4 (global.get $dlg_proc))))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
-            (global.set $eip (global.get $dlg_proc))
+            (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
         ;; Poll host for input
@@ -93,14 +111,25 @@
             (local.set $arg0 (call $host_check_input_hwnd))                        ;; hwnd
             (if (i32.eqz (local.get $arg0))
               (then (local.set $arg0 (global.get $dlg_hwnd))))
-            ;; Dispatch to dialog proc
+            ;; Dispatch by hwnd wndproc — WAT-native controls handle directly
+            (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+              (then
+                (drop (call $wat_wndproc_dispatch
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
+            ;; x86 wndproc or dialog proc
+            (if (i32.eqz (local.get $arg4))
+              (then (local.set $arg4 (global.get $dlg_proc))))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
-            (global.set $eip (global.get $dlg_proc))
+            (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
         ;; No input — yield to host and come back
