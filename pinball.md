@@ -36,6 +36,40 @@ After the fix:
 
 Regression-checked notepad, calc, freecell, ski32 — all still reach clean exit.
 
+## Flipper input chain works — render is the only failure (2026-04-09)
+
+User reported flippers don't move. End-to-end trace with breakpoints + watchpoints proved every stage of the input → flipper-update path works:
+
+| Stage | Verification |
+|---|---|
+| `check_input` returns Z | trace shows `msg=0x100 wParam=0x5a` |
+| `PeekMessageA` yields it | `DispatchMessageA` API call with msg=0x100 wParam=0x5a |
+| Wndproc `0x01007a3e` reached | `--break=0x01007d1a` (WM_KEYDOWN case) fires for Z |
+| `process_key` `0x01015072` called | break fires for Z |
+| Three early-exit gates pass | `[0x1024fd8]` and `[0x1025570]` watchpoints never fire (stay 0); `[0x1025568]` set to 1 at batch 292 by `set_game_state(1)` and never reverts |
+| Flipper-key cmp at `0x010150bf` | hit with `esi=0x5a` |
+| Match body at `0x010150c7` | reached — Z matches `[0x1028238]` (left-flipper key var, set to `0x5a` at batch 1759) |
+| Vtable call `[0x1025658]->vtable[0](float, 1000)` at `0x010150de` | executes — game state advances (score 2000 → 3000 from bumper hits while ball is in play) |
+
+So pinball receives the keypress, dispatches it, accepts it, calls the flipper method, and the ball physics responds. **The flipper sprite renders as missing/erased instead of rotated.** Confirmed by Gemini visual analysis of the snapshots in `scratch/f_*.png` / `scratch/run*.png`: every Z-held frame shows `flipper=missing/erased`. This is the same StretchDIBits sub-rect bug below — when pinball blits the rotated flipper sprite, the destination at the flipper coords gets overwritten but the source pixels read are stale, so the at-rest flipper is erased instead of being replaced with the rotated sprite.
+
+### Test gotcha: ball must be plunged for flippers to react
+
+`test/test-pinball-flipper.js` originally only sent F2 then Z. F2 starts a *game* but the table sits in "Awaiting Deployment" until the user holds Space to plunge the ball. The flipper game-state object's update path silently no-ops while there is no ball in play, so the test was indistinguishable from a broken input chain. Fixed: the test now sends `keydown:32 ... keyup:32` (VK_SPACE = plunger) between F2 and the Z press.
+
+### Test gotcha: `test/run.js` `get_ticks` was wall-clock and non-deterministic
+
+While debugging the plunger, three back-to-back runs of the same input sequence produced API counts 50561 / 48911 / 48311 / 50543 — the plunger sometimes deployed the ball, sometimes didn't, and `pinball.md`'s "rand loop ~30K iterations" termination drifted between runs. Root cause: `test/run.js` had
+
+```js
+const tickStart = Date.now();
+h.get_ticks = () => ((tickStart + (Date.now() - tickStart) * 200) & 0x7FFFFFFF);
+```
+
+so simulated time was tied to host wall-clock through `Date.now()`. Each batch took a jittery amount of wall-time (GC, FS I/O, system load), so the simulated ms between API calls varied per run. A 500-batch Space hold gave pinball anywhere from a few hundred ms to several seconds of perceived plunger duration.
+
+**Fix** (`test/run.js:340-345`): drive `get_ticks` from the batch counter, `tick = batch * 200`. Three back-to-back runs now produce identical 50543-API-call traces. Anything that uses `timeGetTime` / `GetTickCount` in CLI tests is now reproducible. (The browser/`lib/host-imports.js` path still uses `Date.now()`, which is fine — interactive sessions don't need determinism.)
+
 ## In-progress (2026-04-09): StretchDIBits sub-rect blits render wrong
 
 After the WM_SETFOCUS fix above, pinball reaches active gameplay and issues ~8900 `StretchDIBits` calls per 10K batches. The rendered window has the table backdrop visible but **sprites, score-panel text, ball, lights, and digits all look wrong**. Investigation so far:

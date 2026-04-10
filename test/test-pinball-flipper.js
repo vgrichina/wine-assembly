@@ -52,17 +52,20 @@ const afterPng   = path.join(TMP, 'pinball_flipper_after.png');
 for (const p of [beforePng, controlPng, afterPng]) { try { fs.unlinkSync(p); } catch (_) {} }
 
 // Schedule (batch numbers chosen so pinball has time to reach gameplay).
-// We take THREE snapshots so the test can distinguish a real flipper
-// swing from background animation noise (score blink, "Awaiting
-// Deployment" pulse, etc):
+// IMPORTANT: pinball gates flipper input on "ball in play" — F2 alone
+// leaves the table in "Awaiting Deployment" and Z is silently no-op'd
+// by the game-state object's update path. We must hold Space (the
+// plunger) to deploy the ball before pressing Z.
 //
-//   6000 : F2 (start new game)
-//   6500 : snapshot "before"   (no key held)
-//   6600 : snapshot "control"  (still no key — measures animation noise
-//                                 over 100 batches)
-//   6610 : keydown Z   (left flipper)
-//   6700 : snapshot "after"    (with flipper key held for ~90 batches)
-//   6710 : keyup Z
+//   5000 : F2 (start new game)
+//   5500 : keydown Space (plunger) — needs ~2000 batches to build full
+//                                     plunger power and actually deploy
+//   7500 : keyup Space   (ball is now in play)
+//   7700 : snapshot "before"   (no flipper key held)
+//   7800 : snapshot "control"  (still no flipper key — animation noise)
+//   7810 : keydown Z   (left flipper)
+//   8000 : snapshot "after"    (with flipper key held ~190 batches)
+//   8010 : keyup Z
 //
 // Comparison:
 //   noise = pixel diff(before, control)         — baseline animation
@@ -70,16 +73,18 @@ for (const p of [beforePng, controlPng, afterPng]) { try { fs.unlinkSync(p); } c
 // If `move` is not meaningfully larger than `noise` (especially in the
 // bottom 30% where the flippers live), the flipper is broken.
 const inputSpec = [
-  `6000:keydown:113`,    // VK_F2
-  `6010:keyup:113`,
-  `6500:png:${beforePng}`,
-  `6600:png:${controlPng}`,
-  `6610:keydown:90`,     // VK 'Z' = left flipper
-  `6700:png:${afterPng}`,
-  `6710:keyup:90`,
+  `5000:keydown:113`,    // VK_F2
+  `5010:keyup:113`,
+  `5500:keydown:32`,     // VK_SPACE = plunger (hold ~2000 batches)
+  `7500:keyup:32`,
+  `7700:png:${beforePng}`,
+  `7800:png:${controlPng}`,
+  `7810:keydown:90`,     // VK 'Z' = left flipper
+  `8000:png:${afterPng}`,
+  `8010:keyup:90`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input='${inputSpec}' --max-batches=6800 --stuck-after=6800`;
+const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --input='${inputSpec}' --max-batches=8100 --stuck-after=8100`;
 console.log('$', cmd);
 
 let out = '';
