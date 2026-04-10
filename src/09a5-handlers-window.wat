@@ -292,6 +292,10 @@
           (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
         (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
         (br $ctrl_loop)))
+    ;; Set control geometry from dialog resource template
+    (if (local.get $ctrl_count)
+      (then (call $dlg_set_ctrl_geom (local.get $arg1)
+        (i32.add (local.get $hwnd) (i32.const 1)) (local.get $ctrl_count))))
     ;; If dlgProc is provided, store it in window table and dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then

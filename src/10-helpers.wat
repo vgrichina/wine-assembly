@@ -494,4 +494,193 @@
       (br $shift)))
     (local.get $hwnd))
 
+  ;; Skip a DLGTEMPLATE variable-length field (OrdOrString):
+  ;;   0x0000 → null (skip 2 bytes)
+  ;;   0xFFFF → ordinal (skip 4 bytes: 0xFFFF + u16 value)
+  ;;   else   → UTF-16LE null-terminated string (skip to null + 2)
+  ;; $wa = WASM address of field start. Returns WASM address past field.
+  (func $dlg_skip_ord_or_sz (param $wa i32) (result i32)
+    (local $ch i32)
+    (local.set $ch (i32.load16_u (local.get $wa)))
+    (if (i32.eqz (local.get $ch))
+      (then (return (i32.add (local.get $wa) (i32.const 2)))))
+    (if (i32.eq (local.get $ch) (i32.const 0xFFFF))
+      (then (return (i32.add (local.get $wa) (i32.const 4)))))
+    ;; UTF-16 string — scan for null terminator
+    (block $done (loop $scan
+      (local.set $ch (i32.load16_u (local.get $wa)))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 2)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (br $scan)))
+    (local.get $wa))
+
+  ;; Skip a UTF-16LE null-terminated string. Returns WASM address past null.
+  (func $dlg_skip_sz (param $wa i32) (result i32)
+    (block $done (loop $scan
+      (if (i32.eqz (i32.load16_u (local.get $wa)))
+        (then (return (i32.add (local.get $wa) (i32.const 2)))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 2)))
+      (br $scan)))
+    (local.get $wa))
+
+  ;; Convert UTF-16LE OrdOrString at WASM addr $wa to ASCII in guest buffer.
+  ;; Returns guest ptr to NUL-terminated ASCII string (heap-allocated), or 0 if null/ordinal.
+  ;; Also advances $wa past the field (caller must use returned $wa_out).
+  ;; out[0] = guest text ptr (or 0), out[1] = new $wa position
+  ;; We use two return values via a scratch global pair.
+  (global $dlg_text_ptr (mut i32) (i32.const 0))
+  (global $dlg_text_wa  (mut i32) (i32.const 0))
+  (func $dlg_read_text (param $wa i32)
+    (local $ch i32) (local $len i32) (local $start i32) (local $buf i32) (local $j i32)
+    (local.set $ch (i32.load16_u (local.get $wa)))
+    ;; null → skip 2 bytes, return 0
+    (if (i32.eqz (local.get $ch))
+      (then
+        (global.set $dlg_text_ptr (i32.const 0))
+        (global.set $dlg_text_wa (i32.add (local.get $wa) (i32.const 2)))
+        (return)))
+    ;; ordinal (0xFFFF) → skip 4 bytes, return 0
+    (if (i32.eq (local.get $ch) (i32.const 0xFFFF))
+      (then
+        (global.set $dlg_text_ptr (i32.const 0))
+        (global.set $dlg_text_wa (i32.add (local.get $wa) (i32.const 4)))
+        (return)))
+    ;; UTF-16 string — measure length first
+    (local.set $start (local.get $wa))
+    (local.set $len (i32.const 0))
+    (block $m_done (loop $m_loop
+      (br_if $m_done (i32.eqz (i32.load16_u (local.get $wa))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 2)))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $m_loop)))
+    (local.set $wa (i32.add (local.get $wa) (i32.const 2))) ;; skip null
+    (global.set $dlg_text_wa (local.get $wa))
+    ;; Allocate guest buffer and convert to ASCII
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $j (i32.const 0))
+    (block $c_done (loop $c_loop
+      (br_if $c_done (i32.ge_u (local.get $j) (local.get $len)))
+      (i32.store8 (call $g2w (i32.add (local.get $buf) (local.get $j)))
+        (i32.and (i32.load16_u (i32.add (local.get $start)
+          (i32.mul (local.get $j) (i32.const 2)))) (i32.const 0xFF)))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $c_loop)))
+    (i32.store8 (call $g2w (i32.add (local.get $buf) (local.get $len))) (i32.const 0))
+    (global.set $dlg_text_ptr (local.get $buf)))
+
+  ;; Parse dialog resource template, set CONTROL_GEOM, and send WM_CREATE
+  ;; to each control so it initialises its state (text, style, etc.).
+  ;; $dlg_id     = dialog resource ID
+  ;; $first_hwnd = HWND of the first control (sequential)
+  ;; $count      = number of controls
+  (func $dlg_set_ctrl_geom (param $dlg_id i32) (param $first_hwnd i32) (param $count i32)
+    (local $data_entry i32) (local $rva i32) (local $wa i32) (local $p i32)
+    (local $style i32) (local $ctrl_count i32)
+    (local $i i32) (local $hwnd i32) (local $slot i32)
+    (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
+    (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_id i32)
+    (local $text_ptr i32) (local $cs i32)
+    ;; Find RT_DIALOG resource (type 5)
+    (local.set $data_entry (call $find_resource (i32.const 5) (local.get $dlg_id)))
+    (if (i32.eqz (local.get $data_entry)) (then (return)))
+    ;; Read RVA from data entry
+    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
+    (local.set $wa (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+    (local.set $p (local.get $wa))
+    ;; Detect extended dialog template: sig=1 at offset 0, ver=0xFFFF at offset 2
+    (local.set $is_ex (i32.and
+      (i32.eq (i32.load16_u (local.get $p)) (i32.const 1))
+      (i32.eq (i32.load16_u (i32.add (local.get $p) (i32.const 2))) (i32.const 0xFFFF))))
+    ;; Parse header — skip to control count field
+    (if (local.get $is_ex)
+      (then
+        (local.set $style (i32.load (i32.add (local.get $p) (i32.const 12))))
+        (local.set $p (i32.add (local.get $p) (i32.const 16))))
+      (else
+        (local.set $style (i32.load (local.get $p)))
+        (local.set $p (i32.add (local.get $p) (i32.const 8)))))
+    ;; Read count, skip x(2)+y(2)+cx(2)+cy(2) = 10 bytes
+    (local.set $ctrl_count (i32.load16_u (local.get $p)))
+    (local.set $p (i32.add (local.get $p) (i32.const 10)))
+    ;; Skip variable header fields: menu, class, title
+    (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
+    (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
+    (local.set $p (call $dlg_skip_sz (local.get $p)))
+    ;; If DS_SETFONT (0x40), skip font fields
+    (if (i32.and (local.get $style) (i32.const 0x40))
+      (then
+        (local.set $p (i32.add (local.get $p) (i32.const 2)))
+        (if (local.get $is_ex)
+          (then (local.set $p (i32.add (local.get $p) (i32.const 4)))))
+        (local.set $p (call $dlg_skip_sz (local.get $p)))))
+    ;; Allocate one CREATESTRUCT on the heap (48 bytes), reuse for all controls
+    (local.set $cs (call $heap_alloc (i32.const 48)))
+    ;; Iterate DLGITEMTEMPLATE entries
+    (local.set $i (i32.const 0))
+    (block $done (loop $ctrl_loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
+      ;; DWORD-align
+      (local.set $p (i32.and (i32.add (local.get $p) (i32.const 3)) (i32.const -4)))
+      ;; Read control fields
+      (if (local.get $is_ex)
+        (then
+          ;; Extended: helpId(4)+exStyle(4)+style(4) = 12, then x,y,cx,cy
+          (local.set $ctrl_style (i32.load (i32.add (local.get $p) (i32.const 8))))
+          (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 12))))
+          (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 14))))
+          (local.set $cw (i32.load16_s (i32.add (local.get $p) (i32.const 16))))
+          (local.set $ch (i32.load16_s (i32.add (local.get $p) (i32.const 18))))
+          (local.set $ctrl_id (i32.load (i32.add (local.get $p) (i32.const 20))))
+          (local.set $p (i32.add (local.get $p) (i32.const 24))))
+        (else
+          ;; Standard: style(4)+exStyle(4)=8, then x,y,cx,cy,id
+          (local.set $ctrl_style (i32.load (local.get $p)))
+          (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 8))))
+          (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 10))))
+          (local.set $cw (i32.load16_s (i32.add (local.get $p) (i32.const 12))))
+          (local.set $ch (i32.load16_s (i32.add (local.get $p) (i32.const 14))))
+          (local.set $ctrl_id (i32.load16_u (i32.add (local.get $p) (i32.const 16))))
+          (local.set $p (i32.add (local.get $p) (i32.const 18)))))
+      ;; Skip className
+      (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
+      ;; Read text (convert UTF-16 → ASCII, heap-allocate)
+      (call $dlg_read_text (local.get $p))
+      (local.set $text_ptr (global.get $dlg_text_ptr))
+      (local.set $p (global.get $dlg_text_wa))
+      ;; Skip extra data
+      (local.set $p (i32.add (local.get $p)
+        (i32.add (i32.const 2) (i32.load16_u (local.get $p)))))
+      ;; Set geometry: DLU → pixels (x*3/2, y*7/4)
+      (local.set $hwnd (i32.add (local.get $first_hwnd) (local.get $i)))
+      (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+      (if (i32.ge_s (local.get $slot) (i32.const 0))
+        (then
+          (call $ctrl_geom_set (local.get $slot)
+            (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
+            (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4))
+            (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
+            (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4)))))
+      ;; Build CREATESTRUCT and send WM_CREATE
+      ;; CREATESTRUCT: +0 lpCreateParams, +4 hInstance, +8 hMenu(=ctrlId),
+      ;;   +12 hwndParent, +16 cy, +20 cx, +24 y, +28 x, +32 style, +36 lpszName, +40 lpszClass, +44 dwExStyle
+      (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
+      (i32.store offset=12 (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=16 (call $g2w (local.get $cs)) (local.get $ch))
+      (i32.store offset=20 (call $g2w (local.get $cs)) (local.get $cw))
+      (i32.store offset=24 (call $g2w (local.get $cs)) (local.get $cy))
+      (i32.store offset=28 (call $g2w (local.get $cs)) (local.get $cx))
+      (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
+      (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_ptr))
+      (i32.store offset=40 (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
+      (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+      ;; Free text buffer
+      (if (local.get $text_ptr) (then (call $heap_free (local.get $text_ptr))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ctrl_loop)))
+    (call $heap_free (local.get $cs)))
+
 

@@ -53,25 +53,20 @@ for (const p of [initialPng, dealPng]) {
 // Build input sequence: dismiss assertion dialogs (Continue=IDOK=1),
 // then snapshot, then Deal, then dismiss more assertions, then snapshot.
 // The debug build fires ~17 assertions during initial deal.
-const dismissAsserts = [];
-for (let b = 50; b <= 430; b += 20) {
-  dismissAsserts.push(`${b}:0x111:1`);
-}
+// Each assertion dialog processes WM_CREATE for its controls, so space
+// dismissals at 40-batch intervals for headroom.
+const dismiss = (start, count, step) =>
+  Array.from({length: count}, (_, i) => `${start + i * step}:0x111:1`);
 
 const inputSpec = [
-  ...dismissAsserts,
-  `470:png:${initialPng}`,            // snapshot after initial deal
-  '490:0x111:1000',                    // Game > Deal
-  // Dismiss assertions from the new deal
-  '510:0x111:1', '530:0x111:1', '550:0x111:1', '570:0x111:1',
-  '590:0x111:1', '610:0x111:1', '630:0x111:1', '650:0x111:1',
-  '670:0x111:1', '690:0x111:1', '710:0x111:1', '730:0x111:1',
-  '750:0x111:1', '770:0x111:1', '790:0x111:1', '810:0x111:1',
-  '830:0x111:1', '850:0x111:1', '870:0x111:1', '890:0x111:1',
-  `920:png:${dealPng}`,                // snapshot after re-deal
+  ...dismiss(50, 20, 40),                // dismiss initial assertions (50..810)
+  `900:png:${initialPng}`,               // snapshot after initial deal
+  '950:0x111:1000',                      // Game > Deal
+  ...dismiss(1000, 20, 40),              // dismiss re-deal assertions (1000..1760)
+  `1850:png:${dealPng}`,                 // snapshot after re-deal
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=950`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=1900`;
 console.log('$', cmd.replace(ROOT, '.'));
 
 let out = '';

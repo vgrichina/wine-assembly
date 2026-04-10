@@ -1221,6 +1221,10 @@
         ;; If old wndproc is WNDPROC_BUILTIN sentinel, return 0 (no real wndproc to chain)
         (if (i32.eq (global.get $eax) (global.get $WNDPROC_BUILTIN))
           (then (global.set $eax (i32.const 0))))
+        ;; If old wndproc is 0 (not in table), fall back to global wndproc for main window
+        (if (i32.and (i32.eqz (global.get $eax))
+                     (i32.eq (local.get $arg0) (global.get $main_hwnd)))
+          (then (global.set $eax (global.get $wndproc_addr))))
         (call $wnd_table_set (local.get $arg0) (local.get $arg2)) ;; set new wndproc
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
@@ -1587,8 +1591,14 @@
           (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
         (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
         (br $ctrl_loop)))
+    ;; Set control geometry from dialog resource template
+    (if (local.get $ctrl_count)
+      (then (call $dlg_set_ctrl_geom (local.get $dlg_id)
+        (i32.add (local.get $hwnd) (i32.const 1)) (local.get $ctrl_count))))
     ;; Register dialog proc in wnd_table
     (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
+    (call $host_show_window (local.get $hwnd) (i32.const 1))
     ;; Save return address — we'll restore it when EndDialog is called
     (global.set $dlg_ret_addr (call $gl32 (global.get $esp)))
     ;; Clean DialogBoxParamA frame (ret + 5 args = 24 bytes)
@@ -2364,6 +2374,13 @@
       (local.get $arg0) (local.get $arg1) (i32.add (global.get $esp) (i32.const 12))))
     ;; cdecl: only pop return address
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; wvsprintfA(buf, fmt, arglist) — stdcall, 3 args
+  (func $handle_wvsprintfA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $wsprintf_impl
+      (local.get $arg0) (local.get $arg1) (call $g2w (local.get $arg2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 256: GetPrivateProfileStringA — STUB: unimplemented
