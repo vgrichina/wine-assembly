@@ -108,6 +108,9 @@ async function main() {
         scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
       } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'poke') {
+        // B:poke:GUEST_ADDR:VALUE — write a dword to guest memory
+        scheduledInput.push({ batch, action: 'poke', addr: parseInt(parts[2]), value: parseInt(parts[3]) });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
@@ -208,6 +211,16 @@ async function main() {
           const strPtr = dv.getUint32(g2w(esp + 4), true);
           const strVal = readStr(g2w(strPtr), 64);
           if (strVal) strInfo = ` str="${strVal}"`;
+        } catch (_) {}
+      }
+      // Dump both strings for lstrcmp/lstrcmpi
+      if ((t === 'lstrcmpiA' || t === 'lstrcmpA') && !strInfo) {
+        try {
+          const s1 = dv.getUint32(g2w(esp + 4), true);
+          const s2 = dv.getUint32(g2w(esp + 8), true);
+          const v1 = readStr(g2w(s1), 32);
+          const v2 = readStr(g2w(s2), 32);
+          strInfo = ` "${v1}" vs "${v2}"`;
         } catch (_) {}
       }
 
@@ -339,12 +352,14 @@ async function main() {
 
   // Deterministic tick: drive from the batch counter, not wall clock.
   // Wall-clock ticks make pinball (and any timeGetTime-driven game) flake
-  // between runs because batches don't take a fixed wall-time. 1 tick per
-  // batch ≈ 1 simulated ms per batch which roughly matches our throughput.
-  // ~200 simulated ms per batch matches the throughput of the old wall-clock
-  // implementation (Date.now() * 200 with batches taking ~1ms wall time).
-  const tickState = { batch: 0 };
-  h.get_ticks = () => ((tickState.batch * 200) & 0x7FFFFFFF);
+  // between runs because batches don't take a fixed wall-time.
+  // Each call advances by 1ms so games that compare consecutive timeGetTime
+  // calls within the same batch see time progressing (pinball's physics tick
+  // requires this — it compares two timeGetTime results and only advances
+  // when they differ). Batch transitions add a larger jump (~200ms) to keep
+  // the overall simulated pace realistic.
+  const tickState = { batch: 0, callsInBatch: 0 };
+  h.get_ticks = () => (((tickState.batch * 200 + tickState.callsInBatch++) & 0x7FFFFFFF));
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -407,6 +422,35 @@ async function main() {
   h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
   h.com_create_instance = (rclsid, pUnkOuter, dwClsCtx, riid, ppv) => 0x80004002; // E_NOINTERFACE
 
+  // Check if a DLL file exists in VFS or host filesystem
+  h.has_dll_file = (nameWA) => {
+    const mem8 = new Uint8Array(memory.buffer);
+    let name = '';
+    for (let i = 0; i < 260; i++) {
+      const ch = mem8[nameWA + i];
+      if (!ch) break;
+      name += String.fromCharCode(ch);
+    }
+    const fileName = name.split('\\').pop().toLowerCase();
+    // Check VFS
+    if (ctx.vfs) {
+      const tryPaths = [name.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName];
+      for (const p of tryPaths) {
+        if (ctx.vfs.files.has(p)) return 1;
+      }
+    }
+    // Check host filesystem
+    const searchPaths = [
+      path.join(path.dirname(EXE_PATH), fileName),
+      path.join(path.dirname(EXE_PATH), 'plugins', fileName),
+      path.join(__dirname, 'binaries/dlls', fileName),
+    ];
+    for (const sp of searchPaths) {
+      if (fs.existsSync(sp)) return 1;
+    }
+    return 0;
+  };
+
   const imports = { host: h };
 
   const wasmModule = await WebAssembly.compile(wasmBytes);
@@ -449,6 +493,7 @@ async function main() {
       if (TRACE_API) logs.push(`  => ${hex(val)}`);
     };
     wh.exit = () => {};
+    wh.has_dll_file = h.has_dll_file;
     return { host: wh };
   };
 
@@ -544,18 +589,27 @@ async function main() {
     const exeName = path.basename(EXE_PATH).toLowerCase();
     ctx.vfs.files.set('c:\\' + exeName, { data: exeData, attrs: 0x20 });
     // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
+    // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
     const exeDir = path.dirname(EXE_PATH);
-    for (const f of fs.readdirSync(exeDir)) {
-      if (f.toLowerCase() === exeName) continue;
-      const fpath = path.join(exeDir, f);
-      try {
-        if (fs.statSync(fpath).isFile()) {
-          ctx.vfs.files.set('c:\\' + f.toLowerCase(), {
-            data: new Uint8Array(fs.readFileSync(fpath)), attrs: 0x20
-          });
-        }
-      } catch (_) {}
-    }
+    const loadDir = (hostDir, vfsPrefix) => {
+      for (const f of fs.readdirSync(hostDir)) {
+        if (vfsPrefix === 'c:\\' && f.toLowerCase() === exeName) continue;
+        const fpath = path.join(hostDir, f);
+        try {
+          const stat = fs.statSync(fpath);
+          if (stat.isFile()) {
+            ctx.vfs.files.set(vfsPrefix + f.toLowerCase(), {
+              data: new Uint8Array(fs.readFileSync(fpath)), attrs: 0x20
+            });
+          } else if (stat.isDirectory() && f !== '.' && f !== '..') {
+            const subDir = vfsPrefix + f.toLowerCase() + '\\';
+            ctx.vfs.dirs.add(subDir);
+            loadDir(fpath, subDir);
+          }
+        } catch (_) {}
+      }
+    };
+    loadDir(exeDir, 'c:\\');
   }
 
   const regs = () => {
@@ -782,6 +836,7 @@ async function main() {
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     tickState.batch = batch;
+    tickState.callsInBatch = 0;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
@@ -961,6 +1016,11 @@ async function main() {
         } catch (e) {
           logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'poke') {
+        const wa = g2w(ev.addr);
+        const dv = new DataView(memory.buffer);
+        dv.setUint32(wa, ev.value, true);
+        logs.push(`[input] poke [0x${ev.addr.toString(16)}] = 0x${ev.value.toString(16)} at batch ${batch}`);
       } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
@@ -1076,6 +1136,69 @@ async function main() {
           instance.exports.set_esp(instance.exports.get_esp() + 24);
         }
       }
+      instance.exports.clear_yield();
+    }
+
+    // Handle LoadLibraryA yield (yield_reason=5)
+    if (instance.exports.get_yield_reason() === 5) {
+      const nameWA = instance.exports.get_loadlib_name();
+      const mem8 = new Uint8Array(memory.buffer);
+      let nameStr = '';
+      if (nameWA > 0 && nameWA < mem8.length - 260) {
+        for (let i = 0; i < 260; i++) {
+          const ch = mem8[nameWA + i];
+          if (!ch) break;
+          nameStr += String.fromCharCode(ch);
+        }
+      }
+      const fileName = nameStr.split('\\').pop().toLowerCase();
+      // Search VFS for the DLL file
+      let dllData = null;
+      if (ctx.vfs) {
+        // Try exact path first, then just filename in common locations
+        const tryPaths = [
+          nameStr.toLowerCase(),
+          'c:\\' + fileName,
+          'c:\\plugins\\' + fileName,
+          'c:\\windows\\system\\' + fileName,
+        ];
+        for (const p of tryPaths) {
+          const entry = ctx.vfs.files.get(p);
+          if (entry) { dllData = entry.data; break; }
+        }
+      }
+      // Also try host filesystem
+      if (!dllData) {
+        const searchPaths = [
+          path.join(__dirname, 'binaries/dlls', fileName),
+          path.join(path.dirname(EXE_PATH), fileName),
+          path.join(path.dirname(EXE_PATH), 'plugins', fileName),
+        ];
+        for (const sp of searchPaths) {
+          if (fs.existsSync(sp)) {
+            dllData = new Uint8Array(fs.readFileSync(sp));
+            break;
+          }
+        }
+      }
+      if (dllData) {
+        const dllBytesArr = new Uint8Array(dllData);
+        const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm } = require('../lib/dll-loader');
+        const result = ld(instance.exports, memory.buffer, dllBytesArr);
+        console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
+        // Patch the new DLL's imports against all previously loaded DLLs
+        pdi(instance.exports, memory.buffer,
+          [{ name: fileName, bytes: dllBytesArr }],
+          [result], console.log);
+        // Call DllMain(DLL_PROCESS_ATTACH) — skip for now as it can trigger yields
+        // Plugin DLLs don't need complex init; their real init is via the plugin API
+        // if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
+        instance.exports.set_eax(result.loadAddr);
+      } else {
+        console.log(`[LoadLibrary] DLL not found: ${fileName}`);
+        instance.exports.set_eax(0);
+      }
+      // ESP and EIP already adjusted by WAT handler before yield
       instance.exports.clear_yield();
     }
 

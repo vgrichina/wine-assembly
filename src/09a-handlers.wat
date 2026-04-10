@@ -164,10 +164,27 @@
 
   ;; 4: GetProcAddress
   (func $handle_GetProcAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $v i32)
+    (local $tmp i32) (local $v i32) (local $i i32) (local $dll_base i32) (local $resolved i32)
     (block $gpa
     ;; If lpProcName is an ordinal (< 0x10000), return 0 (unsupported)
     (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
+    ;; Check if hModule matches a loaded DLL — if so, resolve from its export table
+    (local.set $i (i32.const 0))
+    (block $not_dll (loop $scan_dll
+      (br_if $not_dll (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (local.set $dll_base (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32)))))
+      (if (i32.eq (local.get $dll_base) (local.get $arg0))
+        (then
+          ;; Found matching DLL — resolve export by name
+          (local.set $resolved (call $resolve_name_export (local.get $i) (call $g2w (local.get $arg1))))
+          (if (local.get $resolved)
+            (then
+              (global.set $eax (local.get $resolved))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+              (return)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan_dll)))
+    ;; Not a loaded DLL — create thunk as before (Win32 API)
     ;; Allocate hint(2) + name in guest heap
     (local.set $tmp (call $guest_strlen (local.get $arg1)))
     (local.set $v (call $heap_alloc (i32.add (local.get $tmp) (i32.const 3)))) ;; 2 hint + name + NUL
@@ -176,16 +193,16 @@
     ;; Copy name string
     (call $memcpy (i32.add (call $g2w (local.get $v)) (i32.const 2))
     (call $g2w (local.get $arg1)) (i32.add (local.get $tmp) (i32.const 1)))
+    ;; Look up api_id — if unknown (0xFFFF), return NULL instead of creating broken thunk
+    (local.set $i (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
+    (if (i32.eq (local.get $i) (i32.const 0xFFFF))
+      (then (br $gpa))) ;; return 0 — function not found
     ;; Create thunk: store RVA and api_id at THUNK_BASE + num_thunks*8
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
     (i32.sub (local.get $v) (global.get $image_base)))
-    ;; Store api_id via hash lookup
-    ;; DEBUG: dump hash table entry 0 and entry 310 to verify integrity
-    (call $host_log_i32 (i32.load (global.get $API_HASH_TABLE)))  ;; hash[0]
-    (call $host_log_i32 (i32.load (i32.add (global.get $API_HASH_TABLE) (i32.const 2480))))  ;; hash[310] = OleInitialize
-    (call $host_log_i32 (global.get $API_HASH_COUNT))  ;; count
+    ;; Store api_id
     (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-    (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
+    (local.get $i))
     ;; Compute guest address of this thunk
     (global.set $eax (i32.add
     (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
@@ -299,12 +316,27 @@
 
   ;; 12: LoadLibraryA
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
+    (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32)
     (local.set $tmp (call $find_loaded_dll (local.get $arg0)))
     (if (i32.ge_s (local.get $tmp) (i32.const 0))
-      (then (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32))))))
-      (else (global.set $eax (global.get $image_base)))) ;; fallback: return EXE base
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+      (then
+        (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Not already loaded — check if DLL file exists in VFS
+    (if (call $host_has_dll_file (call $g2w (local.get $arg0)))
+      (then
+        ;; DLL file found — yield to JS for loading
+        (global.set $loadlib_name_ptr (call $g2w (local.get $arg0)))
+        (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (global.set $yield_reason (i32.const 5))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
+    ;; Not found — return EXE base (system DLL stub) so GetProcAddress can create thunks
+    (global.set $eax (global.get $image_base))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 13: DeleteFileA(lpFileName) — 1 arg stdcall

@@ -263,6 +263,10 @@
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
   ;; fs_unmap_view(baseAddr) → BOOL
 
+  ;; DLL file check (for dynamic LoadLibrary)
+  (import "host" "has_dll_file" (func $host_has_dll_file (param i32) (result i32)))
+  ;; has_dll_file(nameWA) → 1 if DLL file exists in VFS/host, 0 if not
+
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
   ;; com_create_instance(rclsidWA, pUnkOuterGA, dwClsContext, riidWA, ppvGA) → HRESULT
@@ -564,7 +568,8 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   ;; Thread yield state (for multi-instance threading)
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 6=modal_dialog
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog
+  (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $wait_handle  (mut i32) (i32.const 0))
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
