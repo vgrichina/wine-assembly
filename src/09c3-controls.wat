@@ -2454,6 +2454,23 @@
             (i32.store offset=16 (local.get $state_w) (local.get $text_len))
             (call $host_invalidate (local.get $hwnd))
             (return (i32.const 0))))
+        ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
+        ;; so WM_CHAR 0x08 never arrives for WAT-native edits; handle it here.
+        (if (i32.eq (local.get $vk) (i32.const 0x08))
+          (then
+            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+              (then (return (i32.const 0))))
+            (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+            (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+            (if (i32.ne (local.get $lo) (local.get $hi))
+              (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi)))
+              (else
+                (if (local.get $cur)
+                  (then (call $edit_delete_range (local.get $state_w)
+                          (i32.sub (local.get $cur) (i32.const 1))
+                          (local.get $cur))))))
+            (call $host_invalidate (local.get $hwnd))
+            (return (i32.const 0))))
         ;; VK_DELETE 0x2E
         (if (i32.eq (local.get $vk) (i32.const 0x2E))
           (then
