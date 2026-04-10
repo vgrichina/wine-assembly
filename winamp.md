@@ -234,6 +234,53 @@ Skin loaded in back buffer (65537) but not blitted on-screen. EIP→0 stall afte
 2. **Main skin has garbled strips** — LCD area and visualizer band in the 275×116 back buffer have noise pixels. The per-pixel `GetPixel`→`CreateBrush`→`FillRect` skin builder may be computing wrong rects for some bands due to FPU math edge cases.
 3. **No on-screen compositing yet** — Back buffers have correct pixels but the composite `winamp.png` shows them via the renderer's window-to-desktop blit, not via Winamp's own WM_PAINT→BitBlt path. The wndproc WM_PAINT at `0x410060` checks `[0x450500]` and does BitBlt, but we haven't confirmed this path fires correctly.
 
+## SESSION 4 PROGRESS — Plugin DLL Loading
+
+### Dynamic LoadLibraryA Implementation
+
+Winamp dynamically loads plugins via `FindFirstFile("C:\Plugins\IN_*.DLL")` → `LoadLibraryA` → `GetProcAddress("winampGetInModule2")`. Previously `LoadLibraryA` was a stub returning the EXE base for any unknown DLL.
+
+**New mechanism:**
+1. `LoadLibraryA` checks `$find_loaded_dll` (already-loaded DLLs) first
+2. If not found, calls `host_has_dll_file(nameWA)` to check VFS/host filesystem
+3. If file exists: yields (reason=5, yield_flag=1) with EIP/ESP already adjusted
+4. JS handler reads DLL from VFS, calls `loadDll()` + `patchDllImports()`, sets EAX
+5. If file not found: returns `$image_base` (system DLL stub for GetProcAddress thunks)
+
+**GetProcAddress enhanced:**
+- First checks if hModule matches a loaded DLL → resolves via `$resolve_name_export`
+- Falls back to thunk creation for Win32 API names
+- Returns NULL for unknown names (instead of creating crash-stub thunks)
+
+### Plugin Files
+
+| File | Source | VFS Path | Load Address |
+|------|--------|----------|-------------|
+| in_mp3.dll | NSIS installer extract | `C:\Plugins\in_mp3.dll` | 0x5af000 |
+| out_wave.dll | NSIS installer extract | `C:\Plugins\out_wave.dll` | 0x5e2000 |
+| demo.mp3 | NSIS installer extract | `C:\demo.mp3` | N/A (data file) |
+
+### VFS Recursive Loading
+
+`test/run.js` companion file loader now recursively scans subdirectories. Files in `test/binaries/plugins/` map to `C:\Plugins\` in VFS.
+
+### Current Blocking: EIP Corruption After Plugin Init
+
+With plugins loaded, execution reaches the plugin init phase (calling `winampGetInModule2` etc.) but eventually EIP corrupts to 0x0001001a (invalid address). This is likely the same uninitialized function pointer issue from Session 2 (EIP→0 after SetTimer) — the plugin loading code path exercises additional init code that hits uninitialized callback slots.
+
+Without plugins (moving `test/binaries/plugins/` away), the skin renders normally at 7315 API calls.
+
+### DllMain Skipped
+
+Plugin DLL DllMain is currently skipped because calling it triggers yields inside `callDllMain()` (which calls `run()` internally), causing state corruption. Plugin DLLs don't need DllMain for their plugin API to work — `winampGetInModule2` handles init.
+
+### What's Needed Next for Audio
+
+1. **Fix EIP corruption** — trace the exact call that corrupts EIP after plugin init; likely an indirect call through a BSS function pointer table slot
+2. **waveOut API implementation** — `out_wave.dll` calls `waveOutOpen`, `waveOutWrite`, `waveOutPrepareHeader`, etc. via WINMM.dll thunks. Need real implementations piping PCM to Web Audio API
+3. **File I/O for demo.mp3** — Winamp reads the MP3 via `CreateFileA`/`ReadFile` (already implemented in VFS)
+4. **Trigger playback** — either via command-line argument or injected WM_COMMAND to open a file
+
 ### Palette Plumbing Added (not on hot path for this exe but correct)
 
 - `lib/resources.js`: 8bpp DIB parser now retains `indices` (raw palette
