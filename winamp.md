@@ -274,12 +274,25 @@ Without plugins (moving `test/binaries/plugins/` away), the skin renders normall
 
 Plugin DLL DllMain is currently skipped because calling it triggers yields inside `callDllMain()` (which calls `run()` internally), causing state corruption. Plugin DLLs don't need DllMain for their plugin API to work — `winampGetInModule2` handles init.
 
+### EIP Corruption FIXED — CoCreateInstance *ppv
+
+The EIP corruption was caused by `CoCreateInstance` not zeroing `*ppv` on failure. Winamp's minibrowser creates COM objects for its embedded browser. On `E_NOINTERFACE`, the unzeroed `ppv` contained garbage (the hwnd value 0x1001a), which the caller dereferenced as a vtable pointer, corrupting EIP. Fix: zero `*ppv` when HRESULT is non-zero.
+
+### Current Test Command
+
+```bash
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=500 \
+  --batch-size=5000 --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --stuck-after=5000 --input=10:273:2 --png=scratch/winamp.png
+```
+
+Stats: 8241 API calls, all 4 windows skinned, plugins loaded, no crashes.
+
 ### What's Needed Next for Audio
 
-1. **Fix EIP corruption** — trace the exact call that corrupts EIP after plugin init; likely an indirect call through a BSS function pointer table slot
-2. **waveOut API implementation** — `out_wave.dll` calls `waveOutOpen`, `waveOutWrite`, `waveOutPrepareHeader`, etc. via WINMM.dll thunks. Need real implementations piping PCM to Web Audio API
-3. **File I/O for demo.mp3** — Winamp reads the MP3 via `CreateFileA`/`ReadFile` (already implemented in VFS)
-4. **Trigger playback** — either via command-line argument or injected WM_COMMAND to open a file
+1. **Trigger file playback** — `--args='C:\demo.mp3'` passes cmdline but no CreateFileA for the MP3 is observed. Winamp's cmdline parser at `0x41ab78` may not process filenames until after the message loop stabilizes, or the playlist code path requires more init steps. Need to trace where the cmdline filename goes after parsing. Alternative: use Winamp IPC (WM_COPYDATA or WM_USER+100 with IPC_PLAYFILE)
+2. **waveOut API implementation** — `out_wave.dll` calls waveOutOpen/Write/PrepareHeader via WINMM.dll thunks. Need real implementations piping PCM to Web Audio API
+3. **Plugin DllMain** — currently skipped because `callDllMain()` can trigger LoadLibrary yields during `run()`, corrupting state. Need either: (a) handle yield_reason inside callDllMain, or (b) defer DllMain to run during the normal batch loop
 
 ### Palette Plumbing Added (not on hot path for this exe but correct)
 
