@@ -82,7 +82,7 @@
     (i32.store (local.get $tbl) (i32.const 0)))
 
   ;; Top-level item count (0 if no menu). Helper for keyboard nav.
-  (func (export "menu_bar_count") (param $hwnd i32) (result i32)
+  (func $menu_bar_count (export "menu_bar_count") (param $hwnd i32) (result i32)
     (local $b i32)
     (local.set $b (call $menu_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $b)) (then (return (i32.const 0))))
@@ -275,7 +275,7 @@
     (i32.add (local.get $blob_w) (local.get $cof)))
 
   ;; Number of children for bar item $idx (0 if none).
-  (func (export "menu_child_count")
+  (func $menu_child_count (export "menu_child_count")
         (param $hwnd i32) (param $idx i32) (result i32)
     (local $blob i32) (local $hdr i32)
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
@@ -294,7 +294,7 @@
              (i32.add (i32.const 4) (i32.mul (local.get $cidx) (i32.const 24)))))
 
   ;; Command id of child (top, child).
-  (func (export "menu_child_id")
+  (func $menu_child_id (export "menu_child_id")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
@@ -304,7 +304,7 @@
     (i32.load offset=20 (local.get $it)))
 
   ;; Flags of child (bit0 separator, bit1 grayed).
-  (func (export "menu_child_flags")
+  (func $menu_child_flags (export "menu_child_flags")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
@@ -315,7 +315,7 @@
 
   ;; Accel-char (uppercase ASCII) for top-level item $idx, or 0 if none.
   ;; The accel char is the byte after the first un-doubled '&'.
-  (func (export "menu_bar_accel")
+  (func $menu_bar_accel (export "menu_bar_accel")
         (param $hwnd i32) (param $idx i32) (result i32)
     (local $blob i32) (local $base i32)
     (local $text_wa i32) (local $text_len i32) (local $i i32) (local $ch i32)
@@ -345,7 +345,7 @@
     (i32.const 0))
 
   ;; Accel-char for child item (top, child) — same logic as bar_accel.
-  (func (export "menu_child_accel")
+  (func $menu_child_accel (export "menu_child_accel")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
     (local $text_wa i32) (local $text_len i32) (local $i i32) (local $ch i32)
@@ -814,3 +814,172 @@
       (i32.add (i32.const 4) (i32.mul (global.get $ml_bar_count) (i32.const 12))))
     (global.set $ml_pos (i32.add (local.get $bytes_w) (i32.const 4)))
     (call $ml_pass2))
+
+  ;; ============================================================
+  ;; Menu tracking — JS shells out raw mouse / keyboard events to
+  ;; the helpers below; all open/close/hover/activate logic lives
+  ;; here. State is in $menu_open_hwnd / $menu_open_top /
+  ;; $menu_open_hover (one menu open at a time, system-wide).
+  ;;
+  ;; Activations post WM_COMMAND (or WM_CLOSE for File→Exit, id=28)
+  ;; into the existing post queue at WASM addr 0x400 (same one
+  ;; PostMessageA writes to). The host pump dequeues and dispatches
+  ;; on the next iteration.
+  ;; ============================================================
+
+  (func (export "menu_open_hwnd")  (result i32) (global.get $menu_open_hwnd))
+  (func (export "menu_open_top")   (result i32) (global.get $menu_open_top))
+  (func (export "menu_open_hover") (result i32) (global.get $menu_open_hover))
+
+  ;; Number of items currently being tracked (0 if no menu open).
+  (func $menu_track_child_count (result i32)
+    (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))
+    (call $menu_child_count (global.get $menu_open_hwnd) (global.get $menu_open_top)))
+
+  ;; Returns the first non-separator non-grayed child idx in the open
+  ;; dropdown, or -1 (e.g. when nothing is selectable).
+  (func $menu_first_selectable (result i32)
+    (local $n i32) (local $i i32) (local $f i32)
+    (local.set $n (call $menu_track_child_count))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $f (call $menu_child_flags
+                     (global.get $menu_open_hwnd)
+                     (global.get $menu_open_top)
+                     (local.get $i)))
+      (if (i32.eqz (i32.and (local.get $f) (i32.const 0x03)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $menu_open (export "menu_open") (param $hwnd i32) (param $top_idx i32)
+    (global.set $menu_open_hwnd  (local.get $hwnd))
+    (global.set $menu_open_top   (local.get $top_idx))
+    (global.set $menu_open_hover (i32.const -1)))
+
+  (func $menu_close (export "menu_close")
+    (global.set $menu_open_hwnd  (i32.const 0))
+    (global.set $menu_open_top   (i32.const -1))
+    (global.set $menu_open_hover (i32.const -1)))
+
+  (func (export "menu_set_hover") (param $cidx i32)
+    (global.set $menu_open_hover (local.get $cidx)))
+
+  ;; Down/Up arrow nav: walk to next selectable child, wrapping. $dir
+  ;; is +1 (Down) or -1 (Up).
+  (func (export "menu_advance") (param $dir i32)
+    (local $n i32) (local $i i32) (local $k i32) (local $f i32)
+    (local.set $n (call $menu_track_child_count))
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (local.set $i (global.get $menu_open_hover))
+    (if (i32.lt_s (local.get $i) (i32.const 0))
+      (then (local.set $i (select (i32.const -1) (local.get $n)
+                                  (i32.gt_s (local.get $dir) (i32.const 0))))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+      (local.set $i (i32.add (local.get $i) (local.get $dir)))
+      (if (i32.lt_s (local.get $i) (i32.const 0))
+        (then (local.set $i (i32.sub (local.get $n) (i32.const 1)))))
+      (if (i32.ge_s (local.get $i) (local.get $n))
+        (then (local.set $i (i32.const 0))))
+      (local.set $f (call $menu_child_flags
+                     (global.get $menu_open_hwnd)
+                     (global.get $menu_open_top)
+                     (local.get $i)))
+      (if (i32.eqz (i32.and (local.get $f) (i32.const 0x03)))
+        (then
+          (global.set $menu_open_hover (local.get $i))
+          (return)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $scan))))
+
+  ;; Left/Right arrow nav: switch to neighbor bar item, wrapping.
+  (func (export "menu_switch_top") (param $dir i32)
+    (local $n i32) (local $i i32)
+    (if (i32.eqz (global.get $menu_open_hwnd)) (then (return)))
+    (local.set $n (call $menu_bar_count (global.get $menu_open_hwnd)))
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (local.set $i (i32.add (global.get $menu_open_top) (local.get $dir)))
+    (if (i32.lt_s (local.get $i) (i32.const 0))
+      (then (local.set $i (i32.sub (local.get $n) (i32.const 1)))))
+    (if (i32.ge_s (local.get $i) (local.get $n))
+      (then (local.set $i (i32.const 0))))
+    (global.set $menu_open_top (local.get $i))
+    (global.set $menu_open_hover (i32.const -1)))
+
+  ;; Internal: enqueue a posted message for hwnd. Mirrors the body of
+  ;; $handle_PostMessageA. Used by $menu_post_command on activation.
+  (func $menu_post (param $hwnd i32) (param $msg i32)
+                    (param $wp i32) (param $lp i32)
+    (local $tmp i32)
+    (if (i32.ge_u (global.get $post_queue_count) (i32.const 8)) (then (return)))
+    (local.set $tmp (i32.add (i32.const 0x400)
+                      (i32.mul (global.get $post_queue_count) (i32.const 16))))
+    (i32.store           (local.get $tmp) (local.get $hwnd))
+    (i32.store offset=4  (local.get $tmp) (local.get $msg))
+    (i32.store offset=8  (local.get $tmp) (local.get $wp))
+    (i32.store offset=12 (local.get $tmp) (local.get $lp))
+    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1))))
+
+  ;; Activate the currently-hovered child of the open menu. Posts a
+  ;; WM_COMMAND (or WM_CLOSE for the File→Exit id=28 special case)
+  ;; to the parent hwnd, then closes the menu. Returns the command
+  ;; id that was posted (0 if nothing happened).
+  (func $menu_activate (export "menu_activate") (result i32)
+    (local $hwnd i32) (local $top i32) (local $hover i32)
+    (local $f i32) (local $id i32)
+    (local.set $hwnd (global.get $menu_open_hwnd))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top  (global.get $menu_open_top))
+    (local.set $hover (global.get $menu_open_hover))
+    (if (i32.lt_s (local.get $hover) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $f (call $menu_child_flags (local.get $hwnd) (local.get $top) (local.get $hover)))
+    (if (i32.and (local.get $f) (i32.const 0x03))
+      (then (return (i32.const 0))))   ;; separator or grayed
+    (local.set $id (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $hover)))
+    (if (i32.eq (local.get $id) (i32.const 28))
+      (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+    (call $menu_close)
+    (local.get $id))
+
+  ;; Find the bar item index whose accelerator char (uppercase ASCII)
+  ;; matches $ch, or -1.
+  (func (export "menu_find_bar_accel") (param $hwnd i32) (param $ch i32) (result i32)
+    (local $n i32) (local $i i32)
+    (local.set $n (call $menu_bar_count (local.get $hwnd)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.eq (call $menu_bar_accel (local.get $hwnd) (local.get $i)) (local.get $ch))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Try to activate by child accelerator char while a menu is open.
+  ;; Returns 1 if a matching item was found and activated, else 0.
+  (func (export "menu_handle_letter") (param $ch i32) (result i32)
+    (local $n i32) (local $i i32) (local $f i32)
+    (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))
+    (local.set $n (call $menu_track_child_count))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $f (call $menu_child_flags
+                     (global.get $menu_open_hwnd)
+                     (global.get $menu_open_top)
+                     (local.get $i)))
+      (if (i32.eqz (i32.and (local.get $f) (i32.const 0x03)))
+        (then
+          (if (i32.eq (call $menu_child_accel
+                       (global.get $menu_open_hwnd)
+                       (global.get $menu_open_top)
+                       (local.get $i))
+                      (local.get $ch))
+            (then
+              (global.set $menu_open_hover (local.get $i))
+              (drop (call $menu_activate))
+              (return (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0)))

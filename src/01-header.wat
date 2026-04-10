@@ -218,6 +218,8 @@
   (import "host" "get_window_client_size" (func $host_get_window_client_size (param i32) (result i32)))
   ;; get_window_client_size(hwnd) → (clientW | (clientH << 16))
 
+  (import "host" "get_async_key_state" (func $host_get_async_key_state (param i32) (result i32)))
+
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))
   (import "host" "math_cos" (func $host_math_cos (param f64) (result f64)))
@@ -670,4 +672,12 @@
   (global $ml_struct_cur   (mut i32) (i32.const 0))
   (global $ml_string_cur   (mut i32) (i32.const 0))
   (global $ml_label_chars  (mut i32) (i32.const 0))  ;; out from $ml_load_label
+
+  ;; Menu tracking state — set by $menu_open / cleared by $menu_close.
+  ;; Read by $menu_paint_bar (open_idx) and $menu_paint_dropdown (hover)
+  ;; via the JS-side compositor as part of every repaint. Only one menu
+  ;; can be open at a time across all windows.
+  (global $menu_open_hwnd  (mut i32) (i32.const 0))
+  (global $menu_open_top   (mut i32) (i32.const -1))
+  (global $menu_open_hover (mut i32) (i32.const -1))
 
