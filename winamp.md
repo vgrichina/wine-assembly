@@ -37,17 +37,21 @@ Extracted from `winamp291.exe` NSIS installer via VFS dump. Binary is 846,848 by
 11. Message loop: GetMessageA / TranslateMessage / DispatchMessageA
 ```
 
-## Current Status: RUNS — Window Renders at 275×116
+## Current Status: FULLY SKINNED — All 4 Windows Render
 
 **Test command:**
 ```bash
-node test/run.js --exe=test/binaries/winamp.exe --max-batches=50000 --batch-size=5000 --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --png=scratch/winamp.png
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 \
+  --batch-size=5000 --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --stuck-after=5000 --input=10:273:2 --png=scratch/winamp.png
 ```
 
-- Runs 100K+ API calls through 50K batches without crashing
-- Creates "Winamp 2.91" main window and enters message loop
-- Processes WM_PAINT, WM_TIMER, WM_COMMAND, WM_ACTIVATE
-- **Window rendered at 275×116 pixels** — title bar + menu visible, client area gray
+- 7315 API calls across 200 batches, stable in message loop at EIP=0x0041bb3e
+- **Main player** (65537, 275×116): Full classic skin — WINAMP header, transport buttons, time display, spectrum analyzer area, volume/balance sliders, mono/stereo, EQ/PL toggles
+- **Equalizer** (65556, 275×116): All 10 EQ band sliders, presets button, on/auto toggles
+- **Playlist Editor** (65557, 275×116): Track list area, transport buttons, add/rem/sel/misc controls
+- **Minibrowser** (65560, 350×348): Frame chrome with nav buttons renders, content area is empty white (no HTML engine)
+- Survey dialog dismissed via `--input=10:273:2` (WM_COMMAND IDCANCEL), skin loads inline in main thread
 
 ## Fixed Issues
 
@@ -202,48 +206,33 @@ After Sleep, the skin thread enters a msvcrt math function (likely `pow()` at 0x
    pattern). Winamp populates preset/playlist menus via these; visual skin
    does not depend on menu state.
 
-### Current State: Skin Loaded in Back Buffer, Not Yet Blitted On-Screen
+### Session 2 End State
 
-`scratch/winamp_back_65537.png` (269×71) shows the **classic Winamp 2.91
-skin**: WINAMP header bar, transport buttons, time/visualization area — all
-correctly rendered into an offscreen DC. So `[0x450500]` is now being
-populated by the inline skin loader, and the back buffer has real pixels.
+Skin loaded in back buffer (65537) but not blitted on-screen. EIP→0 stall after SetTimer. 2138 API calls.
 
-The on-screen `winamp.png` is still teal (Win98 desktop) because the main
-window's WM_PAINT never blits the back buffer to the front buffer. After
-the inline skin load, main thread calls SetTimer then EIP→0 (return-into-NULL,
-likely a function-pointer table slot still uninitialized — needs investigation).
+## SESSION 3 PROGRESS — All Windows Skinned
 
-### Test Command (current)
+### Fixes Made
 
-```bash
-node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 \
-  --batch-size=5000 --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
-  --stuck-after=5000 --input=10:273:2 --png=scratch/winamp.png
-```
+1. **Paint queue: single slot → 16-entry ring buffer** — The old `$child_paint_hwnd` global could only hold one hwnd needing WM_PAINT. Winamp creates ~8 windows during init (main, EQ, playlist, minibrowser, video, etc.), each needing WM_PAINT. Only the last-created window got painted. New 16-entry queue at `0xB200` with `$paint_queue_push`/`$paint_queue_pop` + dedup. ShowWindow also enqueues. All windows now receive WM_PAINT.
 
-Stats: 2138 API calls, then EIP=0 stall.
+2. **Unified full-window back canvas + ShowWindow paint + NULL_BRUSH fix** — Back canvases now sized to full window (not just client area), ShowWindow triggers WM_PAINT dispatch, and NULL_BRUSH class background doesn't crash FillRect.
 
-### Next Investigations
+### Current State: 4 Windows Rendering
 
-1. **Why EIP=0 after SetTimer?** Trace the call site at `0x0041fe09 / 0x0041fe10`
-   region — likely an indirect call through an uninitialized function pointer
-   in BSS that should have been set during init we still skip.
-2. **WM_PAINT path needs to blit `[0x450500]` → window front buffer.** Even
-   with EIP=0 fixed, the renderer needs to know that this hwnd's contents
-   come from the offscreen DC at `[0x450500]`. Probably the wndproc's WM_PAINT
-   handler at `0x410060` does the BitBlt — confirm we route WM_PAINT here and
-   that BitBlt with the back-buffer DC works.
-3. **Garbled middle strips in destination skin buffer.** Compare
-   `scratch/winamp-gdi/gdi_2097169_275x116.png` (destination) vs
-   `gdi_2097173_280x186.png` (source PE bitmap, which is correct). The
-   destination's titlebar, volume slider, and button row are correct, but
-   the LCD area and visualizer band are noise. Winamp builds the destination
-   via per-pixel `GetPixel` → `CreateBrush` → `FillRect` (NOT `GetDIBits`),
-   so the bug is in `gdi_fill_rect` or the rect args computed by Winamp for
-   those specific bands. Suspect: width/height args from FPU math (now
-   `i32.trunc_sat_f64_s` after the `_ftol` fix) producing 0/negative for
-   some rows, which `gdi_fill_rect` then no-ops, leaving uninitialized pixels.
+| Window | HWND | Size | Status |
+|--------|------|------|--------|
+| Main player | 65537 | 275×116 | Full skin — header, transport, time, spectrum, volume |
+| Equalizer | 65556 | 275×116 | All EQ sliders, presets, on/auto toggles |
+| Playlist | 65557 | 275×116 | Track list, transport, add/rem/sel/misc buttons |
+| Minibrowser | 65560 | 350×348 | Frame chrome + nav buttons rendered, **content area empty** (no HTML) |
+| Video | 65558 | 275×232 | Hidden (visible=false), back canvas exists but blank |
+
+### Remaining Issues
+
+1. **Minibrowser content area is empty white** — Winamp uses private COM interfaces (`{77A366BA-2BE4-4a1e-9263-7734AA3E99A2}`, `{46986115-84D6-459c-8F95-52DD653E532E}`) via `CoCreateInstance`, NOT the standard IE WebBrowser control (`{8856F961-...}`). These are Winamp's own minibrowser plugin COM objects (likely `gen_ml.dll`). `CoCreateInstance` returns `E_NOINTERFACE` (0x80004002), so Winamp shows an empty content area gracefully. Could overlay a cosmetic `<iframe>` in the browser renderer at the child window position, but the original winamp.com minibrowser URLs are dead. Not worth pursuing unless for aesthetics (Wayback Machine snapshot).
+2. **Main skin has garbled strips** — LCD area and visualizer band in the 275×116 back buffer have noise pixels. The per-pixel `GetPixel`→`CreateBrush`→`FillRect` skin builder may be computing wrong rects for some bands due to FPU math edge cases.
+3. **No on-screen compositing yet** — Back buffers have correct pixels but the composite `winamp.png` shows them via the renderer's window-to-desktop blit, not via Winamp's own WM_PAINT→BitBlt path. The wndproc WM_PAINT at `0x410060` checks `[0x450500]` and does BitBlt, but we haven't confirmed this path fires correctly.
 
 ### Palette Plumbing Added (not on hot path for this exe but correct)
 
