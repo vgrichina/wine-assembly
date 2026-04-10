@@ -598,7 +598,9 @@
         (global.set $yield_reason (i32.const 3))
         (global.set $steps (i32.const 0))
         (return)))
-    ;; Synchronous success or error
+    ;; Synchronous success or error — zero *ppv on failure per COM spec
+    (if (local.get $hr)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (local.get $hr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
