@@ -2579,7 +2579,7 @@
         ;; 3) Text — draw line by line, splitting on \n
         (local.set $buf (i32.load (local.get $state_w)))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-        (if (i32.and (local.get $buf) (i32.ne (local.get $text_len) (i32.const 0)))
+        (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.ne (local.get $text_len) (i32.const 0)))
           (then
             (local.set $lo (i32.const 0))    ;; line start offset
             (local.set $px (i32.const 4))    ;; y position
@@ -2605,7 +2605,7 @@
             (local.set $hi (i32.mul (call $edit_line_from_char (local.get $state_w) (local.get $cur))
                                      (i32.const 16)))
             (local.set $px (i32.const 0))
-            (if (i32.and (local.get $buf) (i32.gt_u (local.get $cur) (local.get $lo)))
+            (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.gt_u (local.get $cur) (local.get $lo)))
               (then (local.set $px (call $host_measure_text (local.get $hdc)
                                         (i32.add (call $g2w (local.get $buf)) (local.get $lo))
                                         (i32.sub (local.get $cur) (local.get $lo))))))

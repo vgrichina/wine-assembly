@@ -192,9 +192,8 @@ async function main() {
       const dv = new DataView(memory.buffer);
       const g2w = addr => addr - imageBase + 0x12000;
       let argStr = '';
-      const nArgs = (t === 'DeferWindowPos' || t === 'SetWindowPos') ? 8 : 6;
       try {
-        for (let i = 0; i < nArgs; i++) {
+        for (let i = 0; i < 6; i++) {
           const a = dv.getUint32(g2w(esp + 4 + i * 4), true);
           argStr += (i ? ', ' : '') + hex(a);
         }
@@ -233,7 +232,7 @@ async function main() {
       }
       logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}`);
       // Dump MSG struct contents for DispatchMessageA
-      if (t.includes('DispatchMessage')) {
+      if (t.includes('DispatchMessage') && apiCount <= 100) {
         try {
           const msgPtr = dv.getUint32(g2w(esp + 4), true);
           const msgHwnd = dv.getUint32(g2w(msgPtr), true);
@@ -1198,19 +1197,7 @@ if (VERBOSE) {
   }
 
   if (PNG_OUT && renderer) {
-    if (process.env.DBG_BLIT) {
-      console.log('--- pre-repaint window state ---');
-      for (const [hwnd, win] of Object.entries(renderer.windows)) {
-        if (win) console.log(`  hwnd=0x${parseInt(hwnd).toString(16)} visible=${win.visible} isChild=${win.isChild} w=${win.w} h=${win.h}`);
-      }
-    }
     renderer.repaint();
-    if (process.env.DBG_BLIT) {
-      console.log('--- post-repaint window state ---');
-      for (const [hwnd, win] of Object.entries(renderer.windows)) {
-        if (win) console.log(`  hwnd=0x${parseInt(hwnd).toString(16)} visible=${win.visible} isChild=${win.isChild} w=${win.w} h=${win.h}`);
-      }
-    }
     const pngBuf = renderer.canvas.toBuffer('image/png');
     fs.writeFileSync(PNG_OUT, pngBuf);
     console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
@@ -1219,6 +1206,12 @@ if (VERBOSE) {
     for (const [hwnd, win] of Object.entries(renderer.windows)) {
       if (win) {
         console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
+      }
+      if (win && win._fullBackCanvas) {
+        const full = win._fullBackCanvas.toBuffer('image/png');
+        const out = PNG_OUT.replace(/\.png$/, `_full_${hwnd}.png`);
+        fs.writeFileSync(out, full);
+        console.log(`  Wrote ${out} (${full.length} bytes, ${win._fullBackW}x${win._fullBackH})`);
       }
       if (win && win._backCanvas) {
         const back = win._backCanvas.toBuffer('image/png');
