@@ -65,6 +65,7 @@
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_ended (i32.const 0))
+            (global.set $quit_flag (i32.const 0))
             (return)))
         ;; Check post queue first
         (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
@@ -109,20 +110,23 @@
             (local.set $arg2 (i32.shr_u (local.get $arg0) (i32.const 16)))        ;; wParam
             (local.set $arg3 (call $host_check_input_lparam))                      ;; lParam
             (local.set $arg0 (call $host_check_input_hwnd))                        ;; hwnd
-            (if (i32.eqz (local.get $arg0))
-              (then (local.set $arg0 (global.get $dlg_hwnd))))
-            ;; Dispatch by hwnd wndproc — WAT-native controls handle directly
-            (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
-            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+            (if (local.get $arg0)
               (then
-                (drop (call $wat_wndproc_dispatch
-                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-                (global.set $eip (global.get $dlg_loop_thunk))
-                (global.set $steps (i32.const 0))
-                (return)))
-            ;; x86 wndproc or dialog proc
-            (if (i32.eqz (local.get $arg4))
-              (then (local.set $arg4 (global.get $dlg_proc))))
+                ;; Host specified a target hwnd — dispatch by its wndproc
+                (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+                (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+                  (then
+                    (drop (call $wat_wndproc_dispatch
+                      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                    (global.set $eip (global.get $dlg_loop_thunk))
+                    (global.set $steps (i32.const 0))
+                    (return)))
+                (if (i32.eqz (local.get $arg4))
+                  (then (local.set $arg4 (global.get $dlg_proc)))))
+              (else
+                ;; No target hwnd — dispatch to the modal dialog proc
+                (local.set $arg0 (global.get $dlg_hwnd))
+                (local.set $arg4 (global.get $dlg_proc))))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))

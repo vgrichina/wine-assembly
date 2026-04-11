@@ -395,6 +395,64 @@ Once past the first-run dialog, the main loop processes:
 - **WM_ACTIVATE** (0x06): Falls through to DefWindowProcA
 - **WM_ERASEBKGND** (0x14): Falls through to DefWindowProcA
 
+## SESSION 6 PROGRESS — Dialog Fix, Audio Bridge, IPC Delivery
+
+### Fixes Made
+
+1. **EndDialog quit_flag regression (commit 66f2f86)** — commit 66f2f86 removed `quit_flag=0` from the EndDialog cleanup path, and changed dialog loop dispatch to route messages by hwnd wndproc instead of always using `$dlg_proc`. Winamp's survey dialog creates a CHILD dialog (dlg#234, hwnd=0x10009) inside the modal (dlg#231, hwnd=0x10003). When `check_input_hwnd` returned 0 (unspecified), the new code fell back to `dlg_hwnd` (0x10009) and dispatched to the child's dlg_proc, so IDCANCEL never reached the outer modal's EndDialog. Fix: when hwnd=0 from host input, always dispatch to `$dlg_proc` (the modal dialog proc). Also restored `quit_flag=0` on EndDialog. (`src/09b-dispatch.wat`)
+
+2. **waveOut audio bridge** — Added host imports `wave_out_open/write/close/get_pos` in `src/01-header.wat`. `waveOutOpen` now reads WAVEFORMATEX (sample rate, channels, bits) and calls host. `waveOutWrite` reads WAVEHDR lpData/dwBufferLength and sends PCM to host. Host-side (`lib/host-imports.js`) uses Web Audio API for browser playback (AudioContext → createBuffer → BufferSource scheduling). Node CLI can write raw PCM to file descriptor. (`src/09a3-handlers-audio.wat`, `lib/host-imports.js`)
+
+3. **IPC filename delivery fixed** — Changed winamp-play handler to use `guest_alloc()` (heap) instead of hardcoded .rsrc addresses (0x461100) that got overwritten. Filename and pointer cell now survive from injection to dispatch. (`test/run.js`)
+
+4. **_acmdln data import** — NOT actually broken. `resolve_name_export` in `patch_caller_iat` correctly resolves msvcrt's `_acmdln` export (RVA 0x3a6d8, .data section) to guest address 0x5a56d8. `initMsvcrtGlobals` patches the same address via `__p__acmdln`. Verified: IAT[0x4462bc] = 0x5a56d8, `[0x5a56d8]` = cmdline string pointer.
+
+### IPC Playback — Partially Working
+
+IPC_PLAYFILE (WM_USER lParam=100) successfully adds a file to the playlist:
+- CharPrevA walks the filename "C:\demo.mp3" to extract directory
+- GlobalAlloc allocates playlist entry structures
+- wsprintfA formats playlist display text
+- SetWindowTextA updates title bar to "(null) - (null)" (no ID3 metadata)
+- `[0x457608]` (playlist entry count) set to 1
+
+IPC_STARTPLAY (WM_USER lParam=102) dispatched but does NOT trigger actual playback:
+- The play function at 0x42fbcc IS entered from IPC_PLAYFILE's auto-play attempt (batch 160), but `[0x457608]` is still 0 at that point → early return
+- When IPC_STARTPLAY arrives later (batch 185+), the play function breakpoint does NOT fire — the wndproc's IPC handler for lParam=102 apparently has additional gating conditions beyond `[0x45caa4]`
+- With --args="C:\demo.mp3", the cmdline parser reaches a string comparison loop in msvcrt at 0x0057b6f6 (RVA 0x106f6) that runs for billions of instructions — NOT pow() as previously documented, but a strchr/strstr-type scan
+
+### Current Blocking Issues for Audio
+
+1. **Plugin Play() not invoked** — IPC_STARTPLAY dispatches to the wndproc but never reaches the in_mp3.dll plugin's Play function. The wndproc's WM_USER lParam=102 handler has unknown gating conditions. Need to disassemble the IPC dispatch chain from the wndproc's jump table at `0x41d5f2: jmp [0x41e8e0 + ecx*4]` where `ecx = [eax+0x41e940]` to find what blocks lParam=102 → play.
+
+2. **Missing: WM_USER routing in wndproc** — The wndproc uses a two-level dispatch: message ID → byte index table at 0x41e940, then jump table at 0x41e8e0. Need to map WM_USER (0x400) through this table to find the IPC handler, then trace lParam=102 (IPC_STARTPLAY) to identify the gate.
+
+3. **Alternative: command-line path** — `--args="C:\demo.mp3"` correctly sets `_acmdln` and the cmdline parser runs, but gets stuck in a msvcrt string scan loop. This loop isn't pow() — it's a string comparison (test al,al / jnz) that iterates over a large buffer. Could be FindFirstFileA-related path scanning. With batch-size=500K × 500 batches (250M instructions), still stuck.
+
+### Open Tasks (priority order)
+
+| # | Task | Files | Notes |
+|---|------|-------|-------|
+| 1 | **Trace IPC_STARTPLAY gate** | `test/binaries/winamp.exe` (disasm 0x41d5f2 dispatch) | Map WM_USER through the wndproc jump table, find why lParam=102 doesn't call the play function |
+| 2 | **Fix cmdline path string loop** | `test/binaries/dlls/msvcrt.dll` (RVA 0x106f6) | The string scan loop blocks the --args path; may need to stub or accelerate the offending msvcrt function |
+| 3 | **waveOut callback (WOM_DONE)** | `src/09a3-handlers-audio.wat` | Winamp's out_wave.dll expects WOM_DONE callbacks to refill buffers; currently waveOutWrite marks WHDR_DONE immediately but doesn't fire the callback |
+| 4 | **Plugin DllMain** | `lib/dll-loader.js` | DllMain skipped for plugins due to yield corruption; some plugins may need DllMain for init |
+| 5 | **Test waveOut with simpler app** | Create a minimal WAV-playing test EXE | Validate the waveOut→WebAudio bridge independently of Winamp's complex plugin chain |
+
+### Test Commands
+
+```bash
+# Skin renders, no audio:
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# IPC file injection (adds to playlist but doesn't play):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=2000 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input="10:273:2,160:winamp-play:C:\demo.mp3,200:poke:0x45caa4:1,201:winamp-start"
+```
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.

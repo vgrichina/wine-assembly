@@ -559,14 +559,7 @@
     (local $fall i32) (local $target i32) (local $taken i32)
     (local.set $fall (call $read_thread_word)) (local.set $target (call $read_thread_word))
     (local.set $taken (call $eval_cc (local.get $op)))
-    ;; DEBUG: log JCC firings whose fall is in our range
-    (if (i32.and (i32.ge_u (local.get $fall) (i32.const 0x010095f0))
-                 (i32.le_u (local.get $fall) (i32.const 0x01009620)))
-      (then
-        (call $host_log_i32 (i32.const 0xDEC0DEC1))
-        (call $host_log_i32 (local.get $fall))
-        (call $host_log_i32 (local.get $target))
-        (call $host_log_i32 (local.get $taken))))
+    ;; (debug log removed)
     (if (local.get $taken)
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall)))))

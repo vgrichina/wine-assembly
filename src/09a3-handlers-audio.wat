@@ -26,19 +26,47 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
 
-  ;; 795: waveOutOpen — return MMSYSERR_NOERROR, store fake handle
+  ;; 795: waveOutOpen(phwo, uDeviceID, lpFormat, dwCallback, dwInstance, fdwOpen)
+  ;; WAVEFORMATEX: +0 wFormatTag(2), +2 nChannels(2), +4 nSamplesPerSec(4),
+  ;;   +8 nAvgBytesPerSec(4), +12 nBlockAlign(2), +14 wBitsPerSample(2)
   (func $handle_waveOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $fmt_wa i32) (local $rate i32) (local $ch i32) (local $bits i32)
+    (local $handle i32) (local $fdwOpen i32) (local $cbType i32)
     ;; arg0=phwo, arg1=uDeviceID, arg2=lpFormat, arg3=dwCallback, arg4=dwInstance
-    ;; [esp+24]=fdwOpen
-    ;; If phwo != NULL, store fake handle
+    ;; fdwOpen is 6th arg at [esp+24]
+    (local.set $fdwOpen (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; Read WAVEFORMATEX
+    (local.set $fmt_wa (call $g2w (local.get $arg2)))
+    (local.set $rate (i32.load (i32.add (local.get $fmt_wa) (i32.const 4))))
+    (local.set $ch (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 2))))
+    (local.set $bits (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 14))))
+    ;; Callback type from fdwOpen bits 16-17: 0=none, 1=window, 2=thread, 3=function, 4=event
+    (local.set $cbType (i32.and (i32.shr_u (local.get $fdwOpen) (i32.const 16)) (i32.const 7)))
+    ;; If WAVE_FORMAT_QUERY (0x01), just check support, don't open
+    (if (i32.and (local.get $fdwOpen) (i32.const 1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    ;; Open via host
+    (local.set $handle (call $host_wave_out_open
+      (local.get $rate) (local.get $ch) (local.get $bits) (local.get $cbType)))
+    ;; Store handle and callback info for WOM_DONE notifications
+    (global.set $wave_out_handle (local.get $handle))
+    (global.set $wave_out_callback (local.get $arg3))
+    (global.set $wave_out_cb_instance (local.get $arg4))
+    (global.set $wave_out_cb_type (local.get $cbType))
+    ;; If phwo != NULL, store handle
     (if (local.get $arg0)
-      (then (call $gs32 (local.get $arg0) (i32.const 0x000B0001))))
+      (then (call $gs32 (local.get $arg0) (local.get $handle))))
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args stdcall
   )
 
-  ;; 796: waveOutClose — return MMSYSERR_NOERROR
+  ;; 796: waveOutClose(hwo) — 1 arg stdcall
   (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_wave_out_close (local.get $arg0)))
+    (global.set $wave_out_handle (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -67,11 +95,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 799: waveOutWrite — accept buffer, immediately mark done
+  ;; 799: waveOutWrite(hwo, lpWaveHdr, cbWaveHdr) — 3 args stdcall
+  ;; WAVEHDR: +0 lpData(4), +4 dwBufferLength(4), +8 dwBytesRecorded(4),
+  ;;   +12 dwUser(4), +16 dwFlags(4), +20 dwLoops(4), +24 lpNext(4), +28 reserved(4)
   (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Mark WHDR_DONE in WAVEHDR.dwFlags (+16)
-    (local $wa i32)
+    (local $wa i32) (local $data_ga i32) (local $data_len i32)
     (local.set $wa (call $g2w (local.get $arg1)))
+    ;; Read lpData and dwBufferLength from WAVEHDR
+    (local.set $data_ga (i32.load (local.get $wa)))
+    (local.set $data_len (i32.load (i32.add (local.get $wa) (i32.const 4))))
+    ;; Send PCM data to host for playback
+    (if (i32.and (local.get $data_ga) (local.get $data_len))
+      (then
+        (drop (call $host_wave_out_write
+          (local.get $arg0)
+          (call $g2w (local.get $data_ga))
+          (local.get $data_len)))))
+    ;; Mark WHDR_DONE in dwFlags (+16)
     (i32.store (i32.add (local.get $wa) (i32.const 16))
       (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
     (global.set $eax (i32.const 0))
@@ -100,9 +140,10 @@
   (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    ;; MMTIME.wType = TIME_BYTES (4), u.cb = 0
+    ;; MMTIME.wType = TIME_BYTES (4), u.cb = bytes played
     (i32.store (local.get $wa) (i32.const 4))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
+    (i32.store (i32.add (local.get $wa) (i32.const 4))
+      (call $host_wave_out_get_pos (local.get $arg0)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

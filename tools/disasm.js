@@ -176,6 +176,106 @@ function disasmAt(buf, offset, va, count, importNames) {
       else if (op === 0xD1) { const m = modrm(osz); insn = `${shiftOps[m.reg]} ${m.rm}, 1`; }
       else if (op === 0xD2) { const m = modrm(8); insn = `${shiftOps[m.reg]} ${m.rm}, cl`; }
       else if (op === 0xD3) { const m = modrm(osz); insn = `${shiftOps[m.reg]} ${m.rm}, cl`; }
+      else if (op >= 0xD8 && op <= 0xDF) {
+        const fpByte = dv.getUint8(pos);
+        const fpMod = fpByte >> 6, fpReg = (fpByte >> 3) & 7, fpRm = fpByte & 7;
+        const stN = i => `st(${i})`;
+        const fpMemOps = {
+          0xD8: ['fadd','fmul','fcom','fcomp','fsub','fsubr','fdiv','fdivr'],
+          0xD9: ['fld','??','fst','fstp','fldenv','fldcw','fnstenv','fnstcw'],
+          0xDA: ['fiadd','fimul','ficom','ficomp','fisub','fisubr','fidiv','fidivr'],
+          0xDB: ['fild','fisttp','fist','fistp','??','fld','??','fstp'],
+          0xDC: ['fadd','fmul','fcom','fcomp','fsub','fsubr','fdiv','fdivr'],
+          0xDD: ['fld','fisttp','fst','fstp','frstor','??','fnsave','fnstsw'],
+          0xDE: ['fiadd','fimul','ficom','ficomp','fisub','fisubr','fidiv','fidivr'],
+          0xDF: ['fild','fisttp','fist','fistp','fbld','fild','fbstp','fistp'],
+        };
+        const memSz = { 0xD8: 'dword', 0xD9: 'dword', 0xDA: 'dword', 0xDB: 'dword',
+                        0xDC: 'qword', 0xDD: 'qword', 0xDE: 'word', 0xDF: 'word' };
+        if (fpMod !== 3) {
+          const m = modrm(32);
+          const opName = fpMemOps[op][m.reg];
+          const sz = memSz[op];
+          insn = `${opName} ${sz} ${m.rm}`;
+        } else {
+          rd8();
+          if (op === 0xD8) {
+            insn = `${fpMemOps[0xD8][fpReg]} st, ${stN(fpRm)}`;
+          } else if (op === 0xD9) {
+            if (fpReg === 0) insn = `fld ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fxch ${stN(fpRm)}`;
+            else if (fpByte === 0xE0) insn = 'fchs';
+            else if (fpByte === 0xE1) insn = 'fabs';
+            else if (fpByte === 0xE4) insn = 'ftst';
+            else if (fpByte === 0xE5) insn = 'fxam';
+            else if (fpByte === 0xE8) insn = 'fld1';
+            else if (fpByte === 0xE9) insn = 'fldl2t';
+            else if (fpByte === 0xEA) insn = 'fldl2e';
+            else if (fpByte === 0xEB) insn = 'fldpi';
+            else if (fpByte === 0xEC) insn = 'fldlg2';
+            else if (fpByte === 0xED) insn = 'fldln2';
+            else if (fpByte === 0xEE) insn = 'fldz';
+            else if (fpByte === 0xF0) insn = 'f2xm1';
+            else if (fpByte === 0xF1) insn = 'fyl2x';
+            else if (fpByte === 0xF2) insn = 'fptan';
+            else if (fpByte === 0xF3) insn = 'fpatan';
+            else if (fpByte === 0xF4) insn = 'fxtract';
+            else if (fpByte === 0xF5) insn = 'fprem1';
+            else if (fpByte === 0xF6) insn = 'fdecstp';
+            else if (fpByte === 0xF7) insn = 'fincstp';
+            else if (fpByte === 0xF8) insn = 'fprem';
+            else if (fpByte === 0xF9) insn = 'fyl2xp1';
+            else if (fpByte === 0xFA) insn = 'fsqrt';
+            else if (fpByte === 0xFB) insn = 'fsincos';
+            else if (fpByte === 0xFC) insn = 'frndint';
+            else if (fpByte === 0xFD) insn = 'fscale';
+            else if (fpByte === 0xFE) insn = 'fsin';
+            else if (fpByte === 0xFF) insn = 'fcos';
+            else if (fpByte === 0xD0) insn = 'fnop';
+            else insn = `fpu_d9 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDA) {
+            if (fpByte === 0xE9) insn = 'fucompp';
+            else if (fpReg === 0) insn = `fcmovb st, ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fcmove st, ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fcmovbe st, ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fcmovu st, ${stN(fpRm)}`;
+            else insn = `fpu_da 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDB) {
+            if (fpByte === 0xE2) insn = 'fclex';
+            else if (fpByte === 0xE3) insn = 'finit';
+            else if (fpReg === 0) insn = `fcmovnb st, ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fcmovne st, ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fcmovnbe st, ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fcmovnu st, ${stN(fpRm)}`;
+            else if (fpReg === 5) insn = `fucomi st, ${stN(fpRm)}`;
+            else if (fpReg === 6) insn = `fcomi st, ${stN(fpRm)}`;
+            else insn = `fpu_db 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDC) {
+            insn = `${fpMemOps[0xD8][fpReg]} ${stN(fpRm)}, st`;
+          } else if (op === 0xDD) {
+            if (fpReg === 0) insn = `ffree ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fst ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fstp ${stN(fpRm)}`;
+            else if (fpReg === 4) insn = `fucom ${stN(fpRm)}`;
+            else if (fpReg === 5) insn = `fucomp ${stN(fpRm)}`;
+            else insn = `fpu_dd 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDE) {
+            if (fpByte === 0xD9) insn = 'fcompp';
+            else if (fpReg === 0) insn = `faddp ${stN(fpRm)}, st`;
+            else if (fpReg === 1) insn = `fmulp ${stN(fpRm)}, st`;
+            else if (fpReg === 4) insn = `fsubrp ${stN(fpRm)}, st`;
+            else if (fpReg === 5) insn = `fsubp ${stN(fpRm)}, st`;
+            else if (fpReg === 6) insn = `fdivrp ${stN(fpRm)}, st`;
+            else if (fpReg === 7) insn = `fdivp ${stN(fpRm)}, st`;
+            else insn = `fpu_de 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDF) {
+            if (fpByte === 0xE0) insn = 'fnstsw ax';
+            else if (fpReg === 5) insn = `fucomip st, ${stN(fpRm)}`;
+            else if (fpReg === 6) insn = `fcomip st, ${stN(fpRm)}`;
+            else insn = `fpu_df 0x${fpByte.toString(16)}`;
+          }
+        }
+      }
       else if (op === 0xE0) { const d = _sx8(rd8()); insn = `loopnz ${_hex(curVA + (pos - startPos) + d)}`; }
       else if (op === 0xE1) { const d = _sx8(rd8()); insn = `loopz ${_hex(curVA + (pos - startPos) + d)}`; }
       else if (op === 0xE2) { const d = _sx8(rd8()); insn = `loop ${_hex(curVA + (pos - startPos) + d)}`; }
