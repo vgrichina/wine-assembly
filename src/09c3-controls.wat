@@ -1408,7 +1408,7 @@
         (local.set $hmenu    (i32.load offset=8  (local.get $cs_w)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         ;; Allocate ButtonState
-        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state (call $heap_alloc (i32.const 64)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store        (local.get $state_w) (i32.const 0)) ;; text_buf_ptr
         (i32.store offset=4  (local.get $state_w) (i32.const 0)) ;; text_len
@@ -1714,6 +1714,47 @@
                         (global.get $PAINT_SCRATCH)
                         (i32.const 0x20) (i32.const 0)))))
             (return (i32.const 0))))
+
+        ;; ---- Owner-draw (kind 0x0B = BS_OWNERDRAW) ----
+        ;; Post WM_DRAWITEM to parent so the x86 dialog proc can paint.
+        ;; DRAWITEMSTRUCT (48 bytes) is embedded at ButtonState+16.
+        (if (i32.eq (local.get $kind) (i32.const 0x0B))
+          (then
+            ;; Skip if already drawn (flags bit 2) or queue full
+            (if (i32.and (local.get $flags) (i32.const 0x04))
+              (then (return (i32.const 0))))
+            (if (i32.ge_u (global.get $post_queue_count) (i32.const 8))
+              (then (return (i32.const 0))))
+            ;; Set drawn flag
+            (i32.store offset=8 (local.get $state_w)
+              (i32.or (local.get $flags) (i32.const 0x04)))
+            ;; Fill DRAWITEMSTRUCT at ButtonState+16
+            ;; Reuse $edge_flags as WASM address of the struct
+            (local.set $edge_flags (call $g2w (i32.add (local.get $state) (i32.const 16))))
+            (i32.store         (local.get $edge_flags) (i32.const 4))  ;; CtlType = ODT_BUTTON
+            (i32.store offset=4  (local.get $edge_flags)
+              (i32.load offset=12 (local.get $state_w)))               ;; CtlID
+            (i32.store offset=8  (local.get $edge_flags) (i32.const 0)) ;; itemID
+            (i32.store offset=12 (local.get $edge_flags) (i32.const 1)) ;; itemAction = ODA_DRAWENTIRE
+            (i32.store offset=16 (local.get $edge_flags)
+              (select (i32.const 1) (i32.const 0)
+                      (i32.and (local.get $flags) (i32.const 0x01))))   ;; itemState
+            (i32.store offset=20 (local.get $edge_flags) (local.get $hwnd)) ;; hwndItem
+            (i32.store offset=24 (local.get $edge_flags)
+              (i32.add (local.get $hwnd) (i32.const 0x40000)))          ;; hDC
+            (i32.store offset=28 (local.get $edge_flags) (i32.const 0)) ;; rcItem.left
+            (i32.store offset=32 (local.get $edge_flags) (i32.const 0)) ;; rcItem.top
+            (i32.store offset=36 (local.get $edge_flags) (local.get $w)) ;; rcItem.right
+            (i32.store offset=40 (local.get $edge_flags) (local.get $h)) ;; rcItem.bottom
+            (i32.store offset=44 (local.get $edge_flags) (i32.const 0)) ;; itemData
+            ;; Post WM_DRAWITEM (0x002B) to parent
+            (drop (call $wnd_send_message
+              (call $wnd_get_parent (local.get $hwnd))
+              (i32.const 0x002B)
+              (i32.load offset=12 (local.get $state_w))
+              (i32.add (local.get $state) (i32.const 16))))
+            (return (i32.const 0))))
+
         (return (i32.const 0))))
 
     ;; ---------- BM_GETCHECK (0x00F0) ----------

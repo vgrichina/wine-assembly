@@ -29,11 +29,10 @@ Victory animation (Force Win menu command 1010) works — cascading cards via cd
 - Victory animation (Force Win): cdtDrawExt cascading cards
 - Options dialog (103): Draw One/Three, scoring mode, checkboxes — fully rendered
 - Set Game Number dialog (102): static labels, edit control, Deal/Cancel
-- Select Card Back dialog (101): OK/Cancel buttons work (card back previews need owner-draw)
+- Select Card Back dialog (101): OK/Cancel buttons work, 12 card back previews render via WM_DRAWITEM
 - Browser-side double-click detection for WM_LBUTTONDBLCLK
 
 ### Known Issues
-- **Select Card Back dialog**: 12 card back buttons are BS_OWNERDRAW — need WM_DRAWITEM support
 - Status bar child window has negative client height (`"h":-12`) — cosmetic
 
 ### Not Yet Tested
@@ -108,7 +107,7 @@ node test/run.js --exe=test/binaries/entertainment-pack/sol.exe --trace-gdi --du
 
 | ID | Purpose | Controls | Status |
 |----|---------|----------|--------|
-| 101 | Card back selection | 12 owner-draw buttons (ids 54-65) + OK/Cancel | Opens, buttons empty (needs WM_DRAWITEM) |
+| 101 | Card back selection | 12 owner-draw buttons (ids 54-65) + OK/Cancel | Fully working — card backs render via WM_DRAWITEM |
 | 102 | Select game number | Static labels, Edit control (id 200), Deal/Cancel | Fully working |
 | 103 | Options | Draw One/Three radios (300-301), Scoring radios (302-304), checkboxes (305-308), OK/Cancel | Fully working |
 | 999 | Debug assertion | File/line/game# statics, Continue/Exit buttons | Working |
@@ -139,6 +138,7 @@ node test/run.js --exe=test/binaries/entertainment-pack/sol.exe --trace-gdi --du
 6. **Mouse capture routing** (2026-04-10): handleMouseMove/handleMouseUp respect `$capture_hwnd` for drag outside window bounds.
 7. **Dialog control style** (2026-04-11): Dialog creation now stores the control's style from the dialog template into the WND_RECORD. Fixes groupbox labels and any style-dependent button rendering.
 8. **Browser double-click** (2026-04-11): handleMouseDown detects double-clicks and sends WM_LBUTTONDBLCLK for auto-move to foundation.
+9. **WM_DRAWITEM for owner-draw buttons** (2026-04-11): BS_OWNERDRAW buttons now post WM_DRAWITEM to parent dialog proc. ButtonState extended to 64 bytes with embedded DRAWITEMSTRUCT. Owner-draw buttons registered as child windows in renderer for GDI routing. Fixes card back preview in Select Card Back dialog (101).
 
 ## Architecture Notes
 
