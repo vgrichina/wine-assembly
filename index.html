@@ -232,7 +232,7 @@
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
-      <button onclick="runningApps.forEach(a => a.wine.running = false); runningApps.length = 0; if(sharedRenderer){sharedRenderer.windows={};sharedRenderer.repaint();}">Stop All</button>
+      <button onclick="runningApps.forEach(a => a.wine.running = false); runningApps.length = 0; if(sharedRenderer){sharedRenderer.windows={};sharedRenderer.repaint();} document.getElementById('desktop-icons').style.display='';">Stop All</button>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
     <div id="content">
@@ -289,32 +289,55 @@ Resource-aware Win98 emulator
     ];
     const DEFAULT_APP_SET = new Set(DEFAULT_APPS.map(a => a[0]));
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
-    if (!DEBUG_MODE) {
-      document.body.classList.add('no-debug');
-      window.addEventListener('DOMContentLoaded', () => {
-        const sel = document.getElementById('app-select');
-        for (const opt of [...sel.querySelectorAll('option')]) {
-          if (!DEFAULT_APP_SET.has(opt.value)) opt.remove();
-        }
-        for (const grp of [...sel.querySelectorAll('optgroup')]) {
-          if (!grp.querySelector('option')) grp.remove();
-        }
-        const grid = document.getElementById('desktop-icons');
-        for (const [value, label, glyph] of DEFAULT_APPS) {
-          const el = document.createElement('div');
-          el.className = 'desktop-icon';
-          el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
-          el.addEventListener('click', () => {
-            for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
-            el.classList.add('selected');
-          });
-          el.addEventListener('dblclick', () => {
+    function initDesktop() {
+      // Pre-launch click forwarder: canvas sits over the icons even before
+      // wireCanvasInput runs, so clicks would be swallowed. Forward any click
+      // on the canvas through to the icon underneath until the real input
+      // wiring takes over (wireCanvasInput overwrites these handlers).
+      const cv = document.getElementById('screen');
+      cv.onmousedown = e => {
+        cv.style.pointerEvents = 'none';
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        cv.style.pointerEvents = '';
+        const iconEl = under && under.closest && under.closest('.desktop-icon');
+        if (iconEl) iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: e.clientX, clientY: e.clientY }));
+      };
+      const sel = document.getElementById('app-select');
+      for (const opt of [...sel.querySelectorAll('option')]) {
+        if (!DEFAULT_APP_SET.has(opt.value)) opt.remove();
+      }
+      for (const grp of [...sel.querySelectorAll('optgroup')]) {
+        if (!grp.querySelector('option')) grp.remove();
+      }
+      const grid = document.getElementById('desktop-icons');
+      for (const [value, label, glyph] of DEFAULT_APPS) {
+        const el = document.createElement('div');
+        el.className = 'desktop-icon';
+        el.dataset.app = value;
+        el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
+        let lastClick = 0;
+        el.addEventListener('click', () => {
+          for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
+          el.classList.add('selected');
+          const now = Date.now();
+          if (now - lastClick < 500) {
             sel.value = value;
             launchApp();
-          });
-          grid.appendChild(el);
-        }
-      });
+            lastClick = 0;
+          } else {
+            lastClick = now;
+          }
+        });
+        grid.appendChild(el);
+      }
+    }
+    if (!DEBUG_MODE) {
+      document.body.classList.add('no-debug');
+      if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', initDesktop);
+      } else {
+        initDesktop();
+      }
     }
 
     const apps = {
@@ -355,15 +378,33 @@ Resource-aware Win98 emulator
       if (inputWired) return;
       inputWired = true;
       canvas.oncontextmenu = e => e.preventDefault();
+      function windowAtCanvas(cx, cy) {
+        for (const w of Object.values(renderer.windows)) {
+          if (!w.visible || w.isChild) continue;
+          if (cx >= w.x && cx < w.x + w.w && cy >= w.y && cy < w.y + w.h) return w;
+        }
+        return null;
+      }
       canvas.onmousedown = e => {
         canvas.focus();
         const r = canvas.getBoundingClientRect();
         const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        renderer.handleMouseDown(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy),
-          e.button
-        );
+        const cx = Math.floor((e.clientX - r.left) * sx);
+        const cy = Math.floor((e.clientY - r.top) * sy);
+        if (!DEBUG_MODE && !windowAtCanvas(cx, cy)) {
+          // No window here — forward click to the icon under the cursor.
+          canvas.style.pointerEvents = 'none';
+          const under = document.elementFromPoint(e.clientX, e.clientY);
+          canvas.style.pointerEvents = '';
+          const iconEl = under && under.closest && under.closest('.desktop-icon');
+          if (iconEl) {
+            iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY }));
+            return;
+          }
+          // Empty desktop click: clear icon selection.
+          for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
+        }
+        renderer.handleMouseDown(cx, cy, e.button);
       };
       canvas.onmouseup = e => {
         const r = canvas.getBoundingClientRect();
