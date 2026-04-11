@@ -540,6 +540,72 @@
       (br $scan)))
     (local.get $wa))
 
+  ;; Resource data accessor for JS: finds the given (type, name) via
+  ;; $find_resource (which understands int IDs and guest ASCII string
+  ;; pointers) and returns the WASM linear address of the data payload.
+  ;; Sets $rsrc_last_size so callers can read the size in a paired
+  ;; export call. Returns 0 on miss.
+  (global $rsrc_last_size (mut i32) (i32.const 0))
+  (func $rsrc_find_data_wa (param $type_id i32) (param $name_id i32) (result i32)
+    (local $data_entry i32) (local $rva i32)
+    (global.set $rsrc_last_size (i32.const 0))
+    (local.set $data_entry (call $find_resource (local.get $type_id) (local.get $name_id)))
+    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
+    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
+    (global.set $rsrc_last_size
+      (call $gl32 (i32.add (global.get $image_base)
+        (i32.add (local.get $data_entry) (i32.const 4)))))
+    (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+
+  ;; LoadStringA / LoadStringW backing — walks RT_STRING directly in WAT.
+  ;; Win32 packs string resources into 16-entry bundles; string id N lives
+  ;; in bundle (N >> 4) + 1 at index N & 0xF. Each entry is (u16 length
+  ;; in UTF-16 chars) followed by `length` UTF-16LE code units. Empty
+  ;; slots have length 0 and no chars.
+  ;;
+  ;; $buf_wa is the destination WASM linear address (caller already ran
+  ;; the guest pointer through $g2w), $buf_len is the max chars including
+  ;; the NUL terminator. Returns number of chars written (excluding NUL)
+  ;; or 0 if the string can't be found / empty / buf_len is 0.
+  (func $string_load_a (param $id i32) (param $buf_wa i32) (param $buf_len i32) (result i32)
+    (local $bundle_id i32) (local $idx i32) (local $data_entry i32)
+    (local $rva i32) (local $wa i32) (local $i i32) (local $entry_len i32)
+    (local $copy i32) (local $j i32) (local $ch i32)
+    (if (i32.le_s (local.get $buf_len) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $bundle_id (i32.add (i32.shr_u (local.get $id) (i32.const 4)) (i32.const 1)))
+    (local.set $idx (i32.and (local.get $id) (i32.const 0xF)))
+    (local.set $data_entry (call $find_resource (i32.const 6) (local.get $bundle_id)))
+    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
+    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
+    (local.set $wa (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+    ;; Skip entries 0..idx-1
+    (block $at_entry (loop $skip
+      (br_if $at_entry (i32.ge_u (local.get $i) (local.get $idx)))
+      (local.set $entry_len (i32.load16_u (local.get $wa)))
+      (local.set $wa (i32.add (local.get $wa)
+        (i32.add (i32.const 2) (i32.shl (local.get $entry_len) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $skip)))
+    (local.set $entry_len (i32.load16_u (local.get $wa)))
+    (local.set $wa (i32.add (local.get $wa) (i32.const 2)))
+    (if (i32.eqz (local.get $entry_len)) (then (return (i32.const 0))))
+    ;; Clamp to buf_len-1 to leave room for NUL
+    (local.set $copy (local.get $entry_len))
+    (if (i32.ge_u (local.get $copy) (local.get $buf_len))
+      (then (local.set $copy (i32.sub (local.get $buf_len) (i32.const 1)))))
+    ;; Convert UTF-16 → ASCII (low byte) into destination
+    (local.set $j (i32.const 0))
+    (block $done (loop $copy_loop
+      (br_if $done (i32.ge_u (local.get $j) (local.get $copy)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $wa)
+        (i32.shl (local.get $j) (i32.const 1)))))
+      (i32.store8 (i32.add (local.get $buf_wa) (local.get $j))
+        (i32.and (local.get $ch) (i32.const 0xFF)))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $copy_loop)))
+    (i32.store8 (i32.add (local.get $buf_wa) (local.get $copy)) (i32.const 0))
+    (local.get $copy))
+
   ;; Skip a UTF-16LE null-terminated string. Returns WASM address past null.
   (func $dlg_skip_sz (param $wa i32) (result i32)
     (block $done (loop $scan

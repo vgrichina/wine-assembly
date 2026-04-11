@@ -385,6 +385,20 @@
     (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
     (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
     (i32.load offset=24 (local.get $rec)))
+  ;; Generic resource data accessor. Finds (type, name_id_or_str) and
+  ;; returns the WASM linear address of the data payload; the size
+  ;; sits in a WAT global readable via rsrc_last_size. Used by
+  ;; gdi_load_bitmap to pull RT_BITMAP bytes without a JS pre-parse.
+  (func (export "rsrc_find_data_wa") (param $type_id i32) (param $name_id i32) (result i32)
+    (call $rsrc_find_data_wa (local.get $type_id) (local.get $name_id)))
+  (func (export "rsrc_last_size") (result i32)
+    (global.get $rsrc_last_size))
+  ;; Existence check for a resource by (type, int id or guest str ptr).
+  ;; Used by the renderer to decide whether a window has a menu resource
+  ;; without a JS-side presence map.
+  (func (export "rsrc_exists") (param $type_id i32) (param $name_id i32) (result i32)
+    (i32.ne (call $find_resource (local.get $type_id) (local.get $name_id)) (i32.const 0)))
+
   (func (export "dlg_get_ctrl_count") (param $hwnd i32) (result i32)
     (local $rec i32)
     (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))

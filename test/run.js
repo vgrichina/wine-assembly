@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
 const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
@@ -132,10 +131,7 @@ async function main() {
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
 
-  // Parse resources directly from EXE
-  const resourceJson = parseResources(exeBytes);
-  console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
-    Object.keys(resourceJson.strings).length, 'strings');
+  // Resource parsing lives in WAT — nothing to pre-parse here.
 
   // Set up renderer if node-canvas is available
   let renderer = null;
@@ -144,7 +140,6 @@ async function main() {
     const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
-    renderer.loadResources(resourceJson);
   }
 
   // String APIs where we want to log content
@@ -157,7 +152,6 @@ async function main() {
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
-    resourceJson,
     apiTable,
     verbose: VERBOSE,
     onExit: (code) => { stopped = true; },
@@ -470,7 +464,6 @@ async function main() {
     const workerCtx = {
       getMemory: () => memory.buffer,
       renderer,
-      resourceJson,
       onExit: () => {},
       trace: traceCategories,
       vfs: ctx.vfs,  // share filesystem with main thread
@@ -567,15 +560,20 @@ async function main() {
       extraArgs: EXTRA_ARGS || '',
     });
     stopped = false;
-    // Parse resources from DLLs and store by base address
+    // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT's
+    // $find_resource. DLL bitmaps (cards.dll for sol/freecell, etc.)
+    // still come from a per-module byte index extracted here because
+    // WAT's resource walker only knows about $rsrc_rva.
+    const { extractBitmapBytes } = require('../lib/dib');
     ctx.dllResources = {};
     if (dllResults) {
       for (let i = 0; i < dlls.length && i < dllResults.length; i++) {
         try {
-          const dllRes = parseResources(dlls[i].bytes);
-          if (dllRes && dllRes.bitmaps && Object.keys(dllRes.bitmaps).length > 0) {
-            ctx.dllResources[dllResults[i].loadAddr] = dllRes;
-            console.log(`DLL resources: ${dlls[i].name} has ${Object.keys(dllRes.bitmaps).length} bitmaps`);
+          const bitmapBytes = extractBitmapBytes(dlls[i].bytes);
+          const count = Object.keys(bitmapBytes).length;
+          if (count > 0) {
+            ctx.dllResources[dllResults[i].loadAddr] = { bitmapBytes };
+            console.log(`DLL resources: ${dlls[i].name} has ${count} bitmaps`);
           }
         } catch (_) {}
       }

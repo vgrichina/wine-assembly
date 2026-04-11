@@ -33,15 +33,6 @@ async function main() {
     draw_rect: () => {}, read_file: () => 0,
     create_window: () => 0x10001, show_window: () => {},
     dialog_loaded: () => {},
-    load_string: (id, p, l) => {
-      if (!resourceJson.strings[id]) return 0;
-      const s = resourceJson.strings[id];
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      const n = Math.min(s.length, l - 1);
-      for (let i = 0; i < n; i++) mem[p + i] = s.charCodeAt(i) & 0xFF;
-      mem[p + n] = 0;
-      return n;
-    },
     set_window_text: () => {}, invalidate: () => {}, draw_text: () => {},
     check_input: () => 0, check_input_lparam: () => 0, check_input_hwnd: () => 0,
     set_window_class: () => {}, set_menu: () => {},

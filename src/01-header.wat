@@ -29,8 +29,6 @@
   ;; parsed the RT_DIALOG template into WND_DLG_RECORDS + CONTROL_TABLE.
   ;; JS reads window+control state from WAT exports (dlg_*, ctrl_*) —
   ;; there is no JS-side template parser.
-  (import "host" "load_string" (func $host_load_string (param i32 i32 i32) (result i32)))
-  ;; load_string(string_id, buf_ptr, buf_len) → chars_written
   (import "host" "set_window_text" (func $host_set_window_text (param i32 i32)))
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))

@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const { createCanvas } = require('canvas');
 const { Win98Renderer } = require('../lib/renderer');
-const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
 const SRC_DIR = path.join(__dirname, '..', 'src');
@@ -28,18 +27,12 @@ async function main() {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const renderer = new Win98Renderer(canvas);
 
-  // Parse resources directly from EXE
-  const resourceJson = parseResources(exeBytes);
-  renderer.loadResources(resourceJson);
-  console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
-    Object.keys(resourceJson.strings).length, 'strings');
-
+  // Resource parsing lives in WAT.
   let stopped = false;
 
   const base = createHostImports({
     getMemory: () => instance.exports.memory.buffer,
     renderer,
-    resourceJson,
     onExit: (code) => { stopped = true; },
   });
 

@@ -1341,11 +1341,11 @@
 
   ;; 110: LoadStringA
   (func $handle_LoadStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Call host to write string from resource JSON into guest buffer
-    (global.set $eax (call $host_load_string
-    (local.get $arg1)                ;; string ID
-    (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
-    (local.get $arg3)))              ;; max chars
+    ;; RT_STRING walker lives in WAT — see $string_load_a in 10-helpers.wat.
+    (global.set $eax (call $string_load_a
+      (local.get $arg1)                ;; string ID
+      (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
+      (local.get $arg3)))              ;; max chars
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
@@ -6712,9 +6712,9 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 695: LoadStringW — load string resource (same as A for now)
+  ;; 695: LoadStringW — load string resource (writes ASCII into buffer for now)
   (func $handle_LoadStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_load_string
+    (global.set $eax (call $string_load_a
       (local.get $arg1)                ;; string ID
       (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
       (local.get $arg3)))              ;; max chars

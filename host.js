@@ -335,13 +335,9 @@ class WineAssembly {
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
     this._exeBytes = exeBytes;
 
-    // Parse PE resources directly from EXE bytes
-    if (typeof parseResources === 'function') {
-      this.resourceJson = parseResources(exeBytes);
-      if (this.renderer) {
-        this.renderer.loadResources(this.resourceJson);
-      }
-    }
+    // Resource parsing lives in WAT ($find_resource, $dlg_load,
+    // $menu_load, $string_load_a, $rsrc_find_data_wa). The JS side no
+    // longer pre-parses anything from the EXE bytes.
 
     // Load EXE into staging buffer
     const staging = this.instance.exports.get_staging();
@@ -401,16 +397,23 @@ class WineAssembly {
     this._inDllInit = true;
     const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
     this._inDllInit = false;
-    // Parse DLL resources for bitmap loading
-    const _parseResources = (typeof parseResources === 'function') ? parseResources : (typeof ResourceParser !== 'undefined' && ResourceParser.parseResources);
-    if (_parseResources && results) {
+    // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT, but DLL
+    // bitmaps (e.g. cards.dll for sol/freecell) still need a JS-side
+    // per-module index because WAT's resource walker only knows about
+    // $rsrc_rva. extractBitmapBytes() slurps the raw DIB payload for
+    // every integer-keyed RT_BITMAP entry in a DLL.
+    const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
+      ? extractBitmapBytes
+      : (typeof dibLib !== 'undefined' && dibLib.extractBitmapBytes);
+    if (_extractBitmapBytes && results) {
       this.dllResources = this.dllResources || {};
       for (let i = 0; i < configs.length && i < results.length; i++) {
         try {
-          const dllRes = _parseResources(configs[i].bytes);
-          if (dllRes && dllRes.bitmaps && Object.keys(dllRes.bitmaps).length > 0) {
-            this.dllResources[results[i].loadAddr] = dllRes;
-            console.log(`DLL resources: ${configs[i].name} has ${Object.keys(dllRes.bitmaps).length} bitmaps`);
+          const bitmapBytes = _extractBitmapBytes(configs[i].bytes);
+          const count = Object.keys(bitmapBytes).length;
+          if (count > 0) {
+            this.dllResources[results[i].loadAddr] = { bitmapBytes };
+            console.log(`DLL resources: ${configs[i].name} has ${count} bitmaps`);
           }
         } catch (_) {}
       }
