@@ -222,6 +222,7 @@
   ;; $create_about_dialog directly from inside the WAT-side handler.
   ;; JS does not need to drive dialog construction.)
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
+  (func (export "get_capture_hwnd")     (result i32) (global.get $capture_hwnd))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
 
   ;; Count occupied WND_RECORDS slots (hwnd != 0). Used by the find dialog
