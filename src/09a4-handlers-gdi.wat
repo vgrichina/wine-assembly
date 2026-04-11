@@ -347,6 +347,9 @@
   ;; 185: ReleaseCapture() → BOOL. 0 args stdcall
   (func $handle_ReleaseCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $capture_hwnd (i32.const 0))
+    (global.set $paint_pending (i32.const 1))
+    (if (global.get $main_hwnd)
+      (then (call $host_invalidate (global.get $main_hwnd))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )

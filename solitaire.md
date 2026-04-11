@@ -66,6 +66,7 @@ Game is fully interactive. Cards deal, render correctly, and respond to mouse cl
    - Return address offset: read from `[esp+20]` instead of `[esp+8]` after stack adjustment. Fixed offset.
 2. **Mouse interaction APIs** (2026-04-10): Implemented GetKeyState, CopyRect, InflateRect, SetCursorPos to unblock mouse click handling.
 3. **Time progression** (2026-04-10): GetLocalTime/GetSystemTime/GetSystemTimeAsFileTime now vary with simulated ticks instead of returning constants. Fixes srand seeding so re-deal produces different game numbers.
+4. **Drag trail cleanup** (2026-04-10): ReleaseCapture now triggers InvalidateRect+paint_pending on the main window. The solitaire drag uses triple-buffered BitBlt compositing that leaves artifacts during drag; the forced repaint on drop erases them.
 
 ## Architecture Notes
 
