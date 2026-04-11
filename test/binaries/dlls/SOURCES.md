@@ -2,16 +2,14 @@
 
 System DLLs used for testing Win32 PE emulation. All extracted from publicly archived Microsoft redistributables on archive.org.
 
-## From Windows 98 SE install CD (archive.org)
+## Not redistributed: shell32.dll / shlwapi.dll / advapi32.dll
 
-Source: `https://archive.org/details/win98se` (Win98SE ISO)
-Extracted from: `win98/BASE4.CAB` (spanning cabinet)
-
-| DLL | Size | Date | Notes |
-|-----|------|------|-------|
-| shell32.dll | 1,400,832 | 1999-04-23 | Stock Win98SE, no ntdll dependency |
-| shlwapi.dll | 282,896 | 1999-04-23 | Imports only GDI32/KERNEL32/USER32/ADVAPI32 |
-| advapi32.dll | 65,536 | 1999-04-23 | Imports only KERNEL32 |
+Previously extracted from the Win98SE ISO (`win98/BASE4.CAB`) but removed —
+policy is to only ship DLLs from freely-redistributable updates / shareware,
+not stock Windows install media. These DLLs are instead emulated as "fake
+modules" by the WAT runtime: static imports resolve by name via the WAT API
+hash table, and dynamic `LoadLibraryA` returns a stub handle that
+`GetProcAddress` also resolves by name. No real PE body is needed.
 
 ## From IE5 for Win95/Win98 (archive.org)
 
