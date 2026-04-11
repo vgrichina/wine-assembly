@@ -724,7 +724,7 @@
   (func $handle_LCMapStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (i32.and (local.get $arg4) (local.get $cchDest))
+    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ne (local.get $cchDest) (i32.const 0)))
     (then
       ;; Copy src to dest (identity)
       (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2)) (local.get $arg3))))
@@ -737,7 +737,7 @@
   (func $handle_LCMapStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (i32.and (local.get $arg4) (local.get $cchDest))
+    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ne (local.get $cchDest) (i32.const 0)))
     (then
       (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2))
         (i32.mul (local.get $arg3) (i32.const 2)))))
@@ -2849,7 +2849,7 @@
   ;; 295: GetWindowTextW(hwnd, lpString, nMaxCount) → int (chars copied)
   ;; Write empty wide string, return 0 (no title set)
   (func $handle_GetWindowTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and (local.get $arg1) (local.get $arg2))
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
       (then (i32.store16 (call $g2w (local.get $arg1)) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))

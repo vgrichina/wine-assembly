@@ -174,7 +174,7 @@
           (loop $loop
             (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
             (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
-            (if (i32.and (i32.load (local.get $base))  ;; handle != 0
+            (if (i32.and (i32.ne (i32.load (local.get $base)) (i32.const 0))  ;; handle != 0
                          (i32.eqz (i32.load offset=4 (local.get $base))))  ;; parent == 0
               (then (return (i32.load (local.get $base)))))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))

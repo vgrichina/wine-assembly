@@ -1113,6 +1113,7 @@ async function main() {
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
+      console.log('  Full stack:', e.stack.split('\n').slice(0, 15).join('\n    '));
       console.log('  EIP before batch: ' + hex(eipBefore));
       try { console.log('  thread_alloc: ' + hex(instance.exports.get_thread_alloc())); } catch (_) {}
       console.log('  ' + regs());

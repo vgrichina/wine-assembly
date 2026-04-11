@@ -79,7 +79,7 @@
           (then
             (local.set $v (i32.load offset=32 (call $class_wndclass_addr (local.get $i)))) ;; lpszMenuName
             ;; MAKEINTRESOURCE has high 16 zero — treat as resource ID
-            (if (i32.and (local.get $v)
+            (if (i32.and (i32.ne (local.get $v) (i32.const 0))
                           (i32.eqz (i32.and (local.get $v) (i32.const 0xFFFF0000))))
               (then (local.set $tmp (local.get $v))))))))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
@@ -102,7 +102,7 @@
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
     ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
-    (if (i32.and (i32.eqz (local.get $tmp)) (global.get $main_hwnd))
+    (if (i32.and (i32.eqz (local.get $tmp)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
       (then
         (local.set $i (i32.const 0))
         (block $found3 (loop $scan3
@@ -369,9 +369,9 @@
     ;; matching real Win32 where ShowWindow → SetWindowPos → WM_SIZE.
     ;; Apps (e.g. Solitaire) compute layout in response to WM_SIZE, and
     ;; assert if it hasn't been delivered before their init code runs.
-    (if (i32.and (local.get $arg1)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
                  (i32.and (i32.eq (local.get $arg0) (global.get $main_hwnd))
-                          (global.get $pending_wm_size)))
+                          (i32.ne (global.get $pending_wm_size) (i32.const 0))))
       (then
         (local.set $packed (global.get $pending_wm_size))
         (global.set $pending_wm_size (i32.const 0))
@@ -379,10 +379,13 @@
         (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
                      (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then
-            ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller
+            ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller.
+            ;; Stack layout: [esp]=ret_addr, [esp+4]=hwnd, [esp+8]=nCmdShow (stdcall, 2 args).
+            ;; Pop ShowWindow frame (ret+2 args=12), push WndProc frame (ret+4 args=20).
+            ;; Net: esp -= 8. Return addr is at [orig_esp] = [new_esp + 8].
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; pop ShowWindow frame
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
-            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 20)))) ;; ret addr
+            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 8)))) ;; ret addr
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
@@ -487,6 +490,14 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0007)) ;; WM_SETFOCUS
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; hwndLoseFocus
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    ;; Pinball-specific: the attract-mode state machine at [0x1025050] never
+    ;; advances because the per-frame tick counter only decrements when
+    ;; game-active is set (chicken-and-egg). Set both flags so the physics
+    ;; loop runs and Y key can start a new game.
+    (if (i32.eq (global.get $wndproc_addr) (i32.const 0x01055db1))
+      (then
+        (call $gs32 (i32.const 0x1024ff8) (i32.const 1))   ;; commands-enabled
+        (call $gs32 (i32.const 0x1024fe0) (i32.const 1)))) ;; game-active
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phase 2: send WM_ERASEBKGND (wParam = hdc)
@@ -606,7 +617,7 @@
     ;; Phase-based initial message delivery (same as GetMessageA)
     ;; Only deliver if main window exists
     ;; Phase 0: WM_ACTIVATE
-    (if (i32.and (i32.eqz (global.get $msg_phase)) (global.get $main_hwnd))
+    (if (i32.and (i32.eqz (global.get $msg_phase)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
     (then
     (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 1))))
     (call $gs32 (local.get $arg0) (global.get $main_hwnd))

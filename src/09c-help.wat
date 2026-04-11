@@ -500,7 +500,7 @@
   (func $help_create_window
     (local $title_wa i32) (local $hwnd i32)
     ;; Use parsed title or fallback
-    (if (i32.and (global.get $help_title_wa) (global.get $help_title_len))
+    (if (i32.and (i32.ne (global.get $help_title_wa) (i32.const 0)) (i32.ne (global.get $help_title_len) (i32.const 0)))
       (then (local.set $title_wa (global.get $help_title_wa)))
       (else (local.set $title_wa (i32.const 0x108)))) ;; "Help"
     ;; Allocate hwnd
