@@ -128,19 +128,13 @@ class WineAssembly {
       }, 1000);
       console.log(`[download] ${path} (${entry.data.length} bytes)`);
     };
-    h.shell_about = (hWnd, szAppPtr) => {
-      const appName = self.readString(szAppPtr);
-      const versionInfo = self._getVersionInfo();
-      let text = appName;
-      if (versionInfo.FileVersion) text += '\nVersion ' + versionInfo.FileVersion;
-      if (versionInfo.LegalCopyright) text += '\n' + versionInfo.LegalCopyright;
-      console.log(`[ShellAbout] "${appName}"`);
+    // The About dialog is built entirely in WAT by $create_about_dialog
+    // (see src/09a-handlers.wat:$handle_ShellAboutA). This host import
+    // only logs; matches lib/host-imports.js signature.
+    h.shell_about = (dlgHwnd, ownerHwnd, appPtr) => {
+      const appName = self.readString(appPtr);
+      console.log(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} owner=0x${ownerHwnd.toString(16)} "${appName}"`);
       self.logToUI(`[ShellAbout] ${appName}`);
-      if (self.renderer) {
-        self.renderer.showAboutDialog(hWnd, appName, versionInfo);
-      } else {
-        alert(text);
-      }
       return 1;
     };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {

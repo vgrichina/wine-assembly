@@ -303,7 +303,7 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=20 (local.get $it)))
 
-  ;; Flags of child (bit0 separator, bit1 grayed).
+  ;; Flags of child (bit0 separator, bit1 grayed, bit2 checked).
   (func $menu_child_flags (export "menu_child_flags")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
@@ -312,6 +312,82 @@
     (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $cidx)))
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=16 (local.get $it)))
+
+  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every child
+  ;; item in this blob whose command id matches $id. Returns the item's
+  ;; previous checked state (MF_CHECKED=8 or MF_UNCHECKED=0) for the
+  ;; first match, or -1 if nothing matched.
+  (func $menu_blob_set_check
+        (param $blob_w i32) (param $id i32) (param $check i32) (result i32)
+    (local $bar_count i32) (local $i i32) (local $bar_item i32)
+    (local $hdr_off i32) (local $hdr i32) (local $cc i32) (local $j i32)
+    (local $it i32) (local $flags i32) (local $found i32) (local $prev i32)
+    (local.set $found (i32.const 0))
+    (local.set $prev  (i32.const 0))
+    (local.set $bar_count (i32.load (local.get $blob_w)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $bar
+      (br_if $done (i32.ge_u (local.get $i) (local.get $bar_count)))
+      (local.set $bar_item (i32.add (local.get $blob_w)
+                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+      (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
+      (if (local.get $hdr_off)
+        (then
+          (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
+          (local.set $cc (i32.load (local.get $hdr)))
+          (local.set $j (i32.const 0))
+          (block $cdone (loop $c
+            (br_if $cdone (i32.ge_u (local.get $j) (local.get $cc)))
+            (local.set $it (i32.add (local.get $hdr)
+                             (i32.add (i32.const 4) (i32.mul (local.get $j) (i32.const 24)))))
+            (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
+              (then
+                (local.set $flags (i32.load offset=16 (local.get $it)))
+                (if (i32.eqz (local.get $found))
+                  (then
+                    (if (i32.and (local.get $flags) (i32.const 0x04))
+                      (then (local.set $prev (i32.const 8))))
+                    (local.set $found (i32.const 1))))
+                (if (local.get $check)
+                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
+                  (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
+                (i32.store offset=16 (local.get $it) (local.get $flags))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $c)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bar)))
+    (if (local.get $found)
+      (then (return (local.get $prev))))
+    (i32.const -1))
+
+  ;; Walk every window that has a menu blob and toggle the check state
+  ;; of the first matching id. Invalidates any hwnd whose menu changed
+  ;; so the next dropdown paint reflects the new state. Returns the
+  ;; original state (MF_UNCHECKED=0, MF_CHECKED=8) or -1 if no match.
+  (func $menu_check_item_global (export "menu_check_item_global")
+        (param $id i32) (param $check i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $blob_w i32)
+    (local $r i32) (local $prev i32)
+    (local.set $prev (i32.const -1))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+      (if (local.get $hwnd)
+        (then
+          (local.set $blob_w (call $menu_blob_w (local.get $hwnd)))
+          (if (local.get $blob_w)
+            (then
+              (local.set $r (call $menu_blob_set_check
+                              (local.get $blob_w) (local.get $id) (local.get $check)))
+              (if (i32.ne (local.get $r) (i32.const -1))
+                (then
+                  (if (i32.eq (local.get $prev) (i32.const -1))
+                    (then (local.set $prev (local.get $r))))
+                  (call $host_invalidate (local.get $hwnd))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (local.get $prev))
 
   ;; Accel-char (uppercase ASCII) for top-level item $idx, or 0 if none.
   ;; The accel char is the byte after the first un-doubled '&'.
@@ -440,6 +516,15 @@
               (if (i32.and (local.get $flags) (i32.const 0x02))
                 (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x808080))))
                 (else (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
+          ;; Check glyph — filled square in the left margin when bit2 set
+          (if (i32.and (local.get $flags) (i32.const 0x04))
+            (then
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 6))
+                      (i32.add (local.get $iy) (i32.const 6))
+                      (i32.add (local.get $dx) (i32.const 14))
+                      (i32.add (local.get $iy) (i32.const 14))
+                      (i32.const 0x30012)))))
           ;; Label
           (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
           (local.set $label_len (i32.load offset=4 (local.get $it)))
@@ -769,8 +854,12 @@
       (br $items))))
 
   ;; Public entry: load the menu identified by $menu_id (RT_MENU=4) for
-  ;; $hwnd. Replaces any prior menu blob. Pass menu_id=0 to clear.
-  (func (export "menu_load") (param $hwnd i32) (param $menu_id i32)
+  ;; $hwnd. Pass menu_id=0 to clear. Skips the load entirely if this
+  ;; slot already has a blob — callers may invoke this multiple times
+  ;; (eager path in $handle_CreateWindowExA, lazy path from renderer
+  ;; _ensureWatMenu) and the first load wins so mutable state such as
+  ;; CheckMenuItem's bit2 flag survives subsequent calls.
+  (func $menu_load (export "menu_load") (param $hwnd i32) (param $menu_id i32)
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
@@ -778,9 +867,12 @@
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
     (local.set $old (i32.load (local.get $tbl)))
-    (if (local.get $old) (then (call $heap_free (local.get $old))))
-    (i32.store (local.get $tbl) (i32.const 0))
-    (if (i32.eqz (local.get $menu_id)) (then (return)))
+    (if (i32.eqz (local.get $menu_id))
+      (then
+        (if (local.get $old) (then (call $heap_free (local.get $old))))
+        (i32.store (local.get $tbl) (i32.const 0))
+        (return)))
+    (if (local.get $old) (then (return)))
     ;; Resolve resource bytes.
     (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
     (if (i32.eqz (local.get $entry)) (then (return)))

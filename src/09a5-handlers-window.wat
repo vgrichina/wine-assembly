@@ -150,6 +150,14 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
+    ;; Eagerly load the menu blob now that the WND_RECORDS slot exists —
+    ;; otherwise a CheckMenuItem fired from WM_CREATE (e.g. FreeCell
+    ;; initialising the Messages toggle) would see an empty blob and the
+    ;; renderer's lazy _ensureWatMenu would later reload fresh bytes,
+    ;; wiping the check state. $menu_load is idempotent: if the blob is
+    ;; already installed, it returns early.
+    (if (local.get $v)
+      (then (call $menu_load (global.get $next_hwnd) (local.get $v))))
     ;; Send WM_CREATE synchronously for main window OR top-level windows with EXE-space wndproc.
     ;; Child windows (hWndParent != 0) use the pending_child_create/size path instead,
     ;; because the synchronous path overwrites pending_wm_size with child dimensions.

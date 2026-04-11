@@ -1471,11 +1471,17 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) — return previous state
-  ;; TODO: track menu check state in renderer
+  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state
+  ;; We don't track HMENU-to-window mapping directly, so walk every
+  ;; window with a menu blob and toggle the first matching command id.
+  ;; uCheck combines MF_BYCOMMAND/MF_BYPOSITION with MF_CHECKED (8) or
+  ;; MF_UNCHECKED (0); MF_BYPOSITION isn't supported here — in practice
+  ;; callers use MF_BYCOMMAND, which is what our id-based walk matches.
   (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; MF_UNCHECKED as previous state
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+    (global.set $eax (call $menu_check_item_global
+      (local.get $arg1)
+      (i32.and (local.get $arg2) (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 123: CheckRadioButton
