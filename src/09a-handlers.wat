@@ -219,10 +219,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 6: GetLocalTime
+  ;; 6: GetLocalTime(lpSystemTime) — fills SYSTEMTIME with simulated time
   (func $handle_GetLocalTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (local $wa i32) (local $secs i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
+    (i32.store16 (local.get $wa) (i32.const 2000))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
+      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
+      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
+      (i32.rem_u (local.get $secs) (i32.const 60)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
+      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 7: GetTimeFormatA(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime) — 6 args stdcall
@@ -2903,9 +2917,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 302: GetKeyState — STUB: unimplemented
+  ;; 302: GetKeyState(nVirtKey) → SHORT — 1 arg stdcall
   (func $handle_GetKeyState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 303: GetParent — STUB: unimplemented
@@ -3758,9 +3773,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 391: InflateRect — STUB: unimplemented
+  ;; 391: InflateRect(lprc, dx, dy) → BOOL — 3 args stdcall
   (func $handle_InflateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    ;; left -= dx
+    (i32.store (local.get $wa)
+      (i32.sub (i32.load (local.get $wa)) (local.get $arg1)))
+    ;; top -= dy
+    (i32.store (i32.add (local.get $wa) (i32.const 4))
+      (i32.sub (i32.load (i32.add (local.get $wa) (i32.const 4))) (local.get $arg2)))
+    ;; right += dx
+    (i32.store (i32.add (local.get $wa) (i32.const 8))
+      (i32.add (i32.load (i32.add (local.get $wa) (i32.const 8))) (local.get $arg1)))
+    ;; bottom += dy
+    (i32.store (i32.add (local.get $wa) (i32.const 12))
+      (i32.add (i32.load (i32.add (local.get $wa) (i32.const 12))) (local.get $arg2)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 392: LoadBitmapW — STUB: unimplemented
@@ -3817,9 +3847,17 @@
     (global.set $eax (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 399: CopyRect — STUB: unimplemented
+  ;; 399: CopyRect(lprcDst, lprcSrc) → BOOL — 2 args stdcall
   (func $handle_CopyRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $dst i32) (local $src i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (local.set $src (call $g2w (local.get $arg1)))
+    (i32.store (local.get $dst) (i32.load (local.get $src)))
+    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.load (i32.add (local.get $src) (i32.const 4))))
+    (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.load (i32.add (local.get $src) (i32.const 8))))
+    (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.load (i32.add (local.get $src) (i32.const 12))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 400: IntersectRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL
@@ -5133,14 +5171,14 @@
   )
 
   ;; 514: GetSystemTimeAsFileTime(lpFileTime) — writes 8-byte FILETIME
-  ;; Returns a fixed timestamp (~2000-01-01) since we don't have real time
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg0)))
-    ;; FILETIME for ~2000-01-01 00:00:00 UTC = 0x01BF53EB256D4000
-    (i32.store (local.get $wa) (i32.const 0x256D4000))       ;; dwLowDateTime
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x01BF53EB))  ;; dwHighDateTime
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+    ;; Base: 2000-01-01 = 0x01BF53EB256D4000, add ticks*10000 (100ns units)
+    (i32.store (local.get $wa)
+      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x01BF53EB))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 515: SetLocalTime — STUB: unimplemented
@@ -5148,20 +5186,24 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 516: GetSystemTime(lpSystemTime) — fills SYSTEMTIME struct
-  ;; Returns fixed time 2000-01-01 00:00:00.000 (Saturday)
+  ;; 516: GetSystemTime(lpSystemTime) — fills SYSTEMTIME with simulated time
   (func $handle_GetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $secs i32)
     (local.set $wa (call $g2w (local.get $arg0)))
-    (i32.store16 (local.get $wa) (i32.const 2000))                          ;; wYear
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))     ;; wMonth
-    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))     ;; wDayOfWeek (Saturday)
-    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))     ;; wDay
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))     ;; wHour
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))    ;; wMinute
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0))    ;; wSecond
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14)) (i32.const 0))    ;; wMilliseconds
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
+    (i32.store16 (local.get $wa) (i32.const 2000))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
+      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
+      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
+      (i32.rem_u (local.get $secs) (i32.const 60)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
+      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 517: FormatMessageW — STUB: unimplemented
@@ -6569,9 +6611,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 676: SetCursorPos — STUB: unimplemented
+  ;; 676: SetCursorPos(x, y) → BOOL — 2 args stdcall
   (func $handle_SetCursorPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 677: DestroyCursor — STUB: unimplemented

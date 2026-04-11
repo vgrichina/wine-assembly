@@ -5,24 +5,32 @@ Test: `test/test-solitaire-deal.js`
 
 ## Status (2026-04-10)
 
-Game initializes, deals cards, renders correctly. Main message loop runs (GetMessageA polling). No assertions fire. Cards DLL (cards.dll) loads and renders card bitmaps via cdtDraw/cdtDrawExt.
+Game is fully interactive. Cards deal, render correctly, and respond to mouse clicks. Deck clicks flip cards to waste pile, double-click auto-moves cards to foundation (score updates). Re-deal produces different game numbers. All 6 test checks pass.
 
 ### Working
 - Window creation with menu (resource ID 1)
-- WM_SIZE delivery via ShowWindow → wndproc redirect (was broken, now fixed)
+- WM_SIZE delivery via ShowWindow → wndproc redirect
 - Card pile layout computation (computed during WM_SIZE handler)
 - Initial deal (WM_COMMAND 1000 posted during WinMain)
 - Card rendering: BitBlt with SetPixel corner rounding, GetPixel readback
-- Status bar (child window hwnd=0x10002, custom class)
+- Status bar (child window hwnd=0x10002, custom class) with score/time/game#
 - Timer (SetTimer id=0x29a, 250ms)
 - Profile settings (GetProfileIntA/GetProfileStringA for card back, draw mode)
 - DLL loading: cards.dll (74 bitmaps), msvcrt.dll
-- Debug assertion dialog (dialog 999) — no longer fires after WM_SIZE fix
+- Mouse click → card selection (SetCapture/PtInRect/ReleaseCapture)
+- Deck click → flip cards to waste pile (draw-3 mode)
+- Double-click → auto-move card to foundation (score updates)
+- Game > Deal re-deal with different game number (time-based srand seed)
+- GetKeyState, CopyRect, InflateRect, SetCursorPos, InvertRect all implemented
+
+### Open Issues
+- EndDialog flow not verified end-to-end (browser click → Continue → EndDialog)
+- Options dialog (103) radio buttons need checked state sync (draw-1/draw-3, scoring)
+- Status bar child window has negative client height (`"h":-12`) — cosmetic
 
 ### Not Yet Tested
-- Mouse click → card dragging (SetCapture/ReleaseCapture)
+- Card dragging between tableau columns (click-select then click-destination)
 - Card movement animation (cdtAnimate)
-- Game > Deal (re-deal via menu or WM_COMMAND injection)
 - Game > Options dialog (dialog 103: draw-1/draw-3, scoring mode)
 - Deck back selection dialog (dialog 101: 12 card back bitmaps)
 - Select Game # dialog (dialog 102: edit control + number input)
@@ -56,6 +64,8 @@ Game initializes, deals cards, renders correctly. Main message loop runs (GetMes
 1. **ShowWindow WM_SIZE delivery** (2026-04-10): Two bugs prevented WM_SIZE from reaching the wndproc:
    - Bitwise AND coercion: `i32.and nCmdShow=10 boolean=1` → 0 (bit 0 of 10 is 0). Fixed with `i32.ne` coercion.
    - Return address offset: read from `[esp+20]` instead of `[esp+8]` after stack adjustment. Fixed offset.
+2. **Mouse interaction APIs** (2026-04-10): Implemented GetKeyState, CopyRect, InflateRect, SetCursorPos to unblock mouse click handling.
+3. **Time progression** (2026-04-10): GetLocalTime/GetSystemTime/GetSystemTimeAsFileTime now vary with simulated ticks instead of returning constants. Fixes srand seeding so re-deal produces different game numbers.
 
 ## Architecture Notes
 

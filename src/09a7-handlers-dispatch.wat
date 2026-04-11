@@ -281,12 +281,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 745: time(timer) — return seconds since epoch (fake: 946684800 = 2000-01-01)
+  ;; 745: time(timer) — return seconds since epoch
   (func $handle_time (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 946684800))
+    (local $t i32)
+    (local.set $t (i32.add (i32.const 946684800) (i32.div_u (call $host_get_ticks) (i32.const 1000))))
+    (global.set $eax (local.get $t))
     (if (local.get $arg0)
-      (then (i32.store (call $g2w (local.get $arg0)) (i32.const 946684800))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl, caller cleans
+      (then (i32.store (call $g2w (local.get $arg0)) (local.get $t))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 746: atol(str) — convert ASCII string to long integer
