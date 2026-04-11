@@ -516,15 +516,35 @@
               (if (i32.and (local.get $flags) (i32.const 0x02))
                 (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x808080))))
                 (else (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
-          ;; Check glyph — filled square in the left margin when bit2 set
+          ;; Check glyph — two-stroke V drawn with BLACK_PEN/WHITE_PEN in the
+          ;; left margin when MF_CHECKED (bit2) is set. Second pass offset by
+          ;; +1 row gives a 2-px thick check. Font is re-selected after so
+          ;; DrawText below keeps working.
           (if (i32.and (local.get $flags) (i32.const 0x04))
             (then
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
-                      (i32.add (local.get $dx) (i32.const 6))
-                      (i32.add (local.get $iy) (i32.const 6))
+              (drop (call $host_gdi_select_object (local.get $hdc)
+                      (if (result i32) (i32.eq (local.get $i) (local.get $hover_cidx))
+                        (then (i32.const 0x30016))   ;; WHITE_PEN on hover
+                        (else (i32.const 0x30017))))) ;; BLACK_PEN otherwise
+              (drop (call $host_gdi_move_to (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 5))
+                      (i32.add (local.get $iy) (i32.const 10))))
+              (drop (call $host_gdi_line_to (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 8))
+                      (i32.add (local.get $iy) (i32.const 14))))
+              (drop (call $host_gdi_line_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 14))
-                      (i32.add (local.get $iy) (i32.const 14))
-                      (i32.const 0x30012)))))
+                      (i32.add (local.get $iy) (i32.const 6))))
+              (drop (call $host_gdi_move_to (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 5))
+                      (i32.add (local.get $iy) (i32.const 11))))
+              (drop (call $host_gdi_line_to (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 8))
+                      (i32.add (local.get $iy) (i32.const 15))))
+              (drop (call $host_gdi_line_to (local.get $hdc)
+                      (i32.add (local.get $dx) (i32.const 14))
+                      (i32.add (local.get $iy) (i32.const 7))))
+              (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))))
           ;; Label
           (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
           (local.set $label_len (i32.load offset=4 (local.get $it)))

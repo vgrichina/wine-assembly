@@ -284,7 +284,7 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     if (compileEl) compileEl.style.display = 'block';
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=33').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=35').then(r => r.text()));
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
