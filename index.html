@@ -222,6 +222,25 @@ Resource-aware Win98 emulator
     let sharedWasmModule = null;
     let inputWired = false;
 
+    const DEFAULT_APPS = new Set([
+      'notepad', 'calc',
+      'freecell', 'sol', 'cruel', 'golf', 'pegged', 'snake',
+      'taipei', 'tictac', 'reversi', 'winmine_wep',
+      'ski32',
+    ]);
+    const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+    if (!DEBUG_MODE) {
+      window.addEventListener('DOMContentLoaded', () => {
+        const sel = document.getElementById('app-select');
+        for (const opt of [...sel.querySelectorAll('option')]) {
+          if (!DEFAULT_APPS.has(opt.value)) opt.remove();
+        }
+        for (const grp of [...sel.querySelectorAll('optgroup')]) {
+          if (!grp.querySelector('option')) grp.remove();
+        }
+      });
+    }
+
     const apps = {
       notepad:  { exe: 'binaries/notepad.exe' },
       calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
