@@ -982,27 +982,16 @@
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; If the destroyed window held focus, clear focus_hwnd. Win32 sends
-    ;; WM_KILLFOCUS in this situation; we just zero the global so the JS
-    ;; renderer's handleKeyDown stops trying to deliver keys directly to a
-    ;; dead hwnd. Pinball trips this: it SetFocus()es a temp 1×1 splash
-    ;; window during init then DestroyWindow()s it, leaving focus_hwnd
-    ;; pointing at a corpse — the flipper test caught it because Z keys
-    ;; were being sent to the splash window's wndproc instead of through
-    ;; the GetMessageA queue to the game window.
+    (local $focus_lost i32) (local $wndproc i32) (local $ret_addr i32)
+    ;; If the destroyed window held focus, clear focus_hwnd. After main_hwnd
+    ;; promotion below, we'll transfer focus to the (possibly new) main_hwnd.
     (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
-    (then (global.set $focus_hwnd (i32.const 0))))
+    (then (global.set $focus_hwnd (i32.const 0))
+      (local.set $focus_lost (i32.const 1))))
     ;; When destroying main_hwnd, promote to next window only if it's a sibling
-    ;; top-level window — NOT a child of the destroyed window. Apps like Pinball
-    ;; destroy a frame window during init while keeping the game window. But for
-    ;; normal apps like notepad, the next hwnd is a child control of main_hwnd —
-    ;; promoting it would silently swallow all subsequent messages.
+    ;; top-level window — NOT a child of the destroyed window.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-      ;; NOTE: must coerce wnd_table_get to 0/1 — bitwise i32.and with the
-      ;; raw wndproc address (which has low bit clear for any aligned function)
-      ;; would always yield 0 and silently set quit_flag, killing apps like
-      ;; pinball that destroy a frame window during init.
       (if (i32.and
             (i32.ne (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1))) (i32.const 0))
             (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
@@ -1014,6 +1003,33 @@
     (then (global.set $quit_flag (i32.const 1))))
     ;; Notify renderer to remove window from its table
     (call $host_destroy_window (local.get $arg0))
+    ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
+    ;; On real Windows, destroying the focused window gives focus to the next foreground window.
+    ;; Only if main_hwnd is valid and different from the destroyed window (may have been promoted).
+    (if (i32.and (local.get $focus_lost)
+                 (i32.and (i32.ne (global.get $main_hwnd) (i32.const 0))
+                          (i32.ne (global.get $main_hwnd) (local.get $arg0))))
+      (then
+        (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
+        (if (i32.eqz (local.get $wndproc))
+          (then (local.set $wndproc (global.get $wndproc_addr))))
+        (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
+                     (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+          (then
+            (global.set $focus_hwnd (global.get $main_hwnd))
+            (local.set $ret_addr (call $gl32 (global.get $esp)))
+            ;; DestroyWindow stdcall(1): [ret, hwnd] = 8 bytes.
+            ;; WndProc stdcall(4): [ret, hwnd, msg, wParam, lParam] = 20 bytes.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 12)))
+            (call $gs32 (global.get $esp) (local.get $ret_addr))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0007))  ;; WM_SETFOCUS
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))      ;; wParam = 0
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0))      ;; lParam = 0
+            (global.set $eip (local.get $wndproc))
+            (global.set $eax (i32.const 1))
+            (global.set $steps (i32.const 0))
+            (return)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
