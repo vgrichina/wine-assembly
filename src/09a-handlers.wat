@@ -5516,9 +5516,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 556: SetRectRgn — STUB: unimplemented
+  ;; 556: SetRectRgn(hrgn, left, top, right, bottom) — 5 args stdcall.
+  ;; Regions in this emulator are fake counter handles (see CreateRectRgn);
+  ;; FreeCell uses regions only for drag-rect clipping, so track nothing
+  ;; and return success.
   (func $handle_SetRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 557: GetMapMode — STUB: unimplemented

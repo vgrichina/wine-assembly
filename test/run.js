@@ -105,6 +105,12 @@ async function main() {
         // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
         // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
         scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
+      } else if (kind === 'edit-ok') {
+        // B:edit-ok:CTRL_ID:TEXT — find an Edit control (class 2) with
+        // matching ctrl id, WM_SETTEXT with TEXT, then fire IDOK on its
+        // parent dialog. Generic helper for simple modal prompt dialogs.
+        scheduledInput.push({ batch, action: 'edit-ok',
+          ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
       } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'winamp-play') {
@@ -121,6 +127,12 @@ async function main() {
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'mousedown') {
+        scheduledInput.push({ batch, action: 'mousedown', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'mouseup') {
+        scheduledInput.push({ batch, action: 'mouseup', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'mousemove') {
+        scheduledInput.push({ batch, action: 'mousemove', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else {
         const msg = parseInt(parts[1]);
         const wParam = parseInt(parts[2]) || 0;
@@ -156,6 +168,7 @@ async function main() {
     verbose: VERBOSE,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
+    _traceBitBlt: TRACE_API,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     readFile: (name) => {
       // Try to find file relative to exe directory
@@ -954,6 +967,43 @@ async function main() {
             logs.push(`[input] open-dlg-pick: ${name} at batch ${batch}`);
           }
         }
+      } else if (ev.action === 'edit-ok') {
+        // Find an Edit (class 2) with ctrl_id == ev.ctrlId, WM_SETTEXT with
+        // ev.text, then WM_COMMAND IDOK=1 to its parent dialog. Parent is
+        // discovered by walking wnd_next_child_slot on other slots.
+        const we = instance.exports;
+        let edit = 0;
+        for (let s = 0; s < 256; s++) {
+          const h = we.wnd_slot_hwnd(s);
+          if (!h) continue;
+          if (we.ctrl_get_class(h) === 2 && we.ctrl_get_id(h) === ev.ctrlId) {
+            edit = h; break;
+          }
+        }
+        if (!edit) {
+          logs.push(`[input] edit-ok: no edit id=${ev.ctrlId} at batch ${batch}`);
+        } else {
+          let dlg = 0;
+          for (let s = 0; s < 256; s++) {
+            const h = we.wnd_slot_hwnd(s);
+            if (!h || h === edit) continue;
+            let cs = 0;
+            while ((cs = we.wnd_next_child_slot(h, cs)) !== -1) {
+              if (we.wnd_slot_hwnd(cs) === edit) { dlg = h; break; }
+              cs++;
+            }
+            if (dlg) break;
+          }
+          const text = String(ev.text);
+          const g = we.guest_alloc(text.length + 1);
+          const wa = g2w(g);
+          const u8 = new Uint8Array(memory.buffer);
+          for (let i = 0; i < text.length; i++) u8[wa + i] = text.charCodeAt(i);
+          u8[wa + text.length] = 0;
+          we.send_message(edit, 0x000C, 0, g); // WM_SETTEXT
+          if (dlg) we.send_message(dlg, 0x0111, 1, 0); // WM_COMMAND IDOK
+          logs.push(`[input] edit-ok: id=${ev.ctrlId} text="${text}" edit=0x${edit.toString(16)} dlg=0x${(dlg||0).toString(16)} at batch ${batch}`);
+        }
       } else if (ev.action === 'class-cmd') {
         // Walk WND_RECORDS, find first hwnd whose control class matches,
         // then send WM_COMMAND. Used to close About dialog (class 11) etc.
@@ -1082,6 +1132,15 @@ async function main() {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
         logs.push(`[input] click ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'mousedown' && renderer && renderer.handleMouseDown) {
+        renderer.handleMouseDown(ev.x, ev.y, 1);
+        logs.push(`[input] mousedown ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'mouseup' && renderer && renderer.handleMouseUp) {
+        renderer.handleMouseUp(ev.x, ev.y, 1);
+        logs.push(`[input] mouseup ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'mousemove' && renderer && renderer.handleMouseMove) {
+        renderer.handleMouseMove(ev.x, ev.y);
+        logs.push(`[input] mousemove ${ev.x},${ev.y} at batch ${batch}`);
       } else if (renderer) {
         renderer.inputQueue.push({ type: 'key', hwnd: 0, msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam });
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
