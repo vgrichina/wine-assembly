@@ -838,6 +838,7 @@
       (local.set $ctrl_hwnd (global.get $next_hwnd))
       (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
       (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+      (drop (call $wnd_set_style (local.get $ctrl_hwnd) (local.get $ctrl_style)))
       (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $dlg_hwnd))
       (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
       (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
