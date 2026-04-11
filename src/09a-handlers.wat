@@ -1293,13 +1293,37 @@
 
   ;; 107: SetFocus(hwnd) — 1 arg stdcall, return previous focus hwnd
   (func $handle_SetFocus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $focus_hwnd))  ;; return previous focus
+    (local $wndproc i32) (local $prev i32) (local $ret_addr i32)
+    (local.set $prev (global.get $focus_hwnd))
+    (global.set $eax (local.get $prev))
     (global.set $focus_hwnd (local.get $arg0))
-    ;; Send WM_SETFOCUS to the new focus window (WAT-native controls need this
-    ;; to set their focused flag for caret rendering)
-    (if (i32.ge_u (call $wnd_table_get (local.get $arg0)) (i32.const 0xFFFF0000))
+    (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
+    ;; WAT-native wndproc: dispatch inline
+    (if (i32.ge_u (local.get $wndproc) (i32.const 0xFFFF0000))
       (then (drop (call $wat_wndproc_dispatch
-              (local.get $arg0) (i32.const 0x0007) (i32.const 0) (i32.const 0)))))
+              (local.get $arg0) (i32.const 0x0007) (local.get $prev) (i32.const 0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; x86 wndproc: no entry means try globals
+    (if (i32.eqz (local.get $wndproc))
+      (then
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (local.set $wndproc (global.get $wndproc_addr))))))
+    ;; Deliver WM_SETFOCUS synchronously by redirecting EIP to the wndproc.
+    ;; SetFocus is stdcall(1 arg): stack = [ret, hwnd] = 8 bytes.
+    ;; WndProc(hwnd, msg, wParam, lParam) is stdcall(4 args) = 20 bytes.
+    (if (local.get $wndproc)
+      (then
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 12))) ;; grow 8->20
+        (call $gs32 (global.get $esp) (local.get $ret_addr))
+        (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))     ;; hwnd
+        (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0007))    ;; WM_SETFOCUS
+        (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $prev))    ;; wParam = prev focus
+        (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0))        ;; lParam = 0
+        (global.set $eip (local.get $wndproc))
+        (global.set $steps (i32.const 0))
+        (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1567,8 +1591,7 @@
   ;; DialogBoxParamA(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
   ;; Creates modal dialog, sends WM_INITDIALOG, enters message loop, returns EndDialog result
   (func $handle_DialogBoxParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $hwnd i32) (local $dlg_id i32) (local $init_param i32)
-    (local $ctrl_count i32) (local $ctrl_i i32) (local $ctrl_info i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32)
+    (local $hwnd i32) (local $init_param i32)
     ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
     ;; arg3=lpDialogFunc, arg4=dwInitParam (from stack: [esp+24])
     (local.set $init_param (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -1580,38 +1603,18 @@
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
     (global.set $dlg_proc (local.get $arg3))
-    ;; Resource ID: if < 0x10000, use directly; otherwise string resource name
-    (local.set $dlg_id (if (result i32) (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then (local.get $arg1)) (else (i32.const 0))))
-    ;; Create dialog via host (which reads dialog template from resources)
-    (drop (call $host_create_dialog (local.get $hwnd) (local.get $dlg_id) (local.get $arg2)))
-    ;; Allocate real HWNDs for each dialog control
-    (local.set $ctrl_count (call $host_get_control_count (local.get $hwnd)))
-    (local.set $ctrl_i (i32.const 0))
-    (block $ctrl_done
-      (loop $ctrl_loop
-        (br_if $ctrl_done (i32.ge_u (local.get $ctrl_i) (local.get $ctrl_count)))
-        (local.set $ctrl_info (call $host_get_control_info (local.get $hwnd) (local.get $ctrl_i)))
-        (local.set $ctrl_hwnd (global.get $next_hwnd))
-        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-        (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
-        (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $hwnd))
-        (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
-        (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
-          (then
-            (call $ctrl_table_set (local.get $ctrl_slot)
-              (i32.shr_u (local.get $ctrl_info) (i32.const 16))
-              (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))))
-        (call $host_register_control (local.get $hwnd) (local.get $ctrl_i) (local.get $ctrl_hwnd)
-          (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
-        (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
-        (br $ctrl_loop)))
-    ;; Set control geometry from dialog resource template
-    (if (local.get $ctrl_count)
-      (then (call $dlg_set_ctrl_geom (local.get $dlg_id)
-        (i32.add (local.get $hwnd) (i32.const 1)) (local.get $ctrl_count))))
-    ;; Register dialog proc in wnd_table
+    ;; Register dialog proc in wnd_table before $dlg_load so the walker
+    ;; can find the slot for WND_DLG_RECORDS, and so SendMessageA
+    ;; routing finds the dlgProc immediately.
     (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; Parse the RT_DIALOG template fully in WAT — allocates child hwnds,
+    ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE, stores header
+    ;; state in WND_DLG_RECORDS[slot]. Handles int IDs and guest string
+    ;; pointers (named entries) via $find_resource.
+    (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    ;; Tell the renderer the dialog has been loaded; JS reads geom /
+    ;; style / controls from the dlg_* / ctrl_* exports.
+    (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
     (call $host_show_window (local.get $hwnd) (i32.const 1))
     ;; Save return address — we'll restore it when EndDialog is called

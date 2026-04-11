@@ -32,7 +32,6 @@ async function main() {
   const resourceJson = parseResources(exeBytes);
   renderer.loadResources(resourceJson);
   console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
-    Object.keys(resourceJson.dialogs).length, 'dialogs,',
     Object.keys(resourceJson.strings).length, 'strings');
 
   let stopped = false;

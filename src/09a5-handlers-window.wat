@@ -259,8 +259,7 @@
 
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $hwnd i32) (local $ctrl_count i32) (local $ctrl_i i32)
-    (local $ctrl_info i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32)
+    (local $ret_addr i32) (local $hwnd i32)
     ;; Allocate HWND from next_hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -268,41 +267,23 @@
     (global.set $dlg_hwnd (local.get $hwnd))
     ;; Clear quit_flag — dialog recreation (e.g. calc mode switch) cancels pending quit
     (global.set $quit_flag (i32.const 0))
-    ;; Call host: create_dialog(hwnd, dlg_resource_id, parent)
-    (drop (call $host_create_dialog (local.get $hwnd) (local.get $arg1) (local.get $arg2)))
-    ;; Allocate real HWNDs for each dialog control
-    (local.set $ctrl_count (call $host_get_control_count (local.get $hwnd)))
-    (local.set $ctrl_i (i32.const 0))
-    (block $ctrl_done
-      (loop $ctrl_loop
-        (br_if $ctrl_done (i32.ge_u (local.get $ctrl_i) (local.get $ctrl_count)))
-        (local.set $ctrl_info (call $host_get_control_info (local.get $hwnd) (local.get $ctrl_i)))
-        (local.set $ctrl_hwnd (global.get $next_hwnd))
-        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-        ;; Register control in window table with WNDPROC_CTRL_NATIVE
-        (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
-        (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $hwnd))
-        ;; Set control metadata in CONTROL_TABLE
-        (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
-        (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
-          (then
-            (call $ctrl_table_set (local.get $ctrl_slot)
-              (i32.shr_u (local.get $ctrl_info) (i32.const 16))       ;; classEnum
-              (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))))  ;; ctrlId
-        ;; Notify renderer of control→hwnd mapping
-        (call $host_register_control (local.get $hwnd) (local.get $ctrl_i) (local.get $ctrl_hwnd)
-          (i32.and (local.get $ctrl_info) (i32.const 0xFFFF)))
-        (local.set $ctrl_i (i32.add (local.get $ctrl_i) (i32.const 1)))
-        (br $ctrl_loop)))
-    ;; Set control geometry from dialog resource template
-    (if (local.get $ctrl_count)
-      (then (call $dlg_set_ctrl_geom (local.get $arg1)
-        (i32.add (local.get $hwnd) (i32.const 1)) (local.get $ctrl_count))))
-    ;; If dlgProc is provided, store it in window table and dispatch WM_INITDIALOG
+    ;; Register dialog in wnd_table BEFORE $dlg_load so the walker can
+    ;; find its slot for WND_DLG_RECORDS. Use dlgProc if supplied, 0
+    ;; otherwise — SendMessageA routing looks at this slot.
+    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; Parse RT_DIALOG template entirely in WAT: allocates child HWNDs,
+    ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE to each
+    ;; control, stashes header state in WND_DLG_RECORDS[slot]. Handles
+    ;; both integer template IDs and guest string pointers (named
+    ;; entries) via $find_resource.
+    (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    ;; Tell the renderer the dialog has been loaded; it builds its JS
+    ;; window object by reading header + control state via the dlg_* /
+    ;; ctrl_* exports. No template parsing on the JS side.
+    (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; If dlgProc is provided, dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
-        ;; Store dialog proc in window table so SendMessageA can route to it
-        (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
         ;; Save return address for CACA0001 continuation
         (local.set $ret_addr (call $gl32 (global.get $esp)))
         ;; Pop CreateDialogParamA frame (ret + 5 args = 24 bytes)

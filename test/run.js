@@ -111,6 +111,9 @@ async function main() {
       } else if (kind === 'winamp-play') {
         // B:winamp-play:FILENAME — write filename to guest mem, send Winamp IPC
         scheduledInput.push({ batch, action: 'winamp-play', filename: parts.slice(2).join(':') });
+      } else if (kind === 'winamp-start') {
+        // B:winamp-start — post IPC_STARTPLAY to trigger playback
+        scheduledInput.push({ batch, action: 'winamp-start' });
       } else if (kind === 'poke') {
         // B:poke:GUEST_ADDR:VALUE — write a dword to guest memory
         scheduledInput.push({ batch, action: 'poke', addr: parseInt(parts[2]), value: parseInt(parts[3]) });
@@ -132,7 +135,6 @@ async function main() {
   // Parse resources directly from EXE
   const resourceJson = parseResources(exeBytes);
   console.log('Resources:', Object.keys(resourceJson.menus).length, 'menus,',
-    Object.keys(resourceJson.dialogs).length, 'dialogs,',
     Object.keys(resourceJson.strings).length, 'strings');
 
   // Set up renderer if node-canvas is available
@@ -332,10 +334,9 @@ async function main() {
     }
   };
 
-  h.create_dialog = (hwnd, dlgId, parentHwnd) => {
-    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlg=${dlgId} parent=0x${parentHwnd.toString(16)}`);
-    if (renderer) return renderer.createDialog(hwnd, dlgId, parentHwnd);
-    return hwnd;
+  h.dialog_loaded = (hwnd, parentHwnd) => {
+    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
+    if (renderer) renderer.createDialog(hwnd, parentHwnd);
   };
 
   let installingFiles = false;
@@ -1023,16 +1024,18 @@ async function main() {
         // Winamp IPC: write filename to guest memory, send WM_USER messages
         const we = instance.exports;
         const nameLen = ev.filename.length;
-        // Write filename at guest address 0x461100 (past BSS end at 0x46003C,
-        // inside .rsrc section which is read-only for the app). Pointer cell at +0x100.
-        // Winamp IPC_PLAYFILE dereferences wParam: fn = *(char**)wParam.
-        const nameGA = 0x461100;
-        const ptrGA = 0x461200;
+        // Allocate from heap so the string survives until dispatch
+        // IPC_PLAYFILE dereferences wParam: fn = *(char**)wParam
+        const nameGA = we.guest_alloc(nameLen + 1);
+        const ptrGA = we.guest_alloc(4);
         const mem8 = new Uint8Array(memory.buffer);
         for (let i = 0; i < nameLen; i++) mem8[g2w(nameGA) + i] = ev.filename.charCodeAt(i);
         mem8[g2w(nameGA) + nameLen] = 0;
-        // Write pointer cell using guest_write32 (goes through $gs32, same as x86 would)
         we.guest_write32(ptrGA, nameGA);
+        // Verify writes
+        const verifyStr = Array.from(mem8.slice(g2w(nameGA), g2w(nameGA) + nameLen)).map(c => String.fromCharCode(c)).join('');
+        const verifyPtr = we.guest_read32(ptrGA);
+        logs.push(`[winamp-play] nameGA=0x${nameGA.toString(16)} ptrGA=0x${ptrGA.toString(16)} str="${verifyStr}" [ptrGA]=0x${verifyPtr.toString(16)}`);
         const dv = new DataView(memory.buffer);
         const mainHwnd = we.get_main_hwnd();
         // Restore original WndProc so IPC reaches Winamp's handler
@@ -1057,6 +1060,21 @@ async function main() {
           we.set_post_queue_count(postCount + Math.min(ipcMsgs.length, 8 - postCount));
         }
         logs.push(`[input] winamp-play: "${ev.filename}" at GA=0x${nameGA.toString(16)} batch ${batch}`);
+      } else if (ev.action === 'winamp-start') {
+        // Post IPC_STARTPLAY to the main Winamp window
+        const we = instance.exports;
+        const mainHwnd = we.get_main_hwnd();
+        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
+        if (postCount < 8) {
+          const dv = new DataView(memory.buffer);
+          const off = 0x400 + postCount * 16;
+          dv.setUint32(off, mainHwnd, true);
+          dv.setUint32(off + 4, 0x400, true);     // WM_USER
+          dv.setUint32(off + 8, 0, true);          // wParam=0
+          dv.setUint32(off + 12, 102, true);       // lParam=102 (IPC_STARTPLAY)
+          we.set_post_queue_count(postCount + 1);
+        }
+        logs.push(`[input] winamp-start at batch ${batch}`);
       } else if (ev.action === 'poke') {
         const wa = g2w(ev.addr);
         const dv = new DataView(memory.buffer);

@@ -24,8 +24,11 @@
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
   (import "host" "show_window" (func $host_show_window (param i32 i32)))
   ;; show_window(hwnd, cmd)
-  (import "host" "create_dialog" (func $host_create_dialog (param i32 i32 i32) (result i32)))
-  ;; create_dialog(hwnd, dlg_resource_id) → hwnd
+  (import "host" "dialog_loaded" (func $host_dialog_loaded (param i32 i32)))
+  ;; dialog_loaded(dlg_hwnd, parent_hwnd) — called after $dlg_load has
+  ;; parsed the RT_DIALOG template into WND_DLG_RECORDS + CONTROL_TABLE.
+  ;; JS reads window+control state from WAT exports (dlg_*, ctrl_*) —
+  ;; there is no JS-side template parser.
   (import "host" "load_string" (func $host_load_string (param i32 i32 i32) (result i32)))
   ;; load_string(string_id, buf_ptr, buf_len) → chars_written
   (import "host" "set_window_text" (func $host_set_window_text (param i32 i32)))
@@ -101,12 +104,6 @@
   ;; get_dlg_item_text(hwnd, ctrl_id, bufWA, maxLen) → chars copied
   (import "host" "get_window_text" (func $host_get_window_text (param i32 i32 i32) (result i32)))
   ;; get_window_text(hwnd, bufWA, maxLen) → chars copied
-  (import "host" "get_control_count" (func $host_get_control_count (param i32) (result i32)))
-  ;; get_control_count(dlgHwnd) → number of controls in dialog
-  (import "host" "get_control_info" (func $host_get_control_info (param i32 i32) (result i32)))
-  ;; get_control_info(dlgHwnd, index) → (classEnum << 16) | ctrlId
-  (import "host" "register_control" (func $host_register_control (param i32 i32 i32 i32)))
-  ;; register_control(dlgHwnd, ctrlIndex, controlHwnd, ctrlId)
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
@@ -283,6 +280,16 @@
   (import "host" "wait_single" (func $host_wait_single (param i32 i32) (result i32)))
 
   ;; ---- Memory: imported from host, 1024 pages = 64MB initial ----
+  ;; Audio output — waveOut bridge to Web Audio API
+  (import "host" "wave_out_open" (func $host_wave_out_open (param i32 i32 i32 i32) (result i32)))
+  ;; wave_out_open(sampleRate, channels, bitsPerSample, callbackType) → handle
+  (import "host" "wave_out_write" (func $host_wave_out_write (param i32 i32 i32) (result i32)))
+  ;; wave_out_write(handle, pcmDataWA, byteLength) → 0=ok
+  (import "host" "wave_out_close" (func $host_wave_out_close (param i32) (result i32)))
+  ;; wave_out_close(handle) → 0=ok
+  (import "host" "wave_out_get_pos" (func $host_wave_out_get_pos (param i32) (result i32)))
+  ;; wave_out_get_pos(handle) → bytes played
+
   (import "host" "memory" (memory 1024))
   (export "memory" (memory 0))
 
@@ -350,7 +357,8 @@
   ;; 0x0000AC00  320B    TIMER_TABLE    (16  entries × 20 bytes, ends 0xAD40)
   ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
   ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
-  ;; 0x0000B160  28KB    Free (up to GUEST_BASE)
+  ;; 0x0000B160  8KB     WND_DLG_RECORDS (256 × 32 bytes — dialog header state per slot, ends 0xD160)
+  ;; 0x0000D160  20KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -429,6 +437,22 @@
   ;;              +20 i32 id
   ;;   string bytes appended at the tail
   (global $MENU_DATA_TABLE i32 (i32.const 0x0000AD60))
+  ;; WND_DLG_RECORDS — per-window dialog state, parallel to WND_RECORDS slots.
+  ;; Populated by $dlg_load when a dialog is created from RT_DIALOG template.
+  ;; Consulted by renderer via dlg_* exports.
+  ;; 256 entries × 32 bytes = 0x2000 (0xB160..0xD160)
+  ;;   +0   dlg_id         resource directory eid that matched ($rsrc_matched_eid)
+  ;;                       (0 = unused slot)
+  ;;   +4   style          DLGTEMPLATE.style
+  ;;   +8   ex_style       DLGTEMPLATE.exStyle
+  ;;   +12  x (i16)        DLU
+  ;;   +14  y (i16)        DLU
+  ;;   +16  cx (i16)       DLU
+  ;;   +18  cy (i16)       DLU
+  ;;   +20  title_ptr      guest heap ptr to NUL-terminated ASCII title (0 if none)
+  ;;   +24  menu_key       template menu field: int id, or guest ptr to ASCII name (0 if none)
+  ;;   +28  ctrl_count     number of controls (child hwnds = first_hwnd..first_hwnd+ctrl_count-1)
+  (global $WND_DLG_RECORDS i32 (i32.const 0x0000B160))
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
@@ -459,6 +483,7 @@
   (global $dbg_last_push0 (mut i32) (i32.const 0))
   (global $dbg_last_push1 (mut i32) (i32.const 0))
   (global $dbg_prev_eip (mut i32) (i32.const 0))
+  (global $dbg_counter (mut i32) (i32.const -1))
 
   ;; Direction flag for string ops (0=up, 1=down)
   (global $df (mut i32) (i32.const 0))
@@ -501,6 +526,11 @@
   (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   (global $guid_counter (mut i32) (i32.const 0))
+  ;; waveOut audio state
+  (global $wave_out_handle (mut i32) (i32.const 0))
+  (global $wave_out_callback (mut i32) (i32.const 0))
+  (global $wave_out_cb_instance (mut i32) (i32.const 0))
+  (global $wave_out_cb_type (mut i32) (i32.const 0))
   (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table

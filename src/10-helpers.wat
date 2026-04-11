@@ -144,6 +144,14 @@
     ;; Matched all chars — check ASCII string is also at end
     (i32.eqz (i32.load8_u (i32.add (local.get $str_wa) (local.get $len)))))
 
+  ;; Raw eid (name-level directory entry dword, with 0x80000000 set for
+  ;; named entries) of the most-recent successful name-level $rsrc_find_entry
+  ;; match. Used by $rsrc_match_eid to give dialog/menu lookups a stable
+  ;; integer key regardless of whether the app used MAKEINTRESOURCE or a
+  ;; string template name. Not thread-safe; callers must read immediately
+  ;; after the lookup that produced it.
+  (global $rsrc_matched_eid (mut i32) (i32.const 0))
+
   (func $rsrc_find_entry (param $dir_off i32) (param $id i32) (result i32)
     (local $named i32) (local $ids i32) (local $total i32)
     (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
@@ -166,15 +174,33 @@
         (then
           (if (call $rsrc_name_match (local.get $id)
                 (i32.and (local.get $eid) (i32.const 0x7FFFFFFF)))
-            (then (return (local.get $doff))))))
+            (then
+              (global.set $rsrc_matched_eid (local.get $eid))
+              (return (local.get $doff))))))
       ;; Integer ID match
       (if (i32.and (i32.lt_u (local.get $id) (i32.const 0x10000))
                    (i32.eq (local.get $eid) (local.get $id)))
-        (then (return (local.get $doff))))
+        (then
+          (global.set $rsrc_matched_eid (local.get $eid))
+          (return (local.get $doff))))
       (local.set $e (i32.add (local.get $e) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $loop)))
     (i32.const 0))
+
+  ;; Resolve a resource template name (either MAKEINTRESOURCE integer or
+  ;; a guest pointer to an ASCII string) to a stable integer key that
+  ;; matches how the JS-side resource parser indexes RT_DIALOG / RT_MENU
+  ;; entries: small integer for ID-based, raw directory eid (with high
+  ;; bit set) for named entries. Returns 0 if the resource doesn't exist.
+  ;; This is the WAT-side shim that lets CreateDialogParamA /
+  ;; DialogBoxParamA accept string template names (e.g. freecell's
+  ;; "STATISTICS" dialog) without the JS renderer needing to do string
+  ;; lookup of its own.
+  (func $rsrc_match_eid (param $type_id i32) (param $name_id i32) (result i32)
+    (if (i32.eqz (call $find_resource (local.get $type_id) (local.get $name_id)))
+      (then (return (i32.const 0))))
+    (global.get $rsrc_matched_eid))
 
   ;; FindResourceA: walk type→name→lang, return data entry offset
   (func $find_resource (param $type_id i32) (param $name_id i32) (result i32)
@@ -568,64 +594,144 @@
     (i32.store8 (call $g2w (i32.add (local.get $buf) (local.get $len))) (i32.const 0))
     (global.set $dlg_text_ptr (local.get $buf)))
 
-  ;; Parse dialog resource template, set CONTROL_GEOM, and send WM_CREATE
-  ;; to each control so it initialises its state (text, style, etc.).
-  ;; $dlg_id     = dialog resource ID
-  ;; $first_hwnd = HWND of the first control (sequential)
-  ;; $count      = number of controls
-  (func $dlg_set_ctrl_geom (param $dlg_id i32) (param $first_hwnd i32) (param $count i32)
+  ;; ---- WND_DLG_RECORDS accessors ----
+  ;; Indexed by window slot (same index as WND_RECORDS / CONTROL_TABLE /
+  ;; MENU_DATA_TABLE). Each entry is 32 bytes; layout documented in
+  ;; 01-header.wat alongside $WND_DLG_RECORDS.
+
+  (func $dlg_record_addr (param $slot i32) (result i32)
+    (i32.add (global.get $WND_DLG_RECORDS) (i32.mul (local.get $slot) (i32.const 32))))
+
+  (func $dlg_record_for_hwnd (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (call $dlg_record_addr (local.get $slot)))
+
+  ;; Convert UTF-16LE OrdOrString at WASM addr $wa into a result value:
+  ;;   null      → 0, advances 2 bytes
+  ;;   ordinal   → the ordinal value (int), advances 4 bytes
+  ;;   string    → guest heap ptr to NUL-terminated ASCII copy, advances past null
+  ;; Uses $dlg_text_ptr/$dlg_text_wa globals for the two return values.
+  ;; For the "menu" and "class" header fields we need the integer ordinal
+  ;; preserved; for the title/control-text path ordinals aren't meaningful
+  ;; and are already discarded by $dlg_read_text.
+  (func $dlg_read_menu_or_class (param $wa i32)
+    (local $ch i32)
+    (local.set $ch (i32.load16_u (local.get $wa)))
+    (if (i32.eqz (local.get $ch))
+      (then
+        (global.set $dlg_text_ptr (i32.const 0))
+        (global.set $dlg_text_wa (i32.add (local.get $wa) (i32.const 2)))
+        (return)))
+    (if (i32.eq (local.get $ch) (i32.const 0xFFFF))
+      (then
+        ;; ordinal — stash the u16 value as-is
+        (global.set $dlg_text_ptr (i32.load16_u (i32.add (local.get $wa) (i32.const 2))))
+        (global.set $dlg_text_wa (i32.add (local.get $wa) (i32.const 4)))
+        (return)))
+    ;; Fall through to string handling — reuse $dlg_read_text
+    (call $dlg_read_text (local.get $wa)))
+
+  ;; $dlg_load(dlg_hwnd, dlg_id) → ctrl_count
+  ;;
+  ;; Single entry point for building a dialog from an RT_DIALOG template.
+  ;; Walks the PE resource (via $find_resource — handles both integer IDs
+  ;; and guest string pointers for named entries like freecell's
+  ;; "STATISTICS"), stores the header fields in WND_DLG_RECORDS[slot],
+  ;; allocates one HWND per control with $next_hwnd, fills CONTROL_TABLE,
+  ;; sets CONTROL_GEOM, and sends WM_CREATE with a synthesised
+  ;; CREATESTRUCT so native control wndprocs initialise their state.
+  ;;
+  ;; Returns the number of controls parsed (0 if template not found).
+  ;; The caller is expected to have already registered $dlg_hwnd in
+  ;; WND_RECORDS via $wnd_table_set — $dlg_load uses the slot index as
+  ;; the key into WND_DLG_RECORDS.
+  (func $dlg_load (param $dlg_hwnd i32) (param $dlg_id i32) (result i32)
     (local $data_entry i32) (local $rva i32) (local $wa i32) (local $p i32)
-    (local $style i32) (local $ctrl_count i32)
-    (local $i i32) (local $hwnd i32) (local $slot i32)
+    (local $style i32) (local $ex_style i32) (local $ctrl_count i32)
+    (local $dlg_x i32) (local $dlg_y i32) (local $dlg_cx i32) (local $dlg_cy i32)
+    (local $title_ptr i32) (local $menu_key i32)
+    (local $dlg_slot i32) (local $dlg_rec i32) (local $dlg_key i32)
+    (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
     (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_id i32)
+    (local $class_val i32) (local $class_enum i32)
     (local $text_ptr i32) (local $cs i32)
-    ;; Find RT_DIALOG resource (type 5)
+    ;; Find the dialog slot — caller must have inserted it already
+    (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
+    (if (i32.lt_s (local.get $dlg_slot) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $dlg_rec (call $dlg_record_addr (local.get $dlg_slot)))
+    ;; Walk PE directory; also captures $rsrc_matched_eid for named entries
     (local.set $data_entry (call $find_resource (i32.const 5) (local.get $dlg_id)))
-    (if (i32.eqz (local.get $data_entry)) (then (return)))
-    ;; Read RVA from data entry
+    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
+    (local.set $dlg_key (global.get $rsrc_matched_eid))
+    ;; Read RVA from data entry → WASM linear address of template
     (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
     (local.set $wa (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
     (local.set $p (local.get $wa))
-    ;; Detect extended dialog template: sig=1 at offset 0, ver=0xFFFF at offset 2
+    ;; Detect DIALOGEX: sig=1 at +0, ver=0xFFFF at +2
     (local.set $is_ex (i32.and
       (i32.eq (i32.load16_u (local.get $p)) (i32.const 1))
       (i32.eq (i32.load16_u (i32.add (local.get $p) (i32.const 2))) (i32.const 0xFFFF))))
-    ;; Parse header — skip to control count field
+    ;; Header: style, exStyle
     (if (local.get $is_ex)
       (then
-        (local.set $style (i32.load (i32.add (local.get $p) (i32.const 12))))
+        ;; DIALOGEX: dlgVer(2) + signature(2) + helpID(4) + exStyle(4) + style(4)
+        (local.set $ex_style (i32.load (i32.add (local.get $p) (i32.const 8))))
+        (local.set $style    (i32.load (i32.add (local.get $p) (i32.const 12))))
         (local.set $p (i32.add (local.get $p) (i32.const 16))))
       (else
-        (local.set $style (i32.load (local.get $p)))
+        ;; DLGTEMPLATE: style(4) + exStyle(4)
+        (local.set $style    (i32.load (local.get $p)))
+        (local.set $ex_style (i32.load (i32.add (local.get $p) (i32.const 4))))
         (local.set $p (i32.add (local.get $p) (i32.const 8)))))
-    ;; Read count, skip x(2)+y(2)+cx(2)+cy(2) = 10 bytes
+    ;; cdit(2) + x(2) + y(2) + cx(2) + cy(2)
     (local.set $ctrl_count (i32.load16_u (local.get $p)))
+    (local.set $dlg_x  (i32.load16_s (i32.add (local.get $p) (i32.const 2))))
+    (local.set $dlg_y  (i32.load16_s (i32.add (local.get $p) (i32.const 4))))
+    (local.set $dlg_cx (i32.load16_s (i32.add (local.get $p) (i32.const 6))))
+    (local.set $dlg_cy (i32.load16_s (i32.add (local.get $p) (i32.const 8))))
     (local.set $p (i32.add (local.get $p) (i32.const 10)))
-    ;; Skip variable header fields: menu, class, title
+    ;; Menu (OrdOrString) — may be int id or guest ASCII copy
+    (call $dlg_read_menu_or_class (local.get $p))
+    (local.set $menu_key (global.get $dlg_text_ptr))
+    (local.set $p (global.get $dlg_text_wa))
+    ;; Class (OrdOrString) — ignored for dialogs, but must skip
     (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
-    (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
-    (local.set $p (call $dlg_skip_sz (local.get $p)))
+    ;; Title (UTF-16 sz)
+    (call $dlg_read_text (local.get $p))
+    (local.set $title_ptr (global.get $dlg_text_ptr))
+    (local.set $p (global.get $dlg_text_wa))
     ;; If DS_SETFONT (0x40), skip font fields
     (if (i32.and (local.get $style) (i32.const 0x40))
       (then
-        (local.set $p (i32.add (local.get $p) (i32.const 2)))
+        (local.set $p (i32.add (local.get $p) (i32.const 2)))  ;; pointsize
         (if (local.get $is_ex)
-          (then (local.set $p (i32.add (local.get $p) (i32.const 4)))))
-        (local.set $p (call $dlg_skip_sz (local.get $p)))))
-    ;; Allocate one CREATESTRUCT on the heap (48 bytes), reuse for all controls
+          (then (local.set $p (i32.add (local.get $p) (i32.const 4)))))  ;; weight+italic+charset
+        (local.set $p (call $dlg_skip_sz (local.get $p)))))  ;; typeface
+    ;; Stash header in WND_DLG_RECORDS[slot]
+    (i32.store         (local.get $dlg_rec) (local.get $dlg_key))
+    (i32.store offset=4  (local.get $dlg_rec) (local.get $style))
+    (i32.store offset=8  (local.get $dlg_rec) (local.get $ex_style))
+    (i32.store16 offset=12 (local.get $dlg_rec) (local.get $dlg_x))
+    (i32.store16 offset=14 (local.get $dlg_rec) (local.get $dlg_y))
+    (i32.store16 offset=16 (local.get $dlg_rec) (local.get $dlg_cx))
+    (i32.store16 offset=18 (local.get $dlg_rec) (local.get $dlg_cy))
+    (i32.store offset=20 (local.get $dlg_rec) (local.get $title_ptr))
+    (i32.store offset=24 (local.get $dlg_rec) (local.get $menu_key))
+    (i32.store offset=28 (local.get $dlg_rec) (local.get $ctrl_count))
+    ;; Allocate one CREATESTRUCT on the heap, reused for every control
     (local.set $cs (call $heap_alloc (i32.const 48)))
     ;; Iterate DLGITEMTEMPLATE entries
     (local.set $i (i32.const 0))
     (block $done (loop $ctrl_loop
-      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
       ;; DWORD-align
       (local.set $p (i32.and (i32.add (local.get $p) (i32.const 3)) (i32.const -4)))
-      ;; Read control fields
       (if (local.get $is_ex)
         (then
-          ;; Extended: helpId(4)+exStyle(4)+style(4) = 12, then x,y,cx,cy
+          ;; helpId(4) + exStyle(4) + style(4) + x,y,cx,cy + id(4)
           (local.set $ctrl_style (i32.load (i32.add (local.get $p) (i32.const 8))))
           (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 12))))
           (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 14))))
@@ -634,7 +740,7 @@
           (local.set $ctrl_id (i32.load (i32.add (local.get $p) (i32.const 20))))
           (local.set $p (i32.add (local.get $p) (i32.const 24))))
         (else
-          ;; Standard: style(4)+exStyle(4)=8, then x,y,cx,cy,id
+          ;; style(4) + exStyle(4) + x,y,cx,cy + id(2)
           (local.set $ctrl_style (i32.load (local.get $p)))
           (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 8))))
           (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 10))))
@@ -642,32 +748,54 @@
           (local.set $ch (i32.load16_s (i32.add (local.get $p) (i32.const 14))))
           (local.set $ctrl_id (i32.load16_u (i32.add (local.get $p) (i32.const 16))))
           (local.set $p (i32.add (local.get $p) (i32.const 18)))))
-      ;; Skip className
+      ;; className: int (0xFFFF + u16 ordinal) → Win32 builtin class enum,
+      ;; or a UTF-16 string we currently ignore (class_enum stays 0).
+      ;; 0x80=Button,0x81=Edit,0x82=Static,0x83=ListBox,0x84=ScrollBar,0x85=ComboBox
+      (local.set $class_enum (i32.const 0))
+      (if (i32.eq (i32.load16_u (local.get $p)) (i32.const 0xFFFF))
+        (then
+          (local.set $class_val (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x80)) (then (local.set $class_enum (i32.const 1))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x81)) (then (local.set $class_enum (i32.const 2))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x82)) (then (local.set $class_enum (i32.const 3))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x83)) (then (local.set $class_enum (i32.const 4))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x85)) (then (local.set $class_enum (i32.const 5))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 6))))))
       (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
-      ;; Read text (convert UTF-16 → ASCII, heap-allocate)
+      ;; Text (UTF-16 → ASCII in heap; 0 for null/ordinal)
       (call $dlg_read_text (local.get $p))
       (local.set $text_ptr (global.get $dlg_text_ptr))
       (local.set $p (global.get $dlg_text_wa))
-      ;; Skip extra data
+      ;; Extra data: u16 len followed by len bytes
       (local.set $p (i32.add (local.get $p)
         (i32.add (i32.const 2) (i32.load16_u (local.get $p)))))
-      ;; Set geometry: DLU → pixels (x*3/2, y*7/4)
-      (local.set $hwnd (i32.add (local.get $first_hwnd) (local.get $i)))
-      (local.set $slot (call $wnd_table_find (local.get $hwnd)))
-      (if (i32.ge_s (local.get $slot) (i32.const 0))
+      ;; Allocate control HWND
+      (local.set $ctrl_hwnd (global.get $next_hwnd))
+      (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+      (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+      (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $dlg_hwnd))
+      (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
+      (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
         (then
-          (call $ctrl_geom_set (local.get $slot)
+          (call $ctrl_table_set (local.get $ctrl_slot)
+            (local.get $class_enum) (local.get $ctrl_id))
+          ;; Per-control text is owned by each wndproc's state struct
+          ;; (ButtonState.text_buf_ptr etc.) — populated from
+          ;; CREATESTRUCT.lpszName in WM_CREATE below. Renderer reads
+          ;; live text via existing button_get_text / edit / static
+          ;; accessors, so we don't need to stash a parallel copy in
+          ;; CONTROL_TABLE.
+          ;; DLU → pixel geometry (x*3/2, y*7/4)
+          (call $ctrl_geom_set (local.get $ctrl_slot)
             (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
             (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4))
             (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
             (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4)))))
       ;; Build CREATESTRUCT and send WM_CREATE
-      ;; CREATESTRUCT: +0 lpCreateParams, +4 hInstance, +8 hMenu(=ctrlId),
-      ;;   +12 hwndParent, +16 cy, +20 cx, +24 y, +28 x, +32 style, +36 lpszName, +40 lpszClass, +44 dwExStyle
       (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
-      (i32.store offset=12 (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
       (i32.store offset=16 (call $g2w (local.get $cs)) (local.get $ch))
       (i32.store offset=20 (call $g2w (local.get $cs)) (local.get $cw))
       (i32.store offset=24 (call $g2w (local.get $cs)) (local.get $cy))
@@ -676,11 +804,13 @@
       (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_ptr))
       (i32.store offset=40 (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
-      (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
-      ;; Free text buffer
+      (drop (call $wnd_send_message (local.get $ctrl_hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+      ;; Control wndproc has copied text into its own state struct;
+      ;; free the template-side copy to avoid leaking per dialog open.
       (if (local.get $text_ptr) (then (call $heap_free (local.get $text_ptr))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $ctrl_loop)))
-    (call $heap_free (local.get $cs)))
+    (call $heap_free (local.get $cs))
+    (local.get $ctrl_count))
 
 

@@ -176,11 +176,10 @@ class WineAssembly {
       if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
       return hwnd;
     };
-    h.create_dialog = (hwnd, dlgId) => {
-      console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} dlgId=${dlgId}`);
-      self.logToUI(`[CreateDialog] template=${dlgId}`);
-      if (self.renderer) return self.renderer.createDialog(hwnd, dlgId);
-      return hwnd;
+    h.dialog_loaded = (hwnd, parentHwnd) => {
+      console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
+      self.logToUI(`[CreateDialog] hwnd=0x${hwnd.toString(16)}`);
+      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd);
     };
     h.set_window_text = (hwnd, textPtr) => {
       const text = self.readString(textPtr);
@@ -291,7 +290,7 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     if (compileEl) compileEl.style.display = 'block';
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=32').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=33').then(r => r.text()));
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 

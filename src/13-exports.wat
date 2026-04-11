@@ -332,6 +332,65 @@
   (func (export "ctrl_get_class") (param $hwnd i32) (result i32)
     (call $ctrl_table_get_class (local.get $hwnd)))
 
+  ;; --- Dialog record readers ---
+  ;; The JS renderer reads dialog header fields from WND_DLG_RECORDS
+  ;; after WAT populates them in $dlg_load. Everything is keyed by the
+  ;; dialog HWND. x/y/cx/cy are raw dialog units (DLUs) from the template —
+  ;; the renderer multiplies by dluX/dluY to convert to pixels.
+  (func (export "dlg_get_style") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load offset=4 (local.get $rec)))
+  (func (export "dlg_get_ex_style") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load offset=8 (local.get $rec)))
+  (func (export "dlg_get_x") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load16_s offset=12 (local.get $rec)))
+  (func (export "dlg_get_y") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load16_s offset=14 (local.get $rec)))
+  (func (export "dlg_get_cx") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load16_s offset=16 (local.get $rec)))
+  (func (export "dlg_get_cy") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load16_s offset=18 (local.get $rec)))
+  ;; Returns the WASM linear address of the dialog's ASCII title string,
+  ;; or 0 if the template has no title. The guest heap is in linear
+  ;; memory so $g2w is the JS-facing form.
+  (func (export "dlg_get_title_wa") (param $hwnd i32) (result i32)
+    (local $rec i32) (local $gptr i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $gptr (i32.load offset=20 (local.get $rec)))
+    (if (i32.eqz (local.get $gptr)) (then (return (i32.const 0))))
+    (call $g2w (local.get $gptr)))
+  ;; Menu field from the template: integer ordinal, or guest ptr to an
+  ;; ASCII string if the template named the menu. 0 = no menu. The
+  ;; WNDCLASS.lpszMenuName path already handles both encodings.
+  (func (export "dlg_get_menu") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load offset=24 (local.get $rec)))
+  (func (export "dlg_get_ctrl_count") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load offset=28 (local.get $rec)))
+
   ;; Control id from CONTROL_TABLE.
   (func (export "ctrl_get_id") (param $hwnd i32) (result i32)
     (local $idx i32)

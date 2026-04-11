@@ -32,7 +32,7 @@ async function main() {
     message_box: () => 1, exit: (code) => { console.log('exit(' + code + ')'); },
     draw_rect: () => {}, read_file: () => 0,
     create_window: () => 0x10001, show_window: () => {},
-    create_dialog: () => 0x10002,
+    dialog_loaded: () => {},
     load_string: (id, p, l) => {
       if (!resourceJson.strings[id]) return 0;
       const s = resourceJson.strings[id];

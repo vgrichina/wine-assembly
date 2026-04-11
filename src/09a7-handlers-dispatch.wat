@@ -1189,15 +1189,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 822: CreateDialogParamW(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
-  ;; Wide-char version — delegate to CreateDialogParamA behavior
+  ;; Wide-char version — same template layout as A, different lpTemplateName
+  ;; encoding when it's a string (UTF-16 vs ASCII). Our $find_resource only
+  ;; understands integer IDs and ASCII guest string names, so UTF-16
+  ;; template names still go through as-is and fall to the int branch.
   (func $handle_CreateDialogParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; For resource ID templates (MAKEINTRESOURCE), treat same as A version
-    ;; Allocate dialog hwnd, create via renderer if available
+    (local $hwnd i32)
+    (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $eax (global.get $next_hwnd))
-    (if (local.get $arg3)
-      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $arg3))))
-    (drop (call $host_create_dialog (global.get $next_hwnd) (local.get $arg1) (local.get $arg2)))
+    (global.set $dlg_hwnd (local.get $hwnd))
+    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
 
