@@ -1,30 +1,23 @@
 # WordPad (test/binaries/win98-apps/wordpad.exe)
 
-## Status: FAIL (crash)
+## Status: FAIL (same root cause as mspaint-win98)
 
-## Crash Point
-Crashes on API #791: ResumeThread(0x000e0003)
-- EIP at crash: 0x0104a5d4
-- Crashes at batch 5
+Current crash signature: `[API] IsBadWritePtr` → `memory access out of bounds`.
+This is the *same* bug as mspaint Win98. Both apps dynamically load
+advapi32.dll during MFC init, and advapi32 has 9 ordinal-only KERNEL32
+imports that our DLL loader mis-thunks (marker `0x4F524400`, stored
+api_id = 0xFFFF instead of the real ordinal). See
+scratch/exe-status/mspaint-win98.md for the full analysis and fix sketch.
 
-## API Call Sequence Leading to Crash
-1. RegOpenKeyExA -- opens registry key
-2. TlsGetValue calls (MFC thread-local state)
-3. FindResourceA + LoadMenuA + LoadAcceleratorsA (loads menus for IDs 4, 5, 6)
-4. GetCursorPos
-5. CreateEventA x2 -- creates two manual-reset events (handles 0xe0001, 0xe0002)
-6. Enter/LeaveCriticalSection
-7. **CreateThread(0, 0, 0x011227c5, 0x01166870, CREATE_SUSPENDED=4, ...)** -- creates suspended thread, returns handle 0xe0003
-8. **ResumeThread(0x000e0003)** -- tries to resume the thread, crashes
+Earlier failure mode (ResumeThread/CreateThread) is likely masked by
+this: WordPad used to reach `ResumeThread` because advapi32 wasn't being
+loaded at all; now that dynamic LoadLibraryA works (commit b416e02), the
+MFC flow goes through registry init first and trips the ordinal-thunk
+crash before it ever reaches thread creation.
 
-WordPad loads 3 different menu/accelerator sets and then creates a background worker thread (likely for OLE/COM or file I/O). After CreateThread with CREATE_SUSPENDED flag, it calls ResumeThread to start it.
+## Difficulty
 
-## What Needs to Be Implemented
-1. **ResumeThread** -- needs real implementation that actually resumes a suspended thread
-2. This requires the **thread-manager.js** multi-thread support to actually work with CreateThread
-3. CreateThread currently returns a fake handle but ResumeThread has no implementation
-
-The thread entry point is at 0x011227c5 with parameter 0x01166870. WordPad uses this for background initialization (likely OLE subsystem).
-
-## Difficulty: Hard
-Requires real multi-threading support. CreateThread needs to spawn a new execution context (via thread-manager.js), and ResumeThread needs to activate it. This is a fundamental architecture feature, not just a simple API stub.
+Fixing the ordinal-thunk bug (see mspaint-win98.md) would likely get
+WordPad back to its earlier ResumeThread crash, which is a separate,
+harder problem (real multi-thread support). So this EXE is gated on
+two fixes stacked: ordinal thunks first, then thread manager.

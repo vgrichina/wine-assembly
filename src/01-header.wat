@@ -340,6 +340,8 @@
   (data (i32.const 0x2C8) "14\00")             ;; +0x128
   (data (i32.const 0x2CB) "18\00")             ;; +0x12B
   (data (i32.const 0x2CE) "24\00")             ;; +0x12E
+  ;; Buffer for ordinal-import crash messages: "KERNEL32.#NNNNN\0" (max 16 bytes)
+  (data (i32.const 0x2D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
 
   ;; ============================================================
   ;; MEMORY MAP

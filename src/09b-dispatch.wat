@@ -187,6 +187,28 @@
         (global.set $eip (global.get $initterm_ret))
         (return)))
 
+    ;; Unresolved ordinal import from a system DLL (marker "ORD\0")
+    ;; — $api_id holds the actual ordinal. Format "KERNEL32.#NNNNN" into
+    ;; the scratch buffer at 0x2DA and crash with that name so the user
+    ;; sees exactly which ordinal needs implementing.
+    (if (i32.eq (local.get $name_rva) (i32.const 0x4F524400))
+      (then
+        ;; Write 5 decimal digits of $api_id into buffer at WASM 0x2DA..0x2DE
+        (local.set $arg0 (local.get $api_id))
+        (i32.store8 (i32.const 0x2DE) (i32.add (i32.const 0x30) (i32.rem_u (local.get $arg0) (i32.const 10))))
+        (local.set $arg0 (i32.div_u (local.get $arg0) (i32.const 10)))
+        (i32.store8 (i32.const 0x2DD) (i32.add (i32.const 0x30) (i32.rem_u (local.get $arg0) (i32.const 10))))
+        (local.set $arg0 (i32.div_u (local.get $arg0) (i32.const 10)))
+        (i32.store8 (i32.const 0x2DC) (i32.add (i32.const 0x30) (i32.rem_u (local.get $arg0) (i32.const 10))))
+        (local.set $arg0 (i32.div_u (local.get $arg0) (i32.const 10)))
+        (i32.store8 (i32.const 0x2DB) (i32.add (i32.const 0x30) (i32.rem_u (local.get $arg0) (i32.const 10))))
+        (local.set $arg0 (i32.div_u (local.get $arg0) (i32.const 10)))
+        (i32.store8 (i32.const 0x2DA) (i32.add (i32.const 0x30) (i32.rem_u (local.get $arg0) (i32.const 10))))
+        ;; Log as a synthetic API name so --verbose/--trace-api pick it up
+        (call $host_log (i32.const 0x2D0) (i32.const 15))
+        (call $crash_unimplemented (i32.const 0x2D0))
+        (return)))
+
     ;; ── Normal API dispatch ─────────────────────────────────────
 
     (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))

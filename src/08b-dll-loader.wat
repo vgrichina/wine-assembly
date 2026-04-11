@@ -278,11 +278,13 @@
                 (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
                   (call $lookup_api_id (call $g2w (i32.add (local.get $load_addr) (i32.add (local.get $entry) (i32.const 2)))))))
               (else
-                ;; Ordinal import — store marker and ordinal (will hit fallback)
+                ;; Ordinal import from system DLL — store marker + real ordinal.
+                ;; $win32_dispatch catches the marker and reports a clear
+                ;; "unimplemented KERNEL32 ordinal N" error instead of OOB.
                 (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                   (i32.const 0x4F524400)) ;; "ORD\0" marker
                 (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-                  (i32.const 0xFFFF))))
+                  (i32.and (local.get $entry) (i32.const 0xFFFF)))))
             (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
             (call $update_thunk_end)))
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
