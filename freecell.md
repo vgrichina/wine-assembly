@@ -45,6 +45,8 @@ Classic FreeCell from the Windows Entertainment Pack. 32-bit PE, pure Win32 API.
 ## Tests
 
 - `test/test-freecell-move.js` — pins game #1 via Select Game, clicks col1 bottom (6♠) then free cell 1, verifies canvas diff > 500 px.
+- `test/test-freecell-stats.js` — sends WM_COMMAND(105) (Options > Statistics / F4), verifies the "FreeCell Statistics" dialog renders (canvas diff + dialog-face gray pixel count).
+- `test/test-freecell-dblclick.js` — pins game #1, double-clicks col1 bottom (6♠). Auto-move routes the card to free cell #1 (home isn't legal without the ace of spades); test verifies the card pixels now occupy that cell.
 
 ## Emulator Fixes That Unblocked FreeCell
 
@@ -57,7 +59,6 @@ Classic FreeCell from the Windows Entertainment Pack. 32-bit PE, pure Win32 API.
 
 ## Known Issues / TODO
 
-- Game Over dialog (5020) with "Same game" checkbox not yet tested
-- Statistics dialog (F4) not yet tested
-- No tests for double-click auto-move to home cells or right-click auto-to-freecell
+- Game Over dialog (5020) only fires on actual win/lose detection inside the game loop. None of the Game menu commands trigger it mid-play (F2 / New Game silently deals a fresh game, Restart silently restarts, Exit closes the app). A test would require scripting a full winning move sequence for a known seed, or a losing state — both out of scope for a smoke test.
+- Right-click auto-to-freecell is **not implemented in this binary**. The wndproc at 0x01001700 dispatches via a small jump table keyed on `msg - 0xf` and falls through to `DefWindowProcA` for anything it doesn't recognise — WM_RBUTTONDOWN (0x204) is in the fall-through range. This feature was added in XP's FreeCell, not the Entertainment Pack version.
 - Help > Contents opens freecell.hlp (if present) via WAT-native help window; not part of the move regression

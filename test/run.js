@@ -36,6 +36,7 @@ const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only br
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
+const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save back canvases alongside PNG snapshots
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
@@ -76,6 +77,9 @@ async function main() {
   //   B:keypress:CODE       — call renderer.handleKeyPress(CODE)
   //   B:keydown:VK          — call renderer.handleKeyDown(VK)
   //   B:click:X:Y           — handleMouseDown+Up at canvas (X,Y)
+  //   B:mousedown:X:Y       — handleMouseDown at canvas (X,Y)
+  //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
+  //   B:mousemove:X:Y       — handleMouseMove at canvas (X,Y)
   //   B:dump-find           — log current find dialog edit state
   const scheduledInput = [];
   if (INPUT_SPEC) {
@@ -119,6 +123,9 @@ async function main() {
       } else if (kind === 'winamp-start') {
         // B:winamp-start — post IPC_STARTPLAY to trigger playback
         scheduledInput.push({ batch, action: 'winamp-start' });
+      } else if (kind === 'post-cmd') {
+        // B:post-cmd:WPARAM — post WM_COMMAND with given wParam to main_hwnd via post queue
+        scheduledInput.push({ batch, action: 'post-cmd', wParam: parseInt(parts[2]) });
       } else if (kind === 'poke') {
         // B:poke:GUEST_ADDR:VALUE — write a dword to guest memory
         scheduledInput.push({ batch, action: 'poke', addr: parseInt(parts[2]), value: parseInt(parts[3]) });
@@ -129,6 +136,10 @@ async function main() {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
         scheduledInput.push({ batch, action: 'mousedown', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'dblclick') {
+        scheduledInput.push({ batch, action: 'dblclick', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'rclick') {
+        scheduledInput.push({ batch, action: 'rclick', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mouseup') {
         scheduledInput.push({ batch, action: 'mouseup', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousemove') {
@@ -168,7 +179,6 @@ async function main() {
     verbose: VERBOSE,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
-    _traceBitBlt: TRACE_API,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     readFile: (name) => {
       // Try to find file relative to exe directory
@@ -1065,6 +1075,15 @@ async function main() {
           const buf = renderer.canvas.toBuffer('image/png');
           fs.writeFileSync(ev.path, buf);
           logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+          if (DUMP_BACKCANVAS) {
+            for (const [hwndStr, win] of Object.entries(renderer.windows)) {
+              if (win._backCanvas && win._backCanvas.toBuffer) {
+                const bcPath = ev.path.replace('.png', `_back_${hwndStr}.png`);
+                fs.writeFileSync(bcPath, win._backCanvas.toBuffer('image/png'));
+                logs.push(`[input] back-canvas ${bcPath}`);
+              }
+            }
+          }
         } catch (e) {
           logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
@@ -1123,6 +1142,20 @@ async function main() {
           we.set_post_queue_count(postCount + 1);
         }
         logs.push(`[input] winamp-start at batch ${batch}`);
+      } else if (ev.action === 'post-cmd') {
+        const we = instance.exports;
+        const mainHwnd = we.get_main_hwnd();
+        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
+        if (postCount < 8) {
+          const dv = new DataView(memory.buffer);
+          const off = 0x400 + postCount * 16;
+          dv.setUint32(off, mainHwnd, true);
+          dv.setUint32(off + 4, 0x111, true);     // WM_COMMAND
+          dv.setUint32(off + 8, ev.wParam, true);
+          dv.setUint32(off + 12, 0, true);
+          we.set_post_queue_count(postCount + 1);
+        }
+        logs.push(`[input] post-cmd wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       } else if (ev.action === 'poke') {
         const wa = g2w(ev.addr);
         const dv = new DataView(memory.buffer);
@@ -1135,6 +1168,42 @@ async function main() {
       } else if (ev.action === 'mousedown' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         logs.push(`[input] mousedown ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'rclick' && renderer && renderer.handleMouseDown) {
+        renderer.handleMouseDown(ev.x, ev.y, 2);
+        renderer.handleMouseUp(ev.x, ev.y, 2);
+        logs.push(`[input] rclick ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'dblclick' && renderer && renderer.handleMouseDown) {
+        // First click primes the system; the DBLCLK is injected for the
+        // top-level window under the cursor. FreeCell uses it for auto-
+        // move-to-home. No CS_DBLCLKS detection exists in the emulator, so
+        // we synthesize the DBLCLK message directly.
+        renderer.handleMouseDown(ev.x, ev.y, 1);
+        renderer.handleMouseUp(ev.x, ev.y, 1);
+        let targetWin = null;
+        for (const w of Object.values(renderer.windows)) {
+          if (!w.visible || w.parentHwnd) continue;
+          if (ev.x >= w.x && ev.x < w.x + w.w && ev.y >= w.y && ev.y < w.y + w.h) {
+            if (!targetWin || (w.z || 0) >= (targetWin.z || 0)) targetWin = w;
+          }
+        }
+        if (targetWin) {
+          const clientX = targetWin.x + 3;
+          const hasMenu = renderer._hasMenuBar && renderer._hasMenuBar(targetWin);
+          const clientY = targetWin.y + 3 + 18 + (hasMenu ? 18 : 0) + 1;
+          const relX = ev.x - clientX;
+          const relY = ev.y - clientY;
+          renderer.inputQueue.push({
+            type: 'mouse',
+            hwnd: targetWin.hwnd,
+            msg: 0x0203, // WM_LBUTTONDBLCLK
+            wParam: 0x0001, // MK_LBUTTON
+            lParam: ((relY & 0xFFFF) << 16) | (relX & 0xFFFF),
+          });
+          renderer.handleMouseUp(ev.x, ev.y, 1);
+          logs.push(`[input] dblclick ${ev.x},${ev.y} hwnd=0x${targetWin.hwnd.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dblclick ${ev.x},${ev.y} — no target window at batch ${batch}`);
+        }
       } else if (ev.action === 'mouseup' && renderer && renderer.handleMouseUp) {
         renderer.handleMouseUp(ev.x, ev.y, 1);
         logs.push(`[input] mouseup ${ev.x},${ev.y} at batch ${batch}`);
@@ -1203,6 +1272,9 @@ async function main() {
       }
       process.exit(1);
     }
+
+    // Flush deferred repaint so back canvas composites after all GDI writes
+    if (renderer && renderer.flushRepaint) renderer.flushRepaint();
 
     // WASM-level breakpoint check (after run returns)
     {
