@@ -2837,6 +2837,11 @@
                       (local.get $wParam) (local.get $lParam)))))
     ;; x86 wndproc — queue via PostMessage (max 8 messages, 16 bytes each
     ;; at WASM addr 0x400, same layout as $handle_PostMessageA).
+    ;; Skip WM_PAINT for x86 wndprocs — the app's message loop generates its
+    ;; own WM_PAINT via InvalidateRect / paint queue. Queuing here from the
+    ;; renderer's repaint cycle floods the post queue and starves real messages.
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then (return (i32.const 0))))
     (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
       (then
         (local.set $slot (i32.add (i32.const 0x400)

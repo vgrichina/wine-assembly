@@ -453,6 +453,68 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=2000 --batch-size=
   --input="10:273:2,160:winamp-play:C:\demo.mp3,200:poke:0x45caa4:1,201:winamp-start"
 ```
 
+## SESSION 7 PROGRESS — Post Queue Fix, IPC Path Verified
+
+### Root Cause: Post Queue Flooded by Renderer WM_PAINT
+
+**Problem:** IPC_STARTPLAY (WM_USER lParam=102) was posted to the post queue but never consumed by GetMessageA. Investigation revealed the post queue (max 8 entries at WASM 0x400) was permanently full with WM_PAINT messages.
+
+**Cause:** The JS renderer's `repaint()` cycle calls `send_message(hwnd, 0x000F, 0, 0)` for every window. For Winamp's 4 x86-wndproc child windows (EQ=0x10014, Playlist=0x10015, Video=0x10016, Minibrowser=0x10017), `$wnd_send_message` queued these into the post queue (since they have x86 wndprocs, not WAT-native). With 4 windows × ~1400 repaint cycles per batch, the queue was permanently at capacity. Any other message (like WM_USER IPC) was silently dropped.
+
+**Fix:** Skip WM_PAINT in `$wnd_send_message` for x86 wndprocs (`src/09c3-controls.wat`). The app generates its own WM_PAINT via InvalidateRect → paint queue → GetMessageA, so renderer-injected WM_PAINT was redundant and harmful.
+
+### WndProc Dispatch Fully Mapped
+
+The main Winamp wndproc is at 0x41c210 (set as `$wndproc_addr` via first EXE-space RegisterClassA). WM_USER routing:
+```
+0x41c210 → cmp esi, 0x205 → ja 0x41cd89
+0x41cd89 → cmp esi, 0x400 → jz 0x41cec3
+0x41cec3 → call 0x421290(hwnd, wParam, lParam)  [IPC dispatch]
+0x421290 → byte table at 0x421e54, jump table at 0x421dd8
+  lParam=100 → 0x421641  [IPC_PLAYFILE]
+  lParam=101 → 0x421d64  [IPC_DELETE]
+  lParam=102 → 0x421d93  [IPC_STARTPLAY]
+0x421d93 → call 0x42f868(0); test [0x45caa4]; jz skip; call 0x42fbcc(0)
+```
+
+### IPC_STARTPLAY Now Reaches Play Function
+
+With the post queue fix, breakpoints at 0x421d93 and 0x42fbcc both fire. The play function enters but:
+- Calls `[0x457608]` (playlist count via 0x42ef0b) — returns count
+- If count == 0, exits without playing
+- IPC_PLAYFILE (lParam=100) sets count to 1, but timing depends on message ordering
+
+### Ready Flag [0x45caa4] Never Set Naturally
+
+The "ready to play" flag at [0x45caa4] is never written during our init path. On real Windows, it's likely set by INI processing or the full skin loading chain (which we bypass). Workaround: `--input=...,B:poke:0x45caa4:1`.
+
+### Tools Added
+
+- `tools/disasm_fn.js` — Reusable PE disassembler: `node tools/disasm_fn.js <exe> <VA_hex> [count=30]`
+
+### Remaining Issues for Audio
+
+| # | Task | Notes |
+|---|------|-------|
+| 1 | **Verify IPC_PLAYFILE → playlist → play chain** | Post queue fix enables the full sequence; need to confirm playlist count is 1 when IPC_STARTPLAY fires |
+| 2 | **Fix cmdline path string loop** | `--args` path still stuck in msvcrt string scan at RVA 0x106f6 |
+| 3 | **waveOut WOM_DONE callback** | out_wave.dll needs buffer-done callbacks to drive decode→play pipeline |
+| 4 | **Plugin DllMain** | Skipped due to yield corruption during callDllMain |
+
+### Test Commands
+
+```bash
+# Skin renders (stable):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# IPC playback attempt (play function reached):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=300 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,100:winamp-play:C:\demo.mp3,140:poke:0x45caa4:1,150:winamp-start"
+```
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.
