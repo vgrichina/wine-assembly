@@ -492,14 +492,7 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0007)) ;; WM_SETFOCUS
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; hwndLoseFocus
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    ;; Pinball-specific: the attract-mode state machine at [0x1025050] never
-    ;; advances because the per-frame tick counter only decrements when
-    ;; game-active is set (chicken-and-egg). Set both flags so the physics
-    ;; loop runs and Y key can start a new game.
-    (if (i32.eq (global.get $wndproc_addr) (i32.const 0x01055db1))
-      (then
-        (call $gs32 (i32.const 0x1024ff8) (i32.const 1))   ;; commands-enabled
-        (call $gs32 (i32.const 0x1024fe0) (i32.const 1)))) ;; game-active
+    ;; (Pinball flag poke moved to PeekMessageA handler below)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phase 2: send WM_ERASEBKGND (wParam = hdc)
@@ -628,6 +621,14 @@
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (global.get $main_hwnd))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Pinball-specific: the attract-mode state machine never advances because
+    ;; the per-frame tick counter only decrements when game-active is set
+    ;; (chicken-and-egg). Set both flags so the physics loop runs.
+    (if (i32.and (i32.eq (global.get $msg_phase) (i32.const 1))
+                 (i32.eq (global.get $wndproc_addr) (i32.const 0x01055db1)))
+      (then
+        (call $gs32 (i32.const 0x1024ff8) (i32.const 1))   ;; commands-enabled
+        (call $gs32 (i32.const 0x1024fe0) (i32.const 1)))) ;; game-active
     ;; Phase 1: WM_ERASEBKGND
     (if (i32.eq (global.get $msg_phase) (i32.const 1))
     (then

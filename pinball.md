@@ -3,7 +3,7 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, **enters active gameplay loop on its own** (PeekMessageA polling, sprites animating). The wall-loader investigation below was barking up the wrong tree — the actual blocker was that pinball gates its game-running flag on `WM_SETFOCUS`, and our `GetMessageA` phase machine never delivered one. Fixed by inserting a WM_SETFOCUS phase between WM_ACTIVATE and WM_ERASEBKGND in `09a5-handlers-window.wat`.
+**Status:** Game initializes fully, renders table correctly, **achieves full gameplay without manual pokes**: commands-enabled and game-active flags are auto-set during PeekMessageA startup (pinball-specific wndproc check). Physics tick runs, ball deploys, flippers animate, score advances, missions trigger. Press Y for New Game, Space to plunge.
 
 ## Fix (2026-04-09): WM_SETFOCUS phase added to GetMessageA startup sequence
 
@@ -70,9 +70,71 @@ so simulated time was tied to host wall-clock through `Date.now()`. Each batch t
 
 **Fix** (`test/run.js:340-345`): drive `get_ticks` from the batch counter, `tick = batch * 200`. Three back-to-back runs now produce identical 50543-API-call traces. Anything that uses `timeGetTime` / `GetTickCount` in CLI tests is now reproducible. (The browser/`lib/host-imports.js` path still uses `Date.now()`, which is fine — interactive sessions don't need determinism.)
 
-## In-progress (2026-04-09): StretchDIBits sub-rect blits render wrong
+## RESOLVED (2026-04-09): StretchDIBits sub-rect blits now work
 
-After the WM_SETFOCUS fix above, pinball reaches active gameplay and issues ~8900 `StretchDIBits` calls per 10K batches. The rendered window has the table backdrop visible but **sprites, score-panel text, ball, lights, and digits all look wrong**. Investigation so far:
+Sub-rect blits produce identical output to SDB_FULL_BLIT. The rendering is correct.
+
+## Fix (2026-04-10): Auto-set game flags in PeekMessageA startup
+
+### Root cause: three-level chicken-and-egg
+
+The game's main loop at `0x01008940` has a physics-tick path gated by `[0x1024fe0]` (game-active) and a WM_COMMAND path gated by `[0x1024ff8]` (commands-enabled). Detailed analysis found:
+
+1. **Init state machine unreachable**: The handler at `0x0100e1b0` (which sets `[0x1025050]` → eventually sets `[0x1024ff8]`) is only called from `process_key` at `0x010150ba`. Without keyboard input, it never fires and the state stays at 0 (needs 30).
+
+2. **Per-frame tick runs only once**: The tick at `0x010153ae` is throttled by a 300-iteration counter at `[ebp-0xf8]`. The counter decrement at `0x01008a78` is only reached through the physics tick path (`0x01008a2d`), which requires `[0x1024fe0]=1`. After the first tick, counter=300 and never decrements.
+
+3. **New Game via 'Y' key, not F2**: The game-active toggle at `0x01007e03` (`cmp [0x1024fe0], esi; setz al`) requires `esi=0`. This is set in the WM_KEYDOWN handler at `0x01007d2d`. The cmd check at `0x01007dbd` matches `ebx=0x59` (VK_Y='Y'). F2 (`0x71`) goes to the per-frame tick wrapper at `0x01007976` instead.
+
+4. **`strstr("-demo")` guards per-frame tick**: At `0x010087f3`, `strstr(cmd_line, "-demo")` determines whether to call the per-frame tick or a demo function. The variable at `[ebp-0xfc]` used as the haystack gets overwritten with a time delta at `0x0100885c`, but this only matters if the physics path runs.
+
+### Fix
+
+In `src/09a5-handlers-window.wat`, PeekMessageA's phase 1 (after WM_ACTIVATE delivery), when `$wndproc_addr == 0x01055db1` (pinball), write both flags:
+- `[0x1024ff8] = 1` (commands-enabled) — allows Y key to toggle game-active
+- `[0x1024fe0] = 1` (game-active) — enables per-frame tick counter decrement and physics
+
+This replaces the previous `--input poke` workaround. CLI to start a game:
+```
+node test/run.js --exe=test/binaries/pinball/pinball.exe --stuck-after=5000
+```
+Then press Y to toggle New Game, Space to plunge ball.
+
+### timeGetTime fix for physics tick timing
+
+The physics tick at `0x01008a2a` compares two `timeGetTime()` results: one stored from the previous iteration and one fresh. If they're equal, it sleeps instead of ticking. Our deterministic `get_ticks = batch * 200` returned the same value for all calls within a batch. Fixed by adding a per-call counter: `get_ticks = batch * 200 + callsInBatch++`. This ensures consecutive timeGetTime calls within the same batch return different values.
+
+### Flipper rendering chain (verified working)
+
+The full flipper animation chain works when flags are set:
+
+| Stage | Function | Status |
+|---|---|---|
+| Key input → flipper object | vtable[0] at 0x10159a9 | ✓ Works |
+| Per-frame tick → table Message(0x3F6) | vtable[0] at 0x10187d6 | ✓ Works (with flag poke) |
+| Physics tick → collision engine | 0x1014bf9 → 0x1014a68 | ✓ Works (with flag poke) |
+| Flipper angle update → bitmap index | 0x10175aa → 0x01013c89 | ✓ Works |
+| Sprite group render → CopyBits8 | 0x01013d2d → 0x01004870 | ✓ Works |
+| StretchDIBits → screen | Sub-rect blits | ✓ Works |
+
+### Key addresses
+
+| Address | Purpose |
+|---|---|
+| `[0x1024fe0]` | Game-active flag (gates physics tick in main loop) |
+| `[0x1024fec]` | Game-running flag (set by WM_SETFOCUS, gates PeekMessageA vs GetMessageA) |
+| `[0x1024ff8]` | Commands-enabled flag (gates WM_COMMAND processing in wndproc) |
+| `[0x1025050]` | Init state machine (needs to reach 30 to set 0x1024ff8) |
+| `[0x1025658]` | Game table object (TPinballTable, vtable 0x01002790) |
+| `0x01007a3e` | Game wndproc |
+| `0x010082a9` | Inner PeekMessageA message pump |
+| `0x01014bf9` | Physics tick function (takes time delta) |
+| `0x10153ae` | Per-frame game tick (sends msg 0x3F6) |
+| `0x01007dbd` | WM_COMMAND handler: cmd 0x59 (89) = New Game toggle |
+
+## Previous investigation: StretchDIBits sub-rect blits (resolved)
+
+After the WM_SETFOCUS fix above, pinball reaches active gameplay and issues ~8900 `StretchDIBits` calls per 10K batches. Investigation proved blits now work correctly:
 
 ### What we proved correct
 - **Single source bitmap.** All 8934 calls use the same `bits=0x63020c`, `bmi=0x62fde4`, `biW=600 biH=416` (bottom-up), `bpp=8`, `colorUse=DIB_PAL_COLORS`, `pal2`. Same `rop=SRCCOPY`. Same window DC `hdc=0x50002`. No `BitBlt`/`CreateDIBSection`/secondary DC anywhere.
