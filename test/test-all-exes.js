@@ -119,16 +119,34 @@ function runExe(testCase) {
   const hasMessageBox = output.includes('[MessageBox]');
 
   if ((result.status !== null && result.status !== 0) || unimplMatch) {
-    // Find the specific unimplemented API
-    const crashLines = lines.filter(l => /unreachable|unimplemented|RuntimeError/.test(l));
-    // Last API before crash is likely the unimplemented one
-    const apiLines = lines.filter(l => /\[API/.test(l));
-    const crashApi = apiLines.length > 0 ? apiLines[apiLines.length - 1].trim() : '';
+    // run.js prints "*** CRASH at batch N: <msg>" then "  EIP before batch: 0xXXXX"
+    const crashMsgMatch = output.match(/\*\*\* CRASH at batch \d+: (.+)/);
+    const crashMsg = crashMsgMatch ? crashMsgMatch[1].trim() : '';
+    const eipBeforeMatch = output.match(/EIP before batch:\s*(0x[0-9a-fA-F]+)/);
+    const eipBefore = eipBeforeMatch ? eipBeforeMatch[1] : '';
+
+    // crash_unimplemented is the one case where "last API" IS the crash site:
+    // the WAT $crash_unimplemented trap fires from inside an unimplemented handler stub.
+    const isUnimpl = /crash_unimplemented/.test(output);
+    const apiLines = lines.filter(l => /^\[API/.test(l.trim()));
+    const lastApi = apiLines.length > 0
+      ? apiLines[apiLines.length - 1].trim().replace(/^\[API[^\]]*\]\s*/, '').replace(/\(.*/, '')
+      : '';
+
+    let reason;
+    if (isUnimpl && lastApi) {
+      reason = `unimpl API: ${lastApi}`;
+    } else if (crashMsg) {
+      reason = eipBefore ? `${crashMsg} @ EIP=${eipBefore}` : crashMsg;
+      if (lastApi) reason += ` (last API: ${lastApi})`;
+    } else {
+      reason = 'unknown crash';
+    }
 
     return {
       name: testCase.name,
       status: 'CRASH',
-      reason: crashApi || (crashLines[0] || 'unknown crash').trim(),
+      reason,
       apiCount: apiCalls.size,
       hasWindow,
     };
@@ -180,7 +198,7 @@ const skip = results.filter(r => r.status === 'SKIP').length;
 console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
 
 if (fail > 0) {
-  console.log('\nCrashed EXEs (need API implementations):');
+  console.log('\nCrashed EXEs:');
   for (const r of results.filter(r => r.status === 'CRASH')) {
     console.log(`  ${r.name}: ${r.reason}`);
   }
