@@ -3,7 +3,23 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, renders table correctly, **achieves full gameplay without manual pokes**: commands-enabled and game-active flags are auto-set during PeekMessageA startup (pinball-specific wndproc check). Physics tick runs, ball deploys, flippers animate, score advances, missions trigger. Press Y for New Game, Space to plunge.
+**Status:** Game initializes fully, renders table correctly, enters active PeekMessage game loop via proper WM_SETFOCUS delivery. Physics tick runs with flag poke for game-active/commands-enabled (attract mode state machine doesn't advance yet — callback slots at `[game_obj+0xf4..0x134]` stay empty). Ball deploys, flippers animate, score advances, missions trigger. Press Y for New Game, Space to plunge.
+
+## Fix (2026-04-10): DestroyWindow focus transfer + remove pinball flag poke
+
+**Problem:** Pinball creates a 1x1 splash window (hwnd 0x10001), calls `SetFocus(splash)`, then `DestroyWindow(splash)`. The main game window (0x10002) never received `WM_SETFOCUS` because:
+1. `SetFocus` only delivered WM_SETFOCUS to WAT-native wndprocs, not x86 ones
+2. `DestroyWindow` cleared `focus_hwnd` but didn't transfer focus to the promoted `main_hwnd`
+
+**Fix (2 parts):**
+- `SetFocus`: now delivers WM_SETFOCUS synchronously to x86 wndprocs via EIP redirect (same technique as ShowWindow → WM_SIZE)
+- `DestroyWindow`: when the focused window is destroyed and `main_hwnd` is promoted to a different window, delivers WM_SETFOCUS to the new `main_hwnd` via EIP redirect
+
+This sets `game_running=1` BEFORE the message pump function (`0x10082a9`) is entered, so it takes the PeekMessage path naturally. Removed the pinball-specific flag poke hack from PeekMessageA that hardcoded `wndproc_addr == 0x01055db1`.
+
+**Remaining:** The `game-active` and `commands-enabled` flags still need the attract mode state machine to advance. The idle callback slots at `[game_obj+0xf4..0x134]` are all 0/-1 because the function that populates them (`0x0101df3d`, called via vtable from `0x01006c26`) is never reached. The WM_USER (0x400) PostMessage that would trigger it requires these callbacks to be non-null — chicken and egg. See "Attract Mode" section below.
+
+**Also added:** `tools/find-refs.js` — cross-reference finder for PE binaries (call/jmp/jcc + data refs).
 
 ## Fix (2026-04-09): WM_SETFOCUS phase added to GetMessageA startup sequence
 
@@ -388,6 +404,47 @@ Context for `[edi+8]` and `ax`:
 3. **Perf regression?** — `pinball.md` previously said "~54K API calls across 500 batches"; current run needs ~5000 batches for ~45K calls. Worth investigating whether init genuinely got longer or block-cache/decoder regressed.
 4. **Sound playback** — WAV files loaded but `waveOutWrite` just marks buffers done. Could add Web Audio playback.
 5. **Input handling** — Mouse/keyboard events past F2 need to reach the game's PeekMessageA loop reliably.
+
+## Attract Mode State Machine (open investigation)
+
+The attract mode requires a chain of callbacks to advance the init state to 30, which sets `commands-enabled`, which lets the Y key set `game-active`, which enables the physics counter decrement. Currently the game works because of flag pokes, but the natural attract mode path is broken.
+
+### Key data structures
+| Address | Name | Value at runtime |
+|---------|------|-----------------|
+| `[0x1025798]` | game object ptr | `0x0151dec4` (set during init) |
+| `[0x1027be0]` | game obj copy (timer dispatch) | same ptr |
+| `[0x1027bec]` | timer linked list head | 0 (always empty) |
+| `[game+0xf4..0x134]` | 16 idle callback slots | all 0 or -1 |
+| `[game+0x1a4]` | pending-work flag | 0 |
+| `[0x102506c]` / `[0x1025070]` | primary object array / count | 1 object |
+| `[0x1025084]` / `[0x10250b4]` | secondary object array / count | 195 objects |
+
+### Timer dispatch flow (`0x1006bb8` → `0x101dd5d`)
+Called every main loop iteration regardless of game-active:
+1. Walk timer linked list at `[0x1027bec]` — execute due callbacks via PostMessageA(0x3BD)
+2. If list empty AND `[game+0x1a4]==0`: scan idle callback slots `[game+0xf4..0x134]`
+3. If any slot is non-null/non-(-1): PostMessageA(hwnd, WM_USER, *, game_obj)
+4. WM_USER in wndproc calls `0x01009896` → `0x01006c26` → `0x0101df3d` (populate slots)
+5. **Chicken-and-egg**: step 4 populates the slots that step 3 needs to fire step 4
+
+### Call chain to populate slots
+```
+0x0101df3d  — writes object ptrs into [game+0xf4+i*4] at 0x101e21d/0x101e24e
+  ↑ called from 0x01006c24 (attract mode dispatch, stdcall(6))
+  ↑ called from 0x010098b6 (small wrapper, via vtable)
+  ↑ called via WM_USER dispatch in wndproc
+  ↑ posted by timer dispatch idle check at 0x0101dd3c
+  ↑ needs [game+0xf4] to be non-null to fire the PostMessage ← STUCK HERE
+```
+
+### How to advance
+The slots at `[game+0xf4]` should be set during table initialization (PINBALL.DAT loading). The game object is allocated at `0x1020ed1` with slots initialized to -1 (`rep stosd`). Something in the table loader should write real object pointers there, but it doesn't happen.
+
+**Open questions:**
+1. Does `0x1020ed1` (game object alloc) set up the initial callback? Disasm shows it fills with -1, then what?
+2. Is the game object's "new game" function supposed to write the first callback? On real Windows, the attract mode might be triggered by a menu command or timer that we're not delivering.
+3. Could a missing `WM_COMMAND` (e.g. ID_NEW_GAME from the menu accelerator) be the trigger that starts attract mode?
 
 ## Architecture Notes
 
