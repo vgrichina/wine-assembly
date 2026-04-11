@@ -126,10 +126,10 @@
       (i32.add (global.get $rsrc_rva) (local.get $name_off)))))
     (local.set $len (i32.load16_u (local.get $name_wa)))
     (local.set $j (i32.const 0))
-    (block $fail (loop $cmp
-      (br_if $fail (i32.ge_u (local.get $j) (local.get $len)))
+    (block $done (loop $cmp
+      (br_if $done (i32.ge_u (local.get $j) (local.get $len)))
       (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa) (local.get $j))))
-      (br_if $fail (i32.eqz (local.get $ch_a))) ;; ASCII string shorter
+      (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; ASCII shorter
       (local.set $ch_r (i32.load16_u (i32.add (local.get $name_wa)
         (i32.add (i32.const 2) (i32.mul (local.get $j) (i32.const 2))))))
       ;; Uppercase both for case-insensitive compare
@@ -137,11 +137,10 @@
         (then (local.set $ch_a (i32.sub (local.get $ch_a) (i32.const 0x20)))))
       (if (i32.and (i32.ge_u (local.get $ch_r) (i32.const 0x61)) (i32.le_u (local.get $ch_r) (i32.const 0x7a)))
         (then (local.set $ch_r (i32.sub (local.get $ch_r) (i32.const 0x20)))))
-      (br_if $fail (i32.ne (local.get $ch_a) (local.get $ch_r)))
+      (if (i32.ne (local.get $ch_a) (local.get $ch_r)) (then (return (i32.const 0))))
       (local.set $j (i32.add (local.get $j) (i32.const 1)))
-      (br $cmp))
-    (return (i32.const 0)))
-    ;; Matched all chars — check ASCII string is also at end
+      (br $cmp)))
+    ;; Matched all $len resource chars — ensure ASCII string ends here too
     (i32.eqz (i32.load8_u (i32.add (local.get $str_wa) (local.get $len)))))
 
   ;; Raw eid (name-level directory entry dword, with 0x80000000 set for
