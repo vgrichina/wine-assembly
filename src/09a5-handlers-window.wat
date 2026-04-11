@@ -78,9 +78,11 @@
         (if (i32.ge_s (local.get $i) (i32.const 0))
           (then
             (local.set $v (i32.load offset=32 (call $class_wndclass_addr (local.get $i)))) ;; lpszMenuName
-            ;; MAKEINTRESOURCE has high 16 zero — treat as resource ID
-            (if (i32.and (i32.ne (local.get $v) (i32.const 0))
-                          (i32.eqz (i32.and (local.get $v) (i32.const 0xFFFF0000))))
+            ;; Either MAKEINTRESOURCE (low 16-bit int) or a guest string
+            ;; pointer naming the resource. $find_resource handles both
+            ;; via $rsrc_find_entry's string-vs-id branch, so freecell-style
+            ;; named menus work the same as integer-IDed ones.
+            (if (i32.ne (local.get $v) (i32.const 0))
               (then (local.set $tmp (local.get $v))))))))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
