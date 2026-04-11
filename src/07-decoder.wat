@@ -515,12 +515,6 @@
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 
-      ;; DEBUG: trace opcodes for _stricmp function (0x57b7cb to 0x57b82b)
-      (if (i32.and (i32.ge_u (global.get $d_pc) (i32.const 0x0057b7cb))
-                   (i32.le_u (global.get $d_pc) (i32.const 0x0057b82b)))
-        (then (call $host_log_i32 (i32.const 0xDE0C0DE0))
-              (call $host_log_i32 (global.get $d_pc))))
-
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))
       (local.set $prefix_66 (i32.const 0))
@@ -1316,13 +1310,12 @@
       (if (i32.or (i32.eq (local.get $op) (i32.const 0x86)) (i32.eq (local.get $op) (i32.const 0x87)))
         (then
           (call $decode_modrm)
-          (if (i32.eq (local.get $op) (i32.const 0x86))
-            (then (call $host_log_i32 (i32.const 0xDE860086))
-                  (call $host_log_i32 (global.get $d_pc))))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
-            (then (call $te (if (result i32) (i32.eq (local.get $op) (i32.const 0x86))
-              (then (i32.const 219)) (else (i32.const 71)))
-              (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+            (then (call $te (i32.const 71)
+              (i32.or
+                (if (result i32) (i32.eq (local.get $op) (i32.const 0x86))
+                  (then (i32.const 0x100)) (else (i32.const 0)))
+                (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))
             (else (if (call $mr_simple_base)
               (then (call $te (i32.const 197) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
                     (call $te_raw (global.get $mr_disp)))
