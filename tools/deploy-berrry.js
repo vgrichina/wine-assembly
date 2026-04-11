@@ -6,7 +6,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const API_BASE = 'https://berrry.app/api/nomcp/brry_rw_EmAUqmFJCg8gTyJkYBQ5on7_';
+const BERRRY_KEY = process.env.BERRRY_KEY;
+if (!BERRRY_KEY) { console.error('Missing BERRRY_KEY env var (try: set -a; . .env.berrry; set +a)'); process.exit(1); }
+const API_BASE = 'https://berrry.app/api/nomcp/' + BERRRY_KEY;
 const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
 
