@@ -141,6 +141,55 @@
       font-family: "MS Sans Serif", Tahoma, sans-serif; font-size: 13px;
       z-index: 9999; display: none;
     }
+    #desktop-icons {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 80px);
+      grid-auto-rows: 84px;
+      gap: 4px 8px;
+      align-content: start;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .desktop-icon {
+      pointer-events: auto;
+      width: 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      user-select: none;
+      padding: 2px;
+    }
+    .desktop-icon .icon-img {
+      width: 32px; height: 32px;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+    }
+    .desktop-icon .icon-label {
+      color: white;
+      font-size: 11px;
+      text-align: center;
+      text-shadow: 1px 1px 0 #000;
+      padding: 1px 3px;
+      max-width: 76px;
+      word-wrap: break-word;
+      line-height: 1.1;
+    }
+    .desktop-icon.selected .icon-label {
+      background: #000080;
+      outline: 1px dotted #fff;
+    }
+    body.no-debug #shell { margin: 0; border: 0; background: transparent; }
+    body.no-debug #titlebar,
+    body.no-debug #toolbar,
+    body.no-debug #log { display: none; }
+    body.no-debug #screen-wrap { background: #008080; }
+    body.no-debug canvas { background: transparent; z-index: 2; }
   </style>
 </head>
 <body>
@@ -188,6 +237,7 @@
     </div>
     <div id="content">
       <div id="screen-wrap">
+        <div id="desktop-icons"></div>
         <canvas id="screen"></canvas>
       </div>
       <div id="log">Wine-Assembly v0.2
@@ -222,21 +272,47 @@ Resource-aware Win98 emulator
     let sharedWasmModule = null;
     let inputWired = false;
 
-    const DEFAULT_APPS = new Set([
-      'notepad', 'calc',
-      'freecell', 'sol', 'cruel', 'golf', 'pegged', 'snake',
-      'taipei', 'tictac', 'reversi', 'winmine_wep',
-      'ski32',
-    ]);
+    const DEFAULT_APPS = [
+      ['notepad',     'Notepad',     '\u{1F4DD}'],
+      ['calc',        'Calculator',  '\u{1F9EE}'],
+      ['freecell',    'FreeCell',    '\u{1F0CF}'],
+      ['sol',         'Solitaire',   '\u{2660}'],
+      ['cruel',       'Cruel',       '\u{1F0A1}'],
+      ['golf',        'Golf',        '\u{26F3}'],
+      ['pegged',      'Pegged',      '\u{1F3AF}'],
+      ['snake',       'Rattler',     '\u{1F40D}'],
+      ['taipei',      'Taipei',      '\u{1F004}'],
+      ['tictac',      'TicTactics',  '\u{274C}'],
+      ['reversi',     'Reversi',     '\u{26AB}'],
+      ['winmine_wep', 'Minesweeper', '\u{1F4A3}'],
+      ['ski32',       'SkiFree',     '\u{26F7}'],
+    ];
+    const DEFAULT_APP_SET = new Set(DEFAULT_APPS.map(a => a[0]));
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
     if (!DEBUG_MODE) {
+      document.body.classList.add('no-debug');
       window.addEventListener('DOMContentLoaded', () => {
         const sel = document.getElementById('app-select');
         for (const opt of [...sel.querySelectorAll('option')]) {
-          if (!DEFAULT_APPS.has(opt.value)) opt.remove();
+          if (!DEFAULT_APP_SET.has(opt.value)) opt.remove();
         }
         for (const grp of [...sel.querySelectorAll('optgroup')]) {
           if (!grp.querySelector('option')) grp.remove();
+        }
+        const grid = document.getElementById('desktop-icons');
+        for (const [value, label, glyph] of DEFAULT_APPS) {
+          const el = document.createElement('div');
+          el.className = 'desktop-icon';
+          el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
+          el.addEventListener('click', () => {
+            for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
+            el.classList.add('selected');
+          });
+          el.addEventListener('dblclick', () => {
+            sel.value = value;
+            launchApp();
+          });
+          grid.appendChild(el);
         }
       });
     }
@@ -365,6 +441,7 @@ Resource-aware Win98 emulator
       // Create shared renderer on first launch
       if (!sharedRenderer) {
         sharedRenderer = new Win98Renderer(canvas);
+        if (!DEBUG_MODE) sharedRenderer.transparentDesktop = true;
       }
 
       wine = new WineAssembly();
