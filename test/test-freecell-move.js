@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// FreeCell card-move regression: verify a bottom card can be picked up and
-// stacked on a column of opposite color / one-higher rank.
+// FreeCell card-move regression: verify a bottom card can be picked up
+// and moved to a free cell.
 //
-// Fixed seed: FreeCell's game number is derived from GetTickCount(), which
-// test/run.js makes deterministic (tickState.batch * 200 + callsInBatch).
-// Running the same batch sequence always picks the same game — currently
-// game #7387. Column 5 bottom is 8H, column 4 bottom is 9S, so the move
-// 8H -> col4 is legal and expected to produce a visible change.
+// Fixed seed: we explicitly open Select Game (F3, ID 103) and submit
+// game number 1 via the edit-ok helper — this pins the layout regardless
+// of emulator timing. Game #1 column 1 bottom is the 6 of spades; we pick
+// it up and drop it on free cell 1 (an always-legal single-card move).
 //
 // PASS criteria:
 //   - FreeCell launches and renders the initial deal (cards visible)
@@ -43,19 +42,19 @@ for (const p of [beforePng, afterPng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
-// Game #7387 layout (col indices 1..8, each ~75px wide starting near x=15):
-//   col4 bottom ~ 9 of spades @ (275, 290)
-//   col5 bottom ~ 8 of hearts @ (350, 290)
-// Click col5 bottom (pick up 8H), click col4 bottom (drop onto 9S).
+// Game #1 layout: column 1 bottom card is the 6 of spades at roughly
+// (52, 290). Free cell 1 is at the top-left at roughly (40, 100).
+// Click col1 bottom (pick up 6S), click free cell 1 (drop).
 const inputSpec = [
-  '50:0x111:102',                         // Game > New Game (F2)
-  `300:png:${beforePng}`,                 // snapshot initial deal
-  '350:mousedown:350:290', '360:mouseup:350:290',  // select 8H on col5
-  '420:mousedown:275:290', '430:mouseup:275:290',  // drop on 9S on col4
-  `600:png:${afterPng}`,                  // snapshot after move
+  '50:0x111:103',                         // Game > Select Game (F3)
+  '200:edit-ok:203:1',                    // enter "1" into game number, OK
+  `400:png:${beforePng}`,                 // snapshot initial deal
+  '450:mousedown:52:290', '460:mouseup:52:290',    // pick up 6S on col1
+  '520:mousedown:40:100', '530:mouseup:40:100',    // drop on free cell 1
+  `700:png:${afterPng}`,                  // snapshot after move
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=700`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=800`;
 console.log('$', cmd.replace(ROOT, '.'));
 
 let out = '';

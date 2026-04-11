@@ -6534,12 +6534,65 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 666: GetDlgItemInt(hDlg, nIDDlgItem, lpTranslated, bSigned) — stub, return 0
+  ;; 666: GetDlgItemInt(hDlg, nIDDlgItem, lpTranslated, bSigned) → UINT
+  ;; Reads the child Edit control's WAT-side text buffer directly (via
+  ;; state_ptr offsets that match $handle_edit_wndproc WM_GETTEXT) and
+  ;; parses a decimal integer. bSigned lets a leading '-' flip the sign.
+  ;; *lpTranslated receives TRUE iff at least one digit was consumed.
   (func $handle_GetDlgItemInt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Set lpTranslated to FALSE if non-null
+    (local $child i32) (local $state i32) (local $state_w i32)
+    (local $buf_wa i32) (local $text_len i32)
+    (local $i i32) (local $c i32) (local $val i32)
+    (local $neg i32) (local $ok i32)
+    (local.set $val (i32.const 0))
+    (local.set $neg (i32.const 0))
+    (local.set $ok  (i32.const 0))
+    (local.set $child (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $child)
+      (then
+        (local.set $state (call $wnd_get_state_ptr (local.get $child)))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+            (if (i32.and
+                  (i32.ne (i32.const 0) (i32.load (local.get $state_w)))
+                  (i32.ne (i32.const 0) (local.get $text_len)))
+              (then
+                (local.set $buf_wa (call $g2w (i32.load (local.get $state_w))))
+                (local.set $i (i32.const 0))
+                (block $skip_done (loop $skip
+                  (br_if $skip_done (i32.ge_u (local.get $i) (local.get $text_len)))
+                  (br_if $skip_done (i32.ne
+                    (i32.load8_u (i32.add (local.get $buf_wa) (local.get $i)))
+                    (i32.const 0x20)))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $skip)))
+                (if (i32.and (i32.ne (local.get $arg3) (i32.const 0))
+                             (i32.lt_u (local.get $i) (local.get $text_len)))
+                  (then
+                    (if (i32.eq
+                          (i32.load8_u (i32.add (local.get $buf_wa) (local.get $i)))
+                          (i32.const 0x2D))
+                      (then
+                        (local.set $neg (i32.const 1))
+                        (local.set $i (i32.add (local.get $i) (i32.const 1)))))))
+                (block $parse_done (loop $parse
+                  (br_if $parse_done (i32.ge_u (local.get $i) (local.get $text_len)))
+                  (local.set $c (i32.load8_u (i32.add (local.get $buf_wa) (local.get $i))))
+                  (br_if $parse_done (i32.lt_u (local.get $c) (i32.const 0x30)))
+                  (br_if $parse_done (i32.gt_u (local.get $c) (i32.const 0x39)))
+                  (local.set $val (i32.add
+                    (i32.mul (local.get $val) (i32.const 10))
+                    (i32.sub (local.get $c) (i32.const 0x30))))
+                  (local.set $ok (i32.const 1))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $parse)))
+                (if (local.get $neg)
+                  (then (local.set $val (i32.sub (i32.const 0) (local.get $val)))))))))))
     (if (local.get $arg2)
-      (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+      (then (call $gs32 (local.get $arg2) (local.get $ok))))
+    (global.set $eax (local.get $val))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
