@@ -507,13 +507,20 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Poll for input events from the host
-    (local.set $packed (call $host_check_input))
+    ;; Poll for input events — consume pending cache first, then host
+    (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
+      (then
+        (local.set $packed (global.get $pending_input_packed))
+        (global.set $pending_input_packed (i32.const 0)))
+      (else
+        (local.set $packed (call $host_check_input))
+        (if (i32.ne (local.get $packed) (i32.const 0))
+          (then
+            (global.set $pending_input_hwnd (call $host_check_input_hwnd))
+            (global.set $pending_input_lparam (call $host_check_input_lparam))))))
     (if (i32.ne (local.get $packed) (i32.const 0))
     (then
-    ;; Unpack: msg = low 16 bits, wParam = high 16 bits
-    ;; Use hwnd from event if provided, else main_hwnd
-    (local.set $tmp (call $host_check_input_hwnd))
+    (local.set $tmp (global.get $pending_input_hwnd))
     (if (i32.eqz (local.get $tmp))
     (then (local.set $tmp (global.get $main_hwnd))))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
@@ -522,7 +529,7 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
     (i32.shr_u (local.get $packed) (i32.const 16)))              ;; wParam
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-    (call $host_check_input_lparam))                              ;; lParam
+    (global.get $pending_input_lparam))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No input — deliver WM_PAINT if pending (lowest priority per Win32 spec)
@@ -655,8 +662,27 @@
         (return)
       )
     )
-    ;; Poll host for input events
-    (local.set $packed (call $host_check_input))
+    ;; Poll host for input events (with PM_NOREMOVE cache)
+    ;; host_check_input always dequeues from JS. To support PM_NOREMOVE,
+    ;; we cache the event in WAT globals; a subsequent PM_REMOVE consumes the cache.
+    (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
+      (then
+        ;; Cached event from a previous PM_NOREMOVE call
+        (local.set $packed (global.get $pending_input_packed))
+        ;; If PM_REMOVE, consume the cache
+        (if (i32.and (local.get $arg4) (i32.const 1))
+          (then (global.set $pending_input_packed (i32.const 0)))))
+      (else
+        ;; No cache — fetch from JS
+        (local.set $packed (call $host_check_input))
+        (if (i32.ne (local.get $packed) (i32.const 0))
+          (then
+            ;; Save hwnd and lparam immediately (only valid until next host_check_input)
+            (global.set $pending_input_hwnd (call $host_check_input_hwnd))
+            (global.set $pending_input_lparam (call $host_check_input_lparam))
+            ;; If PM_NOREMOVE, keep the cache for next call
+            (if (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))
+              (then (global.set $pending_input_packed (local.get $packed))))))))
     (if (i32.ne (local.get $packed) (i32.const 0))
       (then
         (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
@@ -665,7 +691,7 @@
               (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
                        (i32.le_u (local.get $msg) (local.get $arg3))))
           (then
-            (local.set $tmp (call $host_check_input_hwnd))
+            (local.set $tmp (global.get $pending_input_hwnd))
             (if (i32.eqz (local.get $tmp))
               (then (local.set $tmp (global.get $main_hwnd))))
             (call $gs32 (local.get $arg0) (local.get $tmp))
@@ -673,7 +699,7 @@
             (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
               (i32.shr_u (local.get $packed) (i32.const 16)))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
-              (call $host_check_input_lparam))
+              (global.get $pending_input_lparam))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)

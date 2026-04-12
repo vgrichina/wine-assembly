@@ -159,10 +159,14 @@
 
 
 
+  (import "host" "gdi_get_clip_box" (func $host_gdi_get_clip_box (param i32) (result i32)))
+  ;; gdi_get_clip_box(hdc) → packed w | (h << 16)
   (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32 i32) (result i32)))
   (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
   (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
+  (import "host" "gdi_get_bk_color" (func $host_gdi_get_bk_color (param i32) (result i32)))
+  (import "host" "gdi_get_text_color" (func $host_gdi_get_text_color (param i32) (result i32)))
   (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32) (result i32)))
@@ -621,7 +625,14 @@
   (global $TIMER_MAX    i32 (i32.const 16))
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
+  (global $auto_timer_id (mut i32) (i32.const 0x1000))  ;; Auto-generated timer IDs start here
   ;; Thread yield state (for multi-instance threading)
+  ;; Pending input event cache for PM_NOREMOVE support.
+  ;; When PeekMessageA is called with PM_NOREMOVE, we fetch from JS but cache here.
+  ;; Next PM_REMOVE call consumes the cache instead of fetching again.
+  (global $pending_input_packed (mut i32) (i32.const 0))
+  (global $pending_input_lparam (mut i32) (i32.const 0))
+  (global $pending_input_hwnd   (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $wait_handle  (mut i32) (i32.const 0))
