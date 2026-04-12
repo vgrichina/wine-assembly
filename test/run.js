@@ -1313,7 +1313,7 @@ async function main() {
             const { loadDll: ld, patchExeImports: pe, callDllMain: cdm } = require('../lib/dll-loader');
             const result = ld(instance.exports, memory.buffer, dllBytes);
             console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
-            pe(instance.exports, memory.buffer, new Uint8Array(fs.readFileSync(EXE_PATH)), console.log);
+            pe(instance.exports, memory.buffer, new Uint8Array(fs.readFileSync(EXE_PATH)), [{ name: fileName, bytes: dllBytes }], console.log);
             if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
             loaded = true;
             break;
@@ -1446,6 +1446,7 @@ if (VERBOSE) {
     console.log(regs());
     if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
     if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
+    if (instance.exports.get_heap_ptr) console.log('heap_ptr:', hex(instance.exports.get_heap_ptr()));
   }
 
   // --peek=ADDR[:LEN],... — dump memory at end. Addrs >= image_base treated as

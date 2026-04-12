@@ -3,7 +3,52 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, renders table correctly, enters active PeekMessage game loop via proper WM_SETFOCUS delivery. Physics tick runs with flag poke for game-active/commands-enabled (attract mode state machine doesn't advance yet — callback slots at `[game_obj+0xf4..0x134]` stay empty). Ball deploys, flippers animate, score advances, missions trigger. Press Y for New Game, Space to plunge.
+**Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Flag pokes still needed for game-active/commands-enabled (attract mode requires WM_WOM_DONE callbacks we don't deliver). Score panel mostly working: title, score digits, BALL label, and mission text ("Careful...") all render. "Player 1" label still missing. Use `--batch-size=500000 --max-batches=500` for full game loop.
+
+**Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
+
+## Open Tasks
+
+### 1. Re-add pinball flag pokes — DONE
+**Files:** `src/09a5-handlers-window.wat` ($handle_PeekMessageA)
+Poke code in PeekMessageA's "no message" return path. Conditional on `wndproc_addr == 0x01055db1` and `msg_phase >= 3`. Sets game-active (0x1024fe0) and commands-enabled (0x1024ff8) to 1. Debug logging (FACE/BEEF/DEAD markers) cleaned up.
+
+### 2. Fix WM_KEYDOWN double-dispatch
+**Priority: MEDIUM** — Every keydown is dispatched twice by PeekMessageA.
+**Files:** `src/09a5-handlers-window.wat` ($handle_PeekMessageA, line 563+), `src/09a5-handlers-window.wat` ($handle_DefWindowProcA, line 811+)
+The wndproc calls DefWindowProcA at 0x1008263 with the same WM_KEYDOWN after handling it. On return, PeekMessageA returns the same keydown again.
+
+**Investigation findings (2026-04-11):**
+- `check_input` in `test/run.js:387` DOES consume events on first call (`inputEvent = null`, `inputQueue.shift()`, etc.)
+- `$handle_DefWindowProcA` does nothing with WM_KEYDOWN — just returns 0 (line 823)
+- PeekMessageA's input path (line 660) calls `host_check_input` and fills the MSG struct, but does NOT differentiate PM_REMOVE vs PM_NOREMOVE for input events (unlike posted messages at line 646 and paint at line 688)
+- **Likely root cause:** After PeekMessageA returns the keydown and the app dispatches it, the app calls PeekMessageA again. Since `check_input` already consumed the event, it returns 0. But `paint_pending` or `paint_queue_count` (line 686-709) may fire and return a WM_PAINT message using the same MSG struct address — but the app's dispatch code may still see the old WM_KEYDOWN data if it inspects the MSG before the new fill. Needs closer runtime trace to confirm.
+
+### 3. Score panel text rendering — MOSTLY FIXED
+**Priority: LOW** — Most text now renders after WaveMix fix (task 4).
+After the 16-bit ALU fix, sound init succeeds and the attract mode initializes text rendering objects. Score panel now shows: title ("3D Pinball Space Cadet"), score digits, BALL label with number, mission text ("Careful..."). Only "Player 1" label still missing — may need further investigation.
+
+### 4. WaveMixOpenWave fails — FIXED
+**Priority: HIGH** — Was root cause of attract mode failure, flag poke need, and missing text.
+**Files:** `src/07-decoder.wat` ($emit_alu_m16_i), `src/06-fpu.wat` ($th_alu_m16_i_ro), `src/04-cache.wat` ($next)
+
+**Root cause (2026-04-11):** Two bugs, both in the x86 decoder/cache layer:
+
+1. **`$emit_alu_m16_i` used 32-bit handler for simple-base addressing.** When the modrm byte indicated a simple `[reg]` or `[reg+disp]` address, the decoder emitted handler 131 (`$th_alu_m32_i_ro`) which did `$gl32` (32-bit load) and no `flag_sign_shift` adjustment. For `cmp word [edi], 0x1` (encoding `66 83 3f 01`), this loaded 4 bytes from `[edi]`, where the upper 2 bytes were non-zero garbage, making the 32-bit compare against 1 always fail.
+
+2. **Off-by-one in cache handler bounds check.** `$next` in `04-cache.wat` rejected handler indices >= 219, but the table had 220 entries (0-219). Handler 219 (`$th_xchg_r8_r8`) was always treated as cache corruption, causing infinite decode/clear loops for any code using 8-bit `xchg`. This pre-existing bug masked many test results.
+
+**Fix:** Added handler 220 (`$th_alu_m16_i_ro`) for 16-bit ALU [base+disp] with immediate, using `$gl16`/`$gs16` and `flag_sign_shift=15`. Updated `$emit_alu_m16_i` to emit handler 220 instead of 131. Fixed cache bounds check to >= 221.
+
+**Result:** WaveMixOpenWave's `cmp word [edi], 0x1` WAVE_FORMAT_PCM check now passes. Sound initialization completes (waveOutOpen, waveOutPrepareHeader all succeed). Test suite improved from 13 to 48 PASS.
+
+### 5. Fix restoreWatThunks crash (uncommitted)
+**Priority: LOW** — Only affects uncommitted DLL loader changes.
+**Files:** `lib/dll-loader.js` (restoreWatThunks), `src/08b-dll-loader.wat`
+The uncommitted `restoreWatThunks` function + WAT-side DLL loader change cause pinball to crash at init (EIP=0, 211 API calls). The WAT change inverts the condition for storing DLL-resolved imports, leaving stale IAT entries for functions that have WAT handlers. Both changes were reverted for now.
+
+### 6. Clarification: game-active vs hidden test mode
+`game-active` (0x1024fe0) and `commands-enabled` (0x1024ff8) are NOT hidden-test-only flags as previously theorized. While they CAN be toggled via the hidden test cheat code, they are ALSO set by the attract mode state machine during normal initialization. The per-frame tick counter at `[ebp-0xf8]` only decrements in the physics tick path when game-active=1 — without it, the counter reaches 0, resets to 300, but the per-frame tick body (Message 0x3F6 to the table) is skipped. This prevents ball physics, sprite updates, and score panel rendering from running properly.
 
 ## Fix (2026-04-10): DestroyWindow focus transfer + remove pinball flag poke
 

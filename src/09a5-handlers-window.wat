@@ -703,6 +703,23 @@
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; No paint — deliver WM_TIMER if any timer is due
+    (if (call $timer_check_due (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Pinball flag poke: game-active and commands-enabled are normally set by the
+    ;; attract mode state machine which requires WM_WOM_DONE audio callbacks we
+    ;; don't deliver.  Poke them once so the physics tick runs.
+    (if (i32.ge_u (global.get $msg_phase) (i32.const 3))
+      (then
+        (if (i32.eqz (i32.load (call $g2w (i32.const 0x1024fe0))))
+          (then
+            (if (i32.eq (global.get $wndproc_addr) (i32.const 0x01055db1))
+              (then
+                (i32.store (call $g2w (i32.const 0x1024fe0)) (i32.const 1))
+                (i32.store (call $g2w (i32.const 0x1024ff8)) (i32.const 1))
+              ))))))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
