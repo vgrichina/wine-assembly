@@ -114,20 +114,50 @@ async function api(method, endpoint, body) {
   return { status: r.status, data: json };
 }
 
+function loadExplicitFiles(relList) {
+  // Load specific files by repo-relative path. Encodes as text or base64 by extension.
+  const files = [];
+  for (const rel of relList) {
+    const full = path.resolve(ROOT, rel);
+    if (!fs.existsSync(full)) { console.error('SKIP missing: ' + rel); continue; }
+    const ext = path.extname(rel).toLowerCase();
+    if (TEXT_EXTS.has(ext)) {
+      files.push({ name: rel, content: fs.readFileSync(full, 'utf-8') });
+    } else {
+      files.push({ name: rel, content: fs.readFileSync(full).toString('base64'), encoding: 'base64' });
+    }
+  }
+  return files;
+}
+
 async function deploy() {
   const isUpdate = process.argv.includes('--update');
+  const filesArg = process.argv.find(a => a.startsWith('--files='));
 
-  console.log('Collecting text files...');
-  const textFiles = collectTextFiles();
-  let textBytes = 0;
-  for (const f of textFiles) { textBytes += f.content.length; console.log('  ' + f.name + ' (' + (f.content.length / 1024).toFixed(1) + 'KB)'); }
-  console.log('Total text: ' + (textBytes / 1024).toFixed(0) + 'KB, ' + textFiles.length + ' files\n');
+  let textFiles, binFiles;
+  if (filesArg) {
+    const list = filesArg.slice('--files='.length).split(',').filter(Boolean);
+    console.log('Uploading explicit file list (' + list.length + '):');
+    const explicit = loadExplicitFiles(list);
+    for (const f of explicit) {
+      const sz = f.encoding === 'base64' ? f.content.length * 3 / 4 : f.content.length;
+      console.log('  ' + f.name + ' (' + (sz / 1024).toFixed(1) + 'KB)');
+    }
+    textFiles = explicit;
+    binFiles = [];
+  } else {
+    console.log('Collecting text files...');
+    textFiles = collectTextFiles();
+    let textBytes = 0;
+    for (const f of textFiles) { textBytes += f.content.length; console.log('  ' + f.name + ' (' + (f.content.length / 1024).toFixed(1) + 'KB)'); }
+    console.log('Total text: ' + (textBytes / 1024).toFixed(0) + 'KB, ' + textFiles.length + ' files\n');
 
-  console.log('Collecting binaries...');
-  const binFiles = collectBinaries();
-  let binBytes = 0;
-  for (const f of binFiles) { const sz = f.content.length * 3 / 4; binBytes += sz; console.log('  ' + f.name + ' (' + (sz / 1024).toFixed(1) + 'KB)'); }
-  console.log('Total binaries: ' + (binBytes / 1024).toFixed(0) + 'KB, ' + binFiles.length + ' files\n');
+    console.log('Collecting binaries...');
+    binFiles = collectBinaries();
+    let binBytes = 0;
+    for (const f of binFiles) { const sz = f.content.length * 3 / 4; binBytes += sz; console.log('  ' + f.name + ' (' + (sz / 1024).toFixed(1) + 'KB)'); }
+    console.log('Total binaries: ' + (binBytes / 1024).toFixed(0) + 'KB, ' + binFiles.length + ' files\n');
+  }
 
   const allFiles = [...textFiles, ...binFiles];
   console.log('Total files: ' + allFiles.length);
