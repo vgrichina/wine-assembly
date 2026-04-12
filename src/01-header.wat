@@ -394,7 +394,7 @@
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  (mut i32) (i32.const 0x01D52000))
+  (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
@@ -491,7 +491,7 @@
   (global $code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x01D52000))  ;; = THREAD_BASE
+  (global $thread_alloc (mut i32) (i32.const 0x01E52000))  ;; = THREAD_BASE
 
   ;; ============================================================
   ;; CPU STATE
@@ -531,7 +531,9 @@
   (global $num_thunks   (mut i32) (i32.const 0))
 
   ;; Heap
+  (global $heap_base (mut i32) (i32.const 0))
   (global $heap_ptr (mut i32) (i32.const 0x01D12000))  ;; heap region: 0x01D12000-0x01E12000 (1MB)
+
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
   (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string

@@ -30,6 +30,11 @@
     ;; CBT hook continuation — hook returned, now dispatch WM_CREATE
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0002))
       (then
+        ;; Push saved_hwnd and saved_ret below WndProc args (for CACA0001 to pop)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
         ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))

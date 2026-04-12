@@ -341,6 +341,7 @@ class WineAssembly {
 
     // Set EXE name from URL
     const exeName = url.replace(/^.*[\\\/]/, '');
+    this._exeName = exeName;
     if (this.instance.exports.set_exe_name) {
       const enc = new TextEncoder();
       const nameBytes = enc.encode(exeName);
@@ -386,7 +387,10 @@ class WineAssembly {
     }
     const exeBytes = this._exeBytes;
     this._inDllInit = true;
-    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log);
+    const opts = {};
+    if (this._exeName) opts.exeName = this._exeName;
+    if (this._extraArgs) opts.extraArgs = this._extraArgs;
+    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log, opts);
     this._inDllInit = false;
     // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT, but DLL
     // bitmaps (e.g. cards.dll for sol/freecell) still need a JS-side
