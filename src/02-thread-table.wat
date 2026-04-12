@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 227 funcref)
+  (table $handlers 231 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -279,5 +279,9 @@
     $th_shrd_m             ;; 224: SHRD [mem], src, imm (op=src, addr word, count word)
     $th_bsf_rm             ;; 225: BSF dst, [mem] (op=dst, addr next word)
     $th_bsr_rm             ;; 226: BSR dst, [mem] (op=dst, addr next word)
+    $th_bt_m_r             ;; 227: BT  [mem], r32 (op=src_reg, addr next word)
+    $th_bts_m_r            ;; 228: BTS [mem], r32
+    $th_btr_m_r            ;; 229: BTR [mem], r32
+    $th_btc_m_r            ;; 230: BTC [mem], r32
   )
 
