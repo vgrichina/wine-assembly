@@ -60,12 +60,24 @@ const TEST_CASES = [
   { exe: 'test/binaries/xp/claass.exe', name: 'Calculator (XP)' },
   { exe: 'test/binaries/xp/sndrec32.exe', name: 'Sound Recorder (XP)' },
   { exe: 'test/binaries/xp/xp_eos.exe', name: 'XP End of Life' },
+  // Entertainment Pack extras
+  { exe: 'test/binaries/entertainment-pack/mspaint.exe', name: 'MSPaint (EP)' },
   // Pinball
   { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball' },
+  { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)' },
+  // Winamp (top-level copies, not installers)
+  { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
+  { exe: 'test/binaries/winamp295.exe', name: 'Winamp 2.95' },
   // Installers (NSIS etc.)
   { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer',
     extraArgs: ['--buttons=2'], maxBatches: 20000 },  // Click Cancel on license dialog (needs batches for CRC loop)
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
+  // 16-bit NE binaries — emulator is 32-bit PE only, expected to fail at load
+  // time. Kept in the list as SKIP candidates so coverage stays honest.
+  { exe: 'test/binaries/win98-16bit/FREECELL.EXE', name: 'FreeCell (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/SOL.EXE', name: 'Solitaire (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/MSHEARTS.EXE', name: 'Hearts (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/WINMINE.EXE', name: 'Minesweeper (16-bit)', expect16bit: true },
 ];
 
 const MAX_BATCHES = 80;
@@ -75,6 +87,19 @@ function runExe(testCase) {
   const exePath = path.join(ROOT, testCase.exe);
   if (!fs.existsSync(exePath)) {
     return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
+  }
+  if (testCase.expect16bit) {
+    // NE format; emulator only supports 32-bit PE. Verify MZ+NE then SKIP.
+    try {
+      const buf = fs.readFileSync(exePath);
+      if (buf.length >= 0x40 && buf[0] === 0x4D && buf[1] === 0x5A) {
+        const peOff = buf.readUInt32LE(0x3C);
+        if (peOff + 2 <= buf.length && buf[peOff] === 0x4E && buf[peOff + 1] === 0x45) {
+          return { name: testCase.name, status: 'SKIP', reason: '16-bit NE (unsupported)' };
+        }
+      }
+    } catch (_) {}
+    return { name: testCase.name, status: 'SKIP', reason: 'expected 16-bit NE' };
   }
 
   const args = [
