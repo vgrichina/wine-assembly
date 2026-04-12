@@ -36,7 +36,6 @@ Victory animation (Force Win menu command 1010) works — cascading cards via cd
 - Status bar child window has negative client height (`"h":-12`) — cosmetic
 
 ### Not Yet Tested
-- Card movement animation (cdtAnimate — called during auto-move)
 - Scoring modes (standard, vegas, none, timed) — dialog controls work, runtime behavior untested
 
 ### Tested — Working
@@ -101,7 +100,7 @@ node test/run.js --exe=test/binaries/entertainment-pack/sol.exe --trace-gdi --du
 | USER32 | CreateWindowExA, GetMessageA, DispatchMessageA, ShowWindow, SetTimer, SetCapture, CheckMenuItem, InvertRect |
 | GDI32 | SelectObject, BitBlt, SetPixel, GetPixel, PatBlt, SetBkColor, CreateCompatibleDC/Bitmap |
 | KERNEL32 | GetProfileIntA, GetProfileStringA, WriteProfileStringA, LocalAlloc, MulDiv, OpenFile |
-| CARDS.dll | cdtInit, cdtDraw, cdtDrawExt, cdtAnimate, cdtTerm |
+| CARDS.dll | cdtInit, cdtDraw, cdtDrawExt, cdtAnimate, cdtTerm (real PE DLL, no WAT stubs) |
 | SHELL32 | ShellAboutA |
 | msvcrt | rand, srand, time (game number seed) |
 

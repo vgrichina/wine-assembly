@@ -322,50 +322,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
   )
 
-  ;; 747: cdtInit(lpWidth, lpHeight) — init cards, return dimensions 71x96
-  (func $handle_cdtInit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store (call $g2w (local.get $arg0)) (i32.const 71))
-    (i32.store (call $g2w (local.get $arg1)) (i32.const 96))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
-  )
-
-  ;; 748: cdtDraw(hdc, x, y, card, mode, color) — draw a card rectangle
-  (func $handle_cdtDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_gdi_fill_rect (local.get $arg0)
-      (local.get $arg1) (local.get $arg2)
-      (i32.add (local.get $arg1) (i32.const 71))
-      (i32.add (local.get $arg2) (i32.const 96))
-      (i32.const 0x00FFFFFF)))
-    (drop (call $host_gdi_rectangle (local.get $arg0)
-      (local.get $arg1) (local.get $arg2)
-      (i32.add (local.get $arg1) (i32.const 71))
-      (i32.add (local.get $arg2) (i32.const 96))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
-  )
-
-  ;; 749: cdtDrawExt(hdc, x, y, dx, dy, card, mode, color) — draw card with custom size
-  (func $handle_cdtDrawExt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_gdi_fill_rect (local.get $arg0)
-      (local.get $arg1) (local.get $arg2)
-      (i32.add (local.get $arg1) (local.get $arg3))
-      (i32.add (local.get $arg2) (local.get $arg4))
-      (i32.const 0x00FFFFFF)))
-    (drop (call $host_gdi_rectangle (local.get $arg0)
-      (local.get $arg1) (local.get $arg2)
-      (i32.add (local.get $arg1) (local.get $arg3))
-      (i32.add (local.get $arg2) (local.get $arg4))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
-  )
-
-  ;; 750: cdtTerm() — cleanup card drawing
-  (func $handle_cdtTerm (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
-  )
-
-  ;; 751: __GetMainArgs(argc, argv, envp) — CRT init, 3-arg variant
+  ;; __GetMainArgs(argc, argv, envp) — CRT init, 3-arg variant
   (func $handle___GetMainArgs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $i i32) (local $dst i32)
     (call $gs32 (local.get $arg0) (i32.const 1))
@@ -605,6 +562,98 @@
       (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (local.get $hr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; OLEAUT32 BSTR support. BSTR layout:
+  ;;   [ptr-4..ptr-1] = byte length (not char count, not including null)
+  ;;   [ptr..ptr+len-1] = UTF-16 LE data
+  ;;   [ptr+len..ptr+len+1] = null terminator (always present)
+  ;; We allocate (len+6) bytes via $heap_alloc; the 4-byte length prefix lives
+  ;; at the start of the allocation, so BSTR = alloc+4 and SysFreeString can
+  ;; free(alloc) = free(bstr-4).
+
+  ;; SysAllocString(psz: PCOLESTR) → BSTR
+  (func $handle_SysAllocString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $nchars i32) (local $nbytes i32) (local $alloc i32) (local $bstr i32)
+    (local $src_w i32) (local $dst_w i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (local.set $nchars (call $guest_wcslen (local.get $arg0)))
+    (local.set $nbytes (i32.shl (local.get $nchars) (i32.const 1)))
+    (local.set $alloc (call $heap_alloc (i32.add (local.get $nbytes) (i32.const 6))))
+    (if (i32.eqz (local.get $alloc))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (local.set $bstr (i32.add (local.get $alloc) (i32.const 4)))
+    ;; Write length prefix at alloc+0
+    (call $gs32 (local.get $alloc) (local.get $nbytes))
+    ;; Copy the UTF-16 payload + null terminator via WASM addrs
+    (local.set $src_w (call $g2w (local.get $arg0)))
+    (local.set $dst_w (call $g2w (local.get $bstr)))
+    (memory.copy (local.get $dst_w) (local.get $src_w) (i32.add (local.get $nbytes) (i32.const 2)))
+    (global.set $eax (local.get $bstr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; SysAllocStringLen(psz: PCOLESTR, cch: UINT) → BSTR. psz may be NULL (then uninit'd).
+  (func $handle_SysAllocStringLen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $nbytes i32) (local $alloc i32) (local $bstr i32)
+    (local.set $nbytes (i32.shl (local.get $arg1) (i32.const 1)))
+    (local.set $alloc (call $heap_alloc (i32.add (local.get $nbytes) (i32.const 6))))
+    (if (i32.eqz (local.get $alloc))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $bstr (i32.add (local.get $alloc) (i32.const 4)))
+    (call $gs32 (local.get $alloc) (local.get $nbytes))
+    (if (local.get $arg0)
+      (then (memory.copy
+        (call $g2w (local.get $bstr))
+        (call $g2w (local.get $arg0))
+        (local.get $nbytes))))
+    ;; Always null-terminate
+    (call $gs16 (i32.add (local.get $bstr) (local.get $nbytes)) (i32.const 0))
+    (global.set $eax (local.get $bstr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; SysFreeString(bstr: BSTR). No-op on NULL.
+  (func $handle_SysFreeString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $heap_free (i32.sub (local.get $arg0) (i32.const 4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; SysStringLen(bstr: BSTR) → UINT char count (length prefix / 2).
+  (func $handle_SysStringLen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (global.set $eax (i32.shr_u
+      (call $gl32 (i32.sub (local.get $arg0) (i32.const 4)))
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; VariantClear(pvarg: VARIANTARG*) → HRESULT. Full impl would free BSTR/dispatch
+  ;; fields based on vt, but Spider stores only simple VT_I4/VT_BOOL variants, and
+  ;; any cached BSTR leaks are bounded. Zero the whole 16-byte VARIANT so callers
+  ;; don't re-read stale tagged pointers.
+  (func $handle_VariantClear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))))
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; LoadTypeLib(szFile: LPCOLESTR, pptlib: ITypeLib**) → HRESULT. We don't
+  ;; implement type libraries; return TYPE_E_CANTLOADLIBRARY (0x80029C4A) so the
+  ;; caller can take its "no typelib" fallback path. Zero out *pptlib.
+  (func $handle_LoadTypeLib (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0x80029C4A))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 770: CoTaskMemAlloc(cb) — 1 arg stdcall, allocate from heap
@@ -1069,6 +1118,15 @@
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
+
+  ;; timeBeginPeriod(uPeriod) — request timer resolution. No-op stub, returns
+  ;; TIMERR_NOERROR (0). Symmetric timeEndPeriod does the same.
+  (func $handle_timeBeginPeriod (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_timeEndPeriod (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 814: PathFindFileNameA(lpszPath) → pointer to filename component
   ;; Walks backwards from end of path string, returns pointer after last '\' or '/'
