@@ -287,6 +287,8 @@
   ;; wave_out_close(handle) → 0=ok
   (import "host" "wave_out_get_pos" (func $host_wave_out_get_pos (param i32) (result i32)))
   ;; wave_out_get_pos(handle) → bytes played
+  (import "host" "wave_out_set_volume" (func $host_wave_out_set_volume (param i32 i32)))
+  ;; wave_out_set_volume(handle, volume_0_to_65535)
 
   (import "host" "memory" (memory 1024))
   (export "memory" (memory 0))
@@ -534,6 +536,7 @@
   (global $wave_out_callback (mut i32) (i32.const 0))
   (global $wave_out_cb_instance (mut i32) (i32.const 0))
   (global $wave_out_cb_type (mut i32) (i32.const 0))
+  (global $wave_out_volume (mut i32) (i32.const 0xFFFFFFFF))  ;; packed L|R, default max
   (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table
@@ -572,6 +575,7 @@
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
+  (global $next_hmenu   (mut i32) (i32.const 0x800001)) ;; HMENU allocator — opaque handle, no backing state (AppendMenu is no-op; menu bar rendered from PE resources)
   (global $next_atom    (mut i32) (i32.const 0xC000))  ;; Atom allocator (0xC000+)
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)

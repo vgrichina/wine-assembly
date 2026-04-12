@@ -136,6 +136,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; 840: waveOutGetVolume(hwo, lpdwVolume) — 2 args stdcall
+  ;; dwVolume: low word = left channel, high word = right channel (0x0000–0xFFFF)
+  (func $handle_waveOutGetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (global.get $wave_out_volume))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 841: waveOutSetVolume(hwo, dwVolume) — 2 args stdcall
+  (func $handle_waveOutSetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $wave_out_volume (local.get $arg1))
+    ;; Pass max of left/right channel to host (0–65535)
+    (call $host_wave_out_set_volume (local.get $arg0)
+      (if (result i32) (i32.gt_u
+        (i32.and (local.get $arg1) (i32.const 0xFFFF))
+        (i32.shr_u (local.get $arg1) (i32.const 16)))
+        (then (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (else (i32.shr_u (local.get $arg1) (i32.const 16)))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 803: waveOutGetPosition(hwo, lpInfo, cbInfo) — fill MMTIME struct
   (func $handle_waveOutGetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
