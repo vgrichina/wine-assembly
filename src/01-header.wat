@@ -224,6 +224,8 @@
   (import "host" "math_cos" (func $host_math_cos (param f64) (result f64)))
   (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
   (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
+  (import "host" "math_log2" (func $host_math_log2 (param f64) (result f64)))
+  (import "host" "math_pow2" (func $host_math_pow2 (param f64) (result f64)))
 
   ;; Filesystem host imports — backed by virtual FS
   (import "host" "fs_create_file" (func $host_fs_create_file (param i32 i32 i32 i32 i32) (result i32)))
@@ -347,6 +349,9 @@
   ;; Placeholder name for RESOLVED ordinal imports. thunk+0 holds the ordinal
   ;; tag (bit 31 set), so dispatcher can't treat it as a name RVA for strlen.
   (data (i32.const 0x2E0) "<ord>\00")
+  ;; FPU unimplemented opcode message — passed to $crash_unimplemented when an
+  ;; x87 escape opcode is decoded but the (group, reg, rm) tuple has no handler.
+  (data (i32.const 0x2F0) "FPU_UNIMPL\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -704,6 +709,11 @@
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
   (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word
+  ;; Tag word: 8-bit mask, bit i = physical register i is valid (1) or empty (0).
+  ;; x87 spec uses 2 bits per register (00=valid,01=zero,10=special,11=empty); we
+  ;; only distinguish valid/empty since we can't represent the other states without
+  ;; tracking each value's class. Used for stack overflow/underflow detection.
+  (global $fpu_tag (mut i32) (i32.const 0))
 
   ;; Palette management
   (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index

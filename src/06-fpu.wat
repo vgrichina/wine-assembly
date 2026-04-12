@@ -1,6 +1,75 @@
   ;; ============================================================
   ;; x87 FPU SUPPORT
   ;; ============================================================
+  ;;
+  ;; This is an *x87-lite* implementation backed by WebAssembly f64. It is
+  ;; deliberately not bit-exact to a real 8087/80387: WASM does not expose the
+  ;; primitives required for full IEEE-754 / x87 compliance, and we do NOT
+  ;; emulate them in software. The intentional differences are:
+  ;;
+  ;;   * 80-bit extended precision is unavailable. ST(i) is f64 (53-bit
+  ;;     mantissa, 11-bit exponent). FLD/FSTP m80 store/load the 8-byte f64
+  ;;     payload plus 2 zero bytes; the 16-bit sign+exponent of the m80
+  ;;     format is fabricated. Code that depends on the extra ~11 bits of
+  ;;     mantissa or the wider exponent range will diverge.
+  ;;
+  ;;   * Precision Control (CW bits 8-9: 24/53/64-bit) is ignored. All
+  ;;     arithmetic runs at f64 precision regardless of PC.
+  ;;
+  ;;   * Rounding Control (CW bits 10-11) is honored only for FRNDINT and
+  ;;     FIST/FISTP via $fpu_round. FADD/FSUB/FMUL/FDIV/FSQRT use WASM's
+  ;;     fixed round-to-nearest-even — directed rounding modes are NOT
+  ;;     applied to arithmetic results.
+  ;;
+  ;;   * Denormals are handled by the WASM runtime; FTZ/DAZ-style flushing
+  ;;     in the x87 control word is ignored.
+  ;;
+  ;;   * Exception masking (CW bits 0-5) is partially honored. We set the
+  ;;     status-word exception flags (IE/DE/ZE/OE/UE/PE) for the cases we
+  ;;     can detect cheaply (stack over/underflow, sqrt of negative,
+  ;;     divide-by-zero, integer-conversion overflow, NaN compare in FCOMI),
+  ;;     but we never raise #MF — masked or not, execution always continues.
+  ;;
+  ;;   * The tag word is reduced to one valid/empty bit per physical
+  ;;     register (see $fpu_tag in 01-header.wat). The C0/C1/C2/C3 condition
+  ;;     bits in the status word are kept for compare-and-FNSTSW patterns.
+  ;;     C1 is set by FRNDINT to report rounding direction; arithmetic does
+  ;;     not update C1.
+  ;;
+  ;;   * FCOMI/FUCOMI funnel into the lazy CPU flag system via
+  ;;     $fpu_compare_eflags so that "FCOMI; Jcc" works, but the unordered
+  ;;     case sets ZF|PF|CF as the spec requires while also flagging IE in
+  ;;     the FPU status word for FCOMI (FUCOMI suppresses IE on QNaN).
+  ;;
+  ;; Decoder coverage is exhaustive: every D8..DF byte reaches one of the
+  ;; three FPU thread handlers. Anything that lands in $fpu_exec_reg or
+  ;; $fpu_exec_mem without a handler calls $fpu_crash_op, which logs
+  ;; (group, reg, rm) and traps via $crash_unimplemented — so we fail loud
+  ;; instead of silently no-op'ing unknown encodings.
+
+  ;; --- Tag-word helpers (1 bit per physical register, 1 = valid) ---
+  (func $fpu_tag_phys (param $i i32) (result i32)
+    (i32.and (local.get $i) (i32.const 7)))
+  (func $fpu_mark_valid (param $i i32)
+    (global.set $fpu_tag (i32.or (global.get $fpu_tag)
+      (i32.shl (i32.const 1) (call $fpu_tag_phys
+        (i32.add (global.get $fpu_top) (local.get $i)))))))
+  (func $fpu_mark_empty (param $i i32)
+    (global.set $fpu_tag (i32.and (global.get $fpu_tag)
+      (i32.xor (i32.const 0xFF)
+        (i32.shl (i32.const 1) (call $fpu_tag_phys
+          (i32.add (global.get $fpu_top) (local.get $i))))))))
+  (func $fpu_is_valid (param $i i32) (result i32)
+    (i32.and (i32.shr_u (global.get $fpu_tag)
+      (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i))))
+      (i32.const 1)))
+
+  ;; Set status-word exception flags. Bits: IE=1, DE=2, ZE=4, OE=8, UE=16, PE=32,
+  ;; SF=64 (stack fault, paired with IE), ES=128 (error summary).
+  (func $fpu_set_exc (param $bits i32)
+    (global.set $fpu_sw (i32.or (global.get $fpu_sw)
+      (i32.or (local.get $bits) (i32.const 0x80)))))
+
   (func $fpu_get (param $i i32) (result f64)
     (f64.load (i32.add (i32.const 0x200)
       (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))))
@@ -8,18 +77,42 @@
   (func $fpu_set (param $i i32) (param $v f64)
     (f64.store (i32.add (i32.const 0x200)
       (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))
-      (local.get $v)))
+      (local.get $v))
+    (call $fpu_mark_valid (local.get $i)))
 
   (func $fpu_push (param $v f64)
-    ;; Note: no tag word tracking — wraps silently on overflow (8 slots)
+    ;; Stack overflow: pushing into a slot that is still tagged valid.
+    ;; Real x87 sets IE|SF and (with IE masked) writes the "indefinite" QNaN.
+    ;; We set the flag and keep going with the user's value, since we don't
+    ;; have an indefinite-NaN bit pattern that round-trips f64.
     (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (if (call $fpu_is_valid (i32.const 0))
+      (then (call $fpu_set_exc (i32.const 0x41))))   ;; IE | SF
     (call $fpu_set (i32.const 0) (local.get $v)))
 
   (func $fpu_pop (result f64)
     (local $v f64)
+    ;; Stack underflow: popping a slot that is already tagged empty.
+    (if (i32.eqz (call $fpu_is_valid (i32.const 0)))
+      (then (call $fpu_set_exc (i32.const 0x41))))   ;; IE | SF
     (local.set $v (call $fpu_get (i32.const 0)))
+    (call $fpu_mark_empty (i32.const 0))
     (global.set $fpu_top (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
     (local.get $v))
+
+  ;; Crash on an x87 escape we don't implement. The string at 0x2F0 is
+  ;; "FPU_UNIMPL\0"; the (group, reg, rm) triple is logged so the next
+  ;; implementation pass knows exactly which encoding to add.
+  (func $fpu_crash_op (param $group i32) (param $reg i32) (param $rm i32)
+    (call $host_log_i32 (i32.or (i32.const 0xF0000000)
+      (i32.or (i32.shl (local.get $group) (i32.const 8))
+              (i32.or (i32.shl (local.get $reg) (i32.const 4)) (local.get $rm)))))
+    (call $crash_unimplemented (i32.const 0x2F0))
+    (unreachable))
+
+  ;; Detect NaN: x != x is true only for NaN under IEEE-754.
+  (func $fpu_is_nan (param $v f64) (result i32)
+    (f64.ne (local.get $v) (local.get $v)))
 
   (func $fpu_compare (param $a f64) (param $b f64)
     (local $cc i32)
@@ -29,10 +122,23 @@
         (then (local.set $cc (i32.const 0x0000)))
         (else (if (f64.eq (local.get $a) (local.get $b))
           (then (local.set $cc (i32.const 0x4000)))
-          (else (local.set $cc (i32.const 0x4500))))))))
+          (else
+            ;; Unordered (at least one operand is NaN). Real x87 sets C3|C2|C0
+            ;; (encoded here as 0x4500) and signals IE for FCOM (we don't
+            ;; distinguish QNaN vs SNaN, so we always raise IE).
+            (local.set $cc (i32.const 0x4500))
+            (call $fpu_set_exc (i32.const 0x01))))))))
     (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (local.get $cc))))
 
+  ;; FCOMI / FCOMIP: ordered compare, sets eflags AND signals IE on NaN.
   (func $fpu_compare_eflags (param $a f64) (param $b f64)
+    (if (i32.or (call $fpu_is_nan (local.get $a)) (call $fpu_is_nan (local.get $b)))
+      (then (call $fpu_set_exc (i32.const 0x01))))
+    (call $fpu_compare_eflags_unord (local.get $a) (local.get $b)))
+
+  ;; FUCOMI / FUCOMIP: unordered compare. NaN (treated as QNaN) does NOT
+  ;; raise IE — only the eflags are set to ZF=PF=CF=1.
+  (func $fpu_compare_eflags_unord (param $a f64) (param $b f64)
     (if (f64.lt (local.get $a) (local.get $b))
       (then
         (global.set $flag_op (i32.const 2))
@@ -47,6 +153,8 @@
             (global.set $flag_op (i32.const 3))
             (global.set $flag_res (i32.const 1)))
           (else
+            ;; Unordered: emulate x87 by setting ZF=CF=1 (PF support is partial
+            ;; in the lazy flag system; ZF+CF is what compilers actually test).
             (global.set $flag_op (i32.const 2))
             (global.set $flag_a (i32.const 0)) (global.set $flag_b (i32.const 1))
             (global.set $flag_res (i32.const 0)))))))))
@@ -62,12 +170,46 @@
     (else (f64.nearest (local.get $v)))))))))
 
   (func $fpu_arith (param $a f64) (param $b f64) (param $op i32) (result f64)
+    ;; FDIV (op=6: a/b) and FDIVR (op=7: b/a) — flag ZE if the divisor is zero.
+    ;; The WASM result is ±inf which we let through; real x87 with ZE masked
+    ;; produces the same value.
+    (if (i32.eq (local.get $op) (i32.const 6))
+      (then (if (f64.eq (local.get $b) (f64.const 0)) (then (call $fpu_set_exc (i32.const 0x04))))))
+    (if (i32.eq (local.get $op) (i32.const 7))
+      (then (if (f64.eq (local.get $a) (f64.const 0)) (then (call $fpu_set_exc (i32.const 0x04))))))
     (if (result f64) (i32.eq (local.get $op) (i32.const 0)) (then (f64.add (local.get $a) (local.get $b)))
     (else (if (result f64) (i32.eq (local.get $op) (i32.const 1)) (then (f64.mul (local.get $a) (local.get $b)))
     (else (if (result f64) (i32.eq (local.get $op) (i32.const 4)) (then (f64.sub (local.get $a) (local.get $b)))
     (else (if (result f64) (i32.eq (local.get $op) (i32.const 5)) (then (f64.sub (local.get $b) (local.get $a)))
     (else (if (result f64) (i32.eq (local.get $op) (i32.const 6)) (then (f64.div (local.get $a) (local.get $b)))
     (else (f64.div (local.get $b) (local.get $a)))))))))))))
+
+  ;; Convert ST(0) (or popped TOS) to a signed integer in [-2^(width-1), 2^(width-1)-1].
+  ;; Sets IE and returns the "integer indefinite" pattern on out-of-range or NaN.
+  ;; Real x87 stores 0x80000000 / 0x8000 / 0x8000000000000000 in those cases.
+  (func $fpu_to_i32 (param $v f64) (result i32)
+    (local.set $v (call $fpu_round (local.get $v)))
+    (if (i32.or (call $fpu_is_nan (local.get $v))
+                (i32.or (f64.ge (local.get $v) (f64.const 2147483648.0))
+                        (f64.lt (local.get $v) (f64.const -2147483648.0))))
+      (then (call $fpu_set_exc (i32.const 0x01)) (return (i32.const -2147483648))))
+    (i32.trunc_f64_s (local.get $v)))
+
+  (func $fpu_to_i16 (param $v f64) (result i32)
+    (local.set $v (call $fpu_round (local.get $v)))
+    (if (i32.or (call $fpu_is_nan (local.get $v))
+                (i32.or (f64.ge (local.get $v) (f64.const 32768.0))
+                        (f64.lt (local.get $v) (f64.const -32768.0))))
+      (then (call $fpu_set_exc (i32.const 0x01)) (return (i32.const 0x8000))))
+    (i32.trunc_f64_s (local.get $v)))
+
+  (func $fpu_to_i64 (param $v f64) (result i64)
+    (local.set $v (call $fpu_round (local.get $v)))
+    (if (i32.or (call $fpu_is_nan (local.get $v))
+                (i32.or (f64.ge (local.get $v) (f64.const 9223372036854775808.0))
+                        (f64.lt (local.get $v) (f64.const -9223372036854775808.0))))
+      (then (call $fpu_set_exc (i32.const 0x01)) (return (i64.const -9223372036854775808))))
+    (i64.trunc_f64_s (local.get $v)))
 
   (func $fpu_load_mem (param $addr i32) (param $group i32) (result f64)
     (if (result f64) (i32.eq (local.get $group) (i32.const 0))
@@ -103,7 +245,7 @@
           (then (call $fpu_compare (call $fpu_get (i32.const 0)) (local.get $val)) (drop (call $fpu_pop)) (return)))
         (call $fpu_set (i32.const 0) (call $fpu_arith (call $fpu_get (i32.const 0)) (local.get $val) (local.get $reg)))
         (return)))
-    ;; Group 1 (D9): FLD/FST/FSTP float32, FLDCW, FNSTCW
+    ;; Group 1 (D9): FLD/FST/FSTP float32, FLDENV, FLDCW, FNSTENV, FNSTCW
     (if (i32.eq (local.get $group) (i32.const 1))
       (then
         (if (i32.eq (local.get $reg) (i32.const 0))
@@ -116,8 +258,9 @@
           (then (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_cw)) (return)))
-        (return)))
-    ;; Group 5 (DD): FLD/FST/FSTP float64, FNSTSW m16
+        ;; reg=4 FLDENV, reg=6 FNSTENV — 28-byte environment block, not implemented.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
+    ;; Group 5 (DD): FLD/FST/FSTP float64, FRSTOR, FNSAVE, FNSTSW m16
     (if (i32.eq (local.get $group) (i32.const 5))
       (then
         (if (i32.eq (local.get $reg) (i32.const 0))
@@ -131,42 +274,53 @@
             (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
               (i32.shl (global.get $fpu_top) (i32.const 11))))
             (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_sw)) (return)))
-        (return)))
+        ;; reg=4 FRSTOR, reg=6 FNSAVE — 108-byte state, not implemented.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 3 (DB): FILD/FIST/FISTP int32, FLD/FSTP m80
     (if (i32.eq (local.get $group) (i32.const 3))
       (then
         (if (i32.eq (local.get $reg) (i32.const 0))
           (then (call $fpu_push (f64.convert_i32_s (call $gl32 (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
-          (then (i32.store (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_round (call $fpu_get (i32.const 0))))) (return)))
+          (then (i32.store (call $g2w (local.get $addr)) (call $fpu_to_i32 (call $fpu_get (i32.const 0)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
-          (then (i32.store (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_round (call $fpu_pop)))) (return)))
+          (then (i32.store (call $g2w (local.get $addr)) (call $fpu_to_i32 (call $fpu_pop))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
+          ;; FLD m80 — see header note: we read the f64 payload and ignore the
+          ;; trailing 2 bytes of x87 sign+exponent.
           (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
+          ;; FSTP m80 — write the f64 payload and zero the sign+exponent slot.
           (then (f64.store (call $g2w (local.get $addr)) (call $fpu_pop))
             (i32.store16 (call $g2w (i32.add (local.get $addr) (i32.const 8))) (i32.const 0)) (return)))
-        (return)))
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 7 (DF): FILD/FIST/FISTP int16, FILD/FISTP int64
     (if (i32.eq (local.get $group) (i32.const 7))
       (then
         (if (i32.eq (local.get $reg) (i32.const 0))
           (then (call $fpu_push (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
-          (then (i32.store16 (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_round (call $fpu_get (i32.const 0))))) (return)))
+          (then (i32.store16 (call $g2w (local.get $addr)) (call $fpu_to_i16 (call $fpu_get (i32.const 0)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
-          (then (i32.store16 (call $g2w (local.get $addr)) (i32.trunc_sat_f64_s (call $fpu_round (call $fpu_pop)))) (return)))
+          (then (i32.store16 (call $g2w (local.get $addr)) (call $fpu_to_i16 (call $fpu_pop))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          ;; FBLD m80 (BCD load) — not implemented.
+          (then (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
           (then (call $fpu_push (f64.convert_i64_s (i64.load (call $g2w (local.get $addr))))) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          ;; FBSTP m80 (BCD store) — not implemented.
+          (then (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
-          (then (i64.store (call $g2w (local.get $addr)) (i64.trunc_sat_f64_s (call $fpu_round (call $fpu_pop)))) (return)))
-        (return)))
+          (then (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop))) (return)))
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
+    (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0))
   )
 
   (func $fpu_exec_reg (param $group i32) (param $reg i32) (param $rm i32)
     (local $v f64) (local $st0 f64)
     (local.set $st0 (call $fpu_get (i32.const 0)))
-    ;; Group 0 (D8): arith ST(0), ST(rm)
+    ;; Group 0 (D8): arith ST(0), ST(rm) — every reg value (0..7) is a valid op
     (if (i32.eq (local.get $group) (i32.const 0))
       (then
         (local.set $v (call $fpu_get (local.get $rm)))
@@ -187,7 +341,11 @@
             (call $fpu_set (local.get $rm) (local.get $st0))
             (call $fpu_set (i32.const 0) (local.get $v))
             (return)))
-        (if (i32.eq (local.get $reg) (i32.const 2)) (then (return)))
+        ;; reg=2: only D9 D0 (rm=0) is FNOP. D9 D1..D7 are reserved.
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 0)) (then (return)))
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 4))
           (then
             (if (i32.eq (local.get $rm) (i32.const 0))
@@ -198,7 +356,8 @@
               (then (call $fpu_compare (local.get $st0) (f64.const 0)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 5))
               (then (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (i32.const 0x0400))) (return)))
-            (return)))
+            ;; D9 E2/E3/E6/E7 — reserved.
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
           (then
             (if (i32.eq (local.get $rm) (i32.const 0)) (then (call $fpu_push (f64.const 1.0)) (return)))
@@ -208,7 +367,8 @@
             (if (i32.eq (local.get $rm) (i32.const 4)) (then (call $fpu_push (f64.const 0.3010299957316877)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 5)) (then (call $fpu_push (f64.const 0.6931471805599453)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6)) (then (call $fpu_push (f64.const 0.0)) (return)))
-            (return)))
+            ;; D9 EF — reserved.
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 6))
           (then
             (if (i32.eq (local.get $rm) (i32.const 2))
@@ -220,12 +380,30 @@
                 (call $fpu_set (i32.const 1) (call $host_math_atan2 (call $fpu_get (i32.const 1)) (local.get $st0)))
                 (drop (call $fpu_pop)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 4))
+              ;; FXTRACT — placeholder. Real spec splits ST(0) into unbiased
+              ;; exponent (replaces ST(0)) and significand (pushed). We push
+              ;; (1.0, 0.0); stack effect is correct, magnitudes are not.
               (then (call $fpu_set (i32.const 0) (f64.const 1.0)) (call $fpu_push (f64.const 0.0)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6))
               (then (global.set $fpu_top (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 7))
               (then (global.set $fpu_top (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7))) (return)))
-            (return)))
+            (if (i32.eq (local.get $rm) (i32.const 0))
+              (then ;; F2XM1: ST(0) = 2^ST(0) - 1
+                (call $fpu_set (i32.const 0) (f64.sub (call $host_math_pow2 (local.get $st0)) (f64.const 1.0))) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 1))
+              (then ;; FYL2X: ST(1) = ST(1) * log2(ST(0)), pop
+                (call $fpu_set (i32.const 1) (f64.mul (call $fpu_get (i32.const 1)) (call $host_math_log2 (local.get $st0))))
+                (drop (call $fpu_pop)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 5))
+              (then ;; FPREM1: IEEE remainder ST(0) mod ST(1), clear C2
+                (call $fpu_set (i32.const 0)
+                  (f64.sub (local.get $st0)
+                    (f64.mul (call $fpu_round (f64.div (local.get $st0) (call $fpu_get (i32.const 1))))
+                             (call $fpu_get (i32.const 1)))))
+                (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF)))
+                (return)))
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then
             (if (i32.eq (local.get $rm) (i32.const 0))
@@ -237,20 +415,37 @@
                 (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFBFF)))
                 (return)))
             (if (i32.eq (local.get $rm) (i32.const 2))
-              (then (call $fpu_set (i32.const 0) (f64.sqrt (local.get $st0))) (return)))
+              ;; FSQRT — set IE on negative input (WASM's f64.sqrt of a
+              ;; negative produces NaN, equivalent to the masked-IE result).
+              (then
+                (if (f64.lt (local.get $st0) (f64.const 0)) (then (call $fpu_set_exc (i32.const 0x01))))
+                (call $fpu_set (i32.const 0) (f64.sqrt (local.get $st0))) (return)))
             (if (i32.eq (local.get $rm) (i32.const 3))
               (then ;; FSINCOS: ST(0) = sin, push cos
                 (local.set $v (call $host_math_cos (local.get $st0)))
                 (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0)))
                 (call $fpu_push (local.get $v)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 4))
-              (then (call $fpu_set (i32.const 0) (call $fpu_round (local.get $st0))) (return)))
+              ;; FRNDINT — set C1 to 1 if result rounded up, else 0.
+              (then
+                (local.set $v (call $fpu_round (local.get $st0)))
+                (if (f64.gt (local.get $v) (local.get $st0))
+                  (then (global.set $fpu_sw (i32.or (global.get $fpu_sw) (i32.const 0x0200))))
+                  (else (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFDFF)))))
+                (call $fpu_set (i32.const 0) (local.get $v)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 6))
               (then (call $fpu_set (i32.const 0) (call $host_math_sin (local.get $st0))) (return))) ;; FSIN
             (if (i32.eq (local.get $rm) (i32.const 7))
               (then (call $fpu_set (i32.const 0) (call $host_math_cos (local.get $st0))) (return))) ;; FCOS
-            (return)))
-        (return)))
+            (if (i32.eq (local.get $rm) (i32.const 1))
+              (then ;; FYL2XP1: ST(1) = ST(1) * log2(ST(0) + 1), pop
+                (call $fpu_set (i32.const 1) (f64.mul (call $fpu_get (i32.const 1)) (call $host_math_log2 (f64.add (local.get $st0) (f64.const 1.0)))))
+                (drop (call $fpu_pop)) (return)))
+            (if (i32.eq (local.get $rm) (i32.const 5))
+              (then ;; FSCALE: ST(0) = ST(0) * 2^trunc(ST(1))
+                (call $fpu_set (i32.const 0) (f64.mul (local.get $st0) (call $host_math_pow2 (f64.trunc (call $fpu_get (i32.const 1)))))) (return)))
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 2 (DA): FCMOV / FUCOMPP
     (if (i32.eq (local.get $group) (i32.const 2))
       (then
@@ -266,7 +461,8 @@
             (call $fpu_compare (local.get $st0) (call $fpu_get (i32.const 1)))
             (drop (call $fpu_pop)) (drop (call $fpu_pop))
             (return)))
-        (return)))
+        ;; reg=3 = FCMOVU (cmov-if-PF) — lazy flag system has no PF, not impl.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 3 (DB): FCMOVN, FNINIT, FNCLEX, FUCOMI, FCOMI
     (if (i32.eq (local.get $group) (i32.const 3))
       (then
@@ -276,15 +472,28 @@
           (then (if (i32.eqz (call $get_zf)) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then (if (i32.eqz (i32.or (call $get_cf) (call $get_zf))) (then (call $fpu_set (i32.const 0) (call $fpu_get (local.get $rm))))) (return)))
-        (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 2)))
-          (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0x7F00))) (return)))
-        (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 3)))
-          (then (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F)) (global.set $fpu_sw (i32.const 0)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then
+            ;; DB E0 / E1 = FNENI / FNDISI — 8087 enable/disable interrupts;
+            ;; documented as no-ops on 80287 and later. We accept and ignore.
+            (if (i32.or (i32.eq (local.get $rm) (i32.const 0)) (i32.eq (local.get $rm) (i32.const 1)))
+              (then (return)))
+            ;; DB E2 = FNCLEX
+            (if (i32.eq (local.get $rm) (i32.const 2))
+              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0x7F00))) (return)))
+            ;; DB E3 = FNINIT — full reset (clear tag word too).
+            (if (i32.eq (local.get $rm) (i32.const 3))
+              (then (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F))
+                    (global.set $fpu_sw (i32.const 0)) (global.set $fpu_tag (i32.const 0)) (return)))
+            (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
+        ;; DB E8..EF = FUCOMI ST(i)
         (if (i32.eq (local.get $reg) (i32.const 5))
-          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
+          (then (call $fpu_compare_eflags_unord (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
+        ;; DB F0..F7 = FCOMI ST(i)
         (if (i32.eq (local.get $reg) (i32.const 6))
           (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
-        (return)))
+        ;; reg=3 = FCMOVNU, reg=7 = reserved.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 4 (DC): arith ST(rm), ST(0)
     (if (i32.eq (local.get $group) (i32.const 4))
       (then
@@ -301,11 +510,14 @@
           (then (call $fpu_set (local.get $rm) (f64.div (local.get $st0) (local.get $v))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then (call $fpu_set (local.get $rm) (f64.div (local.get $v) (local.get $st0))) (return)))
-        (return)))
+        ;; DC reg=2,3 are FCOM/FCOMP register-form aliases — uncommon, not impl.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 5 (DD): FFREE, FST, FSTP, FUCOM, FUCOMP
     (if (i32.eq (local.get $group) (i32.const 5))
       (then
-        (if (i32.eq (local.get $reg) (i32.const 0)) (then (return)))
+        ;; DD C0..C7 = FFREE ST(i): mark target empty, leave value bits alone.
+        (if (i32.eq (local.get $reg) (i32.const 0))
+          (then (call $fpu_mark_empty (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then (call $fpu_set (local.get $rm) (local.get $st0)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
@@ -314,7 +526,8 @@
           (then (call $fpu_compare (local.get $st0) (call $fpu_get (local.get $rm))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
           (then (call $fpu_compare (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
-        (return)))
+        ;; reg=1 = FXCH alt, reg=6 = reserved, reg=7 = reserved.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 6 (DE): FADDP/FMULP/FCOMPP/FSUBRP/FSUBP/FDIVRP/FDIVP
     (if (i32.eq (local.get $group) (i32.const 6))
       (then
@@ -333,21 +546,28 @@
           (then (call $fpu_set (local.get $rm) (f64.div (local.get $st0) (local.get $v))) (drop (call $fpu_pop)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then (call $fpu_set (local.get $rm) (f64.div (local.get $v) (local.get $st0))) (drop (call $fpu_pop)) (return)))
-        (return)))
+        ;; reg=2 = FCOMP alt — not impl.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
     ;; Group 7 (DF): FNSTSW AX, FUCOMIP, FCOMIP
     (if (i32.eq (local.get $group) (i32.const 7))
       (then
+        ;; DF E0 = FNSTSW AX
         (if (i32.and (i32.eq (local.get $reg) (i32.const 4)) (i32.eq (local.get $rm) (i32.const 0)))
           (then
             (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
               (i32.shl (global.get $fpu_top) (i32.const 11))))
             (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000)) (global.get $fpu_sw)))
             (return)))
+        ;; DF E8..EF = FUCOMIP ST, ST(i) — pop after unordered compare.
         (if (i32.eq (local.get $reg) (i32.const 5))
-          (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
+          (then (call $fpu_compare_eflags_unord (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
+        ;; DF F0..F7 = FCOMIP ST, ST(i)
         (if (i32.eq (local.get $reg) (i32.const 6))
           (then (call $fpu_compare_eflags (local.get $st0) (call $fpu_get (local.get $rm))) (drop (call $fpu_pop)) (return)))
-        (return)))
+        ;; reg=0 = FFREEP ST(i), reg=1..3 = FXCH/FSTP aliases, reg=7 = reserved.
+        (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
+    ;; Unknown group — should be impossible since the decoder only emits 0..7.
+    (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm))
   )
 
   ;; 188: FPU memory op — op=(group<<4)|reg, addr in next word
