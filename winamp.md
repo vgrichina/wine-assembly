@@ -515,6 +515,177 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=300 --batch-size=5
   --input="10:273:2,100:winamp-play:C:\demo.mp3,140:poke:0x45caa4:1,150:winamp-start"
 ```
 
+## SESSION 8 PROGRESS — WM_COMMAND Dispatch Mapped, Play Path Reached
+
+### WM_COMMAND Dispatch Fully Mapped
+
+The main wndproc WM_COMMAND dispatch is a three-level chain:
+
+```
+WndProc 0x41c210
+  → WM_COMMAND (0x111) handler at 0x41c73b
+    → extracts commandID = wParam & 0xFFFF, notifyCode = wParam >> 16
+    → calls 0x41d240(hwnd, commandID, lParam, notifyCode)
+
+0x41d240 WM_COMMAND dispatcher:
+  1. Skin range: 0x87D0 ≤ cmd < [0x45a9e8] → dynamic menu item
+  2. Plugin range: 0x8000 ≤ cmd < [0x45aca8] → plugin menu
+  3. Standard: byte table at 0x41e940, jump table at 0x41e8e0
+     index = cmd - 0x9C41, max 0xA4
+
+Button command IDs (byte table → jump table):
+  40029 (0x9C5D) → 0x41d866  WINAMP_FILE_PLAY (Open + Play)
+  40044 (0x9C6C) → 0x41d782  Previous
+  40045 (0x9C6D) → 0x41d7a8  Play
+  40046 (0x9C6E) → 0x41d7ce  Pause
+  40047 (0x9C6F) → 0x41d7f4  Stop
+  40048 (0x9C70) → 0x41d81a  Next
+  40041 (0x9C69) → 0x41dc62  Skin Browser
+```
+
+### Play Button (40045) → Open File (40029) Redirect
+
+The Play button handler at 0x41ec00 does NOT directly start playback. When not already playing (`[0x451608]==0`), it calls `SendMessageA(hwnd, WM_COMMAND, 0x9C5D, 0)` — redirecting to the "Open File" command (40029). This is the standard Winamp behavior: pressing Play with no playlist opens the file picker.
+
+### Open File Play Function 0x42e0eb
+
+WM_COMMAND 40029 calls `0x42e0eb(mode=1, hwnd, 0)`:
+1. Checks `[0x457600]` (is-playing flag)
+2. `GlobalAlloc(0, 0x3FF80)` — audio buffer
+3. Calls `0x419070` — builds file type filter
+4. Calls `0x444e70` → `GetOpenFileNameA` — shows Open dialog
+5. On success, parses filename extension via `CharPrevA`
+6. Calls `_stricmp` ([0x4462dc], MSVCRT import) to match extension to plugins
+7. Calls plugin's `Play()` or `0x41a477`/`0x432180` depending on extension match
+
+### Current Blocker: EIP=0 After Open Dialog
+
+**Command:**
+```bash
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=400 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,95:poke:0x45caa4:1,160:post-cmd:40029,170:open-dlg-pick:C:\demo.mp3"
+```
+
+The GetOpenFileNameA modal dialog opens, `open-dlg-pick` writes `C:\demo.mp3` into OFN.lpstrFile and closes the dialog. The play function starts processing (3× CharPrevA on the filename path). Then **EIP goes to 0** with return address 0x0042e210 on the stack.
+
+0x42e210 is inside the extension-matching loop at 0x42e1f0:
+```
+0x42e1dd: push 0x44a7f4    ; extension string (e.g. ".mp3")
+0x42e1e2: push esi          ; filename buffer
+0x42e1e3: call 0x4378d5     ; extract/compare extension
+0x42e1e8: mov edi, [0x4462dc] ; _stricmp (MSVCRT IAT)
+0x42e1f0: call edi           ; _stricmp(ext, ".mp3") — CRASHES HERE
+0x42e1f2: ...
+0x42e201: push 0x44a7f0     ; try another extension
+0x42e207: call 0x4378d5
+0x42e20e: call edi           ; _stricmp again
+0x42e210: pop ecx            ; ← return addr on stack
+```
+
+**Root cause:** `[0x4462dc]` (IAT for `_stricmp` from MSVCRT.dll) is likely not resolved. The EXE imports `_stricmp` from MSVCRT.dll. The dll-loader.js patches the IAT with the DLL's export address. If the resolution failed or the DLL's _stricmp code is not executable in our emulator, calling through it leads to EIP=0.
+
+### `post-cmd` Input Action Added
+
+New `--input` command: `B:post-cmd:WPARAM` — posts WM_COMMAND with the given wParam to main_hwnd via the post queue (bypasses check_input timing issues).
+
+### Key Findings
+
+1. **IPC_STARTPLAY only sets playlist index** — it does NOT invoke the plugin's Play(). The actual audio pipeline is triggered by the Open File path (0x42e0eb).
+2. **The Play button always opens the file picker** when nothing is playing — this is normal Winamp 2.x behavior.
+3. **Plugin init code DOES execute** — `winampGetInModule2()` is called, the plugin reads INI settings, initializes. But `Play()` is never invoked because the play path crashes at `_stricmp`.
+4. **Post queue delivery works correctly** — `post-cmd` successfully routes WM_COMMAND through the wndproc to the right handler.
+
+## SESSION 9 PROGRESS — msvcrt SBH Corruption, g2w Analysis
+
+### Stall at 0x005c3ad4 — Linked List Walk in in_mp3.dll
+
+After _stricmp works and the extension→plugin matcher runs, in_mp3.dll's Play() is called. The plugin opens `C:\demo.mp3` via CreateFileA, reads it, then enters an ID3 tag parser. The parser allocates nodes via msvcrt `malloc` and appends them to a linked list.
+
+**Root cause found:** msvcrt's SBH (Small Block Heap) allocator returns garbage pointers (e.g., 0xfaaf2030). The linked list node is "allocated" at this out-of-bounds address. When the code tries to initialize the node's fields (`and [eax], 0` etc.), the writes go through g2w which maps OOB addresses to GUEST_BASE. When the code later tries to traverse the list, it reads from GUEST_BASE (PE header data) and enters an infinite loop.
+
+### msvcrt CRT IS Initialized
+
+- `[0x5a3000]` = 0x00140000 (process heap handle) ✓
+- `[0x5a3004]` = 0x00000002 (SBH state = active) ✓  
+- DllMain runs successfully with EAX=1
+- HeapCreate returns 0x140000 (fake handle, ESP cleanup is correct: 3 args = 16 bytes incl ret)
+
+### SBH Allocator Returns Invalid Pointers
+
+The SBH at 0x780010b0 (relocated to 0x56c0b0) manages small allocations from pre-allocated regions. It was initialized during DllMain CRT init. However, it returns addresses like 0xfaaf2030 which are way out of bounds.
+
+The SBH uses complex bookkeeping (region headers, page bitmaps, free lists) that involves pointer arithmetic. If any of these internal pointers are wrong (e.g., computed from unrelocated addresses or corrupted during init), the returned pointers will be garbage.
+
+### g2w "Shadow Memory" Behavior
+
+The current `$g2w` function maps ALL out-of-bounds guest addresses to GUEST_BASE (0x12000). This creates a "shadow memory" where reads and writes to the SAME unrelocated address are consistent (both map to GUEST_BASE). But reads and writes to DIFFERENT unrelocated addresses alias to the same WASM offset, causing corruption.
+
+Changing g2w to return a different fallback (0, 0x80) breaks msvcrt because its CRT init code writes to unrelocated addresses that must be read back. The GUEST_BASE fallback accidentally works for same-address read/write consistency.
+
+### Thread Stack Zeroing Added
+
+`lib/thread-manager.js`: thread stacks allocated via `guest_alloc` are now zeroed (matching Windows zero-fill behavior for new stack pages). This doesn't fix the current stall but prevents future uninitialized-stack issues.
+
+### What Needs Investigation
+
+The SBH allocator's internal pointer arithmetic needs to be traced to find where the invalid 0xfaaf2030 address comes from. Likely one of:
+1. A VirtualAlloc call during SBH region creation returned an unexpected address
+2. The SBH's region bookkeeping uses address arithmetic that wraps incorrectly
+3. An intermediate HeapAlloc during SBH init returned a value that was misinterpreted
+
+## SESSION 10 PROGRESS — SBH Fix, Play Path Unblocked
+
+### Root Cause: Wrong Variable Patched
+
+Session 9 identified that msvcrt's SBH allocator returned garbage pointers and patched `__sbh_threshold` to 0 via the `_set_sbh_threshold` export. But that patch was **ineffective** because msvcrt's `_heap_alloc_base` checks a DIFFERENT variable.
+
+**The actual malloc dispatch** (at relocated 0x56c304 in `_heap_alloc_base`):
+```asm
+mov eax, [0x5a3004]    ; __active_heap
+cmp eax, 3             ; V5 SBH?
+je  use_v5_sbh
+cmp eax, 2             ; V6 SBH?
+jne use_heapalloc      ; <-- we want this path
+; ... SBH code ...
+cmp esi, [0x5a5148]    ; compare with REAL threshold (NOT 0x5aa034!)
+ja  use_heapalloc
+```
+
+The old code scanned `_set_sbh_threshold` for an `A3` byte (mov [imm32], eax) and patched whatever address it found — this turned out to be 0x5aa034, an unrelated variable. The actual threshold used by `_heap_alloc_base` is at 0x5a5148.
+
+### Fix: Patch `__active_heap` Instead
+
+Instead of trying to find the correct threshold, we now extract `__active_heap` from the `A1` instruction at the start of `_set_sbh_threshold` (offset 3: `mov eax, [__active_heap]`) and set it to 1. This makes `_heap_alloc_base` take the `jne use_heapalloc` branch, bypassing the SBH entirely.
+
+### Results
+
+- Play path now works: file opens, ID3 tags parsed, track info displayed ("DJ MIKE LLAMA")
+- No regressions: test-all-exes.js still passes 47 tests
+- Next blocker is waveOut callbacks for actual audio playback
+
+### Open Tasks (Priority Order)
+
+| # | Task | Files | Notes |
+|---|------|-------|-------|
+| 1 | **waveOut WOM_DONE callback** | `src/09a3-handlers-audio.wat`, `lib/host-imports.js` | out_wave.dll needs buffer-done callbacks to drive decode→play pipeline |
+| 2 | **Fix cmdline path string loop** | `test/binaries/dlls/msvcrt.dll` (RVA 0x106f6) | `--args` path stuck in msvcrt string scan; alternative to IPC/dialog approach |
+| 3 | **Plugin DllMain** | `lib/dll-loader.js` | Skipped due to yield corruption during callDllMain; some plugins may need it |
+
+### Test Commands
+
+```bash
+# Skin renders (stable):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# Play via Open dialog (works — loads file, parses ID3, shows track info):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=400 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,95:poke:0x45caa4:1,160:post-cmd:40029,170:open-dlg-pick:C:\demo.mp3"
+```
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.
