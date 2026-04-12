@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 221 funcref)
+  (table $handlers 227 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -273,5 +273,11 @@
     $th_setcc_mem_ro       ;; 218: SETcc [base+disp] (op=cc<<4|base, disp in next word)
     $th_xchg_r8_r8         ;; 219: xchg r8, r8 (op=r1<<4|r2, byte regs)
     $th_alu_m16_i_ro       ;; 220: [base+disp] OP= imm16 (runtime EA, 16-bit)
+    $th_cmovcc_rr          ;; 221: CMOVcc r32, r32 (op=cc<<8|dst<<4|src)
+    $th_cmovcc_rm          ;; 222: CMOVcc r32, [mem] (op=cc<<4|dst, addr next word)
+    $th_shld_m             ;; 223: SHLD [mem], src, imm (op=src, addr word, count word)
+    $th_shrd_m             ;; 224: SHRD [mem], src, imm (op=src, addr word, count word)
+    $th_bsf_rm             ;; 225: BSF dst, [mem] (op=dst, addr next word)
+    $th_bsr_rm             ;; 226: BSR dst, [mem] (op=dst, addr next word)
   )
 

@@ -1331,6 +1331,80 @@
       (call $eval_cc (i32.shr_u (local.get $op) (i32.const 4))))
     (return_call $next))
 
+  ;; 221: CMOVcc r32, r32. op = cc<<8 | dst<<4 | src.
+  ;; If condition true, dst := src. No flag effect either way.
+  (func $th_cmovcc_rr (param $op i32)
+    (if (call $eval_cc (i32.shr_u (local.get $op) (i32.const 8)))
+      (then
+        (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+                       (call $get_reg (i32.and (local.get $op) (i32.const 0xF))))))
+    (return_call $next))
+
+  ;; 222: CMOVcc r32, [mem]. op = cc<<4 | dst, addr in next word.
+  ;; Always reads mem (matches Intel hardware), only writes dst if cc.
+  (func $th_cmovcc_rm (param $op i32)
+    (local $v i32)
+    (local.set $v (call $gl32 (call $read_addr)))
+    (if (call $eval_cc (i32.shr_u (local.get $op) (i32.const 4)))
+      (then (call $set_reg (i32.and (local.get $op) (i32.const 0xF)) (local.get $v))))
+    (return_call $next))
+
+  ;; 223: SHLD [mem], src, count. op=src, addr in next word, count in word after.
+  (func $th_shld_m (param $op i32)
+    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32)
+    (local.set $addr (call $read_addr))
+    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $dst (call $gl32 (local.get $addr)))
+    (local.set $src (call $get_reg (local.get $op)))
+    (if (local.get $count) (then
+      (call $gs32 (local.get $addr)
+        (i32.or (i32.shl (local.get $dst) (local.get $count))
+                (i32.shr_u (local.get $src) (i32.sub (i32.const 32) (local.get $count)))))))
+    (return_call $next))
+
+  ;; 224: SHRD [mem], src, count. Same encoding as SHLD_m.
+  (func $th_shrd_m (param $op i32)
+    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32)
+    (local.set $addr (call $read_addr))
+    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $dst (call $gl32 (local.get $addr)))
+    (local.set $src (call $get_reg (local.get $op)))
+    (if (local.get $count) (then
+      (call $gs32 (local.get $addr)
+        (i32.or (i32.shr_u (local.get $dst) (local.get $count))
+                (i32.shl (local.get $src) (i32.sub (i32.const 32) (local.get $count)))))))
+    (return_call $next))
+
+  ;; 225: BSF dst, [mem]. op=dst, addr in next word.
+  (func $th_bsf_rm (param $op i32)
+    (local $src i32) (local $i i32)
+    (local.set $src (call $gl32 (call $read_addr)))
+    (if (i32.eqz (local.get $src))
+      (then (call $set_flags_logic (i32.const 0)))
+      (else
+        (local.set $i (i32.const 0))
+        (block $d (loop $l
+          (br_if $d (i32.and (i32.shr_u (local.get $src) (local.get $i)) (i32.const 1)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
+        (call $set_reg (local.get $op) (local.get $i))
+        (call $set_flags_logic (i32.const 1))))
+    (return_call $next))
+
+  ;; 226: BSR dst, [mem]. op=dst, addr in next word.
+  (func $th_bsr_rm (param $op i32)
+    (local $src i32) (local $i i32)
+    (local.set $src (call $gl32 (call $read_addr)))
+    (if (i32.eqz (local.get $src))
+      (then (call $set_flags_logic (i32.const 0)))
+      (else
+        (local.set $i (i32.const 31))
+        (block $d (loop $l
+          (br_if $d (i32.and (i32.shr_u (local.get $src) (local.get $i)) (i32.const 1)))
+          (local.set $i (i32.sub (local.get $i) (i32.const 1))) (br $l)))
+        (call $set_reg (local.get $op) (local.get $i))
+        (call $set_flags_logic (i32.const 1))))
+    (return_call $next))
+
   ;; --- SHLD/SHRD ---
   (func $th_shld (param $op i32)
     (local $count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32)
