@@ -342,6 +342,9 @@
   (data (i32.const 0x2CE) "24\00")             ;; +0x12E
   ;; Buffer for ordinal-import crash messages: "KERNEL32.#NNNNN\0" (max 16 bytes)
   (data (i32.const 0x2D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
+  ;; Placeholder name for RESOLVED ordinal imports. thunk+0 holds the ordinal
+  ;; tag (bit 31 set), so dispatcher can't treat it as a name RVA for strlen.
+  (data (i32.const 0x2E0) "<ord>\00")
 
   ;; ============================================================
   ;; MEMORY MAP

@@ -211,10 +211,17 @@
 
     ;; ── Normal API dispatch ─────────────────────────────────────
 
-    (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
-
-    ;; Log API name for tracing
-    (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))
+    ;; Resolved-ordinal import: thunk+0 holds (0x80000000 | ordinal), not an
+    ;; IMAGE_IMPORT_BY_NAME RVA. host_resolve_ordinal found a real api_id, so
+    ;; we have a handler to run — just substitute a placeholder name for
+    ;; logging (and for any handler that prints name_ptr).
+    (if (i32.and (local.get $name_rva) (i32.const 0x80000000))
+      (then
+        (local.set $name_ptr (i32.const 0x2E0))
+        (call $host_log (local.get $name_ptr) (i32.const 5)))
+      (else
+        (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
+        (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))
 
     ;; Load args from guest stack
     (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
