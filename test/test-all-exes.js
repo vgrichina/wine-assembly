@@ -155,7 +155,7 @@ function runExe(testCase) {
 
   const result = spawnSync('node', args, {
     cwd: ROOT,
-    timeout: 30000,
+    timeout: 5000,
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
@@ -245,8 +245,13 @@ if (!noBuild) {
 // Run all tests
 console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
 
+const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
+
 const results = [];
 for (const tc of TEST_CASES) {
+  if (filter && !tc.name.toLowerCase().includes(filter.toLowerCase()) && !tc.exe.toLowerCase().includes(filter.toLowerCase())) {
+    continue;
+  }
   process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
   const r = runExe(tc);
   results.push(r);

@@ -434,7 +434,7 @@ class WineAssembly {
 
     try {
       // Try to fetch the DLL
-      const paths = [`binaries/dlls/${fileName}`, `dlls/${fileName}`];
+      const paths = [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`];
       let dllBytes = null;
       for (const p of paths) {
         try {
@@ -445,6 +445,18 @@ class WineAssembly {
             break;
           }
         } catch (_) {}
+      }
+      // Fallback: check VFS for the DLL bytes
+      if (!dllBytes && this._helpCtx && this._helpCtx.vfs) {
+        const vfs = this._helpCtx.vfs;
+        for (const vp of [dllName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName]) {
+          const entry = vfs.files.get(vp);
+          if (entry && entry.data) {
+            dllBytes = entry.data;
+            console.log(`[COM] Found ${fileName} in VFS (${dllBytes.length} bytes)`);
+            break;
+          }
+        }
       }
       if (!dllBytes) {
         console.error(`[COM] Failed to fetch DLL: ${fileName}`);

@@ -240,6 +240,7 @@
           <option value="mspaint">Paint (NT/MFC)</option>
           <option value="pinball">Space Cadet Pinball</option>
           <option value="pinball_plus95">Space Cadet Pinball (Plus! 95)</option>
+          <option value="winamp">Winamp 2.91</option>
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
@@ -298,6 +299,7 @@ Resource-aware Win98 emulator
       ['reversi',     'Reversi',     '\u{26AB}'],
       ['winmine_wep', 'Minesweeper', '\u{1F4A3}'],
       ['ski32',       'SkiFree',     '\u{26F7}'],
+      ['winamp',      'Winamp',      '\u{1F3B5}'],
     ];
     const DEFAULT_APP_SET = new Set(DEFAULT_APPS.map(a => a[0]));
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
@@ -403,6 +405,7 @@ Resource-aware Win98 emulator
       cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
       bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      dlls: ['binaries/wep32-community/Bricks/brk1.dll'] },
       spider:     { exe: 'binaries/plus98/SPIDER.EXE',                      files: ['binaries/plus98/SPIDER.CHM', 'binaries/plus98/SPIDER.HLP'] },
+      winamp:     { exe: 'binaries/winamp.exe', files: ['binaries/plugins/in_mp3.dll', 'binaries/plugins/out_wave.dll'] },
     };
 
     function wireCanvasInput(canvas, renderer) {

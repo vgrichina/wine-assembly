@@ -736,23 +736,57 @@ Fixed `wave_out_open` to set `startTime = Date.now()` unconditionally (was only 
 - T3 signals T4 ~9 times (9 decoded buffers), T4 writes 1 buffer to waveOut
 - Test suite: 55 PASS (no regressions)
 
-### Current Blocker: CanWrite Polling Loop
+### CanWrite Stall — RESOLVED (was block cache corruption)
 
-After producing several decoded buffers, T3 enters a tight polling loop at EIP 0x5b9c69 checking the output plugin's CanWrite() function. CanWrite returns 0 because the internal "bytes played" counter hasn't advanced enough to free buffer space. T4 did process WOM_DONE (unprepared the header), but the counter path may need `waveOutGetPosition` to be called from T4's context (T4 never calls it).
+The CanWrite stall at EIP 0x5b9c69 was a symptom of the thread cache collision (see below), not a real audio pipeline issue. With the fix, T4 produces 25+ waveOutWrite calls in 2000 batches.
+
+## SESSION 12 PROGRESS — Thread Cache Collision Fix, Web Deployment
+
+### Critical Bug: Thread block cache collision
+
+**Root cause:** Thread 2 (tid=2) got `THREAD_BASE = 0x01D52000 + 2*0x80000 = 0x01E52000`, which is the SAME address as the main instance's hardcoded `THREAD_BASE = 0x01E52000`. Thread 2's decoded blocks overwrote the main instance's block cache in shared WASM linear memory, causing corrupted x86 execution.
+
+**Symptom:** Main thread's WM_TIMER handler (wndproc at 0x41c210) executed corrupted decoded blocks, causing a ret to pop 0 from the stack → EIP=0 crash at batch ~247. The crash only occurred when audio threads were active.
+
+**Investigation path:**
+1. Traced that the crash always happened during DispatchMessageA(WM_TIMER) — the same message that worked fine hundreds of times before
+2. Confirmed no direct stack corruption from threads (memory snapshots showed no changes)
+3. Isolated to thread execution: crash disappeared when `threadManager.runSlice()` was disabled
+4. Found that `init_thread` uses `0x01D52000 + tid*0x80000` for THREAD_BASE, and tid=2 produces 0x01E52000 = main's base
+
+**Fix:** Changed main instance's THREAD_BASE from 0x01E52000 to 0x01D52000 (aligns with tid=0 in the init_thread formula). No overlap with heap (ends at 0x01E12000) or thunks (start at 0x01E12000).
+
+### Results
+
+- Main thread stable through 2000+ batches with audio threads running
+- T4 produces 25 waveOutWrite calls (was 1 before)
+- T3 decode loop runs successfully with no CanWrite stall
+- Test suite: 56 PASS (up from 55), no regressions
+
+### Web Deployment
+
+Added Winamp to the browser launcher:
+- `index.html`: Added to DEFAULT_APPS and apps config with plugin files
+- `host.js`: Added `binaries/plugins/` search path for dynamic DLL loading; added VFS fallback for COM DLL loads
 
 ### Open Tasks (Priority Order)
 
 | # | Task | Notes |
 |---|------|-------|
-| 1 | **Fix CanWrite stall** | Disasm at 0x5b9c69 to find which memory address the poll reads. May need to make T4's WOM_DONE processing update the output plugin's bytes_played counter, or ensure waveOutGetPosition returns advancing values. |
-| 2 | **Verify multi-buffer flow** | Once CanWrite unblocks, confirm continuous waveOutWrite calls and PCM data reaching host |
-| 3 | **Browser audio playback** | The host-side Web Audio bridge exists but needs testing with real decoded PCM |
+| 1 | **Browser audio playback** | The host-side Web Audio bridge exists but needs testing with real decoded PCM from Winamp |
+| 2 | **Verify continuous playback** | With 2000 batches, 25 waveOutWrite calls happen. Need to verify audio data quality and timing |
+| 3 | **Browser file picker** | The Open File dialog path needs browser-side file input integration for MP3 selection |
 
 ### Test Commands
 
 ```bash
-# Play path with trace (shows 1 waveOutWrite, T3 decode active):
-node test/run.js --exe=test/binaries/winamp.exe --max-batches=800 --batch-size=5000 \
+# Skin renders (stable):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# Play path with audio (25 waveOutWrite calls):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=2000 --batch-size=5000 \
   --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --trace-api \
   --input="10:273:2,95:poke:0x45caa4:1,160:post-cmd:40029,170:open-dlg-pick:C:\demo.mp3"
 
@@ -764,12 +798,10 @@ node test/test-all-exes.js
 
 | File | Changes |
 |------|---------|
-| `src/13-exports.wat` | yield_reason=1 check in $run loop |
-| `src/06-fpu.wat` | F2XM1, FYL2X, FPREM1, FYL2XP1, FSCALE |
-| `src/01-header.wat` | math_log2/math_pow2 imports, WAVE_OUT_STATE at 0xD160 |
-| `src/09a3-handlers-audio.wat` | waveOutOpen shared-memory callback storage, waveOutWrite WOM_DONE event delivery |
-| `lib/thread-manager.js` | Yield/resume EIP restoration via guest_read32 |
-| `lib/host-imports.js` | math_log2/math_pow2 host functions, startTime unconditional |
+| `src/01-header.wat` | THREAD_BASE/thread_alloc: 0x01E52000 → 0x01D52000 (fix tid=2 collision) |
+| `src/13-exports.wat` | Added get_dbg_prev_eip export |
+| `index.html` | Added Winamp to DEFAULT_APPS and apps config |
+| `host.js` | Added binaries/plugins/ search path; VFS fallback for COM DLL loads |
 
 ## Difficulty: Medium-Hard
 
