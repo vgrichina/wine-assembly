@@ -32,10 +32,10 @@
             (return)
           )
         )
-        ;; Track first free slot
+        ;; Track first free slot (hwnd=0 means empty)
         (if (i32.and
               (i32.eq (local.get $free_slot) (i32.const -1))
-              (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 4)))))
+              (i32.eqz (i32.load (local.get $addr))))
           (then (local.set $free_slot (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)
@@ -68,8 +68,8 @@
               (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
               (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
           (then
-            ;; Clear the slot (set id=0)
-            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
+            ;; Clear the slot (set hwnd=0)
+            (i32.store (local.get $addr) (i32.const 0))
             (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
             (return (i32.const 1))
           )
@@ -93,8 +93,8 @@
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
-        ;; Skip empty slots
-        (if (i32.load (i32.add (local.get $addr) (i32.const 4)))
+        ;; Skip empty slots (hwnd=0 means empty)
+        (if (i32.load (local.get $addr))
           (then
             (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
             (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))
@@ -1458,8 +1458,30 @@
   )
 
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
+  ;; Real Win32 sends WM_SIZE after resizing. We update pending_wm_size so the
+  ;; next ShowWindow delivers it; for non-main windows, queue a pending size.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $client_cx i32) (local $client_cy i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
+    ;; Compute client area from outer dimensions
+    (local.set $client_cx (i32.sub (local.get $arg3) (i32.const 6)))
+    (if (i32.lt_s (local.get $client_cx) (i32.const 0))
+      (then (local.set $client_cx (i32.const 0))))
+    (local.set $client_cy (i32.sub (local.get $arg4) (global.get $main_nc_height)))
+    (if (i32.lt_s (local.get $client_cy) (i32.const 0))
+      (then (local.set $client_cy (i32.const 0))))
+    ;; Update pending_wm_size so the next ShowWindow/GetMessageA delivers it
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+      (then
+        (global.set $pending_wm_size
+          (i32.or (i32.and (local.get $client_cx) (i32.const 0xFFFF))
+                  (i32.shl (local.get $client_cy) (i32.const 16)))))
+      (else
+        ;; For non-main windows, store pending size in movewindow globals
+        (global.set $movewindow_pending_hwnd (local.get $arg0))
+        (global.set $movewindow_pending_size
+          (i32.or (i32.and (local.get $client_cx) (i32.const 0xFFFF))
+                  (i32.shl (local.get $client_cy) (i32.const 16))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
@@ -1748,8 +1770,15 @@
 
   ;; 188: SetTimer
   (func $handle_SetTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $timer_set (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
-    (global.set $eax (local.get $arg1))
+    (local $tid i32)
+    (local.set $tid (local.get $arg1))
+    ;; Auto-generate unique timer ID when caller passes 0
+    (if (i32.eqz (local.get $tid))
+      (then
+        (global.set $auto_timer_id (i32.add (global.get $auto_timer_id) (i32.const 1)))
+        (local.set $tid (global.get $auto_timer_id))))
+    (call $timer_set (local.get $arg0) (local.get $tid) (local.get $arg2) (local.get $arg3))
+    (global.set $eax (local.get $tid))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
@@ -3061,9 +3090,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 316: SetStretchBltMode — STUB: unimplemented
+  ;; 316: SetStretchBltMode(hdc, mode) → previous mode — 2 args stdcall
   (func $handle_SetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))  ;; return BLACKONWHITE (previous mode)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 317: GetPixel(hdc, x, y) → COLORREF
@@ -3322,6 +3352,12 @@
     (if (i32.eq (local.get $orig) (local.get $arg2))
       (then (call $gs32 (local.get $arg0) (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 972: GdiFlush() → BOOL — 0 args stdcall, no-op
+  (func $handle_GdiFlush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 343: IsBadReadPtr(lp, ucb) → BOOL
@@ -5757,8 +5793,10 @@
   )
 
   ;; 599: GetTextColor — STUB: unimplemented
+  ;; GetTextColor(hdc) → COLORREF — 1 arg stdcall
   (func $handle_GetTextColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_get_text_color (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 600: GetStretchBltMode — STUB: unimplemented
@@ -5767,8 +5805,10 @@
   )
 
   ;; 601: GetBkColor — STUB: unimplemented
+  ;; GetBkColor(hdc) → COLORREF — 1 arg stdcall
   (func $handle_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_get_bk_color (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 602: CreateFontW — STUB: unimplemented
@@ -5786,9 +5826,20 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 605: GetClipBox — STUB: unimplemented
+  ;; 605: GetClipBox(hdc, lpRect) → regionType — 2 args stdcall
   (func $handle_GetClipBox (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $sz i32)
+    (local $wa i32)
+    (local.set $sz (call $host_gdi_get_clip_box (local.get $arg0)))
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store (local.get $wa) (i32.const 0))           ;; left
+    (i32.store offset=4 (local.get $wa) (i32.const 0))  ;; top
+    (i32.store offset=8 (local.get $wa)
+      (i32.and (local.get $sz) (i32.const 0xFFFF)))      ;; right = width
+    (i32.store offset=12 (local.get $wa)
+      (i32.shr_u (local.get $sz) (i32.const 16)))        ;; bottom = height
+    (global.set $eax (i32.const 2))  ;; SIMPLEREGION
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 606: GetTextFaceW — STUB: unimplemented

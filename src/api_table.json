@@ -6800,5 +6800,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2571678087
+  },
+  {
+    "id": 972,
+    "name": "GdiFlush",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2313355333
   }
 ]

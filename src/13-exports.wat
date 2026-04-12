@@ -58,6 +58,7 @@
   ;; DEBUG EXPORTS
   ;; ============================================================
   (func (export "get_eip") (result i32) (global.get $eip))
+  (func (export "get_dbg_prev_eip") (result i32) (global.get $dbg_prev_eip))
   (func (export "get_esp") (result i32) (global.get $esp))
   (func (export "get_eax") (result i32) (global.get $eax))
   (func (export "get_ecx") (result i32) (global.get $ecx))

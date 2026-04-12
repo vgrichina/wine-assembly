@@ -394,7 +394,7 @@
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  (mut i32) (i32.const 0x01E52000))
+  (global $THREAD_BASE  (mut i32) (i32.const 0x01D52000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x02252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
@@ -491,7 +491,7 @@
   (global $code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x01E52000))  ;; = THREAD_BASE
+  (global $thread_alloc (mut i32) (i32.const 0x01D52000))  ;; = THREAD_BASE
 
   ;; ============================================================
   ;; CPU STATE
@@ -602,6 +602,8 @@
   (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
   (global $main_win_cy       (mut i32) (i32.const 0)) ;; main window height
   (global $main_nc_height    (mut i32) (i32.const 25)) ;; non-client height: 25 (no menu) or 45 (with menu)
+  (global $movewindow_pending_hwnd (mut i32) (i32.const 0)) ;; non-main hwnd awaiting WM_SIZE from MoveWindow
+  (global $movewindow_pending_size (mut i32) (i32.const 0)) ;; packed client cx|cy<<16 for that hwnd
   ;; Posted message queue: up to 8 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
   ;; Stored at fixed WASM address 0x400 (well below guest memory)
   (global $post_queue_count (mut i32) (i32.const 0))
