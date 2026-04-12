@@ -336,6 +336,8 @@ async function main() {
   h.show_window = (hwnd, cmd) => {
     logs.push(`[ShowWindow] hwnd=0x${hwnd.toString(16)} cmd=${cmd}`);
     if (renderer) renderer.showWindow(hwnd, cmd);
+    const win = renderer && renderer.windows[hwnd];
+    if (win && win.clientRect) return (win.clientRect.w & 0xFFFF) | ((win.clientRect.h & 0xFFFF) << 16);
     // Inject button sequence if --buttons provided, else WM_CLOSE.
     // Skip auto-WM_CLOSE when --input is in use — the test is orchestrating
     // its own event timeline and shouldn't be killed prematurely.

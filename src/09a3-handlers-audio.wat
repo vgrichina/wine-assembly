@@ -51,11 +51,13 @@
     ;; Open via host
     (local.set $handle (call $host_wave_out_open
       (local.get $rate) (local.get $ch) (local.get $bits) (local.get $cbType)))
-    ;; Store handle and callback info for WOM_DONE notifications
+    ;; Store callback info in shared memory at 0xD160 (cross-thread accessible)
+    ;; +0: handle, +4: callback, +8: instance, +12: cb_type
     (global.set $wave_out_handle (local.get $handle))
-    (global.set $wave_out_callback (local.get $arg3))
-    (global.set $wave_out_cb_instance (local.get $arg4))
-    (global.set $wave_out_cb_type (local.get $cbType))
+    (i32.store (i32.const 0xD160) (local.get $handle))
+    (i32.store (i32.const 0xD164) (local.get $arg3))
+    (i32.store (i32.const 0xD168) (local.get $arg4))
+    (i32.store (i32.const 0xD16C) (local.get $cbType))
     ;; If phwo != NULL, store handle
     (if (local.get $arg0)
       (then (call $gs32 (local.get $arg0) (local.get $handle))))
@@ -114,6 +116,9 @@
     ;; Mark WHDR_DONE in dwFlags (+16)
     (i32.store (i32.add (local.get $wa) (i32.const 16))
       (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
+    ;; Deliver WOM_DONE notification — read callback info from shared memory
+    (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
+      (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

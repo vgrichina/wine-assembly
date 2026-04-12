@@ -699,6 +699,78 @@ node test/run.js --exe=test/binaries/winamp.exe --max-batches=400 --batch-size=5
   --input="10:273:2,95:poke:0x45caa4:1,160:post-cmd:40029,170:open-dlg-pick:C:\demo.mp3"
 ```
 
+## SESSION 11 PROGRESS — Thread Yield Fix, Audio Pipeline Flowing
+
+### Critical Bug: Thread yield/resume stack corruption
+
+When WaitForSingleObject yielded during `$th_call_ind_ro` (inline thunk dispatch in threaded code), the `$run` loop re-executed the cached block from its entry EIP. Each re-execution pushed a new return address + args onto the stack before re-dispatching the handler. With batch_size=5000, each batch leaked ~60KB of stack (5000 × 12 bytes).
+
+**Root cause:** The `$run` loop lacked a `yield_reason` check, and `$th_call_ind_ro` uses `if ($steps)` to decide whether to restore EIP — but yields set $steps=0 (same as handler redirects), so EIP was left at the block entry.
+
+**Three-part fix:**
+1. `src/13-exports.wat`: Added `(br_if $halt (i32.eq yield_reason 1))` at top of `$run` loop — exits immediately when WaitForSingleObject yields
+2. `lib/thread-manager.js` `runSlice()`: On resume, read return address from `[ESP]` via `guest_read32()` and call `set_eip(retAddr)` before `set_esp(esp+12)`
+3. Result: ESP stays stable across batches, T4 properly resumes at the return address
+
+### FPU: Added 5 transcendental instructions
+
+MP3 decoding uses FYL2X for dB/frequency calculations. Added:
+- **F2XM1** (D9 F0): ST(0) = 2^ST(0) - 1
+- **FYL2X** (D9 F1): ST(1) = ST(1) * log2(ST(0)), pop — via `Math.log2` host import
+- **FPREM1** (D9 F5): IEEE remainder
+- **FYL2XP1** (D9 F9): ST(1) = ST(1) * log2(ST(0)+1), pop
+- **FSCALE** (D9 FD): ST(0) = ST(0) * 2^trunc(ST(1)) — via `2**x` host import
+
+### WOM_DONE callback via CALLBACK_EVENT
+
+waveOutOpen uses CALLBACK_EVENT (type 5) with event handle 0xe0005 (same event used for T3→T4 signaling). Callback info stored in shared memory at 0xD160 (not globals, since globals are per-WASM-instance). waveOutWrite now sets the callback event after marking WHDR_DONE.
+
+### waveOutGetPosition startTime
+
+Fixed `wave_out_open` to set `startTime = Date.now()` unconditionally (was only set when AudioContext existed in browser).
+
+### Results
+
+- T4 now wakes, decodes, and calls `waveOutPrepareHeader → waveOutWrite → waveOutUnprepareHeader`
+- T3's MP3 decode loop runs successfully (tight compute loop at EIPs 0x593xxx/0x596xxx/0x5baxxx)
+- T3 signals T4 ~9 times (9 decoded buffers), T4 writes 1 buffer to waveOut
+- Test suite: 55 PASS (no regressions)
+
+### Current Blocker: CanWrite Polling Loop
+
+After producing several decoded buffers, T3 enters a tight polling loop at EIP 0x5b9c69 checking the output plugin's CanWrite() function. CanWrite returns 0 because the internal "bytes played" counter hasn't advanced enough to free buffer space. T4 did process WOM_DONE (unprepared the header), but the counter path may need `waveOutGetPosition` to be called from T4's context (T4 never calls it).
+
+### Open Tasks (Priority Order)
+
+| # | Task | Notes |
+|---|------|-------|
+| 1 | **Fix CanWrite stall** | Disasm at 0x5b9c69 to find which memory address the poll reads. May need to make T4's WOM_DONE processing update the output plugin's bytes_played counter, or ensure waveOutGetPosition returns advancing values. |
+| 2 | **Verify multi-buffer flow** | Once CanWrite unblocks, confirm continuous waveOutWrite calls and PCM data reaching host |
+| 3 | **Browser audio playback** | The host-side Web Audio bridge exists but needs testing with real decoded PCM |
+
+### Test Commands
+
+```bash
+# Play path with trace (shows 1 waveOutWrite, T3 decode active):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=800 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --trace-api \
+  --input="10:273:2,95:poke:0x45caa4:1,160:post-cmd:40029,170:open-dlg-pick:C:\demo.mp3"
+
+# Regression suite:
+node test/test-all-exes.js
+```
+
+### Key Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/13-exports.wat` | yield_reason=1 check in $run loop |
+| `src/06-fpu.wat` | F2XM1, FYL2X, FPREM1, FYL2XP1, FSCALE |
+| `src/01-header.wat` | math_log2/math_pow2 imports, WAVE_OUT_STATE at 0xD160 |
+| `src/09a3-handlers-audio.wat` | waveOutOpen shared-memory callback storage, waveOutWrite WOM_DONE event delivery |
+| `lib/thread-manager.js` | Yield/resume EIP restoration via guest_read32 |
+| `lib/host-imports.js` | math_log2/math_pow2 host functions, startTime unconditional |
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.

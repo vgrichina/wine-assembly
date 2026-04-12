@@ -28,6 +28,8 @@
       ;; EIP breakpoint
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
         (then (br $halt)))
+      ;; Exit if WaitForSingleObject yielded (yield_reason=1)
+      (br_if $halt (i32.eq (global.get $yield_reason) (i32.const 1)))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))

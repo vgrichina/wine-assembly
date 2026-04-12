@@ -1638,7 +1638,7 @@
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
-    (call $host_show_window (local.get $hwnd) (i32.const 1))
+    (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
     (global.set $dlg_ret_addr (call $gl32 (global.get $esp)))
     ;; Clean DialogBoxParamA frame (ret + 5 args = 24 bytes)

@@ -35,10 +35,8 @@ Victory animation (Force Win menu command 1010) works — cascading cards via cd
 ### Known Issues
 - Status bar child window has negative client height (`"h":-12`) — cosmetic
 
-### Not Yet Tested
-- Scoring modes (standard, vegas, none, timed) — dialog controls work, runtime behavior untested
-
 ### Tested — Working
+- Scoring modes: Standard ("Score: 0"), Vegas ("Score: -$52"), None (no score shown), Timed game checkbox — all change status bar display correctly
 - Help (WinHelpA): help window opens with topic list, navigation works. Text has formatting artifacts from unhandled paragraph codes in HLP parser
 - About (ShellAboutA — menu command 2000): dialog renders with app name, version string, and OK button
 

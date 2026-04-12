@@ -1,50 +1,60 @@
 # Code Review Report: Wine-Assembly x86 Emulator
 
 ## 1. Summary
-This report details the current state of the Wine-Assembly x86 emulator, focusing on API gaps, misimplementations, and resource management issues. While many core CPU bugs have been fixed, several high-level system gaps and resource leaks remain.
+This report details the current state of the Wine-Assembly x86 emulator. Significant progress has been made on SEH dispatch, focus management, and core CPU instruction correctness. However, several resource leaks, implementation gaps in the decoder (FPU/SSE), and GDI/Renderer bridging issues remain as critical blockers for complex applications like Winamp, MSPaint, and Space Cadet Pinball.
 
 ## 2. Resource Leaks & Lifetime Management
-A critical area of concern is the accumulation of leaked memory and table slots during standard application operations.
+Accumulation of leaked memory and table slots remains a primary concern for long-running applications.
 
 ### 2.1 Memory Leaks in `wsprintf` (src/12-wsprintf.wat)
-*   **Decimal Formatting:** `write_uint` and `write_uint_w` allocate temporary 12 or 24-byte buffers on the heap via `$heap_alloc` every time they convert a number to a string. These buffers are never freed, causing a permanent leak on every numeric `wsprintf` call.
+*   **Decimal Formatting:** `write_uint` and `write_uint_w` allocate temporary buffers on the heap via `$heap_alloc` but never call `$heap_free`. 
+*   **Impact:** Affects all apps (Notepad, Winamp, Pinball) formatting scores, coordinates, or UI text.
 
 ### 2.2 Window Table & Control State Leaks (src/09a-handlers.wat, src/09c-help.wat)
-*   **`DestroyWindow` Slot Leak:** `$handle_DestroyWindow` fails to call `wnd_table_remove`. The window's mapping remains in the internal 256-slot table, leading to "Table Full" errors or incorrect message dispatching if `HWND`s are recycled.
-*   **Control State Leak:** `wnd_table_remove` zeroes the window record but does not free the `state_ptr`. Heap-allocated structures for `EditState`, `ButtonState`, etc., are never released when a control is destroyed.
+*   **`DestroyWindow` Slot Leak:** `$handle_DestroyWindow` fails to call `wnd_table_remove`, leading to "Table Full" errors in dynamic apps like Winamp or MSPaint.
+*   **Control State Leak:** `wnd_table_remove` zeroes the window record but does not free the `state_ptr`. 
+*   **HWND Recycling:** Simple incrementing counter will eventually wrap or collide.
+
+### 2.3 Filesystem View & Mapping Gaps (lib/filesystem.js)
+*   **`UnmapViewOfFile` Leak:** `fs_unmap_view` removes the view from the tracking map but fails to free the guest memory.
+*   **Missing Reference Counting:** Violates the Win32 memory-mapped I/O contract where changes in one view must be visible in others.
 
 ## 3. Implementation Gaps
 
-### 3.1 x86 Decoder Limitations (src/07-decoder.wat)
-*   **16-bit Addressing:** The `0x67` address-size override prefix is unimplemented. The decoder assumes all memory operands use 32-bit ModR/M encodings.
-*   **Far Control Flow:** `CALL far` and `JMP far` (inter-segment) are unimplemented.
-*   **Group 5 POP:** certain `POP r/m32` variants in the `0xFF` group are missing.
+### 3.1 x86 Decoder & Pipeline Limitations (src/07-decoder.wat)
+*   **16-bit Addressing:** `0x67` prefix unimplemented.
+*   **Far Control Flow:** `CALL far` and `JMP far` unimplemented.
+*   **Group 5 POP:** `0xFF /7` (`POP m32`) crashes in the memory-target case.
+*   **SSE/MMX Gaps:** Opcodes for SSE3/SSE4 and `EMMS` (`0x0F 0x77`) are missing. 
+*   **Impact:** Multimedia apps (Winamp) get stuck in heavy FPU math (color quantization) due to these gaps.
 
 ### 3.2 Messaging & Windowing
-*   **Asynchronous `SendMessage`:** In `src/09c3-controls.wat`, `wnd_send_message` uses `PostMessage` semantics for x86 targets. This is a violation of the Win32 contract where `SendMessage` must be synchronous and block until the receiver processes the message.
-*   **Bridged UI Controls:** The newer "Controls as Windows" path only supports `Button`, `Edit`, and `Static`. Complex controls like `TreeView` are not yet bridged to the JS renderer.
-*   **Taskbar Sync:** `lib/renderer.js` filters the taskbar by `hasCaption`, which is only set during the first draw. Newly created or hidden windows are missing from the taskbar.
+*   **Asynchronous `SendMessage`:** `wnd_send_message` uses `PostMessage` semantics for x86 targets.
+*   **Impact:** Breaks state machines relying on synchronous message returns (e.g., Pinball attract mode).
+*   **Z-Order & Focus:** Does not handle "Always on Top" (`WS_EX_TOPMOST`) correctly.
 
-### 3.3 Filesystem & Threading (lib/filesystem.js, lib/thread-manager.js)
-*   **`MapViewOfFile`:** Currently implemented as "Copy-on-Map". Changes to mapped memory are not reflected back to the virtual file, breaking apps that use memory-mapped I/O for persistence.
-*   **Synchronization:** No support for `WaitForMultipleObjects`. Lack of atomic primitives or locking in shared memory may lead to heap corruption if multiple threads allocate simultaneously.
+### 3.3 Renderer & GDI Bridge (lib/renderer.js)
+*   **Rectangular Clipping Only:** Complex regions (`SetWindowRgn`, `SelectClipRgn`) are ignored.
+*   **Impact:** Winamp appears as a gray rectangle instead of its intended "skinned" shape.
+*   **Bridged UI Controls:** `TreeView` is implemented in WAT but lacks a JS bridge.
+*   **Font Scaling:** Fixed DLU scaling causes layout breakage on different resolutions.
 
 ## 4. Win32 API Gaps & Silent Stubs
-Over 100 Win32 APIs remain stubbed or unimplemented.
+Over 100 Win32 APIs remain stubbed with `$crash_unimplemented`.
 
-### 4.1 Critical Unicode (W) Variants
-Most Unicode variants are non-functional stubs:
-*   **Windowing:** `RegisterClassW`, `CreateWindowExW`, `SetWindowTextW`.
-*   **Messaging:** `SendMessageW`, `PostMessageW`.
-*   **Resources:** `LoadLibraryW`, `LoadCursorW`, `LoadIconW`.
+### 4.1 Shell & GDI Stubs
+*   **Shell Integration:** `ShellExecuteA/W` and `SHGetFileInfoA/W` are stubs.
+*   **Advanced GDI:** `CreateDIBitmap`, `StretchDIBits`, and `SetDIBitsToDevice` lack proper ICM or color-space handling.
+*   **Impact:** MSPaint cannot load/save images properly; Winamp cannot open URLs or retrieve icons.
 
-### 4.2 System & Environment Stubs
-*   **Time/Locales:** `GetLocalTime`, `GetLocaleInfoA`, `GetACP`.
-*   **Registry:** `GetProfileStringA`, `WriteProfileStringA`.
-*   **Clipboard:** Bridging to JS `navigator.clipboard` is incomplete.
+### 4.2 System & Synchronization Gaps
+*   **Sync Primitives:** `WaitForMultipleObjects` is unimplemented.
+*   **Impact:** Multi-threaded apps (Winamp, Pinball) often hang or busy-wait.
 
-## 5. CPU Bug Tracker
-*   **Fixed:** PE Loader now correctly zeroes the BSS area.
-*   **Fixed:** `ADC`/`SBB` now preserve `flag_res` correctly using raw mode.
-*   **Fixed:** `0x8F` (POP [mem]) correctly calculates the effective address before updating ESP.
-*   **Outstanding:** `SETcc` clobbers the full register when targeting memory (should only affect the byte).
+## 5. CPU & OS Feature Progress
+*   **Implemented:** SEH Dispatch (`RaiseException`) now walks the FS:[0] chain.
+*   **Implemented:** `DestroyWindow` now correctly transfers focus to the promoted `main_hwnd` (Critical for Pinball).
+*   **Fixed:** FPU `frndint` now honors the control word's rounding bits (Corrects PINBALL.DAT loading).
+*   **Fixed:** `StretchDIBits` sub-rect blits now work correctly (Flippers/Ball animate in Pinball).
+*   **Fixed:** `ADC`/`SBB` flags preserved correctly using raw mode.
+*   **Outstanding:** `SETcc` reported to clobber full register when targeting memory (requires final verification).

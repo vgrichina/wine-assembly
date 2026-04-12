@@ -347,8 +347,8 @@
 
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $wndproc i32)
-    (call $host_show_window (local.get $arg0) (local.get $arg1))
+    (local $packed i32) (local $wndproc i32) (local $client_size i32)
+    (local.set $client_size (call $host_show_window (local.get $arg0) (local.get $arg1)))
     ;; Showing a window should trigger WM_PAINT — invalidate it
     ;; cmd != SW_HIDE (0) → mark for paint
     (if (local.get $arg1)
@@ -356,35 +356,38 @@
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else (call $paint_queue_push (local.get $arg0))))))
-    ;; ShowWindow on main window delivers pending WM_SIZE synchronously,
+    ;; ShowWindow on main window delivers WM_SIZE synchronously,
     ;; matching real Win32 where ShowWindow → SetWindowPos → WM_SIZE.
-    ;; Apps (e.g. Solitaire) compute layout in response to WM_SIZE, and
-    ;; assert if it hasn't been delivered before their init code runs.
+    ;; For SW_MAXIMIZE (cmd=3), use the client size returned by the host
+    ;; (which has already resized the window). Otherwise use pending_wm_size.
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
-                 (i32.and (i32.eq (local.get $arg0) (global.get $main_hwnd))
-                          (i32.ne (global.get $pending_wm_size) (i32.const 0))))
+                 (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then
-        (local.set $packed (global.get $pending_wm_size))
-        (global.set $pending_wm_size (i32.const 0))
-        (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
-        (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
-                     (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+        (if (i32.eq (local.get $arg1) (i32.const 3))
           (then
-            ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller.
-            ;; Stack layout: [esp]=ret_addr, [esp+4]=hwnd, [esp+8]=nCmdShow (stdcall, 2 args).
-            ;; Pop ShowWindow frame (ret+2 args=12), push WndProc frame (ret+4 args=20).
-            ;; Net: esp -= 8. Return addr is at [orig_esp] = [new_esp + 8].
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; pop ShowWindow frame
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
-            (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 8)))) ;; ret addr
-            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
-            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
-            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
-            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed)) ;; lParam=cx|(cy<<16)
-            (global.set $eip (local.get $wndproc))
-            (global.set $eax (i32.const 1))
-            (global.set $steps (i32.const 0))
-            (return)))))
+            (local.set $packed (local.get $client_size))
+            (global.set $pending_wm_size (i32.const 0)))
+          (else
+            (local.set $packed (global.get $pending_wm_size))
+            (global.set $pending_wm_size (i32.const 0))))
+        (if (local.get $packed)
+          (then
+            (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
+            (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
+                         (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+              (then
+                ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller.
+                (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; pop ShowWindow frame
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+                (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 8)))) ;; ret addr
+                (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
+                (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
+                (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+                (global.set $eip (local.get $wndproc))
+                (global.set $eax (i32.const 1))
+                (global.set $steps (i32.const 0))
+                (return)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
