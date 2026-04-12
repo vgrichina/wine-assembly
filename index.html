@@ -254,6 +254,7 @@ Resource-aware Win98 emulator
 
   <script src="lib/mem-utils.js?v=35"></script>
   <script src="lib/dib.js?v=35"></script>
+  <script src="lib/resources-icon.js?v=35"></script>
   <script src="lib/renderer-input.js?v=35"></script>
   <script src="lib/renderer.js?v=35"></script>
   <script src="lib/dll-loader.js?v=35"></script>
@@ -315,6 +316,18 @@ Resource-aware Win98 emulator
         el.className = 'desktop-icon';
         el.dataset.app = value;
         el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
+        const exePath = apps[value] && apps[value].exe;
+        if (exePath && typeof fetchIconDataURL === 'function') {
+          fetchIconDataURL(exePath).then(url => {
+            if (!url) return;
+            const imgDiv = el.querySelector('.icon-img');
+            if (imgDiv) {
+              imgDiv.innerHTML = '<img src="' + url + '" style="width:32px;height:32px;image-rendering:pixelated">';
+              imgDiv.style.background = 'transparent';
+              imgDiv.style.border = '0';
+            }
+          });
+        }
         let lastClick = 0;
         el.addEventListener('click', () => {
           for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
