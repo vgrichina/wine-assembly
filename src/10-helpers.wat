@@ -825,7 +825,7 @@
           (if (i32.eq (local.get $class_val) (i32.const 0x82)) (then (local.set $class_enum (i32.const 3))))
           (if (i32.eq (local.get $class_val) (i32.const 0x83)) (then (local.set $class_enum (i32.const 4))))
           (if (i32.eq (local.get $class_val) (i32.const 0x85)) (then (local.set $class_enum (i32.const 5))))
-          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 6))))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7))))))
       (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
       ;; Text (UTF-16 → ASCII in heap; 0 for null/ordinal)
       (call $dlg_read_text (local.get $p))

@@ -17,8 +17,8 @@
   ;;       wndproc treats this control as fully owned by WAT.
   ;;
   ;; ctrl_class values: 0=not a control, 1=Button, 2=Edit, 3=Static,
-  ;;                    4=ListBox, 5=ComboBox, 10=Find dialog parent,
-  ;;                    11=About dialog parent
+  ;;                    4=ListBox, 5=ComboBox, 6=ColorGrid, 7=ScrollBar,
+  ;;                    10=Find dialog parent, 11=About dialog parent
 
   ;; ---- Per-class state struct layouts ----
   ;;
@@ -200,6 +200,9 @@
     ;; Class 6 = ColorGrid (ChooseColor swatches)
     (if (i32.eq (local.get $class) (i32.const 6))
       (then (return (call $colorgrid_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 7 = ScrollBar control
+    (if (i32.eq (local.get $class) (i32.const 7))
+      (then (return (call $scrollbar_ctrl_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -1867,28 +1870,32 @@
         ;; behind every word.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        (if (i32.load (local.get $state_w))
+        (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
+        ;; SS_ICON(3), SS_BITMAP(0x0E): skip text — these display images, not labels
+        (if (i32.and
+              (i32.ne (local.get $style) (i32.const 3))
+              (i32.ne (local.get $style) (i32.const 0x0E)))
           (then
-            ;; Map SS_LEFT/CENTER/RIGHT (low 4 bits of style) → DT_LEFT(0)/CENTER(1)/RIGHT(2)
-            (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
-            ;; SS_LEFT(0)/SS_CENTER(1)/SS_RIGHT(2) use DT_WORDBREAK for multi-line.
-            ;; SS_SIMPLE(0x0B), SS_LEFTNOWORDWRAP(0x0C) use DT_SINGLELINE.
-            (local.set $fmt (if (result i32) (i32.le_u (local.get $style) (i32.const 2))
-              (then (i32.const 0x10))    ;; DT_WORDBREAK
-              (else (i32.const 0x24))))  ;; DT_VCENTER|DT_SINGLELINE
-            (if (i32.eq (local.get $style) (i32.const 1))
-              (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x01))))) ;; DT_CENTER
-            (if (i32.eq (local.get $style) (i32.const 2))
-              (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x02))))) ;; DT_RIGHT
-            (i32.store        (global.get $PAINT_SCRATCH) (i32.const 2))
-            (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-            (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-            (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
-            (drop (call $host_gdi_draw_text (local.get $hdc)
-                    (call $g2w (i32.load (local.get $state_w)))
-                    (i32.load offset=4 (local.get $state_w))
-                    (global.get $PAINT_SCRATCH)
-                    (local.get $fmt) (i32.const 0)))))
+          (if (i32.load (local.get $state_w))
+            (then
+              ;; SS_LEFT(0)/SS_CENTER(1)/SS_RIGHT(2) use DT_WORDBREAK for multi-line.
+              ;; SS_SIMPLE(0x0B), SS_LEFTNOWORDWRAP(0x0C) use DT_SINGLELINE.
+              (local.set $fmt (if (result i32) (i32.le_u (local.get $style) (i32.const 2))
+                (then (i32.const 0x10))    ;; DT_WORDBREAK
+                (else (i32.const 0x24))))  ;; DT_VCENTER|DT_SINGLELINE
+              (if (i32.eq (local.get $style) (i32.const 1))
+                (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x01))))) ;; DT_CENTER
+              (if (i32.eq (local.get $style) (i32.const 2))
+                (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x02))))) ;; DT_RIGHT
+              (i32.store        (global.get $PAINT_SCRATCH) (i32.const 2))
+              (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
+              (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
+              (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
+              (drop (call $host_gdi_draw_text (local.get $hdc)
+                      (call $g2w (i32.load (local.get $state_w)))
+                      (i32.load offset=4 (local.get $state_w))
+                      (global.get $PAINT_SCRATCH)
+                      (local.get $fmt) (i32.const 0)))))))
         (return (i32.const 0))))
 
     ;; Default
@@ -3083,5 +3090,91 @@
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
   )
+
+  ;; ScrollBar control wndproc (class 7).
+  ;; Draws a Win98-style scrollbar track with sunken edge and a raised thumb.
+  ;; Reads position/range from SCROLL_TABLE (set via SetScrollPos/SetScrollRange).
+  (func $scrollbar_ctrl_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $slot i32) (local $base i32) (local $pos i32) (local $smin i32) (local $smax i32)
+    (local $style i32) (local $is_vert i32) (local $track_len i32) (local $thumb_size i32)
+    (local $thumb_pos i32) (local $range i32) (local $brush i32)
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        ;; SBS_VERT = 0x01
+        (local.set $is_vert (i32.and (local.get $style) (i32.const 1)))
+
+        ;; Fill track with scrollbar background (COLOR_SCROLLBAR = light gray)
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x30011))) ;; LTGRAY_BRUSH
+        ;; Sunken edge around track
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x0A) (i32.const 0x0F))) ;; BDR_SUNKEN, BF_RECT
+
+        ;; Read scroll state
+        (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.ge_s (local.get $slot) (i32.const 0))
+          (then
+            (local.set $base (i32.add (global.get $SCROLL_TABLE)
+              (i32.mul (local.get $slot) (i32.const 24))))
+            ;; Vertical scrollbar: use offset +12
+            (if (local.get $is_vert)
+              (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
+            (local.set $pos (i32.load (local.get $base)))
+            (local.set $smin (i32.load offset=4 (local.get $base)))
+            (local.set $smax (i32.load offset=8 (local.get $base)))
+            (local.set $range (i32.sub (local.get $smax) (local.get $smin)))
+            (if (i32.gt_s (local.get $range) (i32.const 0))
+              (then
+                ;; Thumb size = max(16, track_len / (range+1))
+                (if (local.get $is_vert)
+                  (then (local.set $track_len (i32.sub (local.get $h) (i32.const 4))))
+                  (else (local.set $track_len (i32.sub (local.get $w) (i32.const 4)))))
+                (local.set $thumb_size (i32.div_u (local.get $track_len) (i32.add (local.get $range) (i32.const 1))))
+                (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
+                  (then (local.set $thumb_size (i32.const 16))))
+                ;; Thumb position
+                (local.set $thumb_pos (i32.add (i32.const 2)
+                  (i32.div_u
+                    (i32.mul
+                      (i32.sub (local.get $pos) (local.get $smin))
+                      (i32.sub (local.get $track_len) (local.get $thumb_size)))
+                    (local.get $range))))
+                ;; Draw thumb
+                (if (local.get $is_vert)
+                  (then
+                    ;; Vertical: thumb fills width, moves in Y
+                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                            (i32.const 2) (local.get $thumb_pos)
+                            (i32.sub (local.get $w) (i32.const 2))
+                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
+                    (drop (call $host_gdi_draw_edge (local.get $hdc)
+                            (i32.const 2) (local.get $thumb_pos)
+                            (i32.sub (local.get $w) (i32.const 2))
+                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                            (i32.const 0x05) (i32.const 0x0F)))) ;; BDR_RAISED, BF_RECT
+                  (else
+                    ;; Horizontal: thumb fills height, moves in X
+                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                            (local.get $thumb_pos) (i32.const 2)
+                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                            (i32.sub (local.get $h) (i32.const 2))
+                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
+                    (drop (call $host_gdi_draw_edge (local.get $hdc)
+                            (local.get $thumb_pos) (i32.const 2)
+                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                            (i32.sub (local.get $h) (i32.const 2))
+                            (i32.const 0x05) (i32.const 0x0F))))))))) ;; BDR_RAISED, BF_RECT
+        (return (i32.const 0))))
+    (i32.const 0))
 
 
