@@ -1147,6 +1147,78 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
+  ;; 1099: EnumDisplayMonitors(hdc, lprcClip, lpfnEnum, dwData) — 4 args stdcall
+  ;; Calls lpfnEnum(hMonitor, hdcMonitor, lprcMonitor, dwData) once for primary monitor
+  (func $handle_EnumDisplayMonitors (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32) (local $callback i32) (local $data i32) (local $rect_guest i32)
+    ;; arg2 = lpfnEnum (callback), arg3 = dwData
+    (local.set $callback (local.get $arg2))
+    (local.set $data (local.get $arg3))
+    ;; If no callback, just return TRUE
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Save original return address
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Pop EnumDisplayMonitors frame: ret + 4 args = 20 bytes
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ;; Allocate RECT {0, 0, 640, 480} on stack (16 bytes)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
+    (local.set $rect_guest (i32.add (i32.sub (global.get $esp) (i32.const 0x12000)) (global.get $image_base)))
+    (call $gs32 (global.get $esp) (i32.const 0))         ;; left
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (i32.const 0))   ;; top
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 640)) ;; right
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 480)) ;; bottom
+    ;; Push callback args right-to-left: dwData, lprcMonitor, hdcMonitor, hMonitor
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $data))          ;; dwData
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $rect_guest))    ;; lprcMonitor (guest addr)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))              ;; hdcMonitor = NULL
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x00010001))     ;; hMonitor (fake handle)
+    ;; Push return address — callback is stdcall so it pops its own 16 bytes
+    ;; After callback returns, RECT (16 bytes on stack) remains — but caller's ESP is restored
+    ;; Actually the RECT sits below the callback frame, need to adjust:
+    ;; When callback returns (stdcall pops 16 bytes), ESP points to RECT.
+    ;; We need the original ret_addr AFTER the RECT is cleaned up.
+    ;; Solution: put a thunk return address that cleans up the RECT and returns.
+    ;; Simpler: just put the RECT in scratch memory instead of on the stack.
+    ;; Let's use WASM address 0xAD00 area which is below GUEST_BASE.
+    ;; Actually — store RECT at a fixed known location in the sub-GUEST_BASE region.
+    ;; Reset: undo stack RECT, use fixed scratch instead.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))) ;; undo the 4 pushes + RECT
+    ;; Write RECT at WASM addr 0xAD40 (unused scratch below GUEST_BASE)
+    (i32.store (i32.const 0xAD40) (i32.const 0))       ;; left
+    (i32.store (i32.const 0xAD44) (i32.const 0))       ;; top
+    (i32.store (i32.const 0xAD48) (i32.const 640))     ;; right
+    (i32.store (i32.const 0xAD4C) (i32.const 480))     ;; bottom
+    ;; Guest address for 0xAD40: image_base + (0xAD40 - 0x12000) = image_base - 0x72C0
+    ;; Actually RECT needs to be at a guest-addressable address. g2w = guest - image_base + GUEST_BASE
+    ;; So guest = wasm - GUEST_BASE + image_base = 0xAD40 - 0x12000 + image_base
+    ;; If image_base=0x400000 -> guest = 0x3F8D40, which is below image_base but above 0.
+    ;; The callback reads RECT via the pointer — so it will do g2w(guest) and get 0xAD40. Should work.
+    (local.set $rect_guest (i32.add (i32.sub (i32.const 0xAD40) (i32.const 0x12000)) (global.get $image_base)))
+    ;; Push callback args right-to-left
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $data))          ;; dwData
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $rect_guest))    ;; lprcMonitor
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))              ;; hdcMonitor
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x00010001))     ;; hMonitor
+    ;; Push return address — when stdcall callback pops 16 bytes and rets, goes to ret_addr
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Jump to callback
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0))
+  )
+
   ;; 91: GetClientRect
   (func $handle_GetClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32)
@@ -1458,30 +1530,21 @@
   )
 
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
-  ;; Real Win32 sends WM_SIZE after resizing. We update pending_wm_size so the
-  ;; next ShowWindow delivers it; for non-main windows, queue a pending size.
+  ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $client_cx i32) (local $client_cy i32)
+    (local $cx i32) (local $cy i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
-    ;; Compute client area from outer dimensions
-    (local.set $client_cx (i32.sub (local.get $arg3) (i32.const 6)))
-    (if (i32.lt_s (local.get $client_cx) (i32.const 0))
-      (then (local.set $client_cx (i32.const 0))))
-    (local.set $client_cy (i32.sub (local.get $arg4) (global.get $main_nc_height)))
-    (if (i32.lt_s (local.get $client_cy) (i32.const 0))
-      (then (local.set $client_cy (i32.const 0))))
-    ;; Update pending_wm_size so the next ShowWindow/GetMessageA delivers it
-    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-      (then
-        (global.set $pending_wm_size
-          (i32.or (i32.and (local.get $client_cx) (i32.const 0xFFFF))
-                  (i32.shl (local.get $client_cy) (i32.const 16)))))
-      (else
-        ;; For non-main windows, store pending size in movewindow globals
-        (global.set $movewindow_pending_hwnd (local.get $arg0))
-        (global.set $movewindow_pending_size
-          (i32.or (i32.and (local.get $client_cx) (i32.const 0xFFFF))
-                  (i32.shl (local.get $client_cy) (i32.const 16))))))
+    ;; For non-main windows, record pending WM_SIZE for delivery by ShowWindow
+    (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
+    (then
+      (local.set $cx (i32.sub (local.get $arg3) (i32.const 6)))
+      (if (i32.lt_s (local.get $cx) (i32.const 0)) (then (local.set $cx (i32.const 0))))
+      (local.set $cy (i32.sub (local.get $arg4) (global.get $main_nc_height)))
+      (if (i32.lt_s (local.get $cy) (i32.const 0)) (then (local.set $cy (i32.const 0))))
+      (global.set $movewindow_pending_hwnd (local.get $arg0))
+      (global.set $movewindow_pending_size
+        (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
+                (i32.shl (local.get $cy) (i32.const 16))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
@@ -2301,8 +2364,10 @@
         ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
         (i32.store (i32.add (local.get $dst) (i32.const 36))
           (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))))
-    ;; Store first wndproc as main for backward compat
-    (if (i32.eqz (global.get $wndproc_addr))
+    ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
+    (if (i32.and (i32.eqz (global.get $wndproc_addr))
+      (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
@@ -2329,7 +2394,7 @@
     ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000)))))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (local.get $arg0)))
@@ -2756,7 +2821,7 @@
     (then
     (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
     (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
     (then
     (global.set $wndproc_addr (local.get $tmp))
     (br $found)))))))))
@@ -2786,7 +2851,7 @@
     (then
     (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
     (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
     (then
     (global.set $wndproc_addr2 (local.get $tmp))
     (br $found2)))))))))
@@ -2847,12 +2912,17 @@
     ;; RegisterClassW — same layout as RegisterClassA, just Unicode strings
     (local $tmp i32)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (if (i32.eqz (global.get $wndproc_addr))
+    (if (i32.and (i32.eqz (global.get $wndproc_addr))
+      (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (local.get $arg0)))
       (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 28)))))
-    (else (global.set $wndproc_addr2 (local.get $tmp))))
+    (else (if (i32.and (i32.eqz (global.get $wndproc_addr2))
+      (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+    (then (global.set $wndproc_addr2 (local.get $tmp))))))
     (global.set $eax (i32.const 0xC001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -6374,7 +6444,9 @@
 
   ;; 645: WaitMessage — STUB: unimplemented
   (func $handle_WaitMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; WaitMessage() — 0 args, return TRUE (message always available in our event loop)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
   ;; 646: GetWindowThreadProcessId — STUB: unimplemented

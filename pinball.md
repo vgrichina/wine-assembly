@@ -3,7 +3,7 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Flag pokes still needed for game-active/commands-enabled (attract mode requires WM_WOM_DONE callbacks we don't deliver). Score panel mostly working: title, score digits, BALL label, and mission text ("Careful...") all render. "Player 1" label still missing. Use `--batch-size=500000 --max-batches=500` for full game loop.
+**Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Score panel mostly working: title, score digits, BALL label, and mission text ("Careful...") all render. "Player 1" label still missing — see task 7. PeekMessageA/GetMessageA input double-dispatch fixed (PM_NOREMOVE cache). Use `--batch-size=500000 --max-batches=500` for full game loop.
 
 **Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
 
@@ -13,20 +13,38 @@
 **Files:** `src/09a5-handlers-window.wat` ($handle_PeekMessageA)
 Poke code in PeekMessageA's "no message" return path. Conditional on `wndproc_addr == 0x01055db1` and `msg_phase >= 3`. Sets game-active (0x1024fe0) and commands-enabled (0x1024ff8) to 1. Debug logging (FACE/BEEF/DEAD markers) cleaned up.
 
-### 2. Fix WM_KEYDOWN double-dispatch
-**Priority: MEDIUM** — Every keydown is dispatched twice by PeekMessageA.
-**Files:** `src/09a5-handlers-window.wat` ($handle_PeekMessageA, line 563+), `src/09a5-handlers-window.wat` ($handle_DefWindowProcA, line 811+)
-The wndproc calls DefWindowProcA at 0x1008263 with the same WM_KEYDOWN after handling it. On return, PeekMessageA returns the same keydown again.
+### 2. Fix WM_KEYDOWN double-dispatch — DONE (2026-04-11)
+**Files:** `src/01-header.wat` (new globals), `src/09a5-handlers-window.wat` ($handle_PeekMessageA, $handle_GetMessageA)
 
-**Investigation findings (2026-04-11):**
-- `check_input` in `test/run.js:387` DOES consume events on first call (`inputEvent = null`, `inputQueue.shift()`, etc.)
-- `$handle_DefWindowProcA` does nothing with WM_KEYDOWN — just returns 0 (line 823)
-- PeekMessageA's input path (line 660) calls `host_check_input` and fills the MSG struct, but does NOT differentiate PM_REMOVE vs PM_NOREMOVE for input events (unlike posted messages at line 646 and paint at line 688)
-- **Likely root cause:** After PeekMessageA returns the keydown and the app dispatches it, the app calls PeekMessageA again. Since `check_input` already consumed the event, it returns 0. But `paint_pending` or `paint_queue_count` (line 686-709) may fire and return a WM_PAINT message using the same MSG struct address — but the app's dispatch code may still see the old WM_KEYDOWN data if it inspects the MSG before the new fill. Needs closer runtime trace to confirm.
+**Root cause:** PeekMessageA's input path called `host_check_input` which dequeued from JS every time, but didn't differentiate PM_REMOVE vs PM_NOREMOVE. When app called PeekMessageA(PM_NOREMOVE) then GetMessageA (or PeekMessageA(PM_REMOVE)), it dequeued the same event from JS twice.
+
+**Fix:** Added three globals: `$pending_input_packed`, `$pending_input_lparam`, `$pending_input_hwnd`. When `host_check_input` dequeues from JS, cache the event. If PM_NOREMOVE is set, also cache the packed event so the next PM_REMOVE call consumes from cache instead of dequeuing again. GetMessageA also consumes from cache if one exists. F2 key now dispatches exactly once.
 
 ### 3. Score panel text rendering — MOSTLY FIXED
 **Priority: LOW** — Most text now renders after WaveMix fix (task 4).
-After the 16-bit ALU fix, sound init succeeds and the attract mode initializes text rendering objects. Score panel now shows: title ("3D Pinball Space Cadet"), score digits, BALL label with number, mission text ("Careful..."). Only "Player 1" label still missing — may need further investigation.
+After the 16-bit ALU fix, sound init succeeds and the attract mode initializes text rendering objects. Score panel now shows: title ("3D Pinball Space Cadet"), score digits, BALL label with number, mission text ("Careful..."). Only "Player 1" label still missing — see task 7.
+
+### 7. "Player 1" label missing — IN PROGRESS
+**Priority: MEDIUM** — Score panel text box never gets DrawTextA call.
+
+**Root cause investigation (2026-04-11/12):**
+
+**Finding 1:** Only 1 CreateCompatibleDC call, zero DrawTextA calls in the entire run.
+
+**Finding 2:** MoveWindow didn't dispatch WM_SIZE. Fixed with `movewindow_pending_hwnd/size` globals.
+
+**Finding 3-4 (FIXED 2026-04-12):** wndproc scan used hardcoded `0x80000` range, capturing comctl32 wndproc `0x01055db1` instead of EXE wndprocs. **Fix:** replaced all `0x80000` bounds with `$exe_size_of_image` in 7 locations across `09a5-handlers-window.wat` and `09a-handlers.wat` (CreateWindowExA/W scans, RegisterClassExA, RegisterClassA, RegisterClassW, class table fallback). Now `$wndproc_addr = 0x01007264` (correct EXE-space).
+
+**Finding 5 (2026-04-12):** WM_SIZE IS now delivered to hwnd=0x10002 via the correct wndproc `0x01007a3e`. Confirmed: `DefWindowProcA(0x10002, 5, 0, 0x01b30258)` in trace. But disasm of `0x01007a3e` shows the main frame wndproc **does not handle WM_SIZE** — it only handles WM_CREATE(1), WM_DESTROY(2), WM_MOVE(3), WM_SETFOCUS(7), WM_KILLFOCUS(8), WM_PAINT(0xF), WM_CLOSE(0x10), WM_ERASEBKGND(0x14), WM_ACTIVATEAPP(0x1C), and higher messages.
+
+**Finding 6 (2026-04-12):** `render::recreate()` at `0x1006fcb` is the only call site for CreateCompatibleDC. It's called only from `render::init()` at `0x10073ea`, which is called once from `0x10086b1`. This creates the main back buffer DC — NOT text box DCs.
+
+**Finding 7 (2026-04-12):** DrawTextA has exactly one call site at `0x10038cd` in `render_sprite::paint()` at `0x1003803`. This function is called from text box paint at `0x1014269`, which is called by game component paint functions via `0x10144b7`. The text box object ("player_number1") IS created (HeapAlloc + lstrlenA at API #11857), but its paint path never reaches DrawTextA.
+
+**Next steps:**
+- Investigate why `render_sprite::paint()` doesn't reach the DrawTextA call. The function at `0x1003834` checks `[0x1023050]` — if < 0, it initializes color globals. This may be a guard condition.
+- The text box's DC comes from the global back buffer (render_obj at `[0x1028288]`, DC at +0xc). Since the back buffer DC IS created, the text paint should work IF the component gets painted.
+- Check if the text box component's paint function is actually called during the game loop, and what condition prevents DrawTextA from executing.
 
 ### 4. WaveMixOpenWave fails — FIXED
 **Priority: HIGH** — Was root cause of attract mode failure, flag poke need, and missing text.

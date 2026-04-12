@@ -27,7 +27,7 @@
     (then
     (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
     (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
     (then
     (global.set $wndproc_addr (local.get $tmp))
     (br $found)))))))))
@@ -57,7 +57,7 @@
     (then
     (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
     (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x80000))))
+    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
     (then
     (global.set $wndproc_addr2 (local.get $tmp))
     (br $found2)))))))))
@@ -113,7 +113,7 @@
           (local.set $v (i32.load offset=12 (call $class_record_addr (local.get $i))))
           (if (i32.and
             (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
-                     (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (i32.const 0x80000))))
+                     (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
             (i32.ne (local.get $v) (call $wnd_table_get (global.get $main_hwnd))))
             (then (local.set $tmp (local.get $v)) (br $found3)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
