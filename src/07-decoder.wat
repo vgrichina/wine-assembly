@@ -259,10 +259,9 @@
 
   ;; ALU [mem] OP= imm
   (func $emit_alu_m16_i (param $alu_op i32) (param $imm i32) (local $a i32)
-    ;; 16-bit ALU [mem], imm16 — use handler 122 (th_alu_m16_i16)
-    ;; For base+disp, fall through to 32-bit (TODO: proper 16-bit handler)
+    ;; 16-bit ALU [mem], imm16 — handler 220 for base+disp, handler 122 for abs/SIB
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 131) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
+      (then (call $te (i32.const 220) (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $imm)) (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 122) (local.get $alu_op))

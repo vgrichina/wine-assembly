@@ -64,7 +64,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 219))
+    (if (i32.ge_u (local.get $fn) (i32.const 221))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))

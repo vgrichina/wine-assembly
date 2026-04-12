@@ -687,6 +687,18 @@
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
     (return_call $next))
 
+  ;; 220: [base+disp] OP= imm16. operand = alu_op<<8 | base. disp+imm in next words.
+  (func $th_alu_m16_i_ro (param $op i32)
+    (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $imm (call $read_thread_word))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (local.get $imm)))
+    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
+    (global.set $flag_sign_shift (i32.const 15))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
+    (return_call $next))
+
   ;; 133: mov [base+disp], imm32. op=base, disp+imm in next words.
   (func $th_mov_m32_i32_ro (param $op i32)
     (local $addr i32)
