@@ -72,6 +72,47 @@ const TEST_CASES = [
   { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer',
     extraArgs: ['--buttons=2'], maxBatches: 20000 },  // Click Cancel on license dialog (needs batches for CRC loop)
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
+  // WEP community 32-bit remakes (archive.org/details/wep-32bit)
+  { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
+  { exe: 'test/binaries/wep32-community/EmPipe/EMPIPE.EXE', name: 'EmPipe (PipeDream)' },
+  { exe: 'test/binaries/wep32-community/Funpack/Funtris.exe', name: 'Funtris (Tetris)' },
+  { exe: 'test/binaries/wep32-community/Funpack/Peaks.exe', name: 'Peaks (TriPeaks)' },
+  { exe: 'test/binaries/wep32-community/Funpack/Pyramid.exe', name: 'Pyramid (TutsTomb)' },
+  { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
+  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)' },
+  { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
+  { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)' },
+  { exe: 'test/binaries/wep32-community/Tetravex/Tetravex.exe', name: 'Tetravex' },
+  { exe: 'test/binaries/wep32-community/Winarc/Winarc.exe', name: 'Winarc (Pegs/Krypto/Life)' },
+  { exe: 'test/binaries/wep32-community/Wordzap/CWordZap.exe', name: 'CWordZap' },
+  { exe: 'test/binaries/wep32-community/TWorld/tworld.exe', name: 'TWorld (SDL, expected fail)' },
+  { exe: 'test/binaries/wep32-community/Jigssawme/JigSawedME.exe', name: 'JigSawedME (VB6, expected fail)' },
+  { exe: 'test/binaries/wep32-community/Rodent2000/Rodent2000.exe', name: 'Rodent2000 (VB6, expected fail)' },
+  // Plus! 98
+  { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
+  { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX, expected fail)' },
+  // Plus! 98 screensavers — pure GDI
+  { exe: 'test/binaries/screensavers/CATHY.SCR', name: 'Cathy (screensaver)' },
+  { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)' },
+  { exe: 'test/binaries/screensavers/DOONBURY.SCR', name: 'Doonesbury (screensaver)' },
+  { exe: 'test/binaries/screensavers/FOXTROT.SCR', name: 'FoxTrot (screensaver)' },
+  { exe: 'test/binaries/screensavers/GA_SAVER.SCR', name: 'Garfield (screensaver)' },
+  { exe: 'test/binaries/screensavers/PEANUTS.SCR', name: 'Peanuts (screensaver)' },
+  { exe: 'test/binaries/screensavers/PHODISC.SCR', name: 'PhotoDisc (screensaver)' },
+  // Plus! 98 screensavers — MFC42
+  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)' },
+  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)' },
+  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)' },
+  { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)' },
+  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)' },
+  // Plus! 98 screensavers — DirectDraw (expected fail until DDRAW support)
+  { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/GEOMETRY.SCR', name: 'Geometry (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/JAZZ.SCR', name: 'Jazz (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/OASAVER.SCR', name: 'OnlineArt (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/ROCKROLL.SCR', name: 'RockRoll (screensaver, DX)' },
+  { exe: 'test/binaries/screensavers/SCIFI.SCR', name: 'SciFi (screensaver, DX)' },
   // 16-bit NE binaries — emulator is 32-bit PE only, expected to fail at load
   // time. Kept in the list as SKIP candidates so coverage stays honest.
   { exe: 'test/binaries/win98-16bit/FREECELL.EXE', name: 'FreeCell (16-bit)', expect16bit: true },

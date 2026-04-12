@@ -34,11 +34,55 @@ Chess, Chip's Challenge, Dr. Black Jack, Fuji Golf, Go Figure!, IdleWild, JezzBa
 - Individual volumes: `https://archive.org/details/000777-WindowsEntertainmentPack1` (1-4)
 - Best of WEP floppy: `https://archive.org/details/wep_best-of`
 
-**Community 32-bit remakes** (third-party PE executables, untested):
+**Community 32-bit remakes** (third-party PE executables, staged in `wep32-community/`):
 - Source: `https://archive.org/details/wep-32bit`
-- File: `wep32.7z`
-- Includes remakes: tworld (Chip's Challenge), Funtris (Tetris), Peaks (TriPeaks), Pyramid (Tut's Tomb), CWordZap (WordZap), Rodent2000 (Rodent's Revenge), QuickBlackjack (Dr. Black Jack), Pawn (Chess), JigSawedME (JigSawed), FourStones (Tic Tac Drop), EmPipe (Pipe Dream), bricks (Klotski), Tetravex (TetraVex), Runenlegen (Stones)
-- Note: some entries are Flash-based (JezzBall, Maxwell's Maniac, Fuji Golf) and won't work
+- File: `wep32.7z` (2.6 MB)
+- Extraction: archive ships with a deliberately-broken 7z magic byte (`37 78 ...` instead of `37 7a ...`) so it doesn't auto-extract — the uploader intends you to drag it onto their bundled `un7z.exe`. To extract with standard 7z, patch byte 1 back to `0x7a`:
+  ```bash
+  printf '\x7a' | dd of=wep32.7z bs=1 seek=1 count=1 conv=notrunc
+  7z x wep32.7z
+  ```
+- Remakes copied into `wep32-community/`: bricks (Klotski), EMPIPE (Pipe Dream), Funtris/Peaks/Pyramid/FourStones (Funpack: Tetris/TriPeaks/Tut's Tomb/Tic Tac Drop), JigSawedME, Pawn (Chess), QuickBlackjack, Rodent2000, Runenlegen (Stones), Tetravex, tworld (Chip's Challenge, needs SDL), Winarc (Pegs/Krypto/LifeGen bundle), CWordZap
+- Flash-based games in the archive (JezzBall, Maxwell's Maniac, Fuji Golf) are skipped — they need Flash Player, not a PE runtime.
+
+## Plus! 98
+
+**`plus98/`** — Microsoft Plus! 98 add-on pack for Win98.
+Source: `https://archive.org/details/MicrosoftPlusforWindows98`
+File: `PLUS98.ISO` (298 MB). Everything ships inside `plus98/PLUS98.CAB` — extract with `cabextract -F "MARBLES.*" -F "SPIDER.*" PLUS98.CAB` (no JezzBall — that was Plus! 95, not 98).
+
+| Binary | Game | Notes |
+|--------|------|-------|
+| SPIDER.EXE | Spider Solitaire | Pure Win32 + ole32. Viable. |
+| MARBLES.EXE | Lose Your Marbles | Needs DDRAW/DINPUT/DSOUND — won't run until DirectX support lands. |
+
+**`screensavers/`** — Plus! 98 screensavers (.SCR = PE executables). Extracted from same `PLUS98.CAB`.
+
+| Binary | Screensaver | DLL deps |
+|--------|-------------|----------|
+| CATHY.SCR | Cathy (comic strip) | KERNEL32, USER32, GDI32, ADVAPI32 |
+| CITYSCAP.SCR | Cityscape | + COMCTL32, threads |
+| CORBIS.SCR | Corbis Photography | MFC42 |
+| DOONBURY.SCR | Doonesbury (comic strip) | KERNEL32, USER32, GDI32, ADVAPI32 |
+| FASHION.SCR | Fashion | MFC42 |
+| FOXTROT.SCR | FoxTrot (comic strip) | KERNEL32, USER32, GDI32, ADVAPI32 |
+| GA_SAVER.SCR | Garfield | + WINMM |
+| HORROR.SCR | Horror Channel | MFC42 |
+| PEANUTS.SCR | Peanuts (comic strip) | KERNEL32, USER32, GDI32, ADVAPI32 |
+| PHODISC.SCR | Photo Discovery | KERNEL32, USER32, GDI32, ADVAPI32 |
+| WIN98.SCR | Windows 98 | MFC42 |
+| WOTRAVEL.SCR | World Traveler | MFC42 |
+| ARCHITEC.SCR | Architecture | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| FALLINGL.SCR | Falling Leaves | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| GEOMETRY.SCR | Geometry | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| JAZZ.SCR | Jazz | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| OASAVER.SCR | Online Art Saver | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| ROCKROLL.SCR | Rock & Roll | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+| SCIFI.SCR | Sci-Fi | DDRAW, OLEAUT32, VERSION, WINMM, COMCTL32 |
+
+Plus! 98 also ships MFC42.DLL (954 KB, 1998-05-01) and MSVCRT.DLL (280 KB) inside the CAB. EDISK.SCR and PB.SCR are text config files, not PE binaries — skipped.
+
+Same abandonware posture as the rest of `test/binaries/` — not officially redistributable but widely mirrored; consistent with the existing pinball-plus95 precedent.
 
 ## Win98 Apps
 
