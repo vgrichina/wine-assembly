@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const BERRRY_KEY = process.env.BERRRY_KEY;
 if (!BERRRY_KEY) { console.error('Missing BERRRY_KEY env var (try: set -a; . .env.berrry; set +a)'); process.exit(1); }
@@ -130,8 +131,28 @@ function loadExplicitFiles(relList) {
   return files;
 }
 
+function fileSha256(file) {
+  // Hash the raw bytes that berrry stores. For text files we kept the
+  // utf-8 string in `content`; for binaries it's already base64 of the
+  // raw bytes. Berrry hashes raw bytes, so reverse base64 first.
+  const raw = file.encoding === 'base64'
+    ? Buffer.from(file.content, 'base64')
+    : Buffer.from(file.content, 'utf-8');
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+async function fetchServerManifest() {
+  const r = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/files');
+  if (!r.ok) { console.error('Failed to fetch manifest:', r.status); return null; }
+  const j = await r.json();
+  const map = new Map();
+  for (const f of j.files || []) map.set(f.name, f.hash);
+  return map;
+}
+
 async function deploy() {
   const isUpdate = process.argv.includes('--update');
+  const isDiff = process.argv.includes('--diff');
   const filesArg = process.argv.find(a => a.startsWith('--files='));
 
   let textFiles, binFiles;
@@ -159,7 +180,30 @@ async function deploy() {
     console.log('Total binaries: ' + (binBytes / 1024).toFixed(0) + 'KB, ' + binFiles.length + ' files\n');
   }
 
-  const allFiles = [...textFiles, ...binFiles];
+  let allFiles = [...textFiles, ...binFiles];
+
+  if (isDiff) {
+    console.log('\nFetching server manifest...');
+    const server = await fetchServerManifest();
+    if (!server) { console.error('Cannot diff without server manifest'); return; }
+    console.log('Server has ' + server.size + ' files');
+    const before = allFiles.length;
+    const skipped = [];
+    allFiles = allFiles.filter(f => {
+      const want = fileSha256(f);
+      const have = server.get(f.name);
+      if (have === want) { skipped.push(f.name); return false; }
+      return true;
+    });
+    console.log('Skipping ' + skipped.length + ' unchanged files');
+    console.log('Uploading ' + allFiles.length + ' of ' + before + ' files:');
+    for (const f of allFiles) {
+      const sz = f.encoding === 'base64' ? f.content.length * 3 / 4 : f.content.length;
+      console.log('  ' + f.name + ' (' + (sz / 1024).toFixed(1) + 'KB)');
+    }
+    if (allFiles.length === 0) { console.log('\nNothing to upload.'); return; }
+  }
+
   console.log('Total files: ' + allFiles.length);
 
   const BATCH_LIMIT = 900 * 1024; // stay under berrry.app body limit
