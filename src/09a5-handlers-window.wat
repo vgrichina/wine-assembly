@@ -489,21 +489,31 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 0: send WM_ACTIVATE first (game needs activation before paint)
+    ;; Phase 0: send WM_ACTIVATEAPP (DirectDraw games gate on this to set bActive flag)
     (if (i32.eqz (global.get $msg_phase))
     (then
     (global.set $msg_phase (i32.const 1))
+    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x001C)) ;; WM_ACTIVATEAPP
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))      ;; TRUE (activating)
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))     ;; lParam = thread ID
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Phase 1: send WM_ACTIVATE (game needs activation before paint)
+    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    (then
+    (global.set $msg_phase (i32.const 2))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0006)) ;; WM_ACTIVATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))      ;; WA_ACTIVE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $main_hwnd)) ;; lParam (non-zero)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 1: send WM_SETFOCUS (pinball gates its game-running flag on this;
+    ;; Phase 2: send WM_SETFOCUS (pinball gates its game-running flag on this;
     ;; without it the game sits in a modal GetMessage loop and never animates)
-    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    (if (i32.eq (global.get $msg_phase) (i32.const 2))
     (then
-    (global.set $msg_phase (i32.const 2))
+    (global.set $msg_phase (i32.const 3))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0007)) ;; WM_SETFOCUS
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; hwndLoseFocus
@@ -511,20 +521,20 @@
     ;; (Pinball flag poke moved to PeekMessageA handler below)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 2: send WM_ERASEBKGND (wParam = hdc)
-    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    ;; Phase 3: send WM_ERASEBKGND (wParam = hdc)
+    (if (i32.eq (global.get $msg_phase) (i32.const 3))
     (then
-    (global.set $msg_phase (i32.const 3))
+    (global.set $msg_phase (i32.const 4))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000))) ;; wParam = hdc
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 3: send WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 3))
+    ;; Phase 4: send WM_PAINT
+    (if (i32.eq (global.get $msg_phase) (i32.const 4))
     (then
-    (global.set $msg_phase (i32.const 4))
+    (global.set $msg_phase (i32.const 5))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
@@ -634,30 +644,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; Phase-based initial message delivery (same as GetMessageA)
     ;; Only deliver if main window exists
-    ;; Phase 0: WM_ACTIVATE
+    ;; Phase 0: WM_ACTIVATEAPP
     (if (i32.and (i32.eqz (global.get $msg_phase)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
     (then
     (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 1))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x001C)) ;; WM_ACTIVATEAPP
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 1))      ;; TRUE
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Phase 1: WM_ACTIVATE
+    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 2))))
     (call $gs32 (local.get $arg0) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0006)) ;; WM_ACTIVATE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 1))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (global.get $main_hwnd))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Phase 1: WM_ERASEBKGND
-    (if (i32.eq (global.get $msg_phase) (i32.const 1))
+    ;; Phase 2: WM_ERASEBKGND
+    (if (i32.eq (global.get $msg_phase) (i32.const 2))
     (then
-    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 2))))
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 3))))
     (call $gs32 (local.get $arg0) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000)))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Phase 2: WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 2))
+    ;; Phase 3: WM_PAINT
+    (if (i32.eq (global.get $msg_phase) (i32.const 3))
     (then
-    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 3))))
+    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 4))))
     (call $gs32 (local.get $arg0) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))

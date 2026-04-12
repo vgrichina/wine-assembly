@@ -476,9 +476,13 @@
 
   ;; 25: Sleep — STUB: unimplemented
   (func $handle_Sleep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Sleep(dwMilliseconds) — 1 arg stdcall. No-op in single-threaded emulation.
+    ;; Sleep(dwMilliseconds) — 1 arg stdcall.
+    ;; Set yield_flag so the run loop halts after the current block completes,
+    ;; giving other threads a chance to run (important for producer/consumer
+    ;; spin-wait patterns like out_wave.dll ring buffer).
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $yield_flag (i32.const 1))
   )
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE

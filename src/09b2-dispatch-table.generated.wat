@@ -7,6 +7,142 @@
 
     ;; === O(1) br_table dispatch ===
     (block $fallback
+    (block $api_1108
+    (block $api_1107
+    (block $api_1106
+    (block $api_1105
+    (block $api_1104
+    (block $api_1103
+    (block $api_1102
+    (block $api_1101
+    (block $api_1100
+    (block $api_1099
+    (block $api_1098
+    (block $api_1097
+    (block $api_1096
+    (block $api_1095
+    (block $api_1094
+    (block $api_1093
+    (block $api_1092
+    (block $api_1091
+    (block $api_1090
+    (block $api_1089
+    (block $api_1088
+    (block $api_1087
+    (block $api_1086
+    (block $api_1085
+    (block $api_1084
+    (block $api_1083
+    (block $api_1082
+    (block $api_1081
+    (block $api_1080
+    (block $api_1079
+    (block $api_1078
+    (block $api_1077
+    (block $api_1076
+    (block $api_1075
+    (block $api_1074
+    (block $api_1073
+    (block $api_1072
+    (block $api_1071
+    (block $api_1070
+    (block $api_1069
+    (block $api_1068
+    (block $api_1067
+    (block $api_1066
+    (block $api_1065
+    (block $api_1064
+    (block $api_1063
+    (block $api_1062
+    (block $api_1061
+    (block $api_1060
+    (block $api_1059
+    (block $api_1058
+    (block $api_1057
+    (block $api_1056
+    (block $api_1055
+    (block $api_1054
+    (block $api_1053
+    (block $api_1052
+    (block $api_1051
+    (block $api_1050
+    (block $api_1049
+    (block $api_1048
+    (block $api_1047
+    (block $api_1046
+    (block $api_1045
+    (block $api_1044
+    (block $api_1043
+    (block $api_1042
+    (block $api_1041
+    (block $api_1040
+    (block $api_1039
+    (block $api_1038
+    (block $api_1037
+    (block $api_1036
+    (block $api_1035
+    (block $api_1034
+    (block $api_1033
+    (block $api_1032
+    (block $api_1031
+    (block $api_1030
+    (block $api_1029
+    (block $api_1028
+    (block $api_1027
+    (block $api_1026
+    (block $api_1025
+    (block $api_1024
+    (block $api_1023
+    (block $api_1022
+    (block $api_1021
+    (block $api_1020
+    (block $api_1019
+    (block $api_1018
+    (block $api_1017
+    (block $api_1016
+    (block $api_1015
+    (block $api_1014
+    (block $api_1013
+    (block $api_1012
+    (block $api_1011
+    (block $api_1010
+    (block $api_1009
+    (block $api_1008
+    (block $api_1007
+    (block $api_1006
+    (block $api_1005
+    (block $api_1004
+    (block $api_1003
+    (block $api_1002
+    (block $api_1001
+    (block $api_1000
+    (block $api_999
+    (block $api_998
+    (block $api_997
+    (block $api_996
+    (block $api_995
+    (block $api_994
+    (block $api_993
+    (block $api_992
+    (block $api_991
+    (block $api_990
+    (block $api_989
+    (block $api_988
+    (block $api_987
+    (block $api_986
+    (block $api_985
+    (block $api_984
+    (block $api_983
+    (block $api_982
+    (block $api_981
+    (block $api_980
+    (block $api_979
+    (block $api_978
+    (block $api_977
+    (block $api_976
+    (block $api_975
+    (block $api_974
+    (block $api_973
     (block $api_972
     (block $api_971
     (block $api_970
@@ -980,7 +1116,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $api_973 $api_974 $api_975 $api_976 $api_977 $api_978 $api_979 $api_980 $api_981 $api_982 $api_983 $api_984 $api_985 $api_986 $api_987 $api_988 $api_989 $api_990 $api_991 $api_992 $api_993 $api_994 $api_995 $api_996 $api_997 $api_998 $api_999 $api_1000 $api_1001 $api_1002 $api_1003 $api_1004 $api_1005 $api_1006 $api_1007 $api_1008 $api_1009 $api_1010 $api_1011 $api_1012 $api_1013 $api_1014 $api_1015 $api_1016 $api_1017 $api_1018 $api_1019 $api_1020 $api_1021 $api_1022 $api_1023 $api_1024 $api_1025 $api_1026 $api_1027 $api_1028 $api_1029 $api_1030 $api_1031 $api_1032 $api_1033 $api_1034 $api_1035 $api_1036 $api_1037 $api_1038 $api_1039 $api_1040 $api_1041 $api_1042 $api_1043 $api_1044 $api_1045 $api_1046 $api_1047 $api_1048 $api_1049 $api_1050 $api_1051 $api_1052 $api_1053 $api_1054 $api_1055 $api_1056 $api_1057 $api_1058 $api_1059 $api_1060 $api_1061 $api_1062 $api_1063 $api_1064 $api_1065 $api_1066 $api_1067 $api_1068 $api_1069 $api_1070 $api_1071 $api_1072 $api_1073 $api_1074 $api_1075 $api_1076 $api_1077 $api_1078 $api_1079 $api_1080 $api_1081 $api_1082 $api_1083 $api_1084 $api_1085 $api_1086 $api_1087 $api_1088 $api_1089 $api_1090 $api_1091 $api_1092 $api_1093 $api_1094 $api_1095 $api_1096 $api_1097 $api_1098 $api_1099 $api_1100 $api_1101 $api_1102 $api_1103 $api_1104 $api_1105 $api_1106 $api_1107 $api_1108 $fallback (local.get $api_id))
     ) ;; 0: ??1type_info@@UAE@XZ
       (call $handle_??1type_info@@UAE@XZ (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -3899,6 +4035,414 @@
       (return)
     ) ;; 972: GdiFlush
       (call $handle_GdiFlush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 973: DirectDrawCreate
+      (call $handle_DirectDrawCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 974: DirectSoundCreate
+      (call $handle_DirectSoundCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 975: DirectInputCreateA
+      (call $handle_DirectInputCreateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 976: IDirectDraw_QueryInterface
+      (call $handle_IDirectDraw_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 977: IDirectDraw_AddRef
+      (call $handle_IDirectDraw_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 978: IDirectDraw_Release
+      (call $handle_IDirectDraw_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 979: IDirectDraw_Compact
+      (call $handle_IDirectDraw_Compact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 980: IDirectDraw_CreateClipper
+      (call $handle_IDirectDraw_CreateClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 981: IDirectDraw_CreatePalette
+      (call $handle_IDirectDraw_CreatePalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 982: IDirectDraw_CreateSurface
+      (call $handle_IDirectDraw_CreateSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 983: IDirectDraw_DuplicateSurface
+      (call $handle_IDirectDraw_DuplicateSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 984: IDirectDraw_EnumDisplayModes
+      (call $handle_IDirectDraw_EnumDisplayModes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 985: IDirectDraw_EnumSurfaces
+      (call $handle_IDirectDraw_EnumSurfaces (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 986: IDirectDraw_FlipToGDISurface
+      (call $handle_IDirectDraw_FlipToGDISurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 987: IDirectDraw_GetCaps
+      (call $handle_IDirectDraw_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 988: IDirectDraw_GetDisplayMode
+      (call $handle_IDirectDraw_GetDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 989: IDirectDraw_GetFourCCCodes
+      (call $handle_IDirectDraw_GetFourCCCodes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 990: IDirectDraw_GetGDISurface
+      (call $handle_IDirectDraw_GetGDISurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 991: IDirectDraw_GetMonitorFrequency
+      (call $handle_IDirectDraw_GetMonitorFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 992: IDirectDraw_GetScanLine
+      (call $handle_IDirectDraw_GetScanLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 993: IDirectDraw_GetVerticalBlankStatus
+      (call $handle_IDirectDraw_GetVerticalBlankStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 994: IDirectDraw_Initialize
+      (call $handle_IDirectDraw_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 995: IDirectDraw_RestoreDisplayMode
+      (call $handle_IDirectDraw_RestoreDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 996: IDirectDraw_SetCooperativeLevel
+      (call $handle_IDirectDraw_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 997: IDirectDraw_SetDisplayMode
+      (call $handle_IDirectDraw_SetDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 998: IDirectDraw_WaitForVerticalBlank
+      (call $handle_IDirectDraw_WaitForVerticalBlank (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 999: IDirectDrawSurface_QueryInterface
+      (call $handle_IDirectDrawSurface_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1000: IDirectDrawSurface_AddRef
+      (call $handle_IDirectDrawSurface_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1001: IDirectDrawSurface_Release
+      (call $handle_IDirectDrawSurface_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1002: IDirectDrawSurface_AddAttachedSurface
+      (call $handle_IDirectDrawSurface_AddAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1003: IDirectDrawSurface_AddOverlayDirtyRect
+      (call $handle_IDirectDrawSurface_AddOverlayDirtyRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1004: IDirectDrawSurface_Blt
+      (call $handle_IDirectDrawSurface_Blt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1005: IDirectDrawSurface_BltBatch
+      (call $handle_IDirectDrawSurface_BltBatch (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1006: IDirectDrawSurface_BltFast
+      (call $handle_IDirectDrawSurface_BltFast (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1007: IDirectDrawSurface_DeleteAttachedSurface
+      (call $handle_IDirectDrawSurface_DeleteAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1008: IDirectDrawSurface_EnumAttachedSurfaces
+      (call $handle_IDirectDrawSurface_EnumAttachedSurfaces (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1009: IDirectDrawSurface_EnumOverlayZOrders
+      (call $handle_IDirectDrawSurface_EnumOverlayZOrders (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1010: IDirectDrawSurface_Flip
+      (call $handle_IDirectDrawSurface_Flip (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1011: IDirectDrawSurface_GetAttachedSurface
+      (call $handle_IDirectDrawSurface_GetAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1012: IDirectDrawSurface_GetBltStatus
+      (call $handle_IDirectDrawSurface_GetBltStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1013: IDirectDrawSurface_GetCaps
+      (call $handle_IDirectDrawSurface_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1014: IDirectDrawSurface_GetClipper
+      (call $handle_IDirectDrawSurface_GetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1015: IDirectDrawSurface_GetColorKey
+      (call $handle_IDirectDrawSurface_GetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1016: IDirectDrawSurface_GetDC
+      (call $handle_IDirectDrawSurface_GetDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1017: IDirectDrawSurface_GetFlipStatus
+      (call $handle_IDirectDrawSurface_GetFlipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1018: IDirectDrawSurface_GetOverlayPosition
+      (call $handle_IDirectDrawSurface_GetOverlayPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1019: IDirectDrawSurface_GetPalette
+      (call $handle_IDirectDrawSurface_GetPalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1020: IDirectDrawSurface_GetPixelFormat
+      (call $handle_IDirectDrawSurface_GetPixelFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1021: IDirectDrawSurface_GetSurfaceDesc
+      (call $handle_IDirectDrawSurface_GetSurfaceDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1022: IDirectDrawSurface_Initialize
+      (call $handle_IDirectDrawSurface_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1023: IDirectDrawSurface_IsLost
+      (call $handle_IDirectDrawSurface_IsLost (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1024: IDirectDrawSurface_Lock
+      (call $handle_IDirectDrawSurface_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1025: IDirectDrawSurface_ReleaseDC
+      (call $handle_IDirectDrawSurface_ReleaseDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1026: IDirectDrawSurface_Restore
+      (call $handle_IDirectDrawSurface_Restore (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1027: IDirectDrawSurface_SetClipper
+      (call $handle_IDirectDrawSurface_SetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1028: IDirectDrawSurface_SetColorKey
+      (call $handle_IDirectDrawSurface_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1029: IDirectDrawSurface_SetOverlayPosition
+      (call $handle_IDirectDrawSurface_SetOverlayPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1030: IDirectDrawSurface_SetPalette
+      (call $handle_IDirectDrawSurface_SetPalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1031: IDirectDrawSurface_Unlock
+      (call $handle_IDirectDrawSurface_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1032: IDirectDrawSurface_UpdateOverlay
+      (call $handle_IDirectDrawSurface_UpdateOverlay (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1033: IDirectDrawSurface_UpdateOverlayDisplay
+      (call $handle_IDirectDrawSurface_UpdateOverlayDisplay (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1034: IDirectDrawSurface_UpdateOverlayZOrder
+      (call $handle_IDirectDrawSurface_UpdateOverlayZOrder (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1035: IDirectDrawPalette_QueryInterface
+      (call $handle_IDirectDrawPalette_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1036: IDirectDrawPalette_AddRef
+      (call $handle_IDirectDrawPalette_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1037: IDirectDrawPalette_Release
+      (call $handle_IDirectDrawPalette_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1038: IDirectDrawPalette_GetCaps
+      (call $handle_IDirectDrawPalette_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1039: IDirectDrawPalette_GetEntries
+      (call $handle_IDirectDrawPalette_GetEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1040: IDirectDrawPalette_Initialize
+      (call $handle_IDirectDrawPalette_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1041: IDirectDrawPalette_SetEntries
+      (call $handle_IDirectDrawPalette_SetEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1042: IDirectSound_QueryInterface
+      (call $handle_IDirectSound_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1043: IDirectSound_AddRef
+      (call $handle_IDirectSound_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1044: IDirectSound_Release
+      (call $handle_IDirectSound_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1045: IDirectSound_CreateSoundBuffer
+      (call $handle_IDirectSound_CreateSoundBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1046: IDirectSound_GetCaps
+      (call $handle_IDirectSound_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1047: IDirectSound_DuplicateSoundBuffer
+      (call $handle_IDirectSound_DuplicateSoundBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1048: IDirectSound_SetCooperativeLevel
+      (call $handle_IDirectSound_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1049: IDirectSound_Compact
+      (call $handle_IDirectSound_Compact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1050: IDirectSound_GetSpeakerConfig
+      (call $handle_IDirectSound_GetSpeakerConfig (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1051: IDirectSound_SetSpeakerConfig
+      (call $handle_IDirectSound_SetSpeakerConfig (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1052: IDirectSound_Initialize
+      (call $handle_IDirectSound_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1053: IDirectSoundBuffer_QueryInterface
+      (call $handle_IDirectSoundBuffer_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1054: IDirectSoundBuffer_AddRef
+      (call $handle_IDirectSoundBuffer_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1055: IDirectSoundBuffer_Release
+      (call $handle_IDirectSoundBuffer_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1056: IDirectSoundBuffer_GetCaps
+      (call $handle_IDirectSoundBuffer_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1057: IDirectSoundBuffer_GetCurrentPosition
+      (call $handle_IDirectSoundBuffer_GetCurrentPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1058: IDirectSoundBuffer_GetFormat
+      (call $handle_IDirectSoundBuffer_GetFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1059: IDirectSoundBuffer_GetVolume
+      (call $handle_IDirectSoundBuffer_GetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1060: IDirectSoundBuffer_GetPan
+      (call $handle_IDirectSoundBuffer_GetPan (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1061: IDirectSoundBuffer_GetFrequency
+      (call $handle_IDirectSoundBuffer_GetFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1062: IDirectSoundBuffer_GetStatus
+      (call $handle_IDirectSoundBuffer_GetStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1063: IDirectSoundBuffer_Initialize
+      (call $handle_IDirectSoundBuffer_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1064: IDirectSoundBuffer_Lock
+      (call $handle_IDirectSoundBuffer_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1065: IDirectSoundBuffer_Play
+      (call $handle_IDirectSoundBuffer_Play (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1066: IDirectSoundBuffer_SetCurrentPosition
+      (call $handle_IDirectSoundBuffer_SetCurrentPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1067: IDirectSoundBuffer_SetFormat
+      (call $handle_IDirectSoundBuffer_SetFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1068: IDirectSoundBuffer_SetVolume
+      (call $handle_IDirectSoundBuffer_SetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1069: IDirectSoundBuffer_SetPan
+      (call $handle_IDirectSoundBuffer_SetPan (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1070: IDirectSoundBuffer_SetFrequency
+      (call $handle_IDirectSoundBuffer_SetFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1071: IDirectSoundBuffer_Stop
+      (call $handle_IDirectSoundBuffer_Stop (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1072: IDirectSoundBuffer_Unlock
+      (call $handle_IDirectSoundBuffer_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1073: IDirectSoundBuffer_Restore
+      (call $handle_IDirectSoundBuffer_Restore (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1074: IDirectInput_QueryInterface
+      (call $handle_IDirectInput_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1075: IDirectInput_AddRef
+      (call $handle_IDirectInput_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1076: IDirectInput_Release
+      (call $handle_IDirectInput_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1077: IDirectInput_CreateDevice
+      (call $handle_IDirectInput_CreateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1078: IDirectInput_EnumDevices
+      (call $handle_IDirectInput_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1079: IDirectInput_GetDeviceStatus
+      (call $handle_IDirectInput_GetDeviceStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1080: IDirectInput_RunControlPanel
+      (call $handle_IDirectInput_RunControlPanel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1081: IDirectInput_Initialize
+      (call $handle_IDirectInput_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1082: IDirectInputDevice_QueryInterface
+      (call $handle_IDirectInputDevice_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1083: IDirectInputDevice_AddRef
+      (call $handle_IDirectInputDevice_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1084: IDirectInputDevice_Release
+      (call $handle_IDirectInputDevice_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1085: IDirectInputDevice_GetCapabilities
+      (call $handle_IDirectInputDevice_GetCapabilities (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1086: IDirectInputDevice_EnumObjects
+      (call $handle_IDirectInputDevice_EnumObjects (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1087: IDirectInputDevice_GetProperty
+      (call $handle_IDirectInputDevice_GetProperty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1088: IDirectInputDevice_SetProperty
+      (call $handle_IDirectInputDevice_SetProperty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1089: IDirectInputDevice_Acquire
+      (call $handle_IDirectInputDevice_Acquire (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1090: IDirectInputDevice_Unacquire
+      (call $handle_IDirectInputDevice_Unacquire (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1091: IDirectInputDevice_GetDeviceState
+      (call $handle_IDirectInputDevice_GetDeviceState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1092: IDirectInputDevice_GetDeviceData
+      (call $handle_IDirectInputDevice_GetDeviceData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1093: IDirectInputDevice_SetDataFormat
+      (call $handle_IDirectInputDevice_SetDataFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1094: IDirectInputDevice_SetEventNotification
+      (call $handle_IDirectInputDevice_SetEventNotification (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1095: IDirectInputDevice_SetCooperativeLevel
+      (call $handle_IDirectInputDevice_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1096: IDirectInputDevice_GetObjectInfo
+      (call $handle_IDirectInputDevice_GetObjectInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1097: IDirectInputDevice_GetDeviceInfo
+      (call $handle_IDirectInputDevice_GetDeviceInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1098: IDirectInputDevice_RunControlPanel
+      (call $handle_IDirectInputDevice_RunControlPanel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1099: IDirectInputDevice_Initialize
+      (call $handle_IDirectInputDevice_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1100: EnumDisplayMonitors
+      (call $handle_EnumDisplayMonitors (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1101: midiOutGetNumDevs
+      (call $handle_midiOutGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1102: midiOutGetDevCapsA
+      (call $handle_midiOutGetDevCapsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1103: midiOutOpen
+      (call $handle_midiOutOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1104: midiOutClose
+      (call $handle_midiOutClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1105: midiOutShortMsg
+      (call $handle_midiOutShortMsg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1106: midiOutReset
+      (call $handle_midiOutReset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1107: joyGetPos
+      (call $handle_joyGetPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1108: joyGetNumDevs
+      (call $handle_joyGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (local.get $api_id))

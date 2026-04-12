@@ -6807,5 +6807,957 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 2313355333
+  },
+  {
+    "id": 973,
+    "name": "DirectDrawCreate",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3402690714
+  },
+  {
+    "id": 974,
+    "name": "DirectSoundCreate",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1507342867
+  },
+  {
+    "id": 975,
+    "name": "DirectInputCreateA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 261610895
+  },
+  {
+    "id": 976,
+    "name": "IDirectDraw_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 39384395
+  },
+  {
+    "id": 977,
+    "name": "IDirectDraw_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1374612392
+  },
+  {
+    "id": 978,
+    "name": "IDirectDraw_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 785119249
+  },
+  {
+    "id": 979,
+    "name": "IDirectDraw_Compact",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2423595841
+  },
+  {
+    "id": 980,
+    "name": "IDirectDraw_CreateClipper",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1038185517
+  },
+  {
+    "id": 981,
+    "name": "IDirectDraw_CreatePalette",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 822241959
+  },
+  {
+    "id": 982,
+    "name": "IDirectDraw_CreateSurface",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 866938883
+  },
+  {
+    "id": 983,
+    "name": "IDirectDraw_DuplicateSurface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 474366676
+  },
+  {
+    "id": 984,
+    "name": "IDirectDraw_EnumDisplayModes",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1075649895
+  },
+  {
+    "id": 985,
+    "name": "IDirectDraw_EnumSurfaces",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2604445545
+  },
+  {
+    "id": 986,
+    "name": "IDirectDraw_FlipToGDISurface",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3250168019
+  },
+  {
+    "id": 987,
+    "name": "IDirectDraw_GetCaps",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2983516937
+  },
+  {
+    "id": 988,
+    "name": "IDirectDraw_GetDisplayMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3913778685
+  },
+  {
+    "id": 989,
+    "name": "IDirectDraw_GetFourCCCodes",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 250758308
+  },
+  {
+    "id": 990,
+    "name": "IDirectDraw_GetGDISurface",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1614127893
+  },
+  {
+    "id": 991,
+    "name": "IDirectDraw_GetMonitorFrequency",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 623993648
+  },
+  {
+    "id": 992,
+    "name": "IDirectDraw_GetScanLine",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 500504715
+  },
+  {
+    "id": 993,
+    "name": "IDirectDraw_GetVerticalBlankStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2253975594
+  },
+  {
+    "id": 994,
+    "name": "IDirectDraw_Initialize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2071182098
+  },
+  {
+    "id": 995,
+    "name": "IDirectDraw_RestoreDisplayMode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4142656791
+  },
+  {
+    "id": 996,
+    "name": "IDirectDraw_SetCooperativeLevel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 79477203
+  },
+  {
+    "id": 997,
+    "name": "IDirectDraw_SetDisplayMode",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3276337121
+  },
+  {
+    "id": 998,
+    "name": "IDirectDraw_WaitForVerticalBlank",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4132124200
+  },
+  {
+    "id": 999,
+    "name": "IDirectDrawSurface_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1475583812
+  },
+  {
+    "id": 1000,
+    "name": "IDirectDrawSurface_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1847147359
+  },
+  {
+    "id": 1001,
+    "name": "IDirectDrawSurface_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3619384488
+  },
+  {
+    "id": 1002,
+    "name": "IDirectDrawSurface_AddAttachedSurface",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2053037557
+  },
+  {
+    "id": 1003,
+    "name": "IDirectDrawSurface_AddOverlayDirtyRect",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2834282676
+  },
+  {
+    "id": 1004,
+    "name": "IDirectDrawSurface_Blt",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 64297683
+  },
+  {
+    "id": 1005,
+    "name": "IDirectDrawSurface_BltBatch",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 620240549
+  },
+  {
+    "id": 1006,
+    "name": "IDirectDrawSurface_BltFast",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2053043517
+  },
+  {
+    "id": 1007,
+    "name": "IDirectDrawSurface_DeleteAttachedSurface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 841610255
+  },
+  {
+    "id": 1008,
+    "name": "IDirectDrawSurface_EnumAttachedSurfaces",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1022497870
+  },
+  {
+    "id": 1009,
+    "name": "IDirectDrawSurface_EnumOverlayZOrders",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1516010873
+  },
+  {
+    "id": 1010,
+    "name": "IDirectDrawSurface_Flip",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1062223080
+  },
+  {
+    "id": 1011,
+    "name": "IDirectDrawSurface_GetAttachedSurface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3395718076
+  },
+  {
+    "id": 1012,
+    "name": "IDirectDrawSurface_GetBltStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 482351207
+  },
+  {
+    "id": 1013,
+    "name": "IDirectDrawSurface_GetCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2752526344
+  },
+  {
+    "id": 1014,
+    "name": "IDirectDrawSurface_GetClipper",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3611163930
+  },
+  {
+    "id": 1015,
+    "name": "IDirectDrawSurface_GetColorKey",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2960176599
+  },
+  {
+    "id": 1016,
+    "name": "IDirectDrawSurface_GetDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 354948736
+  },
+  {
+    "id": 1017,
+    "name": "IDirectDrawSurface_GetFlipStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1565258040
+  },
+  {
+    "id": 1018,
+    "name": "IDirectDrawSurface_GetOverlayPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1681459584
+  },
+  {
+    "id": 1019,
+    "name": "IDirectDrawSurface_GetPalette",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3612628944
+  },
+  {
+    "id": 1020,
+    "name": "IDirectDrawSurface_GetPixelFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2975990000
+  },
+  {
+    "id": 1021,
+    "name": "IDirectDrawSurface_GetSurfaceDesc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3098962829
+  },
+  {
+    "id": 1022,
+    "name": "IDirectDrawSurface_Initialize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4028038385
+  },
+  {
+    "id": 1023,
+    "name": "IDirectDrawSurface_IsLost",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2187685925
+  },
+  {
+    "id": 1024,
+    "name": "IDirectDrawSurface_Lock",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1635396980
+  },
+  {
+    "id": 1025,
+    "name": "IDirectDrawSurface_ReleaseDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4070608453
+  },
+  {
+    "id": 1026,
+    "name": "IDirectDrawSurface_Restore",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3913160555
+  },
+  {
+    "id": 1027,
+    "name": "IDirectDrawSurface_SetClipper",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1144354758
+  },
+  {
+    "id": 1028,
+    "name": "IDirectDrawSurface_SetColorKey",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2986866843
+  },
+  {
+    "id": 1029,
+    "name": "IDirectDrawSurface_SetOverlayPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2179852380
+  },
+  {
+    "id": 1030,
+    "name": "IDirectDrawSurface_SetPalette",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2643200916
+  },
+  {
+    "id": 1031,
+    "name": "IDirectDrawSurface_Unlock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 417754339
+  },
+  {
+    "id": 1032,
+    "name": "IDirectDrawSurface_UpdateOverlay",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2584284858
+  },
+  {
+    "id": 1033,
+    "name": "IDirectDrawSurface_UpdateOverlayDisplay",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2324503200
+  },
+  {
+    "id": 1034,
+    "name": "IDirectDrawSurface_UpdateOverlayZOrder",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1495924376
+  },
+  {
+    "id": 1035,
+    "name": "IDirectDrawPalette_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4176426488
+  },
+  {
+    "id": 1036,
+    "name": "IDirectDrawPalette_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1191545803
+  },
+  {
+    "id": 1037,
+    "name": "IDirectDrawPalette_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2623907916
+  },
+  {
+    "id": 1038,
+    "name": "IDirectDrawPalette_GetCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1238758100
+  },
+  {
+    "id": 1039,
+    "name": "IDirectDrawPalette_GetEntries",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4177548199
+  },
+  {
+    "id": 1040,
+    "name": "IDirectDrawPalette_Initialize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1260760125
+  },
+  {
+    "id": 1041,
+    "name": "IDirectDrawPalette_SetEntries",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 684089963
+  },
+  {
+    "id": 1042,
+    "name": "IDirectSound_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2313970478
+  },
+  {
+    "id": 1043,
+    "name": "IDirectSound_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1246140317
+  },
+  {
+    "id": 1044,
+    "name": "IDirectSound_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2250429370
+  },
+  {
+    "id": 1045,
+    "name": "IDirectSound_CreateSoundBuffer",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 383371466
+  },
+  {
+    "id": 1046,
+    "name": "IDirectSound_GetCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1830614966
+  },
+  {
+    "id": 1047,
+    "name": "IDirectSound_DuplicateSoundBuffer",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2364461159
+  },
+  {
+    "id": 1048,
+    "name": "IDirectSound_SetCooperativeLevel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3708179216
+  },
+  {
+    "id": 1049,
+    "name": "IDirectSound_Compact",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 937501338
+  },
+  {
+    "id": 1050,
+    "name": "IDirectSound_GetSpeakerConfig",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1135759478
+  },
+  {
+    "id": 1051,
+    "name": "IDirectSound_SetSpeakerConfig",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3152031554
+  },
+  {
+    "id": 1052,
+    "name": "IDirectSound_Initialize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3010835119
+  },
+  {
+    "id": 1053,
+    "name": "IDirectSoundBuffer_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2023809556
+  },
+  {
+    "id": 1054,
+    "name": "IDirectSoundBuffer_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1419211727
+  },
+  {
+    "id": 1055,
+    "name": "IDirectSoundBuffer_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2054926744
+  },
+  {
+    "id": 1056,
+    "name": "IDirectSoundBuffer_GetCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 65939800
+  },
+  {
+    "id": 1057,
+    "name": "IDirectSoundBuffer_GetCurrentPosition",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 475683941
+  },
+  {
+    "id": 1058,
+    "name": "IDirectSoundBuffer_GetFormat",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2800775378
+  },
+  {
+    "id": 1059,
+    "name": "IDirectSoundBuffer_GetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 473126159
+  },
+  {
+    "id": 1060,
+    "name": "IDirectSoundBuffer_GetPan",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1521484140
+  },
+  {
+    "id": 1061,
+    "name": "IDirectSoundBuffer_GetFrequency",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1185454721
+  },
+  {
+    "id": 1062,
+    "name": "IDirectSoundBuffer_GetStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2812175215
+  },
+  {
+    "id": 1063,
+    "name": "IDirectSoundBuffer_Initialize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 541425729
+  },
+  {
+    "id": 1064,
+    "name": "IDirectSoundBuffer_Lock",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2172556996
+  },
+  {
+    "id": 1065,
+    "name": "IDirectSoundBuffer_Play",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 268836769
+  },
+  {
+    "id": 1066,
+    "name": "IDirectSoundBuffer_SetCurrentPosition",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3555969665
+  },
+  {
+    "id": 1067,
+    "name": "IDirectSoundBuffer_SetFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1668422934
+  },
+  {
+    "id": 1068,
+    "name": "IDirectSoundBuffer_SetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3798002483
+  },
+  {
+    "id": 1069,
+    "name": "IDirectSoundBuffer_SetPan",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4276547632
+  },
+  {
+    "id": 1070,
+    "name": "IDirectSoundBuffer_SetFrequency",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 515444405
+  },
+  {
+    "id": 1071,
+    "name": "IDirectSoundBuffer_Stop",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2982295587
+  },
+  {
+    "id": 1072,
+    "name": "IDirectSoundBuffer_Unlock",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3364804307
+  },
+  {
+    "id": 1073,
+    "name": "IDirectSoundBuffer_Restore",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4052608667
+  },
+  {
+    "id": 1074,
+    "name": "IDirectInput_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 797463219
+  },
+  {
+    "id": 1075,
+    "name": "IDirectInput_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3955393024
+  },
+  {
+    "id": 1076,
+    "name": "IDirectInput_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1111425289
+  },
+  {
+    "id": 1077,
+    "name": "IDirectInput_CreateDevice",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 385077386
+  },
+  {
+    "id": 1078,
+    "name": "IDirectInput_EnumDevices",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1536873060
+  },
+  {
+    "id": 1079,
+    "name": "IDirectInput_GetDeviceStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3029426916
+  },
+  {
+    "id": 1080,
+    "name": "IDirectInput_RunControlPanel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1662847176
+  },
+  {
+    "id": 1081,
+    "name": "IDirectInput_Initialize",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3944384218
+  },
+  {
+    "id": 1082,
+    "name": "IDirectInputDevice_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 141813093
+  },
+  {
+    "id": 1083,
+    "name": "IDirectInputDevice_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 373543406
+  },
+  {
+    "id": 1084,
+    "name": "IDirectInputDevice_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3117308099
+  },
+  {
+    "id": 1085,
+    "name": "IDirectInputDevice_GetCapabilities",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4251841920
+  },
+  {
+    "id": 1086,
+    "name": "IDirectInputDevice_EnumObjects",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 858065249
+  },
+  {
+    "id": 1087,
+    "name": "IDirectInputDevice_GetProperty",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3245407003
+  },
+  {
+    "id": 1088,
+    "name": "IDirectInputDevice_SetProperty",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 556537767
+  },
+  {
+    "id": 1089,
+    "name": "IDirectInputDevice_Acquire",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3467231074
+  },
+  {
+    "id": 1090,
+    "name": "IDirectInputDevice_Unacquire",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3784139879
+  },
+  {
+    "id": 1091,
+    "name": "IDirectInputDevice_GetDeviceState",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3907577573
+  },
+  {
+    "id": 1092,
+    "name": "IDirectInputDevice_GetDeviceData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1342496248
+  },
+  {
+    "id": 1093,
+    "name": "IDirectInputDevice_SetDataFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3017867873
+  },
+  {
+    "id": 1094,
+    "name": "IDirectInputDevice_SetEventNotification",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3400844933
+  },
+  {
+    "id": 1095,
+    "name": "IDirectInputDevice_SetCooperativeLevel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1374968401
+  },
+  {
+    "id": 1096,
+    "name": "IDirectInputDevice_GetObjectInfo",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1003756477
+  },
+  {
+    "id": 1097,
+    "name": "IDirectInputDevice_GetDeviceInfo",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1251821996
+  },
+  {
+    "id": 1098,
+    "name": "IDirectInputDevice_RunControlPanel",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2185949266
+  },
+  {
+    "id": 1099,
+    "name": "IDirectInputDevice_Initialize",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 441310616
+  },
+  {
+    "id": 1100,
+    "name": "EnumDisplayMonitors",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 433609817
+  },
+  {
+    "id": 1101,
+    "name": "midiOutGetNumDevs",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3492844264
+  },
+  {
+    "id": 1102,
+    "name": "midiOutGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1569256629
+  },
+  {
+    "id": 1103,
+    "name": "midiOutOpen",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4229614352
+  },
+  {
+    "id": 1104,
+    "name": "midiOutClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4107939196
+  },
+  {
+    "id": 1105,
+    "name": "midiOutShortMsg",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 705989535
+  },
+  {
+    "id": 1106,
+    "name": "midiOutReset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1261176759
+  },
+  {
+    "id": 1107,
+    "name": "joyGetPos",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4091436447
+  },
+  {
+    "id": 1108,
+    "name": "joyGetNumDevs",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 559761077
   }
 ]
