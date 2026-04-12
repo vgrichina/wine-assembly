@@ -37,9 +37,11 @@ Victory animation (Force Win menu command 1010) works — cascading cards via cd
 
 ### Not Yet Tested
 - Card movement animation (cdtAnimate — called during auto-move)
-- Help (WinHelpA)
-- About (ShellAboutA — routed through menu command 2000)
 - Scoring modes (standard, vegas, none, timed) — dialog controls work, runtime behavior untested
+
+### Tested — Working
+- Help (WinHelpA): help window opens with topic list, navigation works. Text has formatting artifacts from unhandled paragraph codes in HLP parser
+- About (ShellAboutA — menu command 2000): dialog renders with app name, version string, and OK button
 
 ## Drag Trail Bug (FIXED)
 
