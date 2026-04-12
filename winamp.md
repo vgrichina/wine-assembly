@@ -662,13 +662,26 @@ Instead of trying to find the correct threshold, we now extract `__active_heap` 
 
 - Play path now works: file opens, ID3 tags parsed, track info displayed ("DJ MIKE LLAMA")
 - No regressions: test-all-exes.js still passes 47 tests
-- Next blocker is waveOut callbacks for actual audio playback
+
+### Audio Pipeline Progress
+
+Added `waveOutSetVolume` and `waveOutGetVolume` handlers. The playback thread (T3) now progresses through:
+1. waveOutGetNumDevs → waveOutOpen (22050Hz 2ch 16bit) → waveOutRestart
+2. waveOutSetVolume → GlobalAlloc → InitializeCriticalSection
+3. CreateThread (spawns T4 decode thread) → SetEvent (signals decoder)
+
+Thread T4 (decode) calls GetCurrentThread, SetThreadPriority, Enter/LeaveCriticalSection, then loops on WaitForSingleObject. Thread T3 signals it via SetEvent repeatedly.
+
+No `waveOutWrite` calls yet — the decode thread may need to produce decoded PCM data first. The next step is likely implementing the inter-thread event signaling (SetEvent/WaitForSingleObject) so T4 can actually wake up and decode.
+
+The "stuck at EIP=0x113" detected after ~250 batches is a false positive — it's the Winamp wndproc actively processing WM_TIMER (timer id=0x27, 200ms interval). With batch-size=1 the app progresses normally through 50,000+ batches. The WM_TIMER handler has a large stack frame (5.5KB alloca) and reads multiple INI settings, so it takes many instructions per timer tick.
 
 ### Open Tasks (Priority Order)
 
 | # | Task | Files | Notes |
 |---|------|-------|-------|
-| 1 | **waveOut WOM_DONE callback** | `src/09a3-handlers-audio.wat`, `lib/host-imports.js` | out_wave.dll needs buffer-done callbacks to drive decode→play pipeline |
+| 1 | **Inter-thread event signaling** | `lib/thread-manager.js` | T3 calls SetEvent to wake T4, but T4's WaitForSingleObject may not be receiving the signal. Need to verify event delivery between threads. |
+| 2 | **waveOut WOM_DONE callback** | `src/09a3-handlers-audio.wat`, `lib/host-imports.js` | out_wave.dll needs buffer-done callbacks to drive decode→play pipeline |
 | 2 | **Fix cmdline path string loop** | `test/binaries/dlls/msvcrt.dll` (RVA 0x106f6) | `--args` path stuck in msvcrt string scan; alternative to IPC/dialog approach |
 | 3 | **Plugin DllMain** | `lib/dll-loader.js` | Skipped due to yield corruption during callDllMain; some plugins may need it |
 
