@@ -222,6 +222,17 @@
           <option value="rsrcmtr">Resource Meter</option>
           <option value="cleanmgr">Disk Cleanup</option>
         </optgroup>
+        <optgroup label="Community WEP Remakes">
+          <option value="funtris">Funtris (Tetris)</option>
+          <option value="peaks">Peaks (TriPeaks)</option>
+          <option value="pyramid">Pyramid (TutsTomb)</option>
+          <option value="fourstones">FourStones (TicTacDrop)</option>
+          <option value="cwordzap">CWordZap</option>
+          <option value="bricks">Bricks (Klotski)</option>
+        </optgroup>
+        <optgroup label="Plus! 98">
+          <option value="spider">Spider</option>
+        </optgroup>
         <optgroup label="Other">
           <option value="ski32">SkiFree</option>
           <option value="winmine">Minesweeper (XP)</option>
@@ -385,6 +396,13 @@ Resource-aware Win98 emulator
         'binaries/pinball-plus95/wavemix.inf', 'binaries/pinball-plus95/PINBALL.DAT', 'binaries/pinball-plus95/FONT.DAT',
         'binaries/pinball-plus95/table.bmp', 'binaries/pinball-plus95/PINBALL.MID', 'binaries/pinball-plus95/PINBALL2.MID',
       ] },
+      funtris:    { exe: 'binaries/wep32-community/Funpack/Funtris.exe',    dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
+      peaks:      { exe: 'binaries/wep32-community/Funpack/Peaks.exe',      dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
+      pyramid:    { exe: 'binaries/wep32-community/Funpack/Pyramid.exe',    dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
+      fourstones: { exe: 'binaries/wep32-community/Funpack/FourStones.exe', dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
+      cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
+      bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      dlls: ['binaries/wep32-community/Bricks/brk1.dll'] },
+      spider:     { exe: 'binaries/plus98/SPIDER.EXE',                      files: ['binaries/plus98/SPIDER.CHM', 'binaries/plus98/SPIDER.HLP'] },
     };
 
     function wireCanvasInput(canvas, renderer) {
