@@ -545,7 +545,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 33: HeapCreate — STUB: unimplemented
+  ;; 33: HeapCreate(flOptions, dwInitialSize, dwMaximumSize) — 3 args stdcall
   (func $handle_HeapCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x00140000))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -3313,6 +3313,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
+  ;; InterlockedCompareExchange(ptr, newVal, comparand) → original
+  ;; Atomic (single-threaded emu, so just sequential): if *ptr == comparand, *ptr = newVal.
+  (func $handle_InterlockedCompareExchange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $orig i32)
+    (local.set $orig (call $gl32 (local.get $arg0)))
+    (global.set $eax (local.get $orig))
+    (if (i32.eq (local.get $orig) (local.get $arg2))
+      (then (call $gs32 (local.get $arg0) (local.get $arg1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 343: IsBadReadPtr(lp, ucb) → BOOL
   ;; Validates read access to memory range. Returns 0 if valid, 1 if bad.
   ;; Check if address falls within our WASM memory range.
@@ -5990,40 +6001,122 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 623: SetScrollPos — STUB: unimplemented
+  ;; 623: SetScrollPos(hwnd, nBar, nPos, bRedraw) → old pos
   (func $handle_SetScrollPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $slot i32) (local $base i32) (local $old i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $old (i32.load (local.get $base)))
+        (i32.store (local.get $base) (local.get $arg2))
+        (global.set $eax (local.get $old)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 624: GetScrollPos — STUB: unimplemented
+  ;; 624: GetScrollPos(hwnd, nBar) → pos
   (func $handle_GetScrollPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $slot i32) (local $base i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (global.set $eax (i32.load (local.get $base))))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 625: SetScrollRange(hwnd, nBar, nMinPos, nMaxPos, bRedraw) → BOOL
   (func $handle_SetScrollRange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $base i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (i32.store offset=4 (local.get $base) (local.get $arg2))
+        (i32.store offset=8 (local.get $base) (local.get $arg3))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 626: GetScrollRange — STUB: unimplemented
+  ;; 626: GetScrollRange(hwnd, nBar, lpMinPos, lpMaxPos) → BOOL
   (func $handle_GetScrollRange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $slot i32) (local $base i32) (local $wmin i32) (local $wmax i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $wmin (i32.load offset=4 (local.get $base)))
+        (local.set $wmax (i32.load offset=8 (local.get $base)))))
+    (if (local.get $arg2)
+      (then (i32.store (call $g2w (local.get $arg2)) (local.get $wmin))))
+    (if (local.get $arg3)
+      (then (i32.store (call $g2w (local.get $arg3)) (local.get $wmax))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 627: ShowScrollBar — STUB: unimplemented
+  ;; 627: ShowScrollBar(hwnd, wBar, bShow) → BOOL
   (func $handle_ShowScrollBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 628: SetScrollInfo — STUB: unimplemented
+  ;; 628: SetScrollInfo(hwnd, nBar, lpsi, bRedraw) → pos
   (func $handle_SetScrollInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $slot i32) (local $base i32) (local $lpsi i32) (local $fMask i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (local.set $lpsi (call $g2w (local.get $arg2)))
+    (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        ;; SIF_RANGE = 0x01
+        (if (i32.and (local.get $fMask) (i32.const 1))
+          (then
+            (i32.store offset=4 (local.get $base) (i32.load offset=8 (local.get $lpsi)))
+            (i32.store offset=8 (local.get $base) (i32.load offset=12 (local.get $lpsi)))))
+        ;; SIF_POS = 0x04
+        (if (i32.and (local.get $fMask) (i32.const 4))
+          (then
+            (i32.store (local.get $base) (i32.load offset=20 (local.get $lpsi)))))
+        (global.set $eax (i32.load (local.get $base))))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 629: GetScrollInfo — STUB: unimplemented
+  ;; 629: GetScrollInfo(hwnd, nBar, lpsi) → BOOL
   (func $handle_GetScrollInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (local $slot i32) (local $base i32) (local $lpsi i32) (local $fMask i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (local.set $lpsi (call $g2w (local.get $arg2)))
+    (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $base (i32.add (global.get $SCROLL_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 24))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        ;; SIF_RANGE = 0x01
+        (if (i32.and (local.get $fMask) (i32.const 1))
+          (then
+            (i32.store offset=8 (local.get $lpsi) (i32.load offset=4 (local.get $base)))
+            (i32.store offset=12 (local.get $lpsi) (i32.load offset=8 (local.get $base)))))
+        ;; SIF_POS = 0x04
+        (if (i32.and (local.get $fMask) (i32.const 4))
+          (then
+            (i32.store offset=20 (local.get $lpsi) (i32.load (local.get $base)))))
+        ;; SIF_PAGE = 0x02 — not tracked, return 0
+        (if (i32.and (local.get $fMask) (i32.const 2))
+          (then
+            (i32.store offset=16 (local.get $lpsi) (i32.const 0))))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 630: ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect) — STUB: unimplemented
   (func $handle_ScrollWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6751,9 +6844,21 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 687: CreateMenu — STUB: unimplemented
+  ;; 687: CreateMenu() — allocate opaque HMENU. No backing state: AppendMenu/InsertMenu
+  ;; are already no-ops, menu bars render from PE RT_MENU resources, and DestroyMenu is
+  ;; a return-TRUE no-op. The handle just needs to be non-zero and distinguishable so
+  ;; downstream APIs that validate it won't trip.
   (func $handle_CreateMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (global.get $next_hmenu))
+    (global.set $next_hmenu (i32.add (global.get $next_hmenu) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; CreatePopupMenu() — same allocator as CreateMenu.
+  (func $handle_CreatePopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $next_hmenu))
+    (global.set $next_hmenu (i32.add (global.get $next_hmenu) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 688: WindowFromDC — STUB: unimplemented

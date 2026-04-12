@@ -368,7 +368,9 @@
   ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
   ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
   ;; 0x0000B160  8KB     WND_DLG_RECORDS (256 × 32 bytes — dialog header state per slot, ends 0xD160)
-  ;; 0x0000D160  20KB    Free (up to GUEST_BASE)
+  ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
+  ;; 0x0000D170  6KB     SCROLL_TABLE   (256 entries × 24 bytes, ends 0xE970)
+  ;; 0x0000E970  14KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -463,6 +465,15 @@
   ;;   +24  menu_key       template menu field: int id, or guest ptr to ASCII name (0 if none)
   ;;   +28  ctrl_count     number of controls (child hwnds = first_hwnd..first_hwnd+ctrl_count-1)
   (global $WND_DLG_RECORDS i32 (i32.const 0x0000B160))
+  ;; SCROLL_TABLE — per-window scroll bar state, parallel to WND_RECORDS slots.
+  ;; 256 entries × 24 bytes = 0x1800 (0xD170..0xE970)
+  ;;   +0   h_pos     SB_HORZ position
+  ;;   +4   h_min     SB_HORZ range min
+  ;;   +8   h_max     SB_HORZ range max
+  ;;   +12  v_pos     SB_VERT position
+  ;;   +16  v_min     SB_VERT range min
+  ;;   +20  v_max     SB_VERT range max
+  (global $SCROLL_TABLE i32 (i32.const 0x0000D170))
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
