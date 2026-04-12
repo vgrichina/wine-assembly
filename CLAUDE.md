@@ -104,7 +104,7 @@ Key regions:
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.py` — WAT parenthesis balance checker
 - `tools/build.sh` — Build script (concat + wat2wasm)
-- `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app; `--diff` fetches the server's sha256 manifest and only uploads files whose hash differs (use this for routine pushes); `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths.
+- `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app and by default fetches the server's sha256 manifest, then uploads only files whose hash differs (so a no-op redeploy ships zero files). `--full` forces a complete reupload. `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths and skips diffing. Note: by default `--update` *will* push uncommitted working-tree changes, since the diff is against the live server, not git.
 
 ## Test Binaries
 

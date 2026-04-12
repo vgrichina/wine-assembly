@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 // Deploy Wine-Assembly to berrry.app
-// Usage: node tools/deploy-berrry.js [--update]
+// Usage:
+//   node tools/deploy-berrry.js                  create app (first deploy only)
+//   node tools/deploy-berrry.js --update         update; only push files whose
+//                                                sha256 differs from server
+//   node tools/deploy-berrry.js --update --full  force-reupload everything
+//   node tools/deploy-berrry.js --update --files=a,b,c   push explicit list
 // Autodiscovers all deployable files — no hardcoded lists.
 
 const fs = require('fs');
@@ -152,8 +157,12 @@ async function fetchServerManifest() {
 
 async function deploy() {
   const isUpdate = process.argv.includes('--update');
-  const isDiff = process.argv.includes('--diff');
+  const isFull = process.argv.includes('--full');
   const filesArg = process.argv.find(a => a.startsWith('--files='));
+  // Default: --update implies sha256-diff against the server. Pass --full
+  // to force a complete reupload (rare; useful if the manifest is stale).
+  // --files= is always literal and skips diffing.
+  const useDiff = isUpdate && !isFull && !filesArg;
 
   let textFiles, binFiles;
   if (filesArg) {
@@ -182,7 +191,7 @@ async function deploy() {
 
   let allFiles = [...textFiles, ...binFiles];
 
-  if (isDiff) {
+  if (useDiff) {
     console.log('\nFetching server manifest...');
     const server = await fetchServerManifest();
     if (!server) { console.error('Cannot diff without server manifest'); return; }
