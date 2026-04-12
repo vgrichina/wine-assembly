@@ -165,16 +165,16 @@ class WineAssembly {
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
       const title = self.readString(titlePtr);
-      console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
+      if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
-      if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
+      if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId, self.instance, self.memory);
       return hwnd;
     };
     h.dialog_loaded = (hwnd, parentHwnd) => {
-      console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
-      self.logToUI(`[CreateDialog] hwnd=0x${hwnd.toString(16)}`);
-      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd);
+      if (self.verbose) console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
+      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd, self.instance, self.memory);
     };
+
     h.set_window_text = (hwnd, textPtr) => {
       const text = self.readString(textPtr);
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
@@ -283,8 +283,14 @@ class WineAssembly {
 
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
-    if (compileEl) compileEl.style.display = 'block';
+    let showTimeout = null;
+    if (compileEl) {
+      showTimeout = setTimeout(() => {
+        compileEl.style.display = 'block';
+      }, 100);
+    }
     const bytes = await compileWat(f => fetch('src/' + f + '?v=35').then(r => r.text()));
+    if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     const imports = this.getImports();
 
@@ -310,15 +316,6 @@ class WineAssembly {
 
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
-    }
-    // Hand the renderer the wasm instance + memory so $drawWatChildren can
-    // walk WND_RECORDS and read CONTROL_GEOM / ButtonState / EditState /
-    // StaticState for WAT-driven dialogs (find, about, ...). Without this
-    // the renderer falls through to the (now-empty) win.controls[] loop and
-    // the dialog body renders as a blank grey rectangle.
-    if (this.renderer) {
-      this.renderer.wasm = this.instance;
-      this.renderer.wasmMemory = this.memory;
     }
   }
 
