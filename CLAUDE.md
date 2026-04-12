@@ -56,12 +56,14 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 | `host-imports.js` | Shared WASM host imports (GDI, file I/O, registry, help system) |
 | `renderer.js` | Win98 canvas renderer (windows, controls, menus, dialogs, drawing) |
 | `renderer-input.js` | Renderer input handling (mouse, keyboard, menu interaction) |
-| `resources.js` | PE resource parser (menus, dialogs, strings, bitmaps, icons) |
+| `dib.js` | DIB → RGBA decoder (1/4/8/24/32 bpp + RLE4/RLE8); used by both guest BITMAP rendering and host icon extraction |
+| `resources-icon.js` | Browser-side PE walker that extracts the desktop icon from each app's exe at page load (RT_GROUP_ICON → RT_ICON → DIB → data URL) |
 | `dll-loader.js` | DLL loading, relocation, import patching |
 | `hlp-parser.js` | Windows HLP file parser (B+tree, Hall phrase decompression) |
 | `thread-manager.js` | Multi-thread support via separate WASM instances |
 | `storage.js` | localStorage-backed registry and INI file persistence |
 | `filesystem.js` | Virtual filesystem for file operations |
+| `compile-wat.js` | Browser-side WAT → WASM compiler (wraps wabt.js) |
 
 ## Memory Layout
 
@@ -102,6 +104,7 @@ Key regions:
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.py` — WAT parenthesis balance checker
 - `tools/build.sh` — Build script (concat + wat2wasm)
+- `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app; `--diff` fetches the server's sha256 manifest and only uploads files whose hash differs (use this for routine pushes); `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths.
 
 ## Test Binaries
 
