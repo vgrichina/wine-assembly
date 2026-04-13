@@ -81,8 +81,9 @@
     (i32.const 0)
   )
 
-  ;; $timer_check_due(msg_ptr) — scan timer table, fill MSG with first due timer, return 1 if found
-  (func $timer_check_due (param $msg_ptr i32) (result i32)
+  ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
+  ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
+  (func $timer_check_due (param $msg_ptr i32) (param $consume i32) (result i32)
     (local $i i32)
     (local $addr i32)
     (local $elapsed i32)
@@ -99,8 +100,9 @@
             (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
             (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))
               (then
-                ;; Timer is due — update last_tick and fill MSG
-                (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
+                ;; Timer is due — only update last_tick if consuming
+                (if (local.get $consume)
+                  (then (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))))
                 (call $gs32 (local.get $msg_ptr) (i32.load (local.get $addr)))                          ;; hwnd
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
@@ -166,6 +168,8 @@
   (func $handle_GetProcAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32) (local $dll_base i32) (local $resolved i32)
     (block $gpa
+    ;; Default return value: NULL (function not found)
+    (global.set $eax (i32.const 0))
     ;; If lpProcName is an ordinal (< 0x10000), return 0 (unsupported)
     (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
     ;; Check if hModule matches a loaded DLL — if so, resolve from its export table
@@ -483,6 +487,7 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (global.set $yield_flag (i32.const 1))
+    (global.set $sleep_yielded (i32.const 1))
   )
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
@@ -6606,8 +6611,8 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No paint — deliver WM_TIMER if any timer is due
-    (if (call $timer_check_due (local.get $msg_ptr))
+    ;; No paint — deliver WM_TIMER if any timer is due (consume=1)
+    (if (call $timer_check_due (local.get $msg_ptr) (i32.const 1))
     (then
     (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
@@ -7878,4 +7883,78 @@
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (call $create_color_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
+
+  ;; === VERSION.DLL APIs ===
+
+  ;; GetFileVersionInfoSizeA(lptstrFilename, lpdwHandle) → size or 0
+  ;; Finds RT_VERSION (16) resource ID 1 in the loaded PE and returns its size.
+  (func $handle_GetFileVersionInfoSizeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $size i32)
+    ;; If lpdwHandle is non-null, set *lpdwHandle = 0
+    (if (local.get $arg1)
+      (then (call $gs32 (call $g2w (local.get $arg1)) (i32.const 0))))
+    ;; Find RT_VERSION (16) resource with ID 1
+    (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
+    (if (local.get $entry)
+      (then
+        ;; entry points to data entry: +0=RVA, +4=size
+        (local.set $size (call $gl32 (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4))))))
+        (global.set $eax (local.get $size)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; GetFileVersionInfoA(lptstrFilename, dwHandle, dwLen, lpData) → BOOL
+  ;; Copies the RT_VERSION resource data into the caller's buffer.
+  (func $handle_GetFileVersionInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $rva i32) (local $size i32) (local $len i32)
+    ;; Find RT_VERSION (16) resource with ID 1
+    (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $rva (call $gl32 (call $g2w (i32.add (global.get $image_base) (local.get $entry)))))
+    (local.set $size (call $gl32 (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4))))))
+    ;; Copy min(dwLen, size) bytes from resource to lpData
+    (local.set $len (local.get $arg2))
+    (if (i32.gt_u (local.get $len) (local.get $size))
+      (then (local.set $len (local.get $size))))
+    (memory.copy
+      (call $g2w (local.get $arg3))
+      (call $g2w (i32.add (global.get $image_base) (local.get $rva)))
+      (local.get $len))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; VerQueryValueA(pBlock, lpSubBlock, lplpBuffer, puLen) → BOOL
+  ;; Only handles "\" (root query) — returns pointer to VS_FIXEDFILEINFO.
+  (func $handle_VerQueryValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $block_wa i32) (local $sub_wa i32)
+    (local.set $block_wa (call $g2w (local.get $arg0)))
+    (local.set $sub_wa (call $g2w (local.get $arg1)))
+    ;; Check if lpSubBlock == "\" and VS_FIXEDFILEINFO signature matches
+    ;; VS_FIXEDFILEINFO is at offset 0x28 in VS_VERSIONINFO
+    ;; (6 byte header + 32 byte UTF-16 key "VS_VERSION_INFO\0" + 2 byte padding)
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load8_u (local.get $sub_wa)) (i32.const 0x5c))
+            (i32.eqz (i32.load8_u (i32.add (local.get $sub_wa) (i32.const 1)))))
+          (i32.eq (i32.load (i32.add (local.get $block_wa) (i32.const 0x28)))
+                  (i32.const -17825603)))  ;; 0xFEEF04BD
+      (then
+        ;; Set *lplpBuffer = guest ptr to VS_FIXEDFILEINFO
+        (call $gs32 (call $g2w (local.get $arg2))
+          (i32.add (local.get $arg0) (i32.const 0x28)))
+        ;; Set *puLen = sizeof(VS_FIXEDFILEINFO) = 52
+        (call $gs32 (call $g2w (local.get $arg3)) (i32.const 52))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; For any other sub-block or if signature doesn't match, return FALSE
+    (if (local.get $arg3)
+      (then (call $gs32 (call $g2w (local.get $arg3)) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 

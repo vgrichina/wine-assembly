@@ -27,6 +27,8 @@
   (global $DX_VTBL_DSBUF      (mut i32) (i32.const 0))
   (global $DX_VTBL_DINPUT     (mut i32) (i32.const 0))
   (global $DX_VTBL_DIDEV      (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3D        (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3D3       (mut i32) (i32.const 0))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -164,11 +166,99 @@
     ;; IDirectInput: 8 methods starting at api_id 1074
     (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1074) (i32.const 8)))
     ;; IDirectInputDevice: 18 methods starting at api_id 1082
-    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1082) (i32.const 18))))
+    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1082) (i32.const 18)))
+    ;; IDirect3D: 9 methods starting at api_id 1114
+    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1114) (i32.const 9)))
+    ;; IDirect3D3: 10 methods starting at api_id 1123
+    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1123) (i32.const 10))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; CREATORS
   ;; ════════════════════════════════════════════════════════════
+
+  ;; DirectDrawEnumerateA(lpCallback, lpContext) → HRESULT
+  ;; Calls the callback once for the primary display driver, then returns DD_OK.
+  ;; Callback: BOOL WINAPI cb(GUID *lpGUID, LPSTR lpDesc, LPSTR lpName, LPVOID lpCtx)
+  (func $handle_DirectDrawEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    ;; Save the original return address (on stack before our args)
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Clean up stdcall args: 2 args + ret
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ;; Allocate strings for description and driver name
+    (local.set $desc (call $heap_alloc (i32.const 32)))
+    (local.set $name (call $heap_alloc (i32.const 16)))
+    ;; Write "Primary Display Driver\0"
+    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))  ;; "Prim"
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261)) ;; "ary "
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x70736944)) ;; "Disp"
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c)) ;; "lay "
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244)) ;; "Driv"
+    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265)) ;; "er"
+    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
+    ;; Write "display\0"
+    (i32.store (call $g2w (local.get $name)) (i32.const 0x70736964))  ;; "disp"
+    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 4))) (i32.const 0x0079616c)) ;; "lay\0"
+    ;; Save original return address first (highest on stack, popped by CACA0007 after callback ret)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push callback args (right-to-left): lpContext, lpName, lpDesc, lpGUID(=NULL)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))  ;; lpContext
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))  ;; lpDriverName
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))  ;; lpDriverDescription
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))  ;; lpGUID = NULL (primary)
+    ;; Push continuation thunk as return address (lowest on stack = callback's return addr)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    ;; Jump to callback
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0)))
+
+  ;; DirectDrawEnumerateExA(lpCallback, lpContext, dwFlags) → HRESULT
+  ;; Callback: BOOL WINAPI cb(GUID *lpGUID, LPSTR lpDesc, LPSTR lpName, LPVOID lpCtx, HMONITOR hm)
+  (func $handle_DirectDrawEnumerateExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Clean up stdcall args: 3 args + ret
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ;; Allocate strings for description and driver name
+    (local.set $desc (call $heap_alloc (i32.const 32)))
+    (local.set $name (call $heap_alloc (i32.const 16)))
+    ;; Write "Primary Display Driver\0"
+    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261))
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x70736944))
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c))
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244))
+    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265))
+    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
+    ;; Write "display\0"
+    (i32.store (call $g2w (local.get $name)) (i32.const 0x70736964))
+    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 4))) (i32.const 0x0079616c))
+    ;; Save original return address first (highest on stack, popped by CACA0007 after callback ret)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push callback args (right-to-left): hMonitor, lpContext, lpName, lpDesc, lpGUID(=NULL)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))  ;; hMonitor = NULL
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))  ;; lpContext
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))  ;; lpDriverName
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))  ;; lpDriverDescription
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))  ;; lpGUID = NULL (primary)
+    ;; Push continuation thunk as return address (lowest on stack = callback's return addr)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    ;; Jump to callback
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0)))
 
   ;; DirectDrawCreate(lpGUID, lplpDD, pUnkOuter) → HRESULT
   (func $handle_DirectDrawCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -218,13 +308,44 @@
   ;; Stack layout: [ESP]=ret, [ESP+4]=this, [ESP+8]=arg1, ...
   ;; The dispatch already loaded 5 args from ESP+4..ESP+24.
 
-  ;; QueryInterface(this, riid, ppvObj) — return E_NOINTERFACE for now
+  ;; QueryInterface(this, riid, ppvObj)
+  ;; Accept DDraw and D3D family interfaces with proper vtables
   (func $handle_IDirectDraw_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; For IDirectDraw2 QI: just return same object (MARBLES may QI for IDD2)
-    ;; Write *ppvObj = this
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    (global.set $eax (i32.const 0)) ;; S_OK
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; 3 args
+    (local $iid_dword i32) (local $obj i32)
+    (local.set $iid_dword (call $gl32 (local.get $arg1)))
+    ;; DDraw family: IUnknown, IDirectDraw, IDirectDraw2, IDirectDraw4, IDirectDraw7
+    (if (i32.or (i32.or
+          (i32.eqz (local.get $iid_dword))
+          (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
+        (i32.or (i32.or
+          (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
+          (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A)))
+          (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $arg0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; IDirect3D {3BBA0080-...}
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
+      (then
+        (local.set $obj (call $dx_create_com_obj (i32.const 8) (global.get $DX_VTBL_D3D)))
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; IDirect3D2 {6AAE1EC1-...} or IDirect3D3 {6AAE1EC1-...} — both use D3D3 vtable
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
+      (then
+        (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D3)))
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Unsupported interface — *ppvObj = NULL, return E_NOINTERFACE
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0x80004002))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectDraw_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32)
@@ -314,7 +435,12 @@
         (local.set $h (i32.load (i32.add (local.get $ddsd_wa) (i32.const 8))))
         (if (i32.eqz (local.get $w)) (then (local.set $w (global.get $dx_display_w))))
         (if (i32.eqz (local.get $h)) (then (local.set $h (global.get $dx_display_h))))
-        (local.set $bpp (global.get $dx_display_bpp))
+        ;; Use pixel format bpp from DDSURFACEDESC if DDSD_PIXELFORMAT (0x1000) is set
+        (if (i32.and (i32.load (i32.add (local.get $ddsd_wa) (i32.const 4))) (i32.const 0x1000))
+          (then
+            (local.set $bpp (i32.load (i32.add (local.get $ddsd_wa) (i32.const 84)))))
+          (else
+            (local.set $bpp (global.get $dx_display_bpp))))
         (local.set $flags (i32.const 4)))) ;; flag=offscreen
     ;; Compute pitch (bytes per row, DWORD-aligned)
     (local.set $pitch (i32.and
@@ -504,7 +630,9 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; SetDisplayMode(this, dwWidth, dwHeight, dwBPP)
+  ;; SetDisplayMode(this, dwWidth, dwHeight, dwBPP, [dwRefreshRate, dwFlags])
+  ;; IDirectDraw has 4 args (this+3), IDirectDraw2+ has 6 args (this+5).
+  ;; QI returns same object for both, so always pop 6 args (IDirectDraw2 style).
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
@@ -515,7 +643,7 @@
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 1))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; this + 3 args
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; this + 5 args (IDirectDraw2)
 
   ;; WaitForVerticalBlank — no-op
   (func $handle_IDirectDraw_WaitForVerticalBlank (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -834,9 +962,18 @@
         (global.set $eax (i32.const 0x887601FF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; GetDC — stub (would need a full DC wrapping the DIB)
+  ;; GetDC(this, lphDC) — return a synthetic HDC for GDI operations on the surface
+  ;; HDC = 0x200000 + slot_index (unique range, doesn't conflict with hwnd-based DCs)
   (func $handle_IDirectDrawSurface_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
+    (local $entry i32) (local $slot i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $slot (i32.div_u
+      (i32.sub (local.get $entry) (global.get $DX_OBJECTS))
+      (i32.const 32)))
+    ;; Write *lphDC = 0x200000 + slot
+    (call $gs32 (local.get $arg1) (i32.add (i32.const 0x200000) (local.get $slot)))
+    (global.set $eax (i32.const 0)) ;; DD_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetFlipStatus — always DD_OK
   (func $handle_IDirectDrawSurface_GetFlipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -877,13 +1014,19 @@
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.load16_u (i32.add (local.get $entry) (i32.const 14))))
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
-    ;; Pixel format
+    ;; Pixel format — set masks based on surface bpp
     (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 32))
     (i32.store (i32.add (local.get $wa) (i32.const 76)) (i32.const 0x40))
     (i32.store (i32.add (local.get $wa) (i32.const 84)) (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
-    (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
-    (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
-    (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))
+    (if (i32.eq (i32.load16_u (i32.add (local.get $entry) (i32.const 16))) (i32.const 32))
+      (then
+        (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0x00FF0000))
+        (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x0000FF00))
+        (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x000000FF)))
+      (else
+        (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
+        (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
+        (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))))
     ;; Caps
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x200)))
@@ -918,13 +1061,19 @@
       (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 20))) (global.get $GUEST_BASE))
       (global.get $image_base)))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
-    ;; Pixel format
-    (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 32))
-    (i32.store (i32.add (local.get $wa) (i32.const 76)) (i32.const 0x40))
-    (i32.store (i32.add (local.get $wa) (i32.const 84)) (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
-    (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
-    (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
-    (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))
+    ;; Pixel format — set masks based on surface bpp
+    (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 32)) ;; ddpfPixelFormat.dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 76)) (i32.const 0x40)) ;; DDPF_RGB
+    (i32.store (i32.add (local.get $wa) (i32.const 84)) (i32.load16_u (i32.add (local.get $entry) (i32.const 16)))) ;; dwRGBBitCount
+    (if (i32.eq (i32.load16_u (i32.add (local.get $entry) (i32.const 16))) (i32.const 32))
+      (then
+        (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0x00FF0000)) ;; R
+        (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x0000FF00)) ;; G
+        (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x000000FF))) ;; B
+      (else
+        (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800)) ;; R 5-6-5
+        (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0)) ;; G
+        (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F)))) ;; B
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))) ;; 5 args
 
@@ -1645,4 +1794,119 @@
   ;; Initialize — no-op
   (func $handle_IDirectInputDevice_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; Direct3DRMCreate(lplpD3DRM) → HRESULT — 1 arg stdcall
+  ;; D3D Retained Mode is not supported; return E_FAIL
+  (func $handle_Direct3DRMCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0) (then
+      (call $gs32 (local.get $arg0) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; IDirect3D stub methods (9 methods)
+  ;; All return E_FAIL (0x80004005) with correct stdcall stack cleanup.
+  ;; ════════════════════════════════════════════════════════════
+
+  ;; IDirect3D::QueryInterface(this, riid, ppvObj) — 3 args
+  (func $handle_IDirect3D_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0x80004002))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D::AddRef(this) — 1 arg
+  (func $handle_IDirect3D_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IDirect3D::Release(this) — 1 arg
+  (func $handle_IDirect3D_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IDirect3D::Initialize(this, riid) — 2 args
+  (func $handle_IDirect3D_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IDirect3D::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
+  ;; Don't call callback — reports 0 devices
+  (func $handle_IDirect3D_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
+  (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D::CreateMaterial(this, lplpDirect3DMaterial, pUnkOuter) — 3 args
+  (func $handle_IDirect3D_CreateMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D::CreateViewport(this, lplpDirect3DViewport, pUnkOuter) — 3 args
+  (func $handle_IDirect3D_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args
+  (func $handle_IDirect3D_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; IDirect3D3 stub methods (10 methods)
+  ;; ════════════════════════════════════════════════════════════
+
+  ;; IDirect3D3::QueryInterface(this, riid, ppvObj) — 3 args
+  (func $handle_IDirect3D3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0x80004002))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::AddRef(this) — 1 arg
+  (func $handle_IDirect3D3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IDirect3D3::Release(this) — 1 arg
+  (func $handle_IDirect3D3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IDirect3D3::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
+  (func $handle_IDirect3D3_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
+  (func $handle_IDirect3D3_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::CreateMaterial(this, lplpDirect3DMaterial, pUnkOuter) — 3 args
+  (func $handle_IDirect3D3_CreateMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::CreateViewport(this, lplpDirect3DViewport, pUnkOuter) — 3 args
+  (func $handle_IDirect3D3_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args
+  (func $handle_IDirect3D3_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirect3D3::CreateDevice(this, riid, lpDDSurface, lplpD3DDevice, pUnkOuter) — 5 args
+  (func $handle_IDirect3D3_CreateDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; IDirect3D3::CreateVertexBuffer(this, lpVBDesc, lplpD3DVertexBuffer, dwFlags, pUnkOuter) — 5 args
+  (func $handle_IDirect3D3_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))

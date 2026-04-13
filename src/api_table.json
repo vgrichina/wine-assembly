@@ -7759,5 +7759,180 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 559761077
+  },
+  {
+    "id": 1109,
+    "name": "GetFileVersionInfoSizeA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1550233293
+  },
+  {
+    "id": 1110,
+    "name": "GetFileVersionInfoA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1121446610
+  },
+  {
+    "id": 1111,
+    "name": "VerQueryValueA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3396095850
+  },
+  {
+    "id": 1112,
+    "name": "DirectDrawEnumerateA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2509937415
+  },
+  {
+    "id": 1113,
+    "name": "DirectDrawEnumerateExA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1037142952
+  },
+  {
+    "id": 1114,
+    "name": "IDirect3D_QueryInterface",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2709405824
+  },
+  {
+    "id": 1115,
+    "name": "IDirect3D_AddRef",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4273929347
+  },
+  {
+    "id": 1116,
+    "name": "IDirect3D_Release",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1501242244
+  },
+  {
+    "id": 1117,
+    "name": "IDirect3D_Initialize",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4157101509
+  },
+  {
+    "id": 1118,
+    "name": "IDirect3D_EnumDevices",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1725019297
+  },
+  {
+    "id": 1119,
+    "name": "IDirect3D_CreateLight",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2599104369
+  },
+  {
+    "id": 1120,
+    "name": "IDirect3D_CreateMaterial",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2491465454
+  },
+  {
+    "id": 1121,
+    "name": "IDirect3D_CreateViewport",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1884439453
+  },
+  {
+    "id": 1122,
+    "name": "IDirect3D_FindDevice",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2435708542
+  },
+  {
+    "id": 1123,
+    "name": "IDirect3D3_QueryInterface",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3075881755
+  },
+  {
+    "id": 1124,
+    "name": "IDirect3D3_AddRef",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3084695000
+  },
+  {
+    "id": 1125,
+    "name": "IDirect3D3_Release",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1347481985
+  },
+  {
+    "id": 1126,
+    "name": "IDirect3D3_EnumDevices",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1219603228
+  },
+  {
+    "id": 1127,
+    "name": "IDirect3D3_CreateLight",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1959230540
+  },
+  {
+    "id": 1128,
+    "name": "IDirect3D3_CreateMaterial",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1247938337
+  },
+  {
+    "id": 1129,
+    "name": "IDirect3D3_CreateViewport",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2108987178
+  },
+  {
+    "id": 1130,
+    "name": "IDirect3D3_FindDevice",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1142092341
+  },
+  {
+    "id": 1131,
+    "name": "IDirect3D3_CreateDevice",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 296408818
+  },
+  {
+    "id": 1132,
+    "name": "IDirect3D3_CreateVertexBuffer",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3085263584
+  },
+  {
+    "id": 1133,
+    "name": "Direct3DRMCreate",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 345094950
   }
 ]
