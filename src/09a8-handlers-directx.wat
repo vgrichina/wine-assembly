@@ -323,6 +323,10 @@
           (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
       (then
         (call $gs32 (local.get $arg2) (local.get $arg0))
+        ;; COM rule: QI must AddRef the returned interface
+        (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (i32.store (i32.add (local.get $obj) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
@@ -655,8 +659,13 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectDrawSurface_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
     ;; Return same object for any QI (DX3 compat)
     (call $gs32 (local.get $arg2) (local.get $arg0))
+    ;; COM rule: QI must AddRef the returned interface
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

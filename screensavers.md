@@ -23,7 +23,7 @@
 | CORBIS.SCR | OK | Black (no animation) | Needs COM — CoCreateInstance for image loading fails |
 | FASHION.SCR | OK | Black (no animation) | Same COM dependency |
 | HORROR.SCR | OK | Black (no animation) | Same COM dependency |
-| WIN98.SCR | OK | Black (no animation) | Loads bitmap, then needs DirectDraw |
+| WIN98.SCR | OK | Renders (Win98 logo on color quadrants) | Fixed by DDraw QueryInterface AddRef |
 | WOTRAVEL.SCR | OK | Black (no animation) | Same COM dependency |
 
 ### DirectDraw-based (need DDRAW.DLL)
@@ -48,6 +48,10 @@ These screensavers use CreateDIBSection to create bitmaps with direct pixel acce
 **Priority: DEFERRED** — CORBIS/FASHION/HORROR/WOTRAVEL call `CoCreateInstance` to load images via COM (likely IPicture). Our stub returns E_NOINTERFACE, so no images load and no timer is ever set. WIN98.SCR now runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
 
 ## Completed
+
+### DirectDraw QueryInterface refcount fix (WIN98.SCR)
+**Files:** `src/09a8-handlers-directx.wat`
+IDirectDraw::QueryInterface and IDirectDrawSurface::QueryInterface were returning the same object pointer but NOT incrementing the refcount. Per COM rules, QI must AddRef. After the guest called QI and subsequently Release, refcount dropped to 0 and the primary surface's DX_OBJECTS slot got freed. The next CreateSurface then reused slot 0 — so the "primary" guest wrapper actually pointed at an offscreen entry (flag=4), and Blt to the primary never triggered `dx_present`. With AddRef in both QIs, WIN98.SCR now renders its animation via SetDIBitsToDevice from the DDraw primary surface.
 
 ### Sprite rendering fix (PEANUTS, CATHY, DOONBURY)
 **Files:** `lib/host-imports.js`
