@@ -57,13 +57,19 @@
   ;; ============================================================
   ;; GUEST MEMORY
   ;; ============================================================
+  ;; Null sentinel: a 4-byte region at offset 0xF0 that stays zeroed.
+  ;; Used as g2w fallback so reads from invalid guest addresses see zeros
+  ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
+  (global $NULL_SENTINEL i32 (i32.const 0xF0))
   (func $g2w (param $ga i32) (result i32)
     (local $wa i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
                 (i32.ge_u (local.get $wa) (i32.const 0x4000000))) ;; 64MB (full WASM memory)
       (then
-        (return (global.get $GUEST_BASE))))
+        ;; Re-zero the sentinel (in case a prior bad write landed here)
+        (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
+        (return (global.get $NULL_SENTINEL))))
     (local.get $wa)
   )
   (func $gl32 (param $ga i32) (result i32) (i32.load (call $g2w (local.get $ga))))

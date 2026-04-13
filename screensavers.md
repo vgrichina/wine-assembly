@@ -20,14 +20,14 @@
 ### MFC42-based (need MFC42.DLL)
 | Screensaver | /c Config | /s Visuals | Notes |
 |-------------|-----------|------------|-------|
-| CORBIS.SCR | OK | Reaches message loop | CBT hook stack fix enabled WM_CREATE |
-| FASHION.SCR | OK | Reaches message loop | Same fix |
-| HORROR.SCR | OK | Reaches message loop | Same fix |
-| WIN98.SCR | OK | Reaches message loop | Same fix |
-| WOTRAVEL.SCR | OK | Reaches message loop | Same fix |
+| CORBIS.SCR | OK | Black (no animation) | Needs COM — CoCreateInstance for image loading fails |
+| FASHION.SCR | OK | Black (no animation) | Same COM dependency |
+| HORROR.SCR | OK | Black (no animation) | Same COM dependency |
+| WIN98.SCR | OK | Black (no animation) | Loads bitmap, then needs DirectDraw |
+| WOTRAVEL.SCR | OK | Black (no animation) | Same COM dependency |
 
 ### DirectDraw-based (need DDRAW.DLL)
-ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI — blocked on DDRAW
+ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI, WIN98 — blocked on DDRAW
 
 ## Open Tasks
 
@@ -43,6 +43,9 @@ Mask inversion issue — sprites render as white silhouettes instead of colored 
 **Files:** `src/09a-handlers.wat`, `lib/host-imports.js`
 
 These screensavers use CreateDIBSection to create bitmaps with direct pixel access, then StretchDIBits to blit them. StretchDIBits is implemented but may have issues. CreateDIBSection needs a working `ppvBits` return (pointer to pixel data in guest memory).
+
+### 4. MFC screensavers blocked on COM/DirectDraw
+**Priority: DEFERRED** — CORBIS/FASHION/HORROR/WOTRAVEL call `CoCreateInstance` to load images via COM (likely IPicture). Our stub returns E_NOINTERFACE, so no images load and no timer is ever set. WIN98.SCR now runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
 
 ## Completed
 

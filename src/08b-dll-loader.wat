@@ -100,7 +100,8 @@
         (i32.const 0xFFF))
       (i32.const 0xFFFFF000)))
     (if (i32.gt_u (local.get $dst) (global.get $heap_ptr))
-      (then (global.set $heap_ptr (local.get $dst))))
+      (then (global.set $heap_ptr (local.get $dst))
+            (global.set $heap_base (local.get $dst))))
 
     ;; Return DllMain entry point
     (if (result i32) (i32.ne (local.get $entry_rva) (i32.const 0))
@@ -359,22 +360,25 @@
       (local.set $desc_ptr (i32.add (local.get $desc_ptr) (i32.const 20)))
       (br $dl))))
 
-  ;; Get next available DLL load address (page-aligned after EXE + heap margin)
+  ;; Get next available DLL load address (page-aligned after last DLL AND after heap)
   (func (export "get_next_dll_addr") (result i32)
-    (local $addr i32)
-    (if (result i32) (global.get $dll_count)
+    (local $addr i32) (local $after_dll i32)
+    (if (global.get $dll_count)
       (then
         ;; After last loaded DLL
         (local.set $addr (i32.add (global.get $DLL_TABLE) (i32.mul (i32.sub (global.get $dll_count) (i32.const 1)) (i32.const 32))))
-        ;; load_addr + size_of_image, page-aligned
-        (i32.and
+        (local.set $after_dll (i32.and
           (i32.add (i32.add (i32.load (local.get $addr)) (i32.load (i32.add (local.get $addr) (i32.const 4)))) (i32.const 0xFFF))
-          (i32.const 0xFFFFF000)))
+          (i32.const 0xFFFFF000))))
       (else
         ;; First DLL: after EXE's SizeOfImage
-        (i32.and
+        (local.set $after_dll (i32.and
           (i32.add (i32.add (global.get $image_base) (global.get $exe_size_of_image)) (i32.const 0xFFF))
           (i32.const 0xFFFFF000)))))
+    ;; Return max(after_dll, page_aligned(heap_ptr)) to avoid overwriting heap
+    (if (result i32) (i32.gt_u (global.get $heap_ptr) (local.get $after_dll))
+      (then (i32.and (i32.add (global.get $heap_ptr) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
+      (else (local.get $after_dll))))
 
   (func (export "get_exe_size_of_image") (result i32) (global.get $exe_size_of_image))
   (func (export "get_dll_count") (result i32) (global.get $dll_count))

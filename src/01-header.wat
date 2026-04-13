@@ -373,6 +373,7 @@
   ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
   ;; 0x0000B160  8KB     WND_DLG_RECORDS (256 × 32 bytes — dialog header state per slot, ends 0xD160)
   ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
+  ;; 0x0000AD98  4B      WAVE_OUT_PENDING_HDR (deferred WHDR_DONE — guest addr of last submitted WAVEHDR)
   ;; 0x0000D170  6KB     SCROLL_TABLE   (256 entries × 24 bytes, ends 0xE970)
   ;; 0x0000E970  14KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
@@ -614,6 +615,7 @@
   (global $freelib_last_handle (mut i32) (i32.const 0)) ;; Last FreeLibrary'd handle (for loop detection)
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
+  (global $sleep_yielded (mut i32) (i32.const 0))  ;; Set by Sleep handler; NOT cleared by run() — JS reads+clears
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
   ;; Paint queue: 16-entry ring at 0xAD50 (64 bytes), head/count globals
@@ -673,6 +675,7 @@
   (global $modal_saved_esp (mut i32) (i32.const 0))  ;; saved ESP at API entry
   (global $modal_esp_adjust (mut i32) (i32.const 0)) ;; bytes to add to ESP on return
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
+  (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
 
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir

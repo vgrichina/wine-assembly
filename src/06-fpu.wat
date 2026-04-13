@@ -1003,6 +1003,7 @@
   ;; 141: jmp [base+disp]. op=0, w1=base, w2=disp.
   (func $th_jmp_ind_ro (param $op i32)
     (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
+    (local $ret_addr i32)
     (local.set $base (call $read_thread_word))
     (local.set $disp (call $read_thread_word))
     (local.set $mem_addr (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
@@ -1010,7 +1011,12 @@
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
       (then
+        ;; JMP to thunk (e.g. JMP [IAT] trampoline). The return address is at [ESP]
+        ;; (pushed by the preceding CALL). Save it before the handler pops it.
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
         (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
+        ;; If dispatch redirected (steps=0), EIP was already set by the handler
+        (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
         (return)))
     (global.set $eip (local.get $target)))
   ;; 142: push [base+disp]. op=base, disp in word.

@@ -192,6 +192,15 @@
         (global.set $eip (global.get $initterm_ret))
         (return)))
 
+    ;; DirectDrawEnumerateA callback returned — set EAX=DD_OK and return to caller
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0007))
+      (then
+        ;; Pop the saved original return address
+        (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (global.set $eax (i32.const 0))  ;; DD_OK
+        (return)))
+
     ;; Unresolved ordinal import from a system DLL (marker "ORD\0")
     ;; — $api_id holds the actual ordinal. Format "KERNEL32.#NNNNN" into
     ;; the scratch buffer at 0x2DA and crash with that name so the user

@@ -67,6 +67,8 @@
 
   ;; 796: waveOutClose(hwo) — 1 arg stdcall
   (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Flush deferred WHDR_DONE
+    (i32.store (i32.const 0xAD98) (i32.const 0))
     (drop (call $host_wave_out_close (local.get $arg0)))
     (global.set $wave_out_handle (i32.const 0))
     (global.set $eax (i32.const 0))
@@ -100,9 +102,27 @@
   ;; 799: waveOutWrite(hwo, lpWaveHdr, cbWaveHdr) — 3 args stdcall
   ;; WAVEHDR: +0 lpData(4), +4 dwBufferLength(4), +8 dwBytesRecorded(4),
   ;;   +12 dwUser(4), +16 dwFlags(4), +20 dwLoops(4), +24 lpNext(4), +28 reserved(4)
+  ;;
+  ;; Deferred WHDR_DONE: real Windows marks WHDR_DONE only after the buffer
+  ;; finishes playing (async). We defer: each waveOutWrite marks the PREVIOUS
+  ;; buffer as done, keeping ≥1 buffer outstanding.  This allows out_wave.dll's
+  ;; threshold logic ([ebp+0x6c] > 0 → use smaller write threshold) to work,
+  ;; enabling continuous streaming instead of waiting for 11KB chunks.
+  ;; Previous WAVEHDR guest address stored at shared memory 0xAD98.
   (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $data_ga i32) (local $data_len i32)
+    (local $wa i32) (local $data_ga i32) (local $data_len i32) (local $prev_ga i32) (local $prev_wa i32)
     (local.set $wa (call $g2w (local.get $arg1)))
+    ;; Complete the PREVIOUS buffer first (deferred WHDR_DONE)
+    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
+    (if (local.get $prev_ga)
+      (then
+        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
+        ;; Mark WHDR_DONE in previous buffer's dwFlags (+16)
+        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
+          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        ;; Deliver WOM_DONE for previous buffer
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
+          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))))
     ;; Read lpData and dwBufferLength from WAVEHDR
     (local.set $data_ga (i32.load (local.get $wa)))
     (local.set $data_len (i32.load (i32.add (local.get $wa) (i32.const 4))))
@@ -113,18 +133,25 @@
           (local.get $arg0)
           (call $g2w (local.get $data_ga))
           (local.get $data_len)))))
-    ;; Mark WHDR_DONE in dwFlags (+16)
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
-    ;; Deliver WOM_DONE notification — read callback info from shared memory
-    (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
-      (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
+    ;; Save this buffer's guest address as pending (deferred done)
+    (i32.store (i32.const 0xAD98) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 800: waveOutReset — return MMSYSERR_NOERROR
+  ;; 800: waveOutReset — flush pending deferred buffer, return MMSYSERR_NOERROR
   (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $prev_ga i32) (local $prev_wa i32)
+    ;; Flush deferred WHDR_DONE
+    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
+    (if (local.get $prev_ga)
+      (then
+        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
+        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
+          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        (i32.store (i32.const 0xAD98) (i32.const 0))
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
+          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -409,6 +436,69 @@
   ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
   (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))  ;; 1 device
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; midiOutGetNumDevs() — 0 args, return 1 (one MIDI device)
+  (func $handle_midiOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))  ;; 1 device
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; midiOutGetDevCapsA(uDeviceID, lpMidiOutCaps, cbMidiOutCaps) — 3 args
+  ;; Fill MIDIOUTCAPSA struct with basic info, return MMSYSERR_NOERROR (0)
+  (func $handle_midiOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $caps i32)
+    (local.set $caps (call $g2w (local.get $arg1)))
+    ;; Zero out the struct
+    (memory.fill (local.get $caps) (i32.const 0) (local.get $arg2))
+    ;; wMid (manufacturer ID) = 1 (MM_MICROSOFT)
+    (i32.store16 (local.get $caps) (i32.const 1))
+    ;; wPid = 1
+    (i32.store16 (i32.add (local.get $caps) (i32.const 2)) (i32.const 1))
+    ;; wTechnology at offset 36 = MOD_MIDIPORT (1)
+    (i32.store16 (i32.add (local.get $caps) (i32.const 36)) (i32.const 1))
+    ;; dwSupport at offset 44 = 0
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
+  ;; midiOutOpen(lphmo, uDeviceID, dwCallback, dwCallbackInstance, dwFlags) — 5 args
+  (func $handle_midiOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Write fake handle to *lphmo
+    (if (local.get $arg0)
+      (then (call $gs32 (local.get $arg0) (i32.const 0x50010001))))
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; midiOutClose(hmo) — 1 arg
+  (func $handle_midiOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; midiOutShortMsg(hmo, dwMsg) — 2 args
+  (func $handle_midiOutShortMsg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; midiOutReset(hmo) — 1 arg
+  (func $handle_midiOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; joyGetPos(uJoyID, lpInfo) — 2 args, return JOYERR_UNPLUGGED (167)
+  (func $handle_joyGetPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 167))  ;; JOYERR_UNPLUGGED
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; joyGetNumDevs() — 0 args, return 0 (no joysticks)
+  (func $handle_joyGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 

@@ -118,6 +118,12 @@
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
   (func (export "clear_yield") (global.set $yield_reason (i32.const 0)))
+  (func (export "get_yield_flag") (result i32) (global.get $yield_flag))
+  (func (export "get_sleep_yielded") (result i32)
+    (local $v i32)
+    (local.set $v (global.get $sleep_yielded))
+    (global.set $sleep_yielded (i32.const 0))
+    (local.get $v))
   (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
   (func (export "get_loadlib_name") (result i32) (global.get $loadlib_name_ptr))
 

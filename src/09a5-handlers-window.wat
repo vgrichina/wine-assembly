@@ -586,8 +586,8 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No paint — deliver WM_TIMER if any timer is due
-    (if (call $timer_check_due (local.get $msg_ptr))
+    ;; No paint — deliver WM_TIMER if any timer is due (consume=1 for GetMessage)
+    (if (call $timer_check_due (local.get $msg_ptr) (i32.const 1))
     (then
     (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
     (global.set $eax (i32.const 1))
@@ -777,7 +777,8 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; No paint — deliver WM_TIMER if any timer is due
-    (if (call $timer_check_due (local.get $arg0))
+    ;; Pass PM_REMOVE flag (arg4 & 1) as consume param — PM_NOREMOVE peeks without resetting last_tick
+    (if (call $timer_check_due (local.get $arg0) (i32.and (local.get $arg4) (i32.const 1)))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
@@ -788,11 +789,24 @@
       (then
         (if (i32.eqz (i32.load (call $g2w (i32.const 0x1024fe0))))
           (then
-            (if (i32.eq (global.get $wndproc_addr) (i32.const 0x01055db1))
+            (if (i32.eq (global.get $wndproc_addr) (i32.const 0x01007264))
               (then
                 (i32.store (call $g2w (i32.const 0x1024fe0)) (i32.const 1))
                 (i32.store (call $g2w (i32.const 0x1024ff8)) (i32.const 1))
               ))))))
+    ;; Pinball ball-in-play poke: set [table+0x172] once the table object exists.
+    ;; Without this, the attract mode text ("Careful...") keeps overwriting "Player 1".
+    (if (i32.and
+          (i32.eq (global.get $wndproc_addr) (i32.const 0x01007264))
+          (i32.ne (i32.load (call $g2w (i32.const 0x1025658))) (i32.const 0)))
+      (then
+        (if (i32.eqz (i32.load (call $g2w (i32.add
+              (i32.load (call $g2w (i32.const 0x1025658)))
+              (i32.const 0x172)))))
+          (then
+            (i32.store (call $g2w (i32.add
+              (i32.load (call $g2w (i32.const 0x1025658)))
+              (i32.const 0x172))) (i32.const 1))))))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )

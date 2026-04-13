@@ -19,6 +19,121 @@ Extracted from `winamp291.exe` NSIS installer via VFS dump. Binary is 846,848 by
 | rasapi32.dll | (dynamic) | RasEnumConnectionsA — dial-up connectivity check |
 | wsock32.dll | (dynamic) | socket/connect/send — update check / survey |
 
+## Key Addresses
+
+### EXE Functions
+
+| Address | Name | Notes |
+|---------|------|-------|
+| 0x41c210 | Main WndProc | Set via first EXE-space RegisterClassA |
+| 0x41d240 | WM_COMMAND dispatcher | 3-level: byte table 0x41e940, jump table 0x41e8e0 |
+| 0x421290 | WM_USER IPC dispatcher | byte table 0x421e54, jump table 0x421dd8 |
+| 0x421641 | IPC_PLAYFILE handler | lParam=100: adds file to playlist |
+| 0x421d64 | IPC_DELETE handler | lParam=101: clears playlist |
+| 0x421d93 | IPC_STARTPLAY handler | lParam=102: calls Stop then Play |
+| 0x42e0eb | Open File Play function | WM_COMMAND 40029 path, shows Open dialog |
+| 0x42e577 | Play init (post-survey) | Sets [0x4575fc]=1, enumerates skins, loads playlist |
+| 0x42fbcc | Play function | Gated on [0x45caa4]!=0 and [0x457608]>0 |
+| 0x42ef0b | Get playlist count | Returns [0x457608] |
+| 0x419020 | Stop wrapper | Loads [0x45ae28] (in_module), jmp [eax+0x48] (Stop) |
+| 0x419070 | Build file type filter | For GetOpenFileNameA |
+| 0x410060 | WM_PAINT handler | Checks [0x450500] (skin DC), BitBlts if set |
+| 0x41aaf8 | Cmdline parser | Parses _acmdln flags: F/Q/S/D/R/A |
+| 0x41efe0 | WM_CREATE handler | Creates child windows, INI, survey dialog |
+| 0x4145f0 | Skin blit function | Checks [0x449e56] bit 0x01 |
+| 0x40b959 | Skin DC writer | Writes [0x450500] = skin DC |
+| 0x4382be | Survey/update thread | Loads wsock32, tries HTTP POST, gives up |
+| 0x432bc0 | Timer/monitor thread | Spawned during play init |
+
+### EXE Globals (BSS/Data)
+
+| Address | Name | Notes |
+|---------|------|-------|
+| 0x45ae28 | in_module ptr | Points to in_mp3.dll's In_Module struct |
+| 0x450500 | Skin DC handle | Set by skin loader; WM_PAINT checks this |
+| 0x451608 | Playing flag | Non-zero = currently playing; Stop checks this |
+| 0x4575fc | Init-done flag | Set to 1 after play init |
+| 0x457608 | Playlist count | Number of entries in playlist |
+| 0x45caa4 | Ready-to-play flag | Gate for play function; never set naturally in our init |
+| 0x45a9f0 | Command-line flags | Parsed from cmdline: F=0x02, S=0x08, D=0x10, R=0x20, A=0x40 |
+| 0x45acc0 | Current filename | Path of playing file |
+| 0x45a7e0 | Title string buffer | Formatted title for SetWindowText |
+| 0x45d960 | INI path buffer | winamp.ini path |
+| 0x449e56 | Skin state bits | Bit 0x01 = skin initialized |
+| 0x45caa5 | Skin dir path set | 0 = no skin dir → enumerate skipped |
+| 0x45d5e1 | Taskbar mode | From INI "taskbar" key |
+| 0x4581b0 | Skin-loaded flag | 0 = skin not loaded |
+| 0x44d328 | Playlist index | -2 = unset; gets set from playlist count |
+
+### WM_COMMAND IDs
+
+| ID | Hex | Handler | Action |
+|----|-----|---------|--------|
+| 40029 | 0x9C5D | 0x41d866 | WINAMP_FILE_PLAY (Open + Play) |
+| 40041 | 0x9C69 | 0x41dc62 | Skin Browser |
+| 40044 | 0x9C6C | 0x41d782 | Previous Track |
+| 40045 | 0x9C6D | 0x41d7a8 | Play |
+| 40046 | 0x9C6E | 0x41d7ce | Pause |
+| 40047 | 0x9C6F | 0x41d7f4 | Stop |
+| 40048 | 0x9C70 | 0x41d81a | Next Track |
+
+### in_mp3.dll (In_Module struct at 0x5cc8c8, loaded at 0x5af000)
+
+| Offset | Field | Value | Notes |
+|--------|-------|-------|-------|
+| +0x00 | version | 0x100 | |
+| +0x04 | description | 0x5cc96c | |
+| +0x08 | hMainWindow | 0x10001 | Set by Winamp |
+| +0x0C | hDllInstance | 0x5af000 | DLL base |
+| +0x1C | Config | 0x5b051a | |
+| +0x20 | About | 0x5b0de0 | |
+| +0x24 | Init | 0x5b7363 | |
+| +0x28 | Quit | 0x5b7385 | |
+| +0x34 | IsOurFile | 0x5b7391 | |
+| +0x38 | Play | 0x5b73d9 | |
+| +0x3C | Pause | 0x5b74a0 | |
+| +0x40 | UnPause | 0x5b74bc | |
+| +0x44 | IsPaused | 0x5b74d6 | |
+| +0x48 | Stop | 0x5b74dc | WaitForSingleObject([0x5cc590]), CloseHandle, cleanup |
+| +0x94 | outMod | 0x5cc95c | Pointer to Out_Module (out_wave.dll) |
+
+### in_mp3.dll Globals
+
+| Address | Name | Notes |
+|---------|------|-------|
+| 0x5cc590 | Decode thread handle | Set by Play, waited by Stop |
+| 0x5cc95c | outMod ptr | Points to out_wave.dll's Out_Module |
+| 0x5d40d8 | Stopping flag | Set to 1 by Stop() |
+| 0x5d40cc | Output-active flag | Non-zero = outMod was opened; checked by Stop for Close call |
+| 0x5b7e45 | Decode thread entry | Start address for CreateThread |
+
+### out_wave.dll (loaded at 0x5e2000)
+
+| Address | Name | Notes |
+|---------|------|-------|
+| 0x5e3f28 | Buffer thread entry | Start address for T4's CreateThread |
+| 0x5e3f66 | Buffer thread post-wait | Return address after WaitForSingleObject |
+
+### Shared Memory (below GUEST_BASE, cross-thread)
+
+| Address | Name | Notes |
+|---------|------|-------|
+| 0xD160 | waveOut handle | Set by waveOutOpen |
+| 0xD164 | waveOut callback | Event handle for WOM_DONE (CALLBACK_EVENT) |
+| 0xD168 | waveOut instance | dwInstance from waveOutOpen |
+| 0xD16C | waveOut cb_type | 5 = CALLBACK_EVENT |
+
+### Thread Handles (runtime)
+
+| Handle | Thread | Start | Notes |
+|--------|--------|-------|-------|
+| 0xe0001 | Event | — | Manual-reset, initial=false |
+| 0xe0002 | T1 | 0x4382be | Survey/update thread |
+| 0xe0003 | T2 | 0x432bc0 | Timer/monitor thread |
+| 0xe0004 | T3 | 0x5b7e45 | in_mp3.dll decode thread |
+| 0xe0005 | Event | — | Auto-reset, data-ready + WOM_DONE |
+| 0xe0006 | T4 | 0x5e3f28 | out_wave.dll buffer thread |
+
 ## Startup Sequence
 
 ```
@@ -802,6 +917,282 @@ node test/test-all-exes.js
 | `src/13-exports.wat` | Added get_dbg_prev_eip export |
 | `index.html` | Added Winamp to DEFAULT_APPS and apps config |
 | `host.js` | Added binaries/plugins/ search path; VFS fallback for COM DLL loads |
+
+## SESSION 13 PROGRESS — WaitForSingleObject Main Thread Fix, Audio PCM Output
+
+### Critical Bug: Main Thread WaitForSingleObject Double Stack Adjustment
+
+**Problem:** When the main thread called WaitForSingleObject (e.g., in_mp3.dll's Stop() function waiting for the decode thread), `checkMainYield()` in thread-manager.js adjusted ESP by 12 (popping return address + 2 args). But EIP was left pointing at the WaitForSingleObject thunk. When the run loop resumed, it re-entered the thunk, dispatching the handler again, which adjusted ESP by ANOTHER 12 bytes. This 24-byte corruption caused the decode thread's Stop function to `jmp [eax+0x48]` through a corrupted vtable → EIP=0 crash.
+
+**Root cause analysis:**
+- Worker threads already handled this correctly: they read the return address from ESP, set EIP to it, and adjusted ESP — so the thunk was never re-entered.
+- The main thread's `checkMainYield()` didn't set EIP, leaving it at the thunk address. The run loop re-entered the thunk on each iteration.
+
+**Fix:** Made `checkMainYield()` mirror the worker thread approach — read return address from `[ESP]` via `guest_read32()`, set EIP to it, adjust ESP, set EAX.
+
+### Audio Pipeline: End-to-End PCM Output
+
+With the WaitForSingleObject fix, the full IPC playback chain works:
+1. IPC_PLAYFILE adds `C:\demo.mp3` to playlist
+2. IPC_STARTPLAY calls play function → starts decode threads T3 (in_mp3.dll) + T4 (out_wave.dll buffer thread)
+3. T3 opens demo.mp3, reads full file (38KB), decodes MP3 frames via FPU math
+4. T3 opens waveOut (22050Hz 2ch 16bit) via outMod->Open
+5. T3 creates T4 (out_wave.dll buffer management thread)
+6. T3 fills ring buffer with decoded PCM, signals event 0xe0005
+7. T4 reads from ring buffer → waveOutPrepareHeader → waveOutWrite (11520 bytes per buffer) → waveOutUnprepareHeader
+8. WOM_DONE callback (CALLBACK_EVENT type 5) signals event 0xe0005 for buffer recycling
+
+**Audio output:** 4 waveOutWrite × 11520 bytes = 46080 bytes = 0.52s of decoded PCM from the 5.34s demo.mp3.
+
+### Shared Audio State Across Threads
+
+waveOutOpen runs on T3 but waveOutWrite runs on T4 — different WASM instances with different host import contexts. Added `ctx._sharedAudio` object shared across all worker contexts so `_waveOut` state (sample rate, channels, bits, bytesWritten) is visible to all threads. Added `--audio-out=FILE` CLI flag to write raw PCM to file.
+
+### IPC Message Fix
+
+Removed redundant IPC_STARTPLAY from `winamp-play` input action — IPC_PLAYFILE was followed immediately by IPC_STARTPLAY in the same post queue, causing Stop() to kill the just-started decode threads and restart. Now `winamp-play` only sends IPC_DELETE + IPC_PLAYFILE; IPC_STARTPLAY is sent separately via `winamp-start` at a later batch.
+
+### Thread Scheduling: Interleaved Slices
+
+Changed `runSlice()` from running each thread for the full `batchSize` to splitting into `batchSize/4` interleaved slices (min 1000 instructions each). This allows producer/consumer thread pairs (decode → waveOut) to make progress within a single batch. Also added Sleep yield via `yield_flag` so spin-wait loops (ring buffer full) yield to other threads.
+
+### waveOutGetPosition: Instant Playback
+
+Changed `wave_out_get_pos` to return `bytesWritten` directly instead of wall-clock-time estimation. In emulation, wall time doesn't match audio time, causing pacing issues where the output thread thinks buffers haven't been played yet.
+
+### Remaining Audio Limitation
+
+Only 0.52s of 5.34s gets decoded/output. The bottleneck is the out_wave.dll ring buffer + scheduling: T3 fills the ring buffer, T4 drains 4 buffers, then T4 finds the buffer empty despite T3 signaling 90+ SetEvent calls. The likely cause is the ring buffer overflowing (CriticalSection is a no-op, so T3's spin-wait on buffer-full burns instruction budget without yielding to T4). In the browser with continuous execution, more audio should flow.
+
+### Test Commands
+
+```bash
+# Skin renders (stable):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# IPC playback with audio output (0.52s PCM):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=300 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,99:poke:0x45caa4:1,100:winamp-play:C:\demo.mp3,150:winamp-start" \
+  --audio-out=scratch/winamp-audio.pcm
+
+# Convert PCM to WAV:
+ffmpeg -f s16le -ar 22050 -ac 2 -i scratch/winamp-audio.pcm scratch/winamp-audio.wav -y
+```
+
+### Key Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/thread-manager.js` | Fixed `checkMainYield()` to set EIP (mirror worker thread approach); interleaved thread slices in `runSlice()` |
+| `lib/host-imports.js` | Shared `_waveOut` via `ctx._sharedAudio`; instant `wave_out_get_pos`; removed debug logging |
+| `src/09a-handlers.wat` | Sleep sets `yield_flag` for thread cooperation |
+| `test/run.js` | Added `--audio-out` flag; shared `_sharedAudio`/`_audioOutFd` with worker contexts; removed IPC_STARTPLAY from `winamp-play` |
+
+## SESSION 14 PROGRESS — Deferred WHDR_DONE, Thread Scheduling, Audio Pipeline Analysis
+
+### Root Cause: waveOutWrite Marked WHDR_DONE Immediately
+
+In real Windows, `waveOutWrite` submits a buffer for **async** playback. WHDR_DONE is set only after the hardware finishes playing the buffer. Our implementation marked WHDR_DONE immediately, causing `out_wave.dll`'s buffer thread to think all buffers had been played instantly.
+
+**Impact on out_wave.dll threshold logic:**
+
+The buffer thread (`T4`, start=0x5e3f28) uses a two-level write threshold at `0x10002017`:
+```
+if ([ebp+0x6c] == 0) {           // outstanding buffer count
+    threshold = max([ebp+0x68],   // initWriteSize (0)
+                    [ebp+0x5c]);  // largeThreshold (11025)
+} else {
+    if ([ebp+0x48] < [ebp+0x44]/2  // inFlight < ringSize/2
+        || [ebp+0x6c] < 3)         // outstanding < 3
+        threshold = [ebp+0x54];   // smallThreshold (256)
+    else
+        threshold = [ebp+0x5c];   // largeThreshold (11025)
+}
+// Write only when pending > threshold
+```
+
+With immediate WHDR_DONE, outstanding was always 0 → threshold always 11025 → T4 waited for 11025 bytes (5 decoded MP3 frames) before each write. Only 4 writes occurred with 300 batches.
+
+**Fix:** Deferred WHDR_DONE — each `waveOutWrite` marks the PREVIOUS buffer as done. Pending WAVEHDR guest address stored at shared memory `0xAD98`. `waveOutReset`/`waveOutClose` flush the last buffer.
+
+**Result:** outstanding=1 after first write → threshold drops to 256 → T4 writes every 2304 bytes (1 frame). Writes increased from 4 to 17 in 300 batches.
+
+### out_wave.dll Buffer Thread (T4) Main Loop — Full Disassembly
+
+```
+0x5e3f28 (VA 0x10001f28): Thread entry
+  mov ecx, [esp+4]         ; ecx = lpParameter (ring buffer struct ptr)
+  call 0x10001f36           ; main loop function
+
+0x5e3f36 (VA 0x10001f36): Main loop
+  push ecx,ecx,ebx,ebp,esi,edi
+  mov ebp, ecx              ; ebp = ring buffer struct
+
+  ; === OUTER LOOP ===
+  0x10001f4f: cmp [ebp+0x00], 0   ; waveOut handle valid?
+  jz exit
+
+  0x10001f5b: WaitForSingleObject([ebp+0x08], INFINITE)  ; wait for signal from T3 or WOM_DONE
+  0x10001f66: EnterCriticalSection([ebp+0x0C])
+
+  ; --- Check stop flag ---
+  0x10001f6d: cmp byte [ebp+0x76], 0
+  jnz cleanup
+
+  ; --- Drain completed buffer list ---
+  0x10001f77: esi = [ebp+0x24]    ; completed list head
+  loop:
+    if esi == 0: break
+    if [esi+0x14] & 1:           ; WHDR_DONE?
+      dec [ebp+0x6c]             ; outstanding--
+      sub [ebp+0x48], [esi+0x8]  ; inFlight -= buffer size
+      timeGetTime → [ebp+0x60]
+      waveOutUnprepareHeader(hwo, esi+4, 32)
+      free node → [ebp+0x28]
+      esi = [esi]
+    else:
+      esi = [esi]; continue
+
+  ; --- Pause/resume logic ---
+  0x10001fb7-0x10002008: checks [ebp+0x74] (paused), [ebp+0x7a] (pause-req)
+  Calls waveOutPause/waveOutRestart + timeGetTime for pause timing
+
+  ; --- Compute write threshold ---
+  0x10002017: see threshold logic above
+
+  ; === WRITE LOOP ===
+  0x10002049: cmp [ebp+0x4c], threshold
+  jbe 0x10002101              ; not enough data → skip
+
+  0x10002056: ebx = min(pending, maxWriteSize)
+  align down to [ebp+0x3c] (block align)
+  add [ebp+0x48], ebx        ; inFlight += size
+  sub [ebp+0x4c], ebx        ; pending -= size
+
+  0x10002078: call alloc_node → allocate WAVEHDR node
+  Copy data from ring buffer (with wrap handling via rep movsd/movsb)
+
+  0x100020ba: if byte [ebp+0x78] (DSP callback):
+    call 0x100029e4           ; volume/DSP processing (DISABLED for Winamp)
+
+  0x100020ce: waveOutPrepareHeader(hwo, wavhdr, 32)
+  0x100020e3: waveOutWrite(hwo, wavhdr, 32)
+
+  0x100020e9: if [ebp+0x6c] == 1:   ; first buffer submitted?
+    timeGetTime → [ebp+0x60]        ; record start time
+  jmp 0x10002049                     ; check for more data
+
+  ; === EXIT WRITE LOOP ===
+  0x10002101: LeaveCriticalSection → loop back to WaitForSingleObject
+```
+
+### Ring Buffer Struct Layout (ebp-relative, out_wave.dll)
+
+| Offset | Type | Name | Notes |
+|--------|------|------|-------|
+| +0x00 | HWAVEOUT | waveOut handle | 0 = closed |
+| +0x08 | HANDLE | event | Waited by T4, set by T3/WOM_DONE |
+| +0x0C | CRITICAL_SECTION | cs | Lock for ring buffer access |
+| +0x24 | ptr | completed list | Linked list of WHDR_DONE buffers |
+| +0x28 | ptr | free list | Recycled buffer nodes |
+| +0x30 | int | nChannels | 2 for stereo |
+| +0x3C | int | block align | nChannels × bitsPerSample/8 = 4 |
+| +0x40 | ptr | ring buffer base | Guest address of circular buffer |
+| +0x44 | int | ring buffer size | 176400 bytes (2s @ 22050Hz stereo 16-bit) |
+| +0x48 | int | bytes in flight | Submitted to waveOut, not yet completed |
+| +0x4C | int | pending data | Bytes in ring buffer available for write |
+| +0x50 | int | write offset | Current position in ring buffer |
+| +0x54 | int | small threshold | 256 — min bytes for a write when buffers outstanding |
+| +0x58 | int | max write size | Max bytes per waveOutWrite call |
+| +0x5C | int | large threshold | 11025 — min bytes when no buffers outstanding |
+| +0x60 | DWORD | last time | timeGetTime value from last completed/first buffer |
+| +0x64 | DWORD | pause delta | Accumulated pause time |
+| +0x68 | int | initial write | First-buffer threshold (0 = use large) |
+| +0x6C | int | outstanding | Number of buffers submitted but not completed |
+| +0x74 | byte | paused | 1 = playback paused |
+| +0x75 | byte | flush | Flush request |
+| +0x76 | byte | stop | Stop request → thread exits |
+| +0x78 | byte | DSP active | 1 = call DSP callback on write (0 for Winamp) |
+| +0x7A | byte | pause request | |
+| +0x7B | byte | end of stream | |
+| +0x7C | int | volume L | Left channel volume (-666..255) |
+| +0x80 | int | volume R | Right channel volume |
+
+### in_mp3.dll Synthesis Filter (T4 Bottleneck)
+
+T4 enters a tight FPU loop in in_mp3.dll at relocated address 0x5bd470 (VA 0x1000E470):
+```asm
+loop:
+  ecx = [esi]; esi += 4     ; read Huffman code
+  if ecx > 0: [eax] = scale × table[ecx]      ; FPU multiply
+  if ecx < 0: [eax] = -scale × table[-ecx]    ; negate + multiply
+  if ecx == 0: [eax] = 0                       ; zero
+  eax += 4; edx--
+  jnz loop
+```
+
+This is the MP3 Huffman dequantization/inverse quantization step. Each call processes 256 samples (~1500 x86 instructions). The function is called from a code path in T4's execution that I traced entering from 0x5e3f66 (out_wave.dll WaitForSingleObject return), but the exact intermediate caller is unclear — the return address on T4's stack is 0 (likely tail-call optimized or thunk-related).
+
+**Impact:** This FPU loop consumes the majority of T4's instruction budget. With 5000 instructions per batch / 4 threads / 4 slices = ~312 instructions per slice, one call to this function takes ~5 slices to complete. T4 can only complete ~1-2 writes per batch.
+
+### Thread Scheduling Improvements
+
+1. **Sleep deprioritization** — Threads that call Sleep repeatedly (like T2 timer/monitor thread, which calls Sleep 467× in 300 batches) are deprioritized: run only every 8th slice. Uses new `$sleep_yielded` global that persists across `run()` calls.
+
+2. **Deferred WHDR_DONE** — Previous WAVEHDR guest address stored at `0xAD98`. Each waveOutWrite marks the previous buffer done, keeping ≥1 outstanding. Flushed by waveOutReset/waveOutClose.
+
+### Audio Output Results
+
+| Config | waveOutWrite | PCM bytes | Duration |
+|--------|-------------|-----------|----------|
+| Before (immediate WHDR_DONE) | 4 | 46080 | 0.52s |
+| After (deferred WHDR_DONE) | 17 | 39168 | 0.44s |
+| 2000 batches × 5000 | 17 | 39168 | 0.44s |
+| 500 batches × 100000 | 9 | ~20736 | 0.23s |
+
+More writes per batch but smaller buffers (2304 vs 11520). Total output limited by T4's FPU throughput, not scheduling. Larger batch sizes actually reduce output because the interleaving is coarser.
+
+### Key Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/09a3-handlers-audio.wat` | Deferred WHDR_DONE in waveOutWrite; flush in waveOutReset/waveOutClose |
+| `src/01-header.wat` | Added `$sleep_yielded` global; documented 0xAD98 shared memory slot |
+| `src/13-exports.wat` | Added `get_yield_flag`, `get_sleep_yielded` exports |
+| `src/09a-handlers.wat` | Sleep handler sets `$sleep_yielded` flag |
+| `lib/thread-manager.js` | Sleep-based thread deprioritization; adaptive slice count |
+
+### Open Tasks (Priority Order)
+
+| # | Task | Notes |
+|---|------|-------|
+| 1 | **Browser audio playback** | The Web Audio bridge + deferred WHDR_DONE should work with continuous execution in browser (requestAnimationFrame). T3/T4 get unlimited instruction budget. |
+| 2 | **Optimize FPU synth** | T4's FPU loop at 0x5bd470 (in_mp3.dll synthesis filter) is the decode bottleneck. Options: (a) detect and fast-path the specific loop pattern in the threaded code emitter, (b) increase thread slice size for compute-heavy threads, (c) implement the inverse quantization as a WASM host import |
+| 3 | **Trace T4→in_mp3 call path** | T4 enters in_mp3.dll FPU code from out_wave.dll but the exact call chain is unclear (stack shows return addr 0). May be via a function pointer in shared audio state or a thunk redirect. |
+
+### Test Commands
+
+```bash
+# Skin renders (stable):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=200 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close --stuck-after=5000 \
+  --input=10:273:2 --png=scratch/winamp.png
+
+# IPC playback with audio output (17 writes, 0.44s PCM):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=300 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,99:poke:0x45caa4:1,100:winamp-play:C:\demo.mp3,150:winamp-start" \
+  --audio-out=scratch/winamp-audio.pcm
+
+# Convert PCM to WAV:
+ffmpeg -f s16le -ar 22050 -ac 2 -i scratch/winamp-audio.pcm scratch/winamp-audio.wav -y
+
+# Regression suite:
+node test/test-all-exes.js
+```
 
 ## Difficulty: Medium-Hard
 

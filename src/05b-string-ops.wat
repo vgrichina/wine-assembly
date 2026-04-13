@@ -102,6 +102,7 @@
     (local $n i32) (local $bytes i32) (local $al i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
+      ;; Ensure n is positive for shift (ECX is unsigned)
       (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
       (local.set $al (i32.and (global.get $eax) (i32.const 0xFF)))
       ;; Fast path: if all 4 bytes of EAX are the same, use memory.fill

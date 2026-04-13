@@ -6,9 +6,12 @@
   ;; SUB-DISPATCHERS (Local*, Global*, lstr*, Reg*)
   ;; ============================================================
 (func $dispatch_local (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
-    (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 5))))
+    (local $ch i32)
+    (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 5))))
     (if (i32.eq (local.get $ch) (i32.const 0x41)) ;; LocalAlloc
       (then (global.set $eax (call $heap_alloc (local.get $a1)))
+            (if (i32.and (local.get $a0) (i32.const 0x40)) ;; LMEM_ZEROINIT
+              (then (if (global.get $eax) (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $a1))))))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; LocalFree
       (then (call $heap_free (local.get $a0))
@@ -17,14 +20,19 @@
       (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; LocalUnlock
       (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; LocalReAlloc
-      (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; LocalReAlloc(hMem, uBytes, uFlags)
+      (then
+        (global.set $eax (call $heap_realloc (local.get $a0) (local.get $a1) (local.get $a2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (call $crash_unimplemented (local.get $name)))
 
   (func $dispatch_global (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
-    (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 6))))
+    (local $ch i32)
+    (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 6))))
     (if (i32.eq (local.get $ch) (i32.const 0x41)) ;; GlobalAlloc
       (then (global.set $eax (call $heap_alloc (local.get $a1)))
+            (if (i32.and (local.get $a0) (i32.const 0x40)) ;; GMEM_ZEROINIT
+              (then (if (global.get $eax) (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $a1))))))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; GlobalFree
       (then (call $heap_free (local.get $a0))
@@ -34,9 +42,12 @@
     (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; GlobalUnlock
       (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; GlobalSize
-      (then (global.set $eax (i32.const 4096)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; GlobalReAlloc
-      (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+      (then (global.set $eax (i32.sub (call $gl32 (i32.sub (local.get $a0) (i32.const 4))) (i32.const 4)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; GlobalReAlloc(hMem, uBytes, uFlags)
+      (then
+        (global.set $eax (call $heap_realloc (local.get $a0) (local.get $a1) (local.get $a2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $ch) (i32.const 0x43)) ;; GlobalCompact
       (then (global.set $eax (i32.const 0x100000)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (call $crash_unimplemented (local.get $name)))

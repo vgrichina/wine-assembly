@@ -45,6 +45,7 @@ const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
+const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
@@ -180,6 +181,8 @@ async function main() {
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
+    _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
+    _sharedAudio: {},  // shared waveOut state across threads
     readFile: (name) => {
       // Try to find file relative to exe directory
       const exeDir = path.dirname(EXE_PATH);
@@ -493,6 +496,8 @@ async function main() {
       trace: traceCategories,
       vfs: ctx.vfs,  // share filesystem with main thread
       exports: instance.exports,  // share main instance exports for g2w
+      _audioOutFd: ctx._audioOutFd,  // share audio output fd
+      _sharedAudio: ctx._sharedAudio,  // share waveOut state across threads
     };
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;
@@ -525,6 +530,11 @@ async function main() {
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
+
+  // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base)
+  if (instance.exports.init_dx_com_thunks) {
+    instance.exports.init_dx_com_thunks();
+  }
 
   // Set EXE name from path
   if (instance.exports.set_exe_name) {
@@ -1116,7 +1126,8 @@ async function main() {
         const ipcMsgs = [
           { hwnd: mainHwnd, msg: 0x400, wParam: 0, lParam: 101 },       // IPC_DELETE
           { hwnd: mainHwnd, msg: 0x400, wParam: ptrGA, lParam: 100 },    // IPC_PLAYFILE (wParam -> ptr -> string)
-          { hwnd: mainHwnd, msg: 0x400, wParam: 0, lParam: 102 },       // IPC_STARTPLAY
+          // IPC_PLAYFILE auto-plays; don't send IPC_STARTPLAY here — it would Stop() the
+          // just-started decode threads and restart, wasting decoded audio.
         ];
         for (let i = 0; i < ipcMsgs.length && postCount + i < 8; i++) {
           const off = 0x400 + (postCount + i) * 16;
@@ -1283,6 +1294,7 @@ async function main() {
       const eipNow = instance.exports.get_eip();
       if (breakAddrs.length && breakAddrs.includes(eipNow) && eipNow !== eipBefore) {
         console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
+        if (instance.exports.get_dbg_prev_eip) console.log('  dbg_prev_eip=' + hex(instance.exports.get_dbg_prev_eip()));
         console.log('  ' + regs());
         dumpStack();
         // Re-arm WASM bp so subsequent hits also fire
@@ -1437,6 +1449,7 @@ if (VERBOSE) {
       stuckCount++;
       if (stuckCount > STUCK_AFTER && !scheduledInput.length) {
         console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
+        if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
         dumpStack();
         break;
       }
@@ -1449,6 +1462,7 @@ if (VERBOSE) {
     if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
     if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
     if (instance.exports.get_heap_ptr) console.log('heap_ptr:', hex(instance.exports.get_heap_ptr()));
+    if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
   }
 
   // --peek=ADDR[:LEN],... — dump memory at end. Addrs >= image_base treated as

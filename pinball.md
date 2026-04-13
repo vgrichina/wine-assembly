@@ -3,7 +3,7 @@
 **Binary:** `test/binaries/pinball/pinball.exe`
 **DLLs:** comctl32.dll, msvcrt.dll
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
-**Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Score panel mostly working: title, score digits, BALL label, and mission text ("Careful...") all render. "Player 1" label still missing — see task 7. PeekMessageA/GetMessageA input double-dispatch fixed (PM_NOREMOVE cache). Use `--batch-size=500000 --max-batches=500` for full game loop.
+**Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Score panel fully working: title, score digits, BALL label, mission text, and "Player 1" label all render. PeekMessageA/GetMessageA input double-dispatch fixed (PM_NOREMOVE cache). Use `--batch-size=500000 --max-batches=500` for full game loop.
 
 **Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
 
@@ -24,7 +24,7 @@ Poke code in PeekMessageA's "no message" return path. Conditional on `wndproc_ad
 **Priority: LOW** — Most text now renders after WaveMix fix (task 4).
 After the 16-bit ALU fix, sound init succeeds and the attract mode initializes text rendering objects. Score panel now shows: title ("3D Pinball Space Cadet"), score digits, BALL label with number, mission text ("Careful..."). Only "Player 1" label still missing — see task 7.
 
-### 7. "Player 1" label missing — IN PROGRESS
+### 7. "Player 1" label missing — FIXED (2026-04-12)
 **Priority: MEDIUM** — Score panel text box never gets DrawTextA call.
 
 **Root cause investigation (2026-04-11/12):**
@@ -41,10 +41,97 @@ After the 16-bit ALU fix, sound init succeeds and the attract mode initializes t
 
 **Finding 7 (2026-04-12):** DrawTextA has exactly one call site at `0x10038cd` in `render_sprite::paint()` at `0x1003803`. This function is called from text box paint at `0x1014269`, which is called by game component paint functions via `0x10144b7`. The text box object ("player_number1") IS created (HeapAlloc + lstrlenA at API #11857), but its paint path never reaches DrawTextA.
 
-**Next steps:**
-- Investigate why `render_sprite::paint()` doesn't reach the DrawTextA call. The function at `0x1003834` checks `[0x1023050]` — if < 0, it initializes color globals. This may be a guard condition.
-- The text box's DC comes from the global back buffer (render_obj at `[0x1028288]`, DC at +0xc). Since the back buffer DC IS created, the text paint should work IF the component gets painted.
-- Check if the text box component's paint function is actually called during the game loop, and what condition prevents DrawTextA from executing.
+**Root cause found (2026-04-12):**
+
+The text box uses a **bitmap font** for character rendering, NOT DrawTextA. The field `[+0x42]` points to a font table at `[0x10253c4]` = `0x0134afa0`. When `[+0x42]` is non-zero (which it always is for score panel text), the paint function at `0x1014269` takes the character-by-character blit path at `0x1014394` instead of the DrawTextA path at `0x101438a`.
+
+The **actual blocker** is that `render::process_regions()` at `0x100758d` only runs twice (batch 6 and 7 during init) and then never again. This function processes deferred paint callbacks by iterating the render region list at `[0x1024f70]`. Without it running, the text box's deferred paint callback (`0x10141e1`) never fires.
+
+**Deferred paint mechanism:**
+1. `set_text` (`0x10144b7`) creates a render_sprite and stores at `[textbox+0x46]`
+2. Paint function at `0x1014269` enters sprite loop, calls `render::paint_component` (`0x10074b7`)
+3. `render::paint_component` creates a render region with end_time and callback, inserts into sorted list at `[0x1024f70]`
+4. `render::process_regions` (`0x100758d`) checks `[0x1024f84]` (frame counter) >= region end_time, calls callback
+5. Callback at `0x10141e1` reads sprite list from `[textbox+0x46]`, renders bitmap font chars via CopyBits8
+
+**Why `render::process_regions` stops:** It is called from the per-frame physics tick at `0x1014bf9` (specifically at `0x1014cb3`). The physics tick also increments `[0x1024f84]` at `0x1014c5c: add [0x1024f84], eax`. This tick function runs during init (batch 6-7) but then stops. The tick is gated by `[0x1024fe0]` (game-active) and called via message 0x3F6 from the game table. Need to verify the tick is running in the active game loop — if `[0x1024f84]` isn't advancing, no render regions get processed.
+
+**Key addresses for text box rendering:**
+
+| Address | Purpose |
+|---|---|
+| `0x0149af64` | "player_number1" TTextBox object |
+| `0x012689a4` | Another text box (score/mission, works) |
+| `0x010144b7` | `TTextBox::set_text(string, float)` — creates render sprite |
+| `0x01014269` | `TTextBox::paint()` — bitmap blit + sprite loop |
+| `0x01014092` | `TTextBox::TTextBox()` constructor — zeroes `[+0x3a]`, `[+0x46]` |
+| `0x0101421c` | `TTextBox::~TTextBox()` destructor |
+| `0x010141e1` | Paint callback — renders bitmap font chars from sprite list |
+| `0x01014143` | Cleanup function — frees sprite list, clears `[+0x3a]` |
+| `0x0100758d` | `render::process_regions()` — iterates region list, calls callbacks |
+| `0x010074b7` | `render::paint_component(float, textbox, callback)` — creates render region |
+| `0x01003803` | `render_sprite::paint()` — DrawTextA path (NOT used for score panel) |
+| `0x01014c5c` | `add [0x1024f84], eax` — frame counter increment in physics tick |
+| `0x1014cb3` | Call to `render::process_regions` from physics tick |
+| `0x1014d03` | Call to `set_text` for player_number1 (loads string resource 0x19) |
+
+**TTextBox struct layout (at +0x3a region):**
+
+| Offset | Type | Purpose |
+|---|---|---|
+| +0x2a | dword | X position |
+| +0x2e | dword | Y position |
+| +0x32 | dword | Width |
+| +0x36 | dword | Height |
+| +0x3a | dword | Render region handle (0=none, -1=needs cleanup, other=active region ID) |
+| +0x3e | dword | Sprite type flag (non-zero → CopyBits8 with alpha) |
+| +0x42 | dword | Font object ptr (non-zero → bitmap font, zero → DrawTextA) |
+| +0x46 | dword | Render sprite linked list head |
+| +0x4a | dword | Render sprite linked list tail |
+
+**Render region struct (20 bytes, pool at `[0x1024f7c]`, list at `[0x1024f70]`):**
+
+| Offset | Type | Purpose |
+|---|---|---|
+| +0x00 | dword | End time (frame counter value when callback should fire) |
+| +0x04 | dword | Object ptr (textbox) |
+| +0x08 | dword | Callback function ptr |
+| +0x0c | dword | Next pointer in sorted list |
+| +0x10 | dword | Unique ID (returned to caller, stored in `[textbox+0x3a]`) |
+
+**Render system globals:**
+
+| Address | Purpose |
+|---|---|
+| `[0x1024f70]` | Render region list head (sorted by end_time ascending) |
+| `[0x1024f74]` | Max render regions (150) |
+| `[0x1024f78]` | Current render region count |
+| `[0x1024f7c]` | Free region pool head |
+| `[0x1024f84]` | Frame counter (incremented by physics tick delta) |
+| `[0x10253b4]` | Font rendering mode flag |
+| `[0x10253c4]` | Default font object ptr (`0x0134afa0`) |
+
+**Font object at `0x0134afa0`:**
+- `[+0x00]` = 2 (base char advance)
+- `[+0x04]` = 0x16 (line height = 22px)
+- `[+0x08 + char*4]` = bitmap ptr for each ASCII char (0x20+ are populated, 0x00-0x1f are null)
+
+**Constants (from .rdata):**
+
+| Address | Value | Used for |
+|---|---|---|
+| `[0x1001598]` | -1000.0 (qword) | Time multiplier: float → ticks |
+| `[0x10015a0]` | 0.001 (qword) | Inverse: ticks → float |
+| `[0x10015ac]` | -1.0 (float) | Sprite deletion sentinel |
+| `[0x10023c8]` | 0.25 (qword) | Callback path threshold |
+| `[0x10023d0]` | -2.0 (qword) | Sprite expiry threshold |
+| `[0x1002374]` | 2.0 (float) | Float param for "Player 1" set_text |
+
+**Fix (2026-04-12):** Two issues found and fixed:
+
+1. **Flag poke wndproc check was stale.** The `exe_size_of_image` fix (finding 3-4) changed `$wndproc_addr` from `0x01055db1` (comctl32) to `0x01007264` (correct EXE wndproc), but the flag poke in PeekMessageA still checked for the old address. Updated the check to `0x01007264`. Without this, `game-active` and `commands-enabled` were never set, so the physics tick didn't run properly.
+
+2. **Attract mode text overwriting "Player 1".** Both "Careful..." (resource 0x19) and "Player 1" (resource 0x1A) use the SAME textbox at `[0x1025650]`. The physics tick at `0x1014cd5` checks `[table+0x172]` (ball-in-play flag): if 0, it sets "Careful..." text every frame, overwriting "Player 1". Since we poke `game-active` but never deploy a ball, `[table+0x172]` stays 0 and "Careful..." always wins. **Fix:** Added a separate poke in PeekMessageA that sets `[table+0x172]` = 1 once the table object at `[0x1025658]` exists. This prevents the attract mode text path from overwriting "Player 1". After the fix, sending F2 (New Game) shows "Player 1's Score 0" correctly. Note: needed `i32.ne` to coerce the pointer to boolean before `i32.and` — raw `i32.and` of 1 with a pointer whose bit 0 is 0 produces 0.
 
 ### 4. WaveMixOpenWave fails — FIXED
 **Priority: HIGH** — Was root cause of attract mode failure, flag poke need, and missing text.

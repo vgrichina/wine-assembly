@@ -105,15 +105,52 @@
   (func $heap_free (param $guest_ptr i32)
     (local $block i32) (local $w i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
-    ;; Only free blocks in our heap range (0x01D12000+) — ignore foreign blocks
+    ;; Only free blocks in our heap range — ignore foreign blocks
     ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list)
-    (if (i32.lt_u (local.get $guest_ptr) (i32.const 0x01D12000)) (then (return)))
+    (if (i32.lt_u (local.get $guest_ptr) (global.get $heap_base)) (then (return)))
     ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
     (local.set $w (call $g2w (local.get $block)))
     ;; Prepend to free list: store next = old head
     (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
     (global.set $free_list (local.get $block)))
+
+  ;; heap_realloc: reallocate a heap block (guest ptrs)
+  ;; Returns new guest pointer (or 0 on failure). Copies old data, frees old block.
+  ;; flags: bit 6 = LMEM_ZEROINIT/GMEM_ZEROINIT
+  (func $heap_realloc (param $old_ptr i32) (param $new_size i32) (param $flags i32) (result i32)
+    (local $new_ptr i32) (local $old_block_size i32) (local $old_data_size i32) (local $copy_size i32)
+    ;; If old_ptr is NULL, just allocate
+    (if (i32.eqz (local.get $old_ptr))
+      (then
+        (local.set $new_ptr (call $heap_alloc (local.get $new_size)))
+        (if (i32.and (local.get $flags) (i32.const 0x40))
+          (then (if (local.get $new_ptr)
+            (then (call $zero_memory (call $g2w (local.get $new_ptr)) (local.get $new_size))))))
+        (return (local.get $new_ptr))))
+    ;; Read old block size from header at [ptr-4] (includes 4-byte header)
+    (local.set $old_block_size (call $gl32 (i32.sub (local.get $old_ptr) (i32.const 4))))
+    (local.set $old_data_size (i32.sub (local.get $old_block_size) (i32.const 4)))
+    ;; If already big enough, return same pointer
+    (if (i32.le_u (local.get $new_size) (local.get $old_data_size))
+      (then (return (local.get $old_ptr))))
+    ;; Allocate new block
+    (local.set $new_ptr (call $heap_alloc (local.get $new_size)))
+    (if (i32.eqz (local.get $new_ptr)) (then (return (i32.const 0))))
+    ;; Copy old data
+    (local.set $copy_size (local.get $old_data_size))
+    (if (i32.gt_u (local.get $copy_size) (local.get $new_size))
+      (then (local.set $copy_size (local.get $new_size))))
+    (call $memcpy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $old_ptr)) (local.get $copy_size))
+    ;; Zero new portion if ZEROINIT flag set
+    (if (i32.and (local.get $flags) (i32.const 0x40))
+      (then (call $zero_memory
+        (i32.add (call $g2w (local.get $new_ptr)) (local.get $copy_size))
+        (i32.sub (local.get $new_size) (local.get $copy_size)))))
+    ;; Free old block
+    (call $heap_free (local.get $old_ptr))
+    (local.get $new_ptr))
+
   ;; Find resource entry in PE resource directory
   ;; Returns offset of data entry (relative to image_base) or 0
   ;; Compare ASCII string at guest $str_ptr with Unicode resource name at rsrc offset $name_off
@@ -304,15 +341,19 @@
     (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32) (local $extra i32)
     (local.set $ptr (call $heap_alloc (i32.const 512)))
     (global.set $fake_cmdline_addr (local.get $ptr))
-    ;; Copy exe name from $exe_name_wa buffer
+    ;; Write "C:\<exe_name>" — full path matching GetModuleFileNameA
     (local.set $dst (call $g2w (local.get $ptr)))
+    (i32.store8 (local.get $dst) (i32.const 0x43))  ;; 'C'
+    (i32.store8 (i32.add (local.get $dst) (i32.const 1)) (i32.const 0x3A))  ;; ':'
+    (i32.store8 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $dst) (local.get $i))
+      (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $i) (i32.const 3)))
         (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
+    (local.set $len (i32.add (local.get $len) (i32.const 3)))
     ;; If extra args were set via $set_extra_cmdline, append " <args>".
     (local.set $extra (global.get $extra_cmdline_len))
     (if (i32.gt_u (local.get $extra) (i32.const 0))
