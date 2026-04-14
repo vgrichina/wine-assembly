@@ -228,7 +228,10 @@ async function main() {
   };
   h.set_menu = (hwnd, menuResId) => { if (renderer) renderer.setMenu(hwnd, menuResId); };
   h.set_dlg_item_text = (hwnd, ctrlId, textPtr) => {
-    if (renderer) renderer.setDlgItemText(hwnd, ctrlId, readStr(textPtr));
+    const text = readStr(textPtr);
+    if (!ctx._controlText) ctx._controlText = new Map();
+    ctx._controlText.set(`${hwnd}:${ctrlId}`, text);
+    if (renderer) renderer.invalidate(hwnd);
   };
   h.message_box = () => 1;
   h.shell_about = () => 1;

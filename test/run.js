@@ -319,7 +319,9 @@ async function main() {
   h.set_dlg_item_text = (hwnd, ctrlId, textPtr) => {
     const text = readStr(textPtr);
     logs.push(`[SetDlgItemText] hwnd=0x${hwnd.toString(16)} ctrl=${ctrlId} "${text}"`);
-    if (renderer) renderer.setDlgItemText(hwnd, ctrlId, text);
+    if (!ctx._controlText) ctx._controlText = new Map();
+    ctx._controlText.set(`${hwnd}:${ctrlId}`, text);
+    if (renderer) renderer.invalidate(hwnd);
   };
 
   // --- Override message_box to log ---
