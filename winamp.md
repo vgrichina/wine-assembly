@@ -1194,6 +1194,51 @@ ffmpeg -f s16le -ar 22050 -ac 2 -i scratch/winamp-audio.pcm scratch/winamp-audio
 node test/test-all-exes.js
 ```
 
+## SESSION 15 PROGRESS — Survey Dialog Routing Bug Blocks Playback
+
+After the Atomics.wait / shared-memory work (commits 9de3418, 01a65bf), the documented `--input=10:273:2` IDCANCEL trick to dismiss the survey now causes immediate `ExitProcess(39)`. Investigation:
+
+### Survey dlgproc reverse-engineered (0x4254f6)
+
+Survey dialog (`DialogBoxParamA` resource ID 0xe7) is a multi-page registration form. State at `[0x45330c]` is the page counter (1 → 2 → 3). Child sub-dialog `0x10009` (created by `CreateDialogParamA` from inside the survey at API #473) holds the form fields.
+
+WM_COMMAND handling in dlgproc:
+- **wParam=1 (IDOK)** → at 0x4255b2: SendMessage(child, 0x408) to validate. If validation passes AND `[0x453310]==0` OR `[0x45330c]!=1` → calls `EndDialog(survey, 0)`. Else `[0x45330c]++` (advance page).
+- **wParam=2 (IDCANCEL)** → falls through to 0x425541 (page advance / decline path).
+- **Other wParams** → ignored.
+
+WM_CLOSE (msg=0x10) only acts when `[0x45330c]==2`: sets `[0x45a9f0]=1` and `[0x45330c]=3`.
+
+### The real bug: nested dialog hwnd tracking
+
+`$dlg_hwnd` is a single global. When the inner sub-dialog 0x10009 is created via `CreateDialogParamA`, the global gets overwritten — so `09b-dispatch.wat:131-134` routes hwnd-less input to the **sub-dialog**, not the outer survey.
+
+Confirmed by trace: with `--input="50:poke:0x45330c:3,60:273:1"`, EndDialog fires on hwnd `0x10009` (sub-dialog) at API #665, never on outer `0x10003`. The outer survey never receives WM_COMMAND. Eventually winamp exits at API #4902 via the standard `RevokeDragDrop → OleUninitialize → ExitProcess(0x27)` shutdown path.
+
+### Sweep results (all `--max-batches=20000`, no audio output)
+
+| Input | APIs ran | Outcome |
+|-------|----------|---------|
+| (none) | 491 | Idle — survey modal forever |
+| `10:273:2` | 6069 | Exit at batch ~14 — IDCANCEL routes to main wndproc somewhere |
+| `10:273:1` | 4316 | Inner sub-dialog ends, survey stays, exits later |
+| `50:poke:0x45330c:3,60:273:1` | 4902 | Sub-dialog ends with poked page state, still no playback, still exits |
+| `wParam ≥ 3` | 491 | No effect |
+
+### Why playback can't proceed
+
+Survey's modal `DialogBoxParamA` loop blocks the main message pump. Until the **outer** survey ends, IPC posts (winamp-play / winamp-start / poke) never reach winamp's main code path that initializes playback (the post-survey init at 0x42e577 sets `[0x4575fc]=1`).
+
+### Fix options (not implemented this session)
+
+1. **Make `$dlg_hwnd` a stack, or track only the topmost modal dialog.** Non-modal `CreateDialogParamA` should NOT overwrite the modal hwnd used by the dispatch loop's hwnd-less fallback. Architecturally correct, fixes the routing for all nested-dialog apps.
+2. **Suppress survey for resource ID 0xe7** — return IDOK/EndDialog immediately. Hacky but unblocks playback for testing.
+3. **Bypass dialog entirely** — directly call play function `0x42fbcc` after manually setting up `[0x4575fc]`, `[0x45caa4]`, playlist count `[0x457608]`, and entry. Risky, easy to crash.
+
+### Recommended next step
+
+Option 1 — fix `$dlg_hwnd` so the modal pump (`09b-dispatch.wat:131-134`) routes hwnd-less input to the topmost MODAL dialog (DialogBoxParamA), not whatever non-modal `CreateDialogParamA` ran most recently. This is the actual regression introduced or exposed by recent dialog/threading changes; the IDCANCEL path that worked in prior sessions worked because that nested-dialog architecture either didn't exist or `$dlg_hwnd` wasn't being clobbered yet.
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.
