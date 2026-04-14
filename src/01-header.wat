@@ -136,6 +136,14 @@
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
+  (import "host" "gdi_create_rect_rgn" (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_create_rect_rgn(l, t, r, b) -> hrgn
+  (import "host" "gdi_set_rect_rgn" (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
+  (import "host" "gdi_combine_rgn" (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
+  (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
+  ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))

@@ -1270,8 +1270,14 @@
   ;; 91: GetClientRect
   (func $handle_GetClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32)
-    ;; Fill RECT with client area — query host for per-window client size
-    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+    ;; Controls live entirely in WAT (CONTROL_GEOM) — asking the host for
+    ;; their client size falls back to the 640×480 desktop default because
+    ;; child hwnds aren't in renderer.windows[], which then corrupts any
+    ;; size calc the guest does from it (calc's dialog resize is one such
+    ;; path). For controls, read the size directly from CONTROL_GEOM.
+    (if (call $ctrl_table_get_class (local.get $arg0))
+      (then (local.set $cs (call $ctrl_get_wh_packed (local.get $arg0))))
+      (else (local.set $cs (call $host_get_window_client_size (local.get $arg0)))))
     (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
     (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
@@ -1819,11 +1825,53 @@
   )
 
   ;; 140: MapWindowPoints(hWndFrom, hWndTo, lpPoints, cPoints) → int
-  ;; Converts points from one window's coordinate space to another.
-  ;; With hWndFrom=child and hWndTo=parent (or vice versa), adjusts by client origin.
-  ;; For our simplified window system, coordinates are already relative — return 0 offset.
+  ;; Translate an array of POINTs from hWndFrom's client space into
+  ;; hWndTo's. For direct parent↔child pairs (the common dialog case) the
+  ;; delta is the child's CONTROL_GEOM xy. General N-level routing walks
+  ;; up the parent chain on each side and sums offsets. Return value packs
+  ;; dx (low 16) and dy (high 16), matching the Win32 contract.
   (func $handle_MapWindowPoints (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $dx i32) (local $dy i32) (local $cur i32) (local $xy i32)
+    (local $i i32) (local $p i32)
+    ;; Accumulate origin of hWndFrom walking up to a common ancestor (we
+    ;; simplify: walk each side fully; works when only one side is nested).
+    (local.set $cur (local.get $arg0))
+    (block $from_done (loop $from_walk
+      (br_if $from_done (i32.eqz (local.get $cur)))
+      (br_if $from_done (i32.eq (local.get $cur) (local.get $arg1)))
+      (if (call $ctrl_table_get_class (local.get $cur))
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $cur)))
+          (local.set $dx (i32.add (local.get $dx) (i32.and (local.get $xy) (i32.const 0xFFFF))))
+          (local.set $dy (i32.add (local.get $dy) (i32.shr_u (local.get $xy) (i32.const 16))))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (br $from_walk)))
+    ;; Subtract origin of hWndTo the same way
+    (local.set $cur (local.get $arg1))
+    (block $to_done (loop $to_walk
+      (br_if $to_done (i32.eqz (local.get $cur)))
+      (br_if $to_done (i32.eq (local.get $cur) (local.get $arg0)))
+      (if (call $ctrl_table_get_class (local.get $cur))
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $cur)))
+          (local.set $dx (i32.sub (local.get $dx) (i32.and (local.get $xy) (i32.const 0xFFFF))))
+          (local.set $dy (i32.sub (local.get $dy) (i32.shr_u (local.get $xy) (i32.const 16))))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (br $to_walk)))
+    ;; Apply to each POINT (or RECT = 2 POINTs, caller picks cPoints)
+    (local.set $i (i32.const 0))
+    (local.set $p (call $g2w (local.get $arg2)))
+    (block $apply_done (loop $apply
+      (br_if $apply_done (i32.ge_u (local.get $i) (local.get $arg3)))
+      (i32.store (local.get $p)
+        (i32.add (i32.load (local.get $p)) (local.get $dx)))
+      (i32.store offset=4 (local.get $p)
+        (i32.add (i32.load offset=4 (local.get $p)) (local.get $dy)))
+      (local.set $p (i32.add (local.get $p) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $apply)))
+    (global.set $eax (i32.or (i32.and (local.get $dx) (i32.const 0xFFFF))
+                             (i32.shl (local.get $dy) (i32.const 16))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 141: SetWindowPos
@@ -5701,20 +5749,19 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 555: CombineRgn — STUB: unimplemented
+  ;; 555: CombineRgn — call host to merge region objects
   (func $handle_CombineRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode) — 4 args stdcall
-    ;; Return COMPLEXREGION (3) to indicate success
-    (global.set $eax (i32.const 3))
+    (global.set $eax (call $host_gdi_combine_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 556: SetRectRgn(hrgn, left, top, right, bottom) — 5 args stdcall.
-  ;; Regions in this emulator are fake counter handles (see CreateRectRgn);
-  ;; FreeCell uses regions only for drag-rect clipping, so track nothing
-  ;; and return success.
+  ;; 556: SetRectRgn — call host to update region object
   (func $handle_SetRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    ;; SetRectRgn(hrgn, left, top, right, bottom) — 5 args stdcall.
+    (global.set $eax (call $host_gdi_set_rect_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -5763,12 +5810,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 566: CreateRectRgn — STUB: unimplemented
+  ;; 566: CreateRectRgn — call host to allocate real region object
   (func $handle_CreateRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CreateRectRgn(left, top, right, bottom) — 4 args stdcall
-    ;; Return a fake region handle from counter
-    (global.set $rgn_counter (i32.add (global.get $rgn_counter) (i32.const 1)))
-    (global.set $eax (i32.or (i32.const 0x00DD0000) (global.get $rgn_counter)))
+    (global.set $eax (call $host_gdi_create_rect_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -7745,9 +7791,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall, return 1 (success)
+  ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall
   (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_gdi_set_window_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
