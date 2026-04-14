@@ -1051,6 +1051,8 @@
     (then (global.set $quit_flag (i32.const 1))))
     ;; Notify renderer to remove window from its table
     (call $host_destroy_window (local.get $arg0))
+    ;; Remove from guest window table
+    (call $wnd_table_remove (local.get $arg0))
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
     ;; On real Windows, destroying the focused window gives focus to the next foreground window.
     ;; Only if main_hwnd is valid and different from the destroyed window (may have been promoted).
@@ -1948,12 +1950,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 193: ShellExecuteA — STUB: unimplemented
+  ;; 193: ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd)
   (func $handle_ShellExecuteA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd)
-    ;; Return >32 for success (we can't actually launch anything)
-    (global.set $eax (i32.const 33))  ;; SE_ERR_NOASSOC would be 31, 33 = success
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+    (global.set $eax (call $host_shell_execute
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg4) (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))))) ;; nShowCmd
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args + ret
   )
 
   ;; 194: ShellAboutA(hwnd, szApp, szOtherStuff, hIcon) — show About dialog

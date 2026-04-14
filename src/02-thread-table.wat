@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 231 funcref)
+  (table $handlers 234 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -283,5 +283,8 @@
     $th_bts_m_r            ;; 228: BTS [mem], r32
     $th_btr_m_r            ;; 229: BTR [mem], r32
     $th_btc_m_r            ;; 230: BTC [mem], r32
+    $th_pop_m32            ;; 231: pop [addr] (addr in next word)
+    $th_pop_m32_ro         ;; 232: pop [base+disp] (op=base, disp in word)
+    $th_emms               ;; 233
   )
 

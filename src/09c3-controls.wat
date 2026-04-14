@@ -2875,7 +2875,7 @@
   ;; invocation; defer that until a consumer actually needs the return.
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $wp i32) (local $slot i32)
+    (local $wp i32) (local $slot i32) (local $old_eip i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     ;; WAT-native (>= 0xFFFF0000)
@@ -2883,23 +2883,26 @@
       (then (return (call $wat_wndproc_dispatch
                       (local.get $hwnd) (local.get $msg)
                       (local.get $wParam) (local.get $lParam)))))
-    ;; x86 wndproc — queue via PostMessage (max 64 messages, 16 bytes each
-    ;; at WASM addr 0x400, same layout as $handle_PostMessageA).
-    ;; Skip WM_PAINT for x86 wndprocs — the app's message loop generates its
-    ;; own WM_PAINT via InvalidateRect / paint queue. Queuing here from the
-    ;; renderer's repaint cycle floods the post queue and starves real messages.
-    (if (i32.eq (local.get $msg) (i32.const 0x000F))
-      (then (return (i32.const 0))))
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
-      (then
-        (local.set $slot (i32.add (i32.const 0x400)
-          (i32.mul (global.get $post_queue_count) (i32.const 16))))
-        (i32.store         (local.get $slot) (local.get $hwnd))
-        (i32.store offset=4  (local.get $slot) (local.get $msg))
-        (i32.store offset=8  (local.get $slot) (local.get $wParam))
-        (i32.store offset=12 (local.get $slot) (local.get $lParam))
-        (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
-    (i32.const 0)
+    ;; x86 wndproc — synchronous dispatch via recursive $run.
+    ;; 1. Save current state
+    (local.set $old_eip (global.get $eip))
+    ;; 2. Push args to guest stack (lParam, wParam, msg, hwnd)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $lParam))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $wParam))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $msg))
+    (call $gs32 (global.get $esp) (local.get $hwnd))
+    ;; 3. Push return thunk
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
+    ;; 4. Set EIP to target WndProc and run
+    (global.set $eip (local.get $wp))
+    (global.set $steps (i32.const 0))
+    (call $run (i32.const 1000000))
+    ;; 5. Restore state and return EAX
+    (global.set $eip (local.get $old_eip))
+    (global.set $steps (i32.const 0))
+    (return (global.get $eax))
   )
 
   ;; Recursively destroy a window and all of its WAT-managed descendants.

@@ -423,11 +423,22 @@
 
   ;; PUSH [mem32]
   (func $emit_push_m32 (local $a i32)
+    (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 142) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 121) (i32.const 0))
+    (call $te_raw (local.get $a)))
+
+  ;; POP [mem32]
+  (func $emit_pop_m32 (local $a i32)
+    (call $apply_seg_override)
+    (if (call $mr_simple_base)
+      (then (call $te (i32.const 232) (global.get $mr_base))
+            (call $te_raw (global.get $mr_disp)) (return)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 231) (i32.const 0))
     (call $te_raw (local.get $a)))
 
   ;; MOVZX reg, byte [mem]
@@ -486,6 +497,7 @@
     (local $done i32)
     (local $prefix_rep i32)    ;; 0=none, 1=REP/REPE, 2=REPNE
     (local $prefix_66 i32)     ;; operand-size override
+    (local $prefix_67 i32)     ;; address-size override
     (local $prefix_seg i32)    ;; segment override (ignored but consumed)
     (local $imm i32)
     (local $disp i32)
@@ -517,6 +529,7 @@
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))
       (local.set $prefix_66 (i32.const 0))
+      (local.set $prefix_67 (i32.const 0))
       (local.set $prefix_seg (i32.const 0))
 
       ;; Consume prefixes
@@ -525,6 +538,7 @@
         (if (i32.eq (local.get $op) (i32.const 0xF3)) (then (local.set $prefix_rep (i32.const 1)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0xF2)) (then (local.set $prefix_rep (i32.const 2)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x66)) (then (local.set $prefix_66 (i32.const 1)) (br $pfx)))
+        (if (i32.eq (local.get $op) (i32.const 0x67)) (then (local.set $prefix_67 (i32.const 1)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x26)) (then (local.set $prefix_seg (i32.const 1)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x2E)) (then (local.set $prefix_seg (i32.const 2)) (br $pfx)))
         (if (i32.eq (local.get $op) (i32.const 0x36)) (then (local.set $prefix_seg (i32.const 3)) (br $pfx)))
@@ -575,6 +589,10 @@
       ;; ---- XCHG eax, reg (0x91-0x97) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x91)) (i32.le_u (local.get $op) (i32.const 0x97)))
         (then (call $te (i32.const 116) (i32.sub (local.get $op) (i32.const 0x90))) (br $decode)))
+
+      ;; ---- CALL far (0x9A ptr16:32) ----
+      (if (i32.eq (local.get $op) (i32.const 0x9A))
+        (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- ALU r/m32, r32 (0x00-0x3F even: ADD=00,OR=08,ADC=10,SBB=18,AND=20,SUB=28,XOR=30,CMP=38) ----
       ;; Opcodes 0x00/0x01: ADD r/m, r (byte/dword)
@@ -884,6 +902,12 @@
                 (then (call $te (i32.const 32) (global.get $mr_val)))
                 (else (call $emit_push_m32)))
               (br $decode)))
+          (if (i32.eq (global.get $mr_reg) (i32.const 7)) ;; POP r/m32
+            (then
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 33) (global.get $mr_val)))
+                (else (call $emit_pop_m32)))
+              (br $decode)))
           ;; Unhandled FF variant
           (call $te (i32.const 45) (global.get $d_pc))
           (local.set $done (i32.const 1)) (br $decode)))
@@ -986,6 +1010,9 @@
         (then (local.set $disp (call $d_fetch32))
               (call $te (i32.const 43) (i32.const 0)) (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
               (local.set $done (i32.const 1)) (br $decode)))
+      ;; ---- JMP far (0xEA ptr16:32) ----
+      (if (i32.eq (local.get $op) (i32.const 0xEA))
+        (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- Jcc rel8 (0x70-0x7F) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x70)) (i32.le_u (local.get $op) (i32.const 0x7F)))
@@ -1083,11 +1110,7 @@
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then (call $te (i32.const 33) (global.get $mr_val)))
-            (else ;; POP to memory — load from stack, store to mem
-              (call $te (i32.const 20) (i32.const 0)) ;; load32 eax from [esp]
-              (call $te_raw (global.get $esp))         ;; but esp is dynamic... this won't work
-              ;; Just end block for this rare case
-              (call $te (i32.const 45) (i32.sub (global.get $d_pc) (i32.const 2)))))
+            (else (call $emit_pop_m32)))
           (br $decode)))
 
       ;; ---- 0x0F: Two-byte opcodes ----
@@ -1331,6 +1354,10 @@
           (if (i32.eq (local.get $op) (i32.const 0x31))
             (then (call $te (i32.const 2) (i32.const 0)) (call $te_raw (i32.const 0))
                   (call $te (i32.const 2) (i32.const 2)) (call $te_raw (i32.const 0)) (br $decode)))
+
+          ;; 0x0F 0x77: EMMS
+          (if (i32.eq (local.get $op) (i32.const 0x77))
+            (then (call $te (i32.const 233) (i32.const 0)) (br $decode)))
 
           ;; 0x0F 0xB1: CMPXCHG r/m32, r32
           (if (i32.eq (local.get $op) (i32.const 0xB1))

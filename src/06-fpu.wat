@@ -764,6 +764,11 @@
   (func $th_push_m32 (param $op i32)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (call $gl32 (call $read_addr))) (return_call $next))
+  (func $th_pop_m32 (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $read_addr))
+    (call $gs32 (local.get $addr) (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
   (func $th_alu_m16_i16 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
@@ -1026,6 +1031,11 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (call $gl32 (local.get $addr)))
     (return_call $next))
+  (func $th_pop_m32_ro (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (call $gs32 (local.get $addr) (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
   ;; 143-146: movzx/movsx [base+disp] variants. op=dst<<4|base, disp in word.
   (func $th_movzx8_ro (param $op i32)
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
@@ -1071,7 +1081,11 @@
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
               (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
             (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 3)) (return)))
-            (global.set $eax (i32.wrap_i64 (i64.div_s (local.get $dividend) (local.get $divisor))))
-            (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))))
-    (return_call $next))
+            (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
+            (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))))
+            (return_call $next))
+
+            (func $th_emms (param $op i32)
+            (global.set $fpu_tag (i32.const 0)) (return_call $next))
+
 

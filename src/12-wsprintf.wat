@@ -25,6 +25,7 @@
         (call $gl8 (i32.add (local.get $buf) (i32.sub (i32.sub (local.get $len) (i32.const 1)) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2)))
+    (call $heap_free (local.get $buf))
     (local.get $len))
 
   ;; Write signed int as decimal
@@ -204,6 +205,7 @@
         (call $gl16 (i32.add (local.get $buf) (i32.mul (i32.sub (i32.sub (local.get $len) (i32.const 1)) (local.get $i)) (i32.const 2)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2)))
+    (call $heap_free (local.get $buf))
     (i32.mul (local.get $len) (i32.const 2)))
 
   (func $write_int_w (param $dst i32) (param $val i32) (result i32)

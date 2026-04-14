@@ -66,13 +66,16 @@
 
   ;; Remove hwnd from window table — zeroes the whole record.
   (func $wnd_table_remove (param $hwnd i32)
-    (local $i i32) (local $ptr i32)
+    (local $i i32) (local $ptr i32) (local $state i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then
+          ;; Free control state if any
+          (local.set $state (i32.load offset=20 (local.get $ptr)))
+          (if (local.get $state) (then (call $heap_free (local.get $state))))
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
           (i32.store offset=8  (local.get $ptr) (i32.const 0))

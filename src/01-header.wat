@@ -74,6 +74,7 @@
   ;; this is a no-op.
   (import "host" "file_download"
     (func $host_file_download (param i32)))
+  (import "host" "shell_execute" (func $host_shell_execute (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; has_dom() → 1 in browser, 0 in headless. Used by $create_open_dialog
   ;; to decide whether to render the Upload/Download buttons.
   (import "host" "has_dom"
@@ -551,6 +552,7 @@
   (global $catch_ret_thunk (mut i32) (i32.const 0))
   ;; Synchronous WM_CREATE: continuation thunk + saved state
   (global $createwnd_ret_thunk (mut i32) (i32.const 0))
+  (global $sync_msg_ret_thunk (mut i32) (i32.const 0))
   (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))

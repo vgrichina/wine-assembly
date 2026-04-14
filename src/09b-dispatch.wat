@@ -147,6 +147,12 @@
         (global.set $steps (i32.const 0))
         (return)))
 
+    ;; Synchronous SendMessage continuation — WndProc returned
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0005))
+      (then
+        (global.set $eip (i32.const 0))  ;; Stop nested run loop
+        (return)))
+
     ;; Modal common-dialog pump (marker 0xCACA0006)
     ;; Set by $modal_begin. Each interpreter pass through this thunk:
     ;;   - if $modal_dlg_hwnd != 0 (dialog still open): set yield_flag and
