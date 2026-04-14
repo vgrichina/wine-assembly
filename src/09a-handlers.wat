@@ -1049,10 +1049,8 @@
     ;; Dialog window destruction sets quit (CreateDialogParamA clears it on recreation)
     (if (i32.eq (local.get $arg0) (global.get $dlg_hwnd))
     (then (global.set $quit_flag (i32.const 1))))
-    ;; Notify renderer to remove window from its table
-    (call $host_destroy_window (local.get $arg0))
-    ;; Remove from guest window table
-    (call $wnd_table_remove (local.get $arg0))
+    ;; Recursively destroy window and all its children (frees table slots)
+    (call $wnd_destroy_recursive (local.get $arg0))
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
     ;; On real Windows, destroying the focused window gives focus to the next foreground window.
     ;; Only if main_hwnd is valid and different from the destroyed window (may have been promoted).
@@ -1959,6 +1957,7 @@
       (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
       (if (result i32) (local.get $arg4) (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 24))))) ;; nShowCmd
+    (drop (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args + ret
   )
 
@@ -5476,6 +5475,8 @@
         (return)))
     (global.set $eax (local.get $result))
     (call $host_log_i32 (global.get $eax))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

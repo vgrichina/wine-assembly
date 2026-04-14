@@ -10,7 +10,7 @@ async function main() {
   // Build if needed
   const ROOT = path.join(__dirname, '..');
   const WASM_PATH = path.join(ROOT, 'build', 'wine-assembly.wasm');
-  const srcDir = path.join(ROOT, 'src', 'parts');
+  const srcDir = path.join(ROOT, 'src');
   let wasmTime = 0;
   try { wasmTime = fs.statSync(WASM_PATH).mtimeMs; } catch (_) {}
   const watFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.wat'));
@@ -21,13 +21,17 @@ async function main() {
 
   const wasmBytes = fs.readFileSync(WASM_PATH);
   const exeBytes = fs.readFileSync(path.join(__dirname, 'binaries', 'notepad.exe'));
-  const ctx = { exports: null };
+  const memory = new WebAssembly.Memory({ initial: 1024, maximum: 1024, shared: true });
+  const ctx = { exports: null, getMemory: () => memory.buffer };
   const base = createHostImports(ctx);
   const h = base.host;
+  h.memory = memory;
   h.exit = () => {};
   h.log = () => {};
   h.log_i32 = () => {};
   h.crash_unimplemented = () => {};
+  h.wait_multiple = () => 0;
+  h.shell_execute = () => 33;
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, { host: h });
   ctx.exports = instance.exports;

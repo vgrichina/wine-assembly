@@ -433,7 +433,7 @@ async function main() {
   h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 1024, maximum: 1024, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 

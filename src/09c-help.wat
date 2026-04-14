@@ -76,6 +76,7 @@
           ;; Free control state if any
           (local.set $state (i32.load offset=20 (local.get $ptr)))
           (if (local.get $state) (then (call $heap_free (local.get $state))))
+          ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
           (i32.store offset=8  (local.get $ptr) (i32.const 0))
@@ -85,6 +86,27 @@
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+  )
+
+  ;; Recursively remove window and all its children from the table.
+  (func $wnd_destroy_recursive (param $hwnd i32)
+    (local $i i32) (local $ptr i32) (local $other i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    ;; First, find all children and destroy them
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
+      (local.set $other (i32.load (local.get $ptr)))
+      (if (i32.and (i32.ne (local.get $other) (i32.const 0))
+                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $hwnd)))
+        (then (call $wnd_destroy_recursive (local.get $other))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    ;; Notify host to remove from its table (for each child too)
+    (call $host_destroy_window (local.get $hwnd))
+    ;; Finally, remove the window itself from guest table
+    (call $wnd_table_remove (local.get $hwnd))
   )
 
   ;; Find window table slot index for hwnd; returns -1 if not found

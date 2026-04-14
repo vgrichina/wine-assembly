@@ -301,7 +301,7 @@
   (import "host" "wave_out_set_volume" (func $host_wave_out_set_volume (param i32 i32)))
   ;; wave_out_set_volume(handle, volume_0_to_65535)
 
-  (import "host" "memory" (memory 1024))
+  (import "host" "memory" (memory 1024 1024 shared))
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
@@ -490,8 +490,8 @@
   ;;   +4: Type (1=Event, 2=Mutex, 3=Semaphore)
   ;;   +8: State (0=Unsignaled, 1=Signaled)
   ;;   +12: ManualReset (1 for Manual, 0 for Auto)
-  (global $SYNC_TABLE (i32.const 0xF000))
-  (global $MAX_SYNC_OBJECTS (i32.const 64))
+  (global $SYNC_TABLE i32 (i32.const 0xF000))
+  (global $MAX_SYNC_OBJECTS i32 (i32.const 64))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
