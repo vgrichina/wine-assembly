@@ -1723,10 +1723,12 @@
         ;; DRAWITEMSTRUCT (48 bytes) is embedded at ButtonState+16.
         (if (i32.eq (local.get $kind) (i32.const 0x0B))
           (then
+            (call $host_log_i32 (i32.const 0xBDBDBDBD))
+            (call $host_log_i32 (local.get $hwnd))
             ;; Skip if already drawn (flags bit 2) or queue full
             (if (i32.and (local.get $flags) (i32.const 0x04))
               (then (return (i32.const 0))))
-            (if (i32.ge_u (global.get $post_queue_count) (i32.const 8))
+            (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
               (then (return (i32.const 0))))
             ;; Set drawn flag
             (i32.store offset=8 (local.get $state_w)
@@ -2890,7 +2892,7 @@
     ;; renderer's repaint cycle floods the post queue and starves real messages.
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then (return (i32.const 0))))
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
       (then
         (local.set $slot (i32.add (i32.const 0x400)
           (i32.mul (global.get $post_queue_count) (i32.const 16))))

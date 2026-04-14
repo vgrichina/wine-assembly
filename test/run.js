@@ -498,6 +498,7 @@ async function main() {
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
       _sharedAudio: ctx._sharedAudio,  // share waveOut state across threads
+      sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
     };
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;

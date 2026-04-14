@@ -814,6 +814,11 @@
   ;; 75: DispatchMessageA
   (func $handle_DispatchMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $wndproc i32)
+    ;; DEBUG: log WM_DRAWITEM (0x2B) dispatches
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x002B))
+      (then
+        (call $host_log_i32 (i32.const 0xDDDDDDDD))
+        (call $host_log_i32 (call $gl32 (local.get $arg0)))))
     ;; Skip WM_NULL — idle message, don't dispatch to WndProc
     (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (then (global.set $eax (i32.const 0))
@@ -932,8 +937,8 @@
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
-    ;; Queue if room (max 8 messages, 16 bytes each, at WASM addr 0x400)
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+    ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
+    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
     (then
     (local.set $tmp (i32.add (i32.const 0x400)
     (i32.mul (global.get $post_queue_count) (i32.const 16))))

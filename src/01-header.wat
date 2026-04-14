@@ -119,6 +119,9 @@
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
   (import "host" "gdi_create_dib_bitmap" (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)))
   ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
+  (import "host" "gdi_create_dib_section" (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
+  ;; lpBits_wa, JS re-reads on every BitBlt source resolution so the guest's in-place draws are visible.
   (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))
   (import "host" "gdi_delete_object" (func $host_gdi_delete_object (param i32) (result i32)))
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
@@ -607,8 +610,11 @@
   (global $main_nc_height    (mut i32) (i32.const 25)) ;; non-client height: 25 (no menu) or 45 (with menu)
   (global $movewindow_pending_hwnd (mut i32) (i32.const 0)) ;; non-main hwnd awaiting WM_SIZE from MoveWindow
   (global $movewindow_pending_size (mut i32) (i32.const 0)) ;; packed client cx|cy<<16 for that hwnd
-  ;; Posted message queue: up to 8 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
-  ;; Stored at fixed WASM address 0x400 (well below guest memory)
+  ;; Posted message queue: up to 64 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
+  ;; Stored at fixed WASM address 0x400..0x800 (well below guest memory).
+  ;; Bumped from 8 to 64 so calc.exe's 30-button owner-draw WM_DRAWITEM burst
+  ;; (posted from button_wndproc WM_PAINT to the x86 SciCalc parent) doesn't
+  ;; overflow during the first render frame.
   (global $post_queue_count (mut i32) (i32.const 0))
   (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase

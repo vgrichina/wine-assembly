@@ -1025,7 +1025,7 @@
   (func $menu_post (param $hwnd i32) (param $msg i32)
                     (param $wp i32) (param $lp i32)
     (local $tmp i32)
-    (if (i32.ge_u (global.get $post_queue_count) (i32.const 8)) (then (return)))
+    (if (i32.ge_u (global.get $post_queue_count) (i32.const 64)) (then (return)))
     (local.set $tmp (i32.add (i32.const 0x400)
                       (i32.mul (global.get $post_queue_count) (i32.const 16))))
     (i32.store           (local.get $tmp) (local.get $hwnd))

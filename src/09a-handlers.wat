@@ -981,6 +981,45 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; PlaySoundA(pszSound, hmod, fdwSound) — 3 args stdcall. Shares logic with PlaySoundW:
+  ;; for SND_RESOURCE the pszSound is MAKEINTRESOURCE(id) which is format-independent; for
+  ;; file/alias strings we don't support audio playback, so just return TRUE.
+  (func $handle_PlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
+    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
+    (local.set $flags (local.get $arg2))
+    (local.set $name_id (local.get $arg0))
+    (if (i32.or (i32.eqz (local.get $name_id))
+                (i32.and (local.get $flags) (i32.const 0x40)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eqz (global.get $rsrc_rva))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
+    (if (i32.eqz (local.get $hrsrc))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
+    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
+    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
+    (if (i32.eqz (local.get $data_size))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
+    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
   (func $handle_RegisterWindowMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
@@ -3010,8 +3049,8 @@
   ;; 297: PostMessageW — same as PostMessageA
   (func $handle_PostMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
-    ;; Queue if room (max 8 messages, 16 bytes each, at WASM addr 0x400)
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 8))
+    ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
+    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
     (then
     (local.set $tmp (i32.add (i32.const 0x400)
     (i32.mul (global.get $post_queue_count) (i32.const 16))))
@@ -4526,8 +4565,12 @@
     (local.set $ptr (call $heap_alloc (local.get $size)))
     (if (local.get $arg3)
       (then (call $gs32 (local.get $arg3) (local.get $ptr))))
-    (global.set $eax (call $host_gdi_create_bitmap
-      (local.get $w) (local.get $h) (local.get $bpp) (i32.const 0)))
+    ;; Register as a live DIB section: JS re-reads pixels from the guest heap buffer on every
+    ;; BitBlt source resolve, so in-place guest draws become visible without explicit sync.
+    (global.set $eax (call $host_gdi_create_dib_section
+      (local.get $w) (local.get $h) (local.get $bpp)
+      (call $g2w (local.get $ptr))
+      (call $g2w (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; 448: GetDIBits(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbmi, uUsage) — 7 args stdcall

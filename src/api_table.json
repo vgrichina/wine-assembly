@@ -7941,5 +7941,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1830140861
+  },
+  {
+    "id": 1135,
+    "name": "PlaySoundA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1518626457
   }
 ]
