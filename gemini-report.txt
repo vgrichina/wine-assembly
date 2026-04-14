@@ -16,17 +16,17 @@ Accumulation of leaked memory and table slots remains a primary concern for long
 *   **HWND Recycling:** Simple incrementing counter will eventually wrap or collide.
 
 ### 2.3 Filesystem View & Mapping Gaps (lib/filesystem.js)
-*   **`UnmapViewOfFile` Leak:** `fs_unmap_view` removes the view from the tracking map but fails to free the guest memory.
-*   **Missing Reference Counting:** Violates the Win32 memory-mapped I/O contract where changes in one view must be visible in others.
+*   **`UnmapViewOfFile` Guest Memory Leak:** `fs_unmap_view` removes the view from the tracking map but fails to call `guest_free` to release the memory allocated during mapping.
+*   **Missing Coherency:** `fs_map_view_of_file` copies file data into guest memory instead of creating a shared view. Changes in one view are not visible in others or synced back to the file.
 
 ## 3. Implementation Gaps
 
 ### 3.1 x86 Decoder & Pipeline Limitations (src/07-decoder.wat)
-*   **16-bit Addressing:** `0x67` prefix unimplemented.
-*   **Far Control Flow:** `CALL far` and `JMP far` unimplemented.
-*   **Group 5 POP:** `0xFF /7` (`POP m32`) crashes in the memory-target case.
+*   **16-bit Addressing:** `0x67` prefix (address-size override) is missing from the prefix consumption loop.
+*   **Far Control Flow:** `CALL far` (`0x9A`) and `JMP far` (`0xEA`) are completely unimplemented.
+*   **Group 5 POP:** `0xFF /7` (`POP m32`) is an unhandled variant in the `FF` group and will trigger a block end crash.
 *   **SSE/MMX Gaps:** Opcodes for SSE3/SSE4 and `EMMS` (`0x0F 0x77`) are missing. 
-*   **Impact:** Multimedia apps (Winamp) get stuck in heavy FPU math (color quantization) due to these gaps.
+*   **Impact:** Multimedia apps (Winamp) get stuck in heavy FPU math or FPU-to-MMX state transitions.
 
 ### 3.2 Messaging & Windowing
 *   **Asynchronous `SendMessage`:** `wnd_send_message` uses `PostMessage` semantics for x86 targets.
@@ -34,10 +34,10 @@ Accumulation of leaked memory and table slots remains a primary concern for long
 *   **Z-Order & Focus:** Does not handle "Always on Top" (`WS_EX_TOPMOST`) correctly.
 
 ### 3.3 Renderer & GDI Bridge (lib/renderer.js)
-*   **Rectangular Clipping Only:** Complex regions (`SetWindowRgn`, `SelectClipRgn`) are ignored.
+*   **Rectangular Clipping Only:** Complex regions (`SetWindowRgn`, `SelectClipRgn`) are ignored; only rectangular `ctx.clip()` is used for built-in controls.
 *   **Impact:** Winamp appears as a gray rectangle instead of its intended "skinned" shape.
-*   **Bridged UI Controls:** `TreeView` is implemented in WAT but lacks a JS bridge.
-*   **Font Scaling:** Fixed DLU scaling causes layout breakage on different resolutions.
+*   **Bridged UI Controls:** `TreeView` is implemented in WAT but lacks a JS bridge in the renderer.
+*   **Font Scaling:** Fixed DLU scaling (1.5x, 1.75y) causes layout breakage on different resolutions or fonts.
 
 ## 4. Win32 API Gaps & Silent Stubs
 Over 100 Win32 APIs remain stubbed with `$crash_unimplemented`.
@@ -48,7 +48,7 @@ Over 100 Win32 APIs remain stubbed with `$crash_unimplemented`.
 *   **Impact:** MSPaint cannot load/save images properly; Winamp cannot open URLs or retrieve icons.
 
 ### 4.2 System & Synchronization Gaps
-*   **Sync Primitives:** `WaitForMultipleObjects` is unimplemented.
+*   **Sync Primitives:** `WaitForMultipleObjects` is unimplemented. `MsgWaitForMultipleObjects` is a weak stub that always returns "message available".
 *   **Impact:** Multi-threaded apps (Winamp, Pinball) often hang or busy-wait.
 
 ## 5. CPU & OS Feature Progress
@@ -57,4 +57,4 @@ Over 100 Win32 APIs remain stubbed with `$crash_unimplemented`.
 *   **Fixed:** FPU `frndint` now honors the control word's rounding bits (Corrects PINBALL.DAT loading).
 *   **Fixed:** `StretchDIBits` sub-rect blits now work correctly (Flippers/Ball animate in Pinball).
 *   **Fixed:** `ADC`/`SBB` flags preserved correctly using raw mode.
-*   **Outstanding:** `SETcc` reported to clobber full register when targeting memory (requires final verification).
+*   **Verified:** `SETcc` correctly preserves other register bits via `$set_reg8` and correctly writes single bytes to memory.

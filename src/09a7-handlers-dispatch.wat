@@ -821,6 +821,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
+  ;; CLSIDFromProgID(lpszProgID, pclsid) — 2 args stdcall
+  ;; Wide ProgID string → CLSID. We don't maintain a ProgID registry, so return
+  ;; REGDB_E_CLASSNOTREG (0x80040154). Callers typically propagate the error
+  ;; through their CoCreateInstance path and degrade gracefully (MFC image
+  ;; loaders used by CORBIS/FASHION/HORROR/WOTRAVEL fall into a "no image"
+  ;; state rather than crashing).
+  (func $handle_CLSIDFromProgID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80040154))  ;; REGDB_E_CLASSNOTREG
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; ret + 2 args
+  )
+
   ;; Helper: parse N hex digits from wide string at WASM addr, return integer value
   (func $parse_hex_wide (param $src i32) (param $ndigits i32) (result i32)
     (local $result i32) (local $i i32) (local $ch i32) (local $digit i32)

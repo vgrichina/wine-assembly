@@ -50,6 +50,8 @@ These screensavers use CreateDIBSection to create bitmaps with direct pixel acce
 ### 4. MFC screensavers blocked on COM/DirectDraw
 **Priority: DEFERRED** — CORBIS/FASHION/HORROR/WOTRAVEL call `CoCreateInstance` to load images via COM (likely IPicture). Our stub returns E_NOINTERFACE, so no images load and no timer is ever set. WIN98.SCR now runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
 
+Added `CLSIDFromProgID` stub returning `REGDB_E_CLASSNOTREG` (0x80040154) so the four COM-image screensavers degrade gracefully instead of `crash_unimplemented`. `IDirectDrawFactory` (ddrawex.dll CLSID 0x4FD2A832) short-circuited in `CoCreateInstance` and exposes 5 vtable methods (api_ids 1136–1140) that delegate to the existing DDraw wrappers.
+
 ## Completed
 
 ### InSendMessage / EnumWindows + ESP cleanup (6 DDraw screensavers)

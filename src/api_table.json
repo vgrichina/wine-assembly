@@ -7983,5 +7983,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 43468675
+  },
+  {
+    "id": 1141,
+    "name": "CLSIDFromProgID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2489871255
   }
 ]
