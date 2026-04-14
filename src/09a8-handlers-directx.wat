@@ -29,6 +29,7 @@
   (global $DX_VTBL_DIDEV      (mut i32) (i32.const 0))
   (global $DX_VTBL_D3D        (mut i32) (i32.const 0))
   (global $DX_VTBL_D3D3       (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -170,7 +171,9 @@
     ;; IDirect3D: 9 methods starting at api_id 1114
     (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1114) (i32.const 9)))
     ;; IDirect3D3: 10 methods starting at api_id 1123
-    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1123) (i32.const 10))))
+    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1123) (i32.const 10)))
+    ;; IDirectDrawFactory: 5 methods starting at api_id 1136 (after Direct3DRMCreate, EnumWindows, PlaySoundA)
+    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1136) (i32.const 5))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; CREATORS
@@ -1919,3 +1922,114 @@
   (func $handle_IDirect3D3_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004005))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; IDirectDrawFactory methods (from ddrawex.dll)
+  ;; ════════════════════════════════════════════════════════════
+  ;; CLSID_DirectDrawFactory = {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}
+  ;; IID_IDirectDrawFactory  = {4FD2A823-86C8-11D0-8FCA-00C04FD9189D}
+  ;; The factory is a thin shim over DirectDrawCreate; CreateDirectDraw returns
+  ;; the same IDirectDraw object DirectDrawCreate would, so reuses VTBL_DDRAW.
+
+  ;; QueryInterface(this, riid, ppv) — 3 args
+  (func $handle_IDirectDrawFactory_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iid_dword i32) (local $obj i32)
+    (local.set $iid_dword (call $gl32 (local.get $arg1)))
+    ;; Accept IUnknown (NULL/zero) and IDirectDrawFactory {4FD2A823-...}
+    (if (i32.or (i32.eqz (local.get $iid_dword))
+                (i32.eq (local.get $iid_dword) (i32.const 0x4FD2A823)))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $arg0))
+        ;; AddRef
+        (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (i32.store (i32.add (local.get $obj) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; AddRef(this) — 1 arg
+  (func $handle_IDirectDrawFactory_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (global.set $eax (i32.load (i32.add (local.get $entry) (i32.const 4))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; Release(this) — 1 arg
+  (func $handle_IDirectDrawFactory_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
+    (if (i32.eqz (local.get $rc))
+      (then (call $dx_free (local.get $entry))))
+    (global.set $eax (local.get $rc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; CreateDirectDraw(this, pGUID, hWnd, dwCoopFlags, dwReserved, pUnkOuter, ppDirectDraw) — 6 args
+  ;; The factory's coop level is supplied at creation time (vs DirectDrawCreate where SetCooperativeLevel
+  ;; is called separately). We store hwnd in misc0 and ignore flags — the resulting IDirectDraw is
+  ;; identical to what DirectDrawCreate yields.
+  (func $handle_IDirectDrawFactory_CreateDirectDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj_guest i32) (local $entry_wa i32) (local $pp_dd i32)
+    ;; ppDirectDraw is the 6th arg, beyond arg4 — read it from stack at ESP+24 (after this+5*arg).
+    ;; Stack: [ESP]=ret, [ESP+4]=this, [ESP+8]=pGUID, [ESP+12]=hWnd, [ESP+16]=dwCoopFlags,
+    ;;        [ESP+20]=dwReserved, [ESP+24]=pUnkOuter, [ESP+28]=ppDirectDraw
+    (local.set $pp_dd (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 1) (global.get $DX_VTBL_DDRAW)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (global.set $eax (i32.const 0x80004005))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; this + 6 args
+        (return)))
+    ;; Stash hWnd in misc0 (DDraw entry layout: +8 = hwnd)
+    (local.set $entry_wa (call $dx_from_this (local.get $obj_guest)))
+    (i32.store (i32.add (local.get $entry_wa) (i32.const 8)) (local.get $arg2))
+    (call $gs32 (local.get $pp_dd) (local.get $obj_guest))
+    (global.set $eax (i32.const 0)) ;; DD_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  ;; DirectDrawEnumerate(this, lpCallback, lpContext) — 2 args
+  ;; Same payload as the standalone DirectDrawEnumerateA — fires once for the primary driver.
+  ;; We can't share the helper easily (different ESP cleanup count), so inline a minimal version
+  ;; that calls back with NULL guid and returns DD_OK without trampolining, since most callers
+  ;; just care about the enumeration completing.
+  (func $handle_IDirectDrawFactory_DirectDrawEnumerate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Pop this + 2 args + ret
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ;; Build description/name strings
+    (local.set $desc (call $heap_alloc (i32.const 32)))
+    (local.set $name (call $heap_alloc (i32.const 16)))
+    (i32.store   (call $g2w (local.get $desc))                          (i32.const 0x6d697250))
+    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 4)))  (i32.const 0x20797261))
+    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 8)))  (i32.const 0x70736944))
+    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c))
+    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244))
+    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265))
+    (i32.store8  (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
+    (i32.store   (call $g2w (local.get $name))                          (i32.const 0x70736964))
+    (i32.store   (call $g2w (i32.add (local.get $name) (i32.const 4)))  (i32.const 0x0079616c))
+    ;; Save original return address so the existing $ddenum_ret_thunk path returns to caller
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push callback args (right-to-left): lpContext, lpName, lpDesc, lpGUID(=NULL)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg2)) ;; lpContext
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0)) ;; lpGUID = NULL
+    ;; Push continuation thunk as callback's return addr
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $arg1))
+    (global.set $steps (i32.const 0)))

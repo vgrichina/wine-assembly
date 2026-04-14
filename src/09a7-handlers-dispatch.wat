@@ -546,7 +546,24 @@
 
   ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
   (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $hr i32)
+    (local $hr i32) (local $clsid_d1 i32) (local $obj_guest i32)
+    ;; Short-circuit CLSID_DirectDrawFactory {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}
+    ;; from ddrawex.dll. Used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers; we
+    ;; manufacture an IDirectDrawFactory directly so the guest never needs the DLL.
+    (local.set $clsid_d1 (call $gl32 (local.get $arg0)))
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0x4FD2A832))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (local.set $hr (call $host_com_create_instance
       (call $g2w (local.get $arg0))   ;; rclsid → WASM addr
       (local.get $arg1)               ;; pUnkOuter (guest addr, usually NULL)

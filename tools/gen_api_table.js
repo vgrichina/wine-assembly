@@ -358,6 +358,13 @@ const extra = [
   { name: 'DirectDrawEnumerateA', nargs: 2 },
   { name: 'EnumWindows', nargs: 2 },
   { name: 'PlaySoundA', nargs: 3 },
+  // IDirectDrawFactory vtable (5 methods) — CLSID_DirectDrawFactory from ddrawex.dll,
+  // used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers via CoCreateInstance.
+  { name: 'IDirectDrawFactory_QueryInterface', nargs: 3 },
+  { name: 'IDirectDrawFactory_AddRef', nargs: 1 },
+  { name: 'IDirectDrawFactory_Release', nargs: 1 },
+  { name: 'IDirectDrawFactory_CreateDirectDraw', nargs: 6 },
+  { name: 'IDirectDrawFactory_DirectDrawEnumerate', nargs: 2 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
