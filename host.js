@@ -221,6 +221,7 @@ class WineAssembly {
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
     h.wait_single = (handle, t) => self.threadManager ? self.threadManager.waitSingle(handle, t) : 0;
+    h.wait_multiple = (n, ha, wa, t) => self.threadManager ? self.threadManager.waitMultiple(n, ha, wa, t) : 0;
 
     // Memory is set later in init()
     h.memory = null;

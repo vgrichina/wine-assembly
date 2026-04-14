@@ -117,7 +117,9 @@
   ;; Yield state exports
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
-  (func (export "clear_yield") (global.set $yield_reason (i32.const 0)))
+  (func (export "get_wait_handles_ptr") (result i32) (global.get $wait_handles_ptr))
+  (func (export "clear_yield") (global.set $yield_reason (i32.const 0)) (global.set $wait_handles_ptr (i32.const 0)))
+  (func (export "get_sync_table") (result i32) (global.get $SYNC_TABLE))
   (func (export "get_yield_flag") (result i32) (global.get $yield_flag))
   (func (export "get_sleep_yielded") (result i32)
     (local $v i32)

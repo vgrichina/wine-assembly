@@ -286,6 +286,7 @@
   (import "host" "set_event" (func $host_set_event (param i32) (result i32)))
   (import "host" "reset_event" (func $host_reset_event (param i32) (result i32)))
   (import "host" "wait_single" (func $host_wait_single (param i32 i32) (result i32)))
+  (import "host" "wait_multiple" (func $host_wait_multiple (param i32 i32 i32 i32) (result i32)))
 
   ;; ---- Memory: imported from host, 1024 pages = 64MB initial ----
   ;; Audio output — waveOut bridge to Web Audio API
@@ -483,6 +484,15 @@
   ;;   +16  v_min     SB_VERT range min
   ;;   +20  v_max     SB_VERT range max
   (global $SCROLL_TABLE i32 (i32.const 0x0000D170))
+  ;; Synchronization object table (SharedArrayBuffer backed)
+  ;; Each entry (16 bytes):
+  ;;   +0: Lock (Atomics lock)
+  ;;   +4: Type (1=Event, 2=Mutex, 3=Semaphore)
+  ;;   +8: State (0=Unsignaled, 1=Signaled)
+  ;;   +12: ManualReset (1 for Manual, 0 for Auto)
+  (global $SYNC_TABLE (i32.const 0xF000))
+  (global $MAX_SYNC_OBJECTS (i32.const 64))
+
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
@@ -650,6 +660,7 @@
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $wait_handle  (mut i32) (i32.const 0))
+  (global $wait_handles_ptr (mut i32) (i32.const 0)) ;; if non-zero, wait_handle is nCount
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
   (global $com_iid_ptr   (mut i32) (i32.const 0))   ;; guest addr of IID

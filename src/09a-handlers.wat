@@ -5463,9 +5463,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 527: WaitForMultipleObjects — STUB: unimplemented
+  ;; 527: WaitForMultipleObjects(nCount, lpHandles, bWaitAll, dwMilliseconds) — 4 args stdcall
   (func $handle_WaitForMultipleObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $result i32)
+    (local.set $result (call $host_wait_multiple (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (local.get $arg3)))
+    (if (i32.eq (local.get $result) (i32.const 0xFFFF))
+      (then
+        (global.set $yield_reason (i32.const 1))
+        (global.set $wait_handle (local.get $arg0)) ;; nCount
+        (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
+        (global.set $steps (i32.const 0))
+        (return)))
+    (global.set $eax (local.get $result))
+    (call $host_log_i32 (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 528: GlobalAddAtomW(lpString) — return unique atom, 1 arg stdcall

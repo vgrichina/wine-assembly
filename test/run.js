@@ -448,6 +448,7 @@ async function main() {
   h.set_event = (handle) => threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
   h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
+  h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
   h.com_create_instance = (rclsid, pUnkOuter, dwClsCtx, riid, ppv) => 0x80004002; // E_NOINTERFACE
 
   // Check if a DLL file exists in VFS or host filesystem
@@ -512,6 +513,7 @@ async function main() {
     wh.set_event = h.set_event;
     wh.reset_event = h.reset_event;
     wh.wait_single = h.wait_single;
+    wh.wait_multiple = h.wait_multiple;
     // Worker logging
     wh.log = (ptr, len) => {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
