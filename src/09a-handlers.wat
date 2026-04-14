@@ -6966,9 +6966,26 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 685: InSendMessage — STUB: unimplemented
+  ;; 685: InSendMessage — TRUE if current message was sent by another thread via
+  ;; SendMessage. Single-threaded emulator → always FALSE. stdcall, 0 args.
   (func $handle_InSendMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; EnumWindows(lpEnumFunc, lParam) — enumerate all top-level windows, calling
+  ;; lpEnumFunc(hwnd, lParam) for each. Returns BOOL. stdcall, 2 args.
+  ;;
+  ;; Limitation: we don't currently chain x86 callbacks across multiple top-level
+  ;; windows. In a typical single-app emulator session there's only the calling
+  ;; app's own window in WND_RECORDS, and callers (e.g. screensaver "duplicate
+  ;; instance" probes) interpret an empty enumeration as "no other instances" —
+  ;; which is exactly the answer we want. So we report success without invoking
+  ;; the callback. If a future use case needs real iteration, set up a CACA
+  ;; continuation thunk that re-enters this handler to drive the next index.
+  (func $handle_EnumWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 686: PostThreadMessageW — STUB: unimplemented

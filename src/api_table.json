@@ -7934,5 +7934,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 345094950
+  },
+  {
+    "id": 1134,
+    "name": "EnumWindows",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1830140861
   }
 ]

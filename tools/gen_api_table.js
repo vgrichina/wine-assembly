@@ -356,6 +356,7 @@ const extra = [
   { name: 'VerQueryValueA', nargs: 4 },
   // DirectDraw enumeration
   { name: 'DirectDrawEnumerateA', nargs: 2 },
+  { name: 'EnumWindows', nargs: 2 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

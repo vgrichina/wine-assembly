@@ -27,7 +27,10 @@
 | WOTRAVEL.SCR | OK | Black (no animation) | Same COM dependency |
 
 ### DirectDraw-based (need DDRAW.DLL)
-ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI, WIN98 — blocked on DDRAW
+| Screensaver | /c Config | /s Visuals | Notes |
+|-------------|-----------|------------|-------|
+| WIN98.SCR | OK | Renders | DDraw QI AddRef fix |
+| ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI | OK | Black (no animation) | All reach Direct3DRMCreate (returns E_FAIL); throw C++ exception. Need IDirect3DRM impl. |
 
 ## Open Tasks
 
@@ -48,6 +51,10 @@ These screensavers use CreateDIBSection to create bitmaps with direct pixel acce
 **Priority: DEFERRED** — CORBIS/FASHION/HORROR/WOTRAVEL call `CoCreateInstance` to load images via COM (likely IPicture). Our stub returns E_NOINTERFACE, so no images load and no timer is ever set. WIN98.SCR now runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
 
 ## Completed
+
+### InSendMessage / EnumWindows + ESP cleanup (6 DDraw screensavers)
+**Files:** `src/09a-handlers.wat`, `tools/gen_api_table.js`
+ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI all crashed in MFC framework init at `call [0x744b22bc]` (USER32!InSendMessage IAT entry — these screensavers share a statically-linked framework at base 0x74400000). Implemented InSendMessage (returns FALSE — single-threaded emulator) and added EnumWindows (returns TRUE without invoking callback — caller's "duplicate instance" probe wants empty enumeration). Crucially, both handlers must `esp += 4 + nargs*4` to pop the return address pushed by `th_call_ind` AND the stdcall args — without that, ESP drifted by 4 each call and downstream code eventually jumped through a corrupted vtable into the PE header. After fix, all 7 reach Direct3DRMCreate in the message loop.
 
 ### DirectDraw QueryInterface refcount fix (WIN98.SCR)
 **Files:** `src/09a8-handlers-directx.wat`
