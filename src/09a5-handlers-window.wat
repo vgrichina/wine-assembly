@@ -267,7 +267,7 @@
 
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $hwnd i32)
+    (local $ret_addr i32) (local $hwnd i32) (local $dlg_wndproc i32)
     ;; Allocate HWND from next_hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -275,10 +275,21 @@
     (global.set $dlg_hwnd (local.get $hwnd))
     ;; Clear quit_flag — dialog recreation (e.g. calc mode switch) cancels pending quit
     (global.set $quit_flag (i32.const 0))
+    ;; Resolve the dialog's wndproc: prefer the supplied DlgProc (arg3); if
+    ;; NULL, fall back to a registered class wndproc (calc.exe's RT_DIALOG
+    ;; template specifies class="SciCalc" and passes NULL DlgProc — without
+    ;; this fallback, $wnd_send_message(dlg, WM_DRAWITEM) from owner-draw
+    ;; buttons finds a 0 wndproc and drops the message).
+    (local.set $dlg_wndproc (local.get $arg3))
+    (if (i32.eqz (local.get $dlg_wndproc))
+      (then
+        (if (global.get $wndproc_addr2)
+          (then (local.set $dlg_wndproc (global.get $wndproc_addr2)))
+          (else (local.set $dlg_wndproc (global.get $wndproc_addr))))))
     ;; Register dialog in wnd_table BEFORE $dlg_load so the walker can
-    ;; find its slot for WND_DLG_RECORDS. Use dlgProc if supplied, 0
-    ;; otherwise — SendMessageA routing looks at this slot.
-    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; find its slot for WND_DLG_RECORDS. SendMessageA routing looks at
+    ;; this slot.
+    (call $wnd_table_set (local.get $hwnd) (local.get $dlg_wndproc))
     ;; Parse RT_DIALOG template entirely in WAT: allocates child HWNDs,
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE to each
     ;; control, stashes header state in WND_DLG_RECORDS[slot]. Handles
@@ -814,11 +825,6 @@
   ;; 75: DispatchMessageA
   (func $handle_DispatchMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $wndproc i32)
-    ;; DEBUG: log WM_DRAWITEM (0x2B) dispatches
-    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x002B))
-      (then
-        (call $host_log_i32 (i32.const 0xDDDDDDDD))
-        (call $host_log_i32 (call $gl32 (local.get $arg0)))))
     ;; Skip WM_NULL — idle message, don't dispatch to WndProc
     (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (then (global.set $eax (i32.const 0))

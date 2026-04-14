@@ -1,59 +1,62 @@
 # Calc.exe Execution Analysis
 
-## Current Status (2026-04-13)
+## Current Status (2026-04-13, evening)
 
 ### Summary
-Calc runs far enough to create its main Calculator dialog via
-`CreateDialogParamA` (hwnd=0x10002) — the bignum init blocker is long past.
-The dialog frame (title bar + Edit/View/Help menu) renders correctly, but
-**the button/digit pad is blank**: the calculator dialog's 30 controls
-(buttons + group statics) never draw.
+All 30 owner-draw buttons now render with labels (digits 0-9, operators,
+MC/MR/MS/M+, Backspace/CE/C, sqrt/%/1/x). Calc is visibly functional —
+title bar, menu bar, and button pad all composite correctly via the x86
+SciCalc WndProc.
 
-Root cause: every button in calc is **BS_OWNERDRAW** (`style & 0xF == 0x0B`).
-Our `button_wndproc` WM_PAINT handler for kind=0x0B posts a `WM_DRAWITEM`
-(0x002B) message to the parent so the x86 dialog proc (SciCalc WndProc at
-`0x0100592a`) can paint. Because the parent is an x86 wndproc, that message
-goes through the PostMessage queue (8 slots). The app is still churning in a
-LocalAlloc/LocalFree loop at `--png` snapshot time and never drains the
-queue, so the buttons remain blank.
+### Two root causes fixed this session
 
-Additionally, button_wndproc only posts WM_DRAWITEM **once per button**
-(guarded by ButtonState.flags bit 2 "already drawn"). After the first
-repaint attempt the flag is set and subsequent WM_PAINTs return silently
-— so unless those 30 queued messages all fit in the 8-slot queue AND are
-dispatched, some buttons will never redraw.
+**1. `CreateDialogParamA` stored a NULL wndproc for calc's dialog.**
+Calc's RT_DIALOG template names `class="SciCalc"` and passes NULL
+DlgProc — real Windows resolves the dialog wndproc from the template's
+class. Our `$dlg_load` skips the class field, and `$handle_CreateDialogParamA`
+stored `arg3` (DlgProc = 0) into `wnd_table`. Every `SendMessage(dlg, ...)`
+on the post-queue path early-returned because `wnd_table_get(dlg) == 0`,
+so none of the 27 posted `WM_DRAWITEM` messages ever dispatched.
 
-### Evidence
-```
-[DBG] paint button h=0x10004 state=0x146a23c style=0x5000000b xy=50,119 wh=36x31
-...
-```
-- state is allocated (WM_CREATE path works)
-- style & 0xF = 0x0B (BS_OWNERDRAW)
-- only 4 `gdi_fill_rect` calls observed, all for the dialog frame
-  (hdc=0x50002 = dialog+0x40000), none for any button hwnd
+Fix: fall back to `$wndproc_addr2` / `$wndproc_addr` when the supplied
+DlgProc is NULL (src/09a5-handlers-window.wat, `$handle_CreateDialogParamA`).
+This assumes the app's most-recently-registered class is the dialog's
+class, which is true for calc and for any app that registers its dialog
+class before opening the dialog.
 
-### What the PNG shows (`--no-close`)
-- Calculator title bar, "Edit View Help" menu, grey client area
-- No digit pad, no display edit, no radio cluster
-- Window size 262x481 (too tall — scientific calc dims may be mis-oriented)
+**2. Post-message queue was 8 slots — too small for the 30-button
+owner-draw burst.** When `_drawWatChildren` sends `WM_PAINT` to each
+owner-draw button, each one posts a `WM_DRAWITEM` back to the parent
+via `$wnd_send_message`. With 30 buttons, 22 were silently dropped.
 
-### Suggested next steps
-1. **Post queue too small for dialog load**: either grow the queue or flush
-   posted WM_DRAWITEM synchronously to an x86 wndproc during render. The
-   cleanest fix is to dispatch WM_DRAWITEM synchronously (SendMessage-style)
-   rather than queueing — it's a paint message, not an input event.
-2. **Stop early-return on "already drawn"**: the flags bit 2 gate in
-   `$button_wndproc` WM_PAINT (src/09c3-controls.wat:1727) means repaints
-   never re-post WM_DRAWITEM. If owner-draw buttons need to repaint (focus,
-   state change), the flag needs clearing.
-3. **Verify calc advances past LocalAlloc loop** — even if we dispatch
-   WM_DRAWITEM correctly, the x86 wndproc only paints when the app's
-   message loop pumps it. At PNG snapshot, calc is still spinning in
-   LocalAlloc/LocalFree; get it to idle in GetMessage first.
-4. **Dialog size** — 262x481 with button band at y=119..255 looks like the
-   dialog cy came out doubled; may need re-examining DLU→pixel scaling
-   for this dialog template.
+Fix: grew the queue from 8 → 64 slots (still well below guest memory
+at WASM 0x400..0x800). Updated all five enqueue guards and the header
+comment (01-header.wat, 09a-handlers.wat, 09a5-handlers-window.wat,
+09c3-controls.wat ×2, 09c5-menu.wat).
+
+### What still looks off in the PNG
+- Display (result edit box) is not visible at the top of the dialog.
+- Window is 262×481; the button pad only fills y≈60..260. The extra
+  220px of dead space below suggests scientific-mode widgets expected
+  there, or the DLU→px scale is still off vertically.
+- Scientific-mode radio cluster (Dec/Hex/Oct/Bin + Degrees/Radians/
+  Gradients + trig buttons) is absent — either we're loading the
+  standard-mode template into a scientific-sized window, or the
+  statics/radios weren't routed through the owner-draw paint path.
+
+### Next steps
+1. Figure out why the display edit is blank — is it a BS_OWNERDRAW-like
+   child that we're failing to route? Or is calc not setting its text
+   yet because some init step is still stalled?
+2. Investigate the dialog height: compare DLU cy in the template vs.
+   the rendered 481px. The "Degrees/Radians/Gradients" SetDlgItemText
+   calls in the trace prove scientific-mode radios exist — they just
+   don't render. Check if `ctrl_get_class` returns the right enum for
+   them (kind=4 radio should go through button_wndproc's radio path,
+   not owner-draw).
+3. Consider whether `$dlg_load` should actually parse the template's
+   class name so the CreateDialogParam fallback becomes principled
+   rather than "last-registered-class wins".
 
 ### Previous status (stale, 2026-04-02)
 Earlier blocker was a Newton-iteration divergence in the bignum init. That

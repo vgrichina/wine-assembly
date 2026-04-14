@@ -1723,8 +1723,6 @@
         ;; DRAWITEMSTRUCT (48 bytes) is embedded at ButtonState+16.
         (if (i32.eq (local.get $kind) (i32.const 0x0B))
           (then
-            (call $host_log_i32 (i32.const 0xBDBDBDBD))
-            (call $host_log_i32 (local.get $hwnd))
             ;; Skip if already drawn (flags bit 2) or queue full
             (if (i32.and (local.get $flags) (i32.const 0x04))
               (then (return (i32.const 0))))
@@ -2885,7 +2883,7 @@
       (then (return (call $wat_wndproc_dispatch
                       (local.get $hwnd) (local.get $msg)
                       (local.get $wParam) (local.get $lParam)))))
-    ;; x86 wndproc — queue via PostMessage (max 8 messages, 16 bytes each
+    ;; x86 wndproc — queue via PostMessage (max 64 messages, 16 bytes each
     ;; at WASM addr 0x400, same layout as $handle_PostMessageA).
     ;; Skip WM_PAINT for x86 wndprocs — the app's message loop generates its
     ;; own WM_PAINT via InvalidateRect / paint queue. Queuing here from the
