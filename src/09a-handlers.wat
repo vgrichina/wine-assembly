@@ -1644,6 +1644,7 @@
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cx i32) (local $cy i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     ;; For non-main windows, record pending WM_SIZE for delivery by ShowWindow
     (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
     (then
@@ -1952,6 +1953,7 @@
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -3797,9 +3799,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 363: SetTextAlign — STUB: unimplemented
+  ;; SetTextAlign(hdc, fMode) — return previous alignment (0 = TA_LEFT|TA_TOP|TA_NOUPDATECP default).
+  ;; No text-alignment state is tracked host-side; TextOut always draws LEFT/TOP.
   (func $handle_SetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 364: ExtTextOutW — STUB: unimplemented
@@ -6924,6 +6928,12 @@
 
   ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
   (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  (func $handle_ModifyMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )

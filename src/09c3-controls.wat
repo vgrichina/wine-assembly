@@ -73,6 +73,26 @@
     (i32.store16 offset=4 (local.get $a) (local.get $w))
     (i32.store16 offset=6 (local.get $a) (local.get $h)))
 
+  ;; Keep CONTROL_GEOM in sync with MoveWindow/SetWindowPos for WAT-managed
+  ;; controls. $flags uses SWP_NOSIZE(1) / SWP_NOMOVE(2) like SetWindowPos;
+  ;; MoveWindow callers pass 0. No-op if $hwnd isn't a control (class==0).
+  (func $ctrl_geom_sync
+        (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $flags i32)
+    (local $idx i32) (local $a i32)
+    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+      (then (return)))
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $a (call $ctrl_geom_addr (local.get $idx)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 2)))
+      (then
+        (i32.store16        (local.get $a) (local.get $x))
+        (i32.store16 offset=2 (local.get $a) (local.get $y))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 1)))
+      (then
+        (i32.store16 offset=4 (local.get $a) (local.get $w))
+        (i32.store16 offset=6 (local.get $a) (local.get $h)))))
+
   ;; Pack x|y<<16 / w|h<<16 for export to JS.
   (func $ctrl_get_xy_packed (param $hwnd i32) (result i32)
     (local $idx i32) (local $a i32)
@@ -178,6 +198,13 @@
         (br $loop)))
     (i32.const 0)
   )
+
+  ;; Fill a freshly-registered dialog's client area on its back-canvas with
+  ;; COLOR_BTNFACE. Called right after $host_register_dialog_frame so the
+  ;; dialog face shows in gaps between child controls. Equivalent to the
+  ;; default WM_ERASEBKGND handler for a class with hbrBackground = BTNFACE.
+  (func $dlg_fill_bkgnd (param $hwnd i32)
+    (drop (call $host_erase_background (local.get $hwnd) (i32.const 16))))
 
   ;; ---- Control WndProc dispatch ----
 
@@ -404,6 +431,7 @@
       (local.get $title_buf_w)
       (local.get $w) (local.get $h)
       (i32.const 1))  ;; kind bit 0 = isAboutDialog
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
@@ -494,6 +522,7 @@
       (local.get $title_wa)
       (i32.const 260) (i32.const 140)
       (i32.const 1))   ;; isAboutDialog modal flag
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
@@ -593,6 +622,7 @@
       (i32.const 0x258)   ;; "Font"
       (i32.const 420) (i32.const 260)
       (i32.const 1))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
@@ -853,6 +883,7 @@
       (i32.const 0x252)   ;; "Color"
       (i32.const 260) (i32.const 160)
       (i32.const 1))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
@@ -1257,6 +1288,7 @@
       (local.get $title_wa)
       (local.get $w) (local.get $h)
       (i32.const 1))  ;; isAboutDialog flag (modal indicator) — reused for now
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
@@ -3069,6 +3101,7 @@
       (i32.const 0x1E3)   ;; "Find" title constant
       (i32.const 340) (i32.const 128)
       (i32.const 2))      ;; kind bit 1 = isFindDialog
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))

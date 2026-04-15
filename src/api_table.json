@@ -8564,5 +8564,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 315056275
+  },
+  {
+    "id": 1224,
+    "name": "ModifyMenuA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1452613103
   }
 ]

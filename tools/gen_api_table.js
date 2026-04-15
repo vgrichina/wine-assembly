@@ -204,6 +204,7 @@ const extra = [
   { name: 'CreateBrushIndirect', nargs: 1 },
   { name: 'AppendMenuA', nargs: 4 },
   { name: 'InsertMenuA', nargs: 5 },
+  { name: 'ModifyMenuA', nargs: 5 },
   { name: 'RegisterDragDrop', nargs: 2 },
   { name: 'RevokeDragDrop', nargs: 1 },
   // DirectX creators
