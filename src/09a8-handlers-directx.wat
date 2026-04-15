@@ -859,7 +859,18 @@
           (local.set $x (i32.const 0))
           (block $ck_col_done (loop $ck_col
             (br_if $ck_col_done (i32.ge_u (local.get $x) (local.get $sw)))
-            (if (i32.eq (local.get $bps) (i32.const 2))
+            (if (i32.eq (local.get $bps) (i32.const 1))
+              (then
+                (local.set $col (i32.load8_u (i32.add (local.get $src_dib)
+                  (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
+                           (i32.add (local.get $sx) (local.get $x))))))
+                (if (i32.ne (local.get $col) (local.get $ckey))
+                  (then
+                    (i32.store8 (i32.add (local.get $dst_dib)
+                      (i32.add (i32.mul (i32.add (local.get $arg2) (local.get $row)) (local.get $dst_pitch))
+                               (i32.add (local.get $arg1) (local.get $x))))
+                      (local.get $col)))))
+              (else (if (i32.eq (local.get $bps) (i32.const 2))
               (then
                 (local.set $col (i32.load16_u (i32.add (local.get $src_dib)
                   (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
@@ -879,7 +890,7 @@
                     (i32.store (i32.add (local.get $dst_dib)
                       (i32.add (i32.mul (i32.add (local.get $arg2) (local.get $row)) (local.get $dst_pitch))
                                (i32.mul (i32.add (local.get $arg1) (local.get $x)) (i32.const 4))))
-                      (local.get $col))))))
+                      (local.get $col))))))))
             (local.set $x (i32.add (local.get $x) (i32.const 1)))
             (br $ck_col)))
           (local.set $row (i32.add (local.get $row) (i32.const 1)))

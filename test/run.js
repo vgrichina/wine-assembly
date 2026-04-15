@@ -223,6 +223,26 @@ async function main() {
     for (let i = 0; i < 6; i++) a.push(dv.getUint32(g2w(esp + 4 + i * 4), true));
     // a[0]=this (for methods), a[0]=arg0 (for creators)
     const desc = () => dxDescThis(a[0], dv, g2w);
+    // For ordinal-dispatched COM calls, name is "<ord>". Guess method from
+    // `this` type + arg shape. Not authoritative, but makes the trace readable.
+    if (name === '<ord>') {
+      const o = dxLookupThis(a[0], dv, g2w);
+      if (!o) return `[this=${hex(a[0])}]`;
+      // Type 2 = IDirectDrawSurface. Disambiguate common methods by arg shape.
+      if (o.type === 2) {
+        // BltFast: a[1],a[2] are small x,y coords, a[3] is another DDSurface
+        if (a[1] < 0x2000 && a[2] < 0x2000 && dxLookupThis(a[3], dv, g2w)) {
+          return `[~BltFast ${desc()} dst=(${a[1]},${a[2]}) src=${dxSurfaceRef(a[3], dv, g2w)} srcRect=${dxReadRect(a[4], dv, g2w)} trans=${hex(a[5])}]`;
+        }
+        // Blt: a[2] is a DDSurface* (or 0 for color-fill), a[4] is DDBLT_* flag bits
+        const bltFlagsLook = (a[4] & 0xFF000000) === 0 && a[4] !== 0;
+        const srcLooksLikeSurface = a[2] === 0 || dxLookupThis(a[2], dv, g2w);
+        if (srcLooksLikeSurface && bltFlagsLook) {
+          return `[~Blt ${desc()} dst=${dxReadRect(a[1], dv, g2w)} src=${dxSurfaceRef(a[2], dv, g2w)} srcRect=${a[3]?dxReadRect(a[3], dv, g2w):'null'} fl=${hex(a[4])}]`;
+        }
+      }
+      return `[${desc()} args=${a.slice(1,5).map(hex).join(',')}]`;
+    }
     if (name === 'DirectDrawCreate' || name === 'DirectSoundCreate') {
       return `[guid=${hex(a[0])} pp=${hex(a[1])}]`;
     }
@@ -370,11 +390,21 @@ async function main() {
         } catch (_) {}
       }
       let dxInfo = '';
-      if (TRACE_DX && (t.startsWith('IDirectDraw') || t.startsWith('IDirectSound') ||
-                        t.startsWith('IDirectInput') || t.startsWith('IDirect3D') ||
-                        t === 'DirectDrawCreate' || t === 'DirectSoundCreate' ||
-                        t === 'DirectInputCreateA' || t === 'Direct3DRMCreate')) {
-        try { dxInfo = ' ' + decodeDx(t, esp, dv, g2w, memory); } catch (_) {}
+      if (TRACE_DX) {
+        const isNamedDx = t.startsWith('IDirectDraw') || t.startsWith('IDirectSound') ||
+                          t.startsWith('IDirectInput') || t.startsWith('IDirect3D') ||
+                          t === 'DirectDrawCreate' || t === 'DirectSoundCreate' ||
+                          t === 'DirectInputCreateA' || t === 'Direct3DRMCreate';
+        let isOrdDx = false;
+        if (!isNamedDx && t === '<ord>') {
+          try {
+            const thisPtr = dv.getUint32(g2w(esp + 4), true);
+            if (dxLookupThis(thisPtr, dv, g2w)) isOrdDx = true;
+          } catch (_) {}
+        }
+        if (isNamedDx || isOrdDx) {
+          try { dxInfo = ' ' + decodeDx(t, esp, dv, g2w, memory); } catch (_) {}
+        }
       }
       logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}${dxInfo}`);
       // Dump MSG struct contents for DispatchMessageA
