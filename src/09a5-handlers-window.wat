@@ -312,6 +312,10 @@
     ;; find its slot for WND_DLG_RECORDS. SendMessageA routing looks at
     ;; this slot.
     (call $wnd_table_set (local.get $hwnd) (local.get $dlg_wndproc))
+    ;; Record parent hwnd so GetParent returns the hosting window —
+    ;; winamp's setup wizard calls GetParent(child_dlg) then
+    ;; SetWindowText(parent, "Winamp Setup: ...") to set the outer title.
+    (call $wnd_set_parent (local.get $hwnd) (local.get $arg2))
     ;; Parse RT_DIALOG template entirely in WAT: allocates child HWNDs,
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE to each
     ;; control, stashes header state in WND_DLG_RECORDS[slot]. Handles
@@ -322,6 +326,9 @@
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Fill dialog client area with COLOR_BTNFACE (see DialogBoxParamA
+    ;; for rationale — template DlgProcs rarely handle WM_PAINT).
+    (call $dlg_fill_bkgnd (local.get $hwnd))
     ;; Enqueue WM_PAINT for each child control. Without this, owner-draw
     ;; buttons never receive their first WM_PAINT and so never post
     ;; WM_DRAWITEM to the dialog proc — calc.exe's 30-button keypad

@@ -75,7 +75,37 @@
             (global.set $dlg_ended (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))
-        ;; Check post queue first
+        ;; Drain paint queue — deliver WM_PAINT to pending hwnds.
+        ;; Without this, controls added by $dlg_load (and children of
+        ;; nested CreateDialogParamA calls inside WM_INITDIALOG) never
+        ;; render while the dialog is modal — the outer frame draws via
+        ;; synchronous NC paint but the client area stays blank.
+        (if (i32.gt_u (global.get $paint_queue_count) (i32.const 0))
+          (then
+            (local.set $arg0 (call $paint_queue_pop))  ;; hwnd
+            (local.set $arg1 (i32.const 0x000F))       ;; WM_PAINT
+            (local.set $arg2 (i32.const 0))            ;; wParam
+            (local.set $arg3 (i32.const 0))            ;; lParam
+            (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+              (then
+                (drop (call $wat_wndproc_dispatch
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
+            (if (i32.eqz (local.get $arg4))
+              (then (local.set $arg4 (global.get $dlg_proc))))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+            (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $eip (local.get $arg4))
+            (global.set $steps (i32.const 0))
+            (return)))
+        ;; Check post queue next
         (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
           (then
             (local.set $arg0 (i32.load (i32.const 0x400)))        ;; hwnd

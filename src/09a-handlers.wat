@@ -1847,6 +1847,12 @@
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Fill dialog client area with COLOR_BTNFACE — template DlgProcs
+    ;; typically don't handle WM_PAINT, expecting DefDlgProc to erase,
+    ;; but our modal pump doesn't fall through to DefWindowProc on a
+    ;; FALSE return from WM_PAINT. Without this, the back-canvas stays
+    ;; transparent/teal between control bodies.
+    (call $dlg_fill_bkgnd (local.get $hwnd))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
     (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
