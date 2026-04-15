@@ -286,6 +286,25 @@ async function main() {
         } catch (_) {}
       }
 
+      // Dump WNDCLASS struct contents for RegisterClassA/W
+      if (t === 'RegisterClassA' || t === 'RegisterClassW') {
+        try {
+          const wcPtr = dv.getUint32(g2w(esp + 4), true);
+          const wcWa = g2w(wcPtr);
+          const style = dv.getUint32(wcWa, true);
+          const wndProc = dv.getUint32(wcWa + 4, true);
+          const menuName = dv.getUint32(wcWa + 32, true);
+          const className = dv.getUint32(wcWa + 36, true);
+          const menuStr = (menuName > 0 && menuName < 0x10000)
+            ? `MAKEINTRESOURCE(${menuName})`
+            : (menuName ? `"${readStr(g2w(menuName), 32)}" (${hex(menuName)})` : '0');
+          const classStr = (className > 0 && className < 0x10000)
+            ? `MAKEINTATOM(${className})`
+            : (className ? `"${readStr(g2w(className), 32)}" (${hex(className)})` : '0');
+          logs.push(`  WNDCLASS: style=${hex(style)} wndProc=${hex(wndProc)} class=${classStr} menu=${menuStr}`);
+        } catch (_) {}
+      }
+
       // SEH tracing for _EH_prolog and _CxxThrowException
       if (TRACE_SEH && (t.includes('_EH_prolog') || t.includes('_CxxThrowException'))) {
         const fsBase = e.get_fs_base();

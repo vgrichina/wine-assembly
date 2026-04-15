@@ -203,6 +203,16 @@
   )
 
   ;; ---- Class table helpers ----
+  ;; Convert a class-name guest pointer to the key used throughout the class
+  ;; table. If the guest value is a MAKEINTATOM (low 16-bit integer), pass it
+  ;; through unchanged — $g2w would otherwise map it to NULL_SENTINEL and
+  ;; collapse all atom-named classes onto one slot. Otherwise translate the
+  ;; guest string pointer to its WASM address as usual.
+  (func $class_name_key (param $guest i32) (result i32)
+    (if (i32.lt_u (local.get $guest) (i32.const 0x10000))
+      (then (return (local.get $guest))))
+    (call $g2w (local.get $guest)))
+
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
     (local $h i32) (local $ch i32)

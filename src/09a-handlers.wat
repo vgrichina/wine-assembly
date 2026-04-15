@@ -2553,7 +2553,7 @@
     ;;   hInstance(+16) hIcon(+20) hCursor(+24) hbrBackground(+28)
     ;;   lpszMenuName(+32) lpszClassName(+36)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
-    (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
+    (local.set $class_name_wa (call $class_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
     ;; Allocate class record (returns atom; WNDCLASSA filled in below)
     (global.set $eax (call $class_table_register (local.get $class_name_wa)))
     ;; Copy full WNDCLASSA into the embedded slot at class record + 8.

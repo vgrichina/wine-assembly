@@ -74,7 +74,7 @@
     (local.set $tmp (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; explicit hMenu
     (if (i32.eqz (local.get $tmp))
       (then
-        (local.set $i (call $class_find_slot (call $g2w (local.get $arg1))))
+        (local.set $i (call $class_find_slot (call $class_name_key (local.get $arg1))))
         ;; Fallback: some EXEs pass a hard-coded class atom (e.g. EmPipe's
         ;; push 0x1F5) that doesn't match any atom the emulator allocated.
         ;; class_find_slot then returns -1. Walk the class table and pick
@@ -121,7 +121,7 @@
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
-    (local.set $tmp (call $class_table_lookup (call $g2w (local.get $arg1))))
+    (local.set $tmp (call $class_table_lookup (call $class_name_key (local.get $arg1))))
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
     ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
