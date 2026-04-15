@@ -124,6 +124,23 @@ Matched 1996 exe + DAT pair. `PINBALL.DAT` is the same size (928,700 B) as the X
 | winamp291.exe | `https://archive.org/details/winamp-291` — WinAmp 2.91 (NSIS installer) |
 | mirc59.exe | `https://archive.org/details/mirc59` — mIRC 5.9 |
 
+## Shareware (`shareware/`)
+
+Downloaded to profile DirectDraw and Direct3D surfaces. Each SFX/installer extracted; game EXE pulled out.
+
+| Binary | Source | Imports | Notes |
+|--------|--------|---------|-------|
+| `HOVER!/HOVER.EXE` | `https://archive.org/download/hoverwindows95/hover.zip` | WINMM+GDI+USER | Pure Win32, no DX. Early MFC-era thunking. |
+| `mcm/mcm_ex/MCM.EXE` (Motocross Madness) | `https://archive.org/details/MotocrossMadnessDemo` | DDRAW, DSOUND, DINPUT, DPLAYX, d3drm | Uses `d3drm.dll` + direct IM via QI (`D3DIM` string present). |
+| `aoe/aoe_ex/Empires.exe` (AoE 1 demo) | `https://archive.org/details/AgeofEmpires_1020` | DDRAW, DSOUND, DPLAYX | 2D isometric, no 3D. |
+| `aoe2/aoe2_ex/EMPIRES2.EXE` (AoE II AoK demo) | `https://archive.org/details/AgeofEmpiresIITheAgeofKings_1020` | DDRAW, DSOUND, DPLAYX, MSVFW32 | 2D isometric. |
+| `abe/ex/AbeDemo.exe` (Oddworld: Abe's Oddysee demo) | `https://archive.org/details/Abes_Oddysee_demo` | DDRAW, DSOUND | 2D prerendered backgrounds + sprites. |
+| `rct/English/RCT.exe` (RollerCoaster Tycoon demo) | `https://archive.org/details/RollercoasterTycoonDemo` | **no DDRAW**, DSOUND, DINPUT | Chris Sawyer hand-assembly engine — pure GDI SetDIBitsToDevice path. |
+| `mw3/ex/Program_Files/mech3demo.exe` (MechWarrior 3 demo) | `https://archive.org/details/Mechwarrior3Demo` | DDRAW, DSOUND, DINPUT, DPLAYX, MFC42, AVIFIL32 | DX6 IM via QI on DDraw (no d3dim.dll or d3drm link). |
+| `shareware/J2swc123.exe` (Jazz Jackrabbit 2 demo) | `https://archive.org/details/JazzJackrabbit2Demo` | — | InstallShield SFX; 7z cannot unpack. Not extracted yet. |
+
+MW3 extracted via `unshield x data1.cab`. Other SFX archives extracted with `7z`.
+
 ## Top-level binaries
 
 | Binary | Notes |
