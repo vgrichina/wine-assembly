@@ -8536,5 +8536,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3847877410
+  },
+  {
+    "id": 1220,
+    "name": "GetLogicalDriveStringsA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3860817427
+  },
+  {
+    "id": 1221,
+    "name": "SetLocaleInfoA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1277596188
   }
 ]

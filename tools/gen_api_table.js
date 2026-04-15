@@ -367,6 +367,10 @@ const extra = [
   { name: 'IDirectDrawFactory_DirectDrawEnumerate', nargs: 2 },
   // WINMM — timer device capabilities
   { name: 'timeGetDevCaps', nargs: 2 },
+  // KERNEL32 — drive enumeration
+  { name: 'GetLogicalDriveStringsA', nargs: 2 },
+  // KERNEL32 — locale persistence stub
+  { name: 'SetLocaleInfoA', nargs: 3 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

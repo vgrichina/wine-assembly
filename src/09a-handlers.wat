@@ -332,6 +332,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; SetLocaleInfoA(Locale, LCType, lpLCData) — accept & drop. Apps persist user prefs here; we don't store them but must return nonzero so callers proceed.
+  (func $handle_SetLocaleInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
   ;; 12: LoadLibraryA
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32)
@@ -695,9 +701,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
   )
 
-  ;; 45: GetStringTypeA — STUB: unimplemented
+  ;; 45: GetStringTypeA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType) — single-byte CT_CTYPE1 classification.
   (func $handle_GetStringTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $i i32) (local $ch i32) (local $ct i32) (local $out i32) (local $src i32) (local $count i32)
+    (local.set $src (call $g2w (local.get $arg2)))
+    (local.set $out (call $g2w (local.get $arg4)))
+    (local.set $count (local.get $arg3))
+    (if (i32.eq (local.get $count) (i32.const -1))
+      (then (local.set $count (i32.add (call $strlen_a (local.get $src)) (i32.const 1)))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (local.set $ct (i32.const 0))
+      (if (i32.le_u (local.get $ch) (i32.const 31))
+        (then (local.set $ct (i32.const 0x20))))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
+            (i32.or (i32.eq (local.get $ch) (i32.const 9))
+              (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x08)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x04)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 33)) (i32.le_u (local.get $ch) (i32.const 47)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 58)) (i32.le_u (local.get $ch) (i32.const 64)))
+        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+      (i32.store16 (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2))) (local.get $ct))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; 46: GetStringTypeW(dwInfoType, lpSrcStr, cchSrc, lpCharType) — classify chars
@@ -1309,9 +1346,23 @@
   )
 
   ;; 95: GetDlgItemTextA(hDlg, nIDDlgItem, lpString, nMaxCount) → int
+  ;; Implemented as GetDlgItem + WM_GETTEXT so the control's own wndproc
+  ;; serves the text from its EditState / ButtonState / StaticState — the
+  ;; JS _controlText Map that used to cache these strings is gone.
   (func $handle_GetDlgItemTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_get_dlg_item_text
-      (local.get $arg0) (local.get $arg1) (call $g2w (local.get $arg2)) (local.get $arg3)))
+    (local $ctrl i32)
+    (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $ctrl)
+      (then (global.set $eax
+              (call $wnd_send_message (local.get $ctrl)
+                (i32.const 0x000D)            ;; WM_GETTEXT
+                (local.get $arg3)             ;; nMaxCount
+                (local.get $arg2))))          ;; lpString (guest ptr)
+      (else
+        ;; Empty string on miss, matching Win32
+        (if (i32.and (local.get $arg2) (i32.gt_u (local.get $arg3) (i32.const 0)))
+          (then (i32.store8 (call $g2w (local.get $arg2)) (i32.const 0))))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
@@ -1404,12 +1455,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 103: SetDlgItemTextA
+  ;; 103: SetDlgItemTextA — delegate to the control's wndproc via
+  ;; WM_SETTEXT so EditState / ButtonState / StaticState own the string.
   (func $handle_SetDlgItemTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_set_dlg_item_text
-    (local.get $arg0)                          ;; hDlg
-    (local.get $arg1)                          ;; nIDDlgItem
-    (call $g2w (local.get $arg2)))             ;; lpString → WASM ptr
+    (local $ctrl i32)
+    (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $ctrl)
+      (then (drop (call $wnd_send_message (local.get $ctrl)
+              (i32.const 0x000C)                    ;; WM_SETTEXT
+              (i32.const 0)
+              (local.get $arg2)))))                 ;; lpString (guest ptr)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -1623,22 +1678,34 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 123: CheckRadioButton
+  ;; 123: CheckRadioButton(hDlg, firstId, lastId, checkId) — clear all in
+  ;; [firstId,lastId] and set checkId. Pure WAT path now that ButtonState
+  ;; bit 1 is the source of truth.
   (func $handle_CheckRadioButton (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_check_radio_button (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    (local $id i32) (local $ctrl i32)
+    (local.set $id (local.get $arg1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $id) (local.get $arg2)))
+      (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $id)))
+      (if (local.get $ctrl)
+        (then (call $ctrl_set_check_state (local.get $ctrl)
+                (select (i32.const 1) (i32.const 0)
+                  (i32.eq (local.get $id) (local.get $arg3))))
+              (call $host_invalidate (local.get $ctrl))))
+      (local.set $id (i32.add (local.get $id) (i32.const 1)))
+      (br $scan)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 124: CheckDlgButton
+  ;; 124: CheckDlgButton — WAT-only; the _checkStates Map in host-imports
+  ;; is gone, ButtonState.flags bit 1 is the source of truth.
   (func $handle_CheckDlgButton (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ctrl_hwnd i32)
-    ;; Update WAT-side state
     (local.set $ctrl_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
     (if (local.get $ctrl_hwnd)
-      (then (call $ctrl_set_check_state (local.get $ctrl_hwnd) (local.get $arg2))))
-    ;; Also update JS-side for rendering
-    (call $host_check_dlg_button (local.get $arg0) (local.get $arg1) (local.get $arg2))
+      (then (call $ctrl_set_check_state (local.get $ctrl_hwnd) (local.get $arg2))
+            (call $host_invalidate (local.get $ctrl_hwnd))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -3476,9 +3543,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 338: IsValidCodePage — return 1 (valid) — STUB: unimplemented
+  ;; 338: IsValidCodePage(CodePage) — emulator uses one code page; report all valid.
   (func $handle_IsValidCodePage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 339: GetEnvironmentStringsA — return ptr to empty env block
@@ -5205,6 +5273,23 @@
   (func $handle_GetLogicalDrives (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x04))  ;; C: drive only
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; GetLogicalDriveStringsA(nBufferLength, lpBuffer) — return double-null-terminated drive list "C:\\\0\0"
+  ;; If nBufferLength=0 or too small, returns required buffer size (5). Otherwise writes "C:\\\0\0" and returns 4 (chars excl. final null).
+  (func $handle_GetLogicalDriveStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    (if (i32.lt_u (local.get $arg0) (i32.const 5))
+      (then (global.set $eax (i32.const 5)))
+      (else
+        (local.set $buf (call $g2w (local.get $arg1)))
+        (i32.store8 (local.get $buf) (i32.const 0x43))              ;; 'C'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))  ;; ':'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))  ;; '\\'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 0))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
+        (global.set $eax (i32.const 4))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 485: GetFileAttributesA — STUB: unimplemented
@@ -6951,20 +7036,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 669: IsDlgButtonChecked
+  ;; 669: IsDlgButtonChecked — BST_UNCHECKED(0) or BST_CHECKED(1)
   (func $handle_IsDlgButtonChecked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ctrl_hwnd i32)
-    ;; IsDlgButtonChecked(hDlg, nIDButton) — 2 args stdcall
-    ;; Returns BST_UNCHECKED(0) or BST_CHECKED(1)
-    ;; Try WAT-side state first (controls with real HWNDs)
     (local.set $ctrl_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
     (if (local.get $ctrl_hwnd)
-      (then
-        (global.set $eax (call $ctrl_get_check_state (local.get $ctrl_hwnd)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    ;; Fallback to host-side state
-    (global.set $eax (call $host_is_dlg_button_checked (local.get $arg0) (local.get $arg1)))
+      (then (global.set $eax (call $ctrl_get_check_state (local.get $ctrl_hwnd))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
