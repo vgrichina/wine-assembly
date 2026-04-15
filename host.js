@@ -290,7 +290,7 @@ class WineAssembly {
         compileEl.style.display = 'block';
       }, 100);
     }
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=36').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=38').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -298,7 +298,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=36');
+        const r = await fetch('src/api_table.json?v=38');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -351,6 +351,11 @@ class WineAssembly {
     // Load PE
     const entry = this.instance.exports.load_pe(exeBytes.length);
     console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
+
+    // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base).
+    if (this.instance.exports.init_dx_com_thunks) {
+      this.instance.exports.init_dx_com_thunks();
+    }
 
     // Set EXE name from URL
     const exeName = url.replace(/^.*[\\\/]/, '');

@@ -656,6 +656,14 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   (global $auto_timer_id (mut i32) (i32.const 0x1000))  ;; Auto-generated timer IDs start here
+  ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
+  ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
+  ;; current ptr is freed (if cap too small) and a fresh one is allocated
+  ;; to fit the selection. $clipboard_ptr is a guest address; 0 = empty.
+  ;; $clipboard_len is authoritative (no NUL terminator).
+  (global $clipboard_ptr (mut i32) (i32.const 0))
+  (global $clipboard_cap (mut i32) (i32.const 0))
+  (global $clipboard_len (mut i32) (i32.const 0))
   ;; Thread yield state (for multi-instance threading)
   ;; Pending input event cache for PM_NOREMOVE support.
   ;; When PeekMessageA is called with PM_NOREMOVE, we fetch from JS but cache here.

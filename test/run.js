@@ -29,6 +29,7 @@ const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
+const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
@@ -171,6 +172,101 @@ async function main() {
   // String APIs where we want to log content
   const STRING_APIS = ['lstrlenA', 'lstrcpyA', 'lstrcpynA', 'LoadStringA', 'GetWindowTextA', 'SetWindowTextA', 'SetDlgItemTextA'];
 
+  // DX_OBJECTS is at WASM addr 0xE970 (below GUEST_BASE); 32 entries × 32 bytes.
+  // Matches src/09a8-handlers-directx.wat layout.
+  const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
+    6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3' };
+  function dxLookupThis(thisGuest, dv, g2w) {
+    if (!thisGuest) return null;
+    let wa, slot;
+    try {
+      wa = g2w(thisGuest);
+      slot = dv.getUint32(wa + 4, true);
+    } catch (_) { return null; }
+    if (slot >= 32) return null;
+    const entry = 0xE970 + slot * 32;
+    const type = dv.getUint32(entry, true);
+    if (!type) return null;
+    const rc = dv.getUint32(entry + 4, true);
+    const dims = dv.getUint32(entry + 12, true);
+    const fmt = dv.getUint32(entry + 16, true);
+    const flags = dv.getUint32(entry + 28, true);
+    const w = dims & 0xFFFF, h = (dims >>> 16) & 0xFFFF;
+    const bpp = fmt & 0xFFFF, pitch = (fmt >>> 16) & 0xFFFF;
+    return { slot, type, typeName: DX_TYPE_NAMES[type] || `T${type}`, rc, w, h, bpp, pitch, flags };
+  }
+  function dxDescThis(thisGuest, dv, g2w) {
+    const o = dxLookupThis(thisGuest, dv, g2w);
+    if (!o) return `this=${hex(thisGuest)}`;
+    let s = `this=#${o.slot}/${o.typeName}`;
+    if (o.type === 2) {
+      const sf = []; if (o.flags & 1) sf.push('PRI'); if (o.flags & 2) sf.push('BACK'); if (o.flags & 4) sf.push('OFF');
+      if (o.flags & 0x100) sf.push('CK');
+      s += `[${o.w}x${o.h} ${o.bpp}bpp pitch=${o.pitch}${sf.length?' '+sf.join('|'):''}]`;
+    }
+    return s;
+  }
+  function dxReadRect(ptr, dv, g2w) {
+    if (!ptr) return 'null';
+    try {
+      const wa = g2w(ptr);
+      return `(${dv.getInt32(wa, true)},${dv.getInt32(wa+4, true)},${dv.getInt32(wa+8, true)},${dv.getInt32(wa+12, true)})`;
+    } catch (_) { return hex(ptr); }
+  }
+  function dxSurfaceRef(guestPtr, dv, g2w) {
+    if (!guestPtr) return 'null';
+    const o = dxLookupThis(guestPtr, dv, g2w);
+    return o ? `#${o.slot}/${o.typeName}` : hex(guestPtr);
+  }
+  function decodeDx(name, esp, dv, g2w, memory) {
+    const a = [];
+    for (let i = 0; i < 6; i++) a.push(dv.getUint32(g2w(esp + 4 + i * 4), true));
+    // a[0]=this (for methods), a[0]=arg0 (for creators)
+    const desc = () => dxDescThis(a[0], dv, g2w);
+    if (name === 'DirectDrawCreate' || name === 'DirectSoundCreate') {
+      return `[guid=${hex(a[0])} pp=${hex(a[1])}]`;
+    }
+    if (name === 'DirectInputCreateA') return `[hInst=${hex(a[0])} ver=${hex(a[1])} pp=${hex(a[2])}]`;
+    if (name === 'IDirectDraw_SetDisplayMode') return `[${desc()} ${a[1]}x${a[2]}x${a[3]}bpp]`;
+    if (name === 'IDirectDraw_SetCooperativeLevel') return `[${desc()} hwnd=${hex(a[1])} flags=${hex(a[2])}]`;
+    if (name === 'IDirectDraw_CreateSurface' || name === 'IDirectDraw2_CreateSurface') {
+      try {
+        const wa = g2w(a[1]);
+        const sz = dv.getUint32(wa, true);
+        const flags = dv.getUint32(wa + 4, true);
+        const h2 = dv.getUint32(wa + 8, true);
+        const w2 = dv.getUint32(wa + 12, true);
+        const caps = dv.getUint32(wa + 104, true);
+        const backbuf = dv.getUint32(wa + 24, true);
+        const cc = [];
+        if (caps & 0x200) cc.push('PRIMARY'); if (caps & 0x4) cc.push('BACKBUF'); if (caps & 0x800) cc.push('OFFSCREEN');
+        if (caps & 0x8) cc.push('FLIP'); if (caps & 0x40) cc.push('COMPLEX');
+        return `[${desc()} DDSD{sz=${sz} fl=${hex(flags)} ${w2}x${h2} caps=${cc.join('|')||hex(caps)} back=${backbuf}} pp=${hex(a[2])}]`;
+      } catch (_) { return `[${desc()} pDDSD=${hex(a[1])}]`; }
+    }
+    if (name === 'IDirectDrawSurface_Blt') {
+      return `[${desc()} dst=${dxReadRect(a[1], dv, g2w)} src=${dxSurfaceRef(a[2], dv, g2w)}${dxReadRect(a[3], dv, g2w)} fl=${hex(a[4])}]`;
+    }
+    if (name === 'IDirectDrawSurface_BltFast') {
+      return `[${desc()} dst=(${a[1]},${a[2]}) src=${dxSurfaceRef(a[3], dv, g2w)}${dxReadRect(a[4], dv, g2w)} trans=${hex(a[5])}]`;
+    }
+    if (name === 'IDirectDrawSurface_Flip') return `[${desc()} override=${hex(a[1])} flags=${hex(a[2])}]`;
+    if (name === 'IDirectDrawSurface_Lock') {
+      return `[${desc()} rect=${dxReadRect(a[1], dv, g2w)} pDDSD=${hex(a[2])} flags=${hex(a[3])}]`;
+    }
+    if (name === 'IDirectDrawSurface_Unlock') return `[${desc()} rect_or_ptr=${hex(a[1])}]`;
+    if (name === 'IDirectDrawSurface_SetColorKey') {
+      let low = 0, hi = 0;
+      try { const wa = g2w(a[2]); low = dv.getUint32(wa, true); hi = dv.getUint32(wa + 4, true); } catch (_) {}
+      return `[${desc()} flags=${hex(a[1])} key=${hex(low)}..${hex(hi)}]`;
+    }
+    if (name === 'IDirectDrawSurface_GetAttachedSurface') return `[${desc()} caps=${hex(a[1])} pp=${hex(a[2])}]`;
+    if (name === 'IDirectDrawSurface_SetPalette') return `[${desc()} pPal=${hex(a[1])}]`;
+    if (name === 'IDirectDrawPalette_SetEntries') return `[${desc()} flags=${hex(a[1])} start=${a[2]} count=${a[3]} pE=${hex(a[4])}]`;
+    // Default: just describe `this` if it resolves to a DX object
+    return `[${desc()}]`;
+  }
+
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
   if (TRACE_DC) traceCategories.add('dc');
@@ -273,7 +369,14 @@ async function main() {
           retInfo += ` frames=[${chain.join(' <- ')}]`;
         } catch (_) {}
       }
-      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}`);
+      let dxInfo = '';
+      if (TRACE_DX && (t.startsWith('IDirectDraw') || t.startsWith('IDirectSound') ||
+                        t.startsWith('IDirectInput') || t.startsWith('IDirect3D') ||
+                        t === 'DirectDrawCreate' || t === 'DirectSoundCreate' ||
+                        t === 'DirectInputCreateA' || t === 'Direct3DRMCreate')) {
+        try { dxInfo = ' ' + decodeDx(t, esp, dv, g2w, memory); } catch (_) {}
+      }
+      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}${dxInfo}`);
       // Dump MSG struct contents for DispatchMessageA
       if (t.includes('DispatchMessage') && apiCount <= 100) {
         try {
@@ -604,7 +707,7 @@ async function main() {
     const required = detectRequiredDlls(exeBytes);
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
-      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll']);
+      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll', 'd3drm.dll']);
     const dllSearchDirs = [dllDir, path.dirname(EXE_PATH), path.join(__dirname, 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {

@@ -878,6 +878,7 @@
     (i32.const 0))
 
   (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
+    (local $grid i32) (local $rgb i32) (local $i i32) (local $sw i32)
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (i32.const 0x252)   ;; "Color"
@@ -891,9 +892,25 @@
       (i32.const 15) (i32.const 0))
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cc)))
     ;; Swatch grid: 8 cols * 24px = 192, 3 rows * 20px = 60
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 6) (i32.const 0x460)
+    (local.set $grid (call $ctrl_create_child (local.get $dlg) (i32.const 6) (i32.const 0x460)
             (i32.const 12) (i32.const 12) (i32.const 192) (i32.const 60)
             (i32.const 0x50000000) (i32.const 0)))
+    ;; Pre-highlight the cell matching CHOOSECOLOR.rgbResult (+12) so the
+    ;; dialog opens with the app's current color already selected.
+    (if (local.get $cc)
+      (then
+        (local.set $rgb (i32.load offset=12 (call $g2w (local.get $cc))))
+        (local.set $i (i32.const 0))
+        (block $done (loop $scan
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 24)))
+          (if (i32.eq (call $colorgrid_color_for_idx (local.get $i)) (local.get $rgb))
+            (then
+              (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
+              (if (local.get $sw)
+                (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+              (br $done)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))))
     ;; OK + Cancel
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 30) (i32.const 92) (i32.const 80) (i32.const 24)
@@ -2364,12 +2381,176 @@
     (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
   )
 
+  ;; Insert $n bytes from guest-ptr $src at cursor (delete selection first).
+  ;; Used by WM_PASTE / Ctrl+V to bulk-insert clipboard text in one pass
+  ;; (avoids per-char memmove storms on large pastes).
+  (func $edit_insert_bytes (param $state_w i32) (param $src_g i32) (param $n i32)
+    (local $lo i32) (local $hi i32) (local $cur i32) (local $len i32) (local $buf_w i32) (local $tail i32) (local $maxlen i32) (local $src_w i32) (local $room i32)
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+    (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+    (if (i32.ne (local.get $lo) (local.get $hi))
+      (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))))
+    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (local.set $maxlen (i32.load offset=28 (local.get $state_w)))
+    (if (local.get $maxlen)
+      (then
+        (local.set $room (i32.sub (local.get $maxlen) (local.get $len)))
+        (if (i32.lt_s (local.get $room) (i32.const 0)) (then (local.set $room (i32.const 0))))
+        (if (i32.gt_u (local.get $n) (local.get $room))
+          (then (local.set $n (local.get $room))))))
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (call $edit_ensure_cap (local.get $state_w) (i32.add (local.get $len) (local.get $n)))
+    (local.set $cur (i32.load offset=12 (local.get $state_w)))
+    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    ;; Shift tail right by $n bytes (reverse copy for overlap safety)
+    (local.set $tail (i32.sub (local.get $len) (local.get $cur)))
+    (if (local.get $tail)
+      (then
+        (block $md (loop $ml
+          (br_if $md (i32.eqz (local.get $tail)))
+          (local.set $tail (i32.sub (local.get $tail) (i32.const 1)))
+          (i32.store8
+            (i32.add (local.get $buf_w) (i32.add (local.get $cur) (i32.add (local.get $tail) (local.get $n))))
+            (i32.load8_u (i32.add (local.get $buf_w) (i32.add (local.get $cur) (local.get $tail)))))
+          (br $ml)))))
+    (local.set $src_w (call $g2w (local.get $src_g)))
+    (call $memcpy
+      (i32.add (local.get $buf_w) (local.get $cur))
+      (local.get $src_w)
+      (local.get $n))
+    (local.set $cur (i32.add (local.get $cur) (local.get $n)))
+    (local.set $len (i32.add (local.get $len) (local.get $n)))
+    (i32.store offset=4  (local.get $state_w) (local.get $len))
+    (i32.store offset=12 (local.get $state_w) (local.get $cur))
+    (i32.store offset=16 (local.get $state_w) (local.get $cur))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
+  )
+
+  ;; Copy [lo..hi) from edit to the global clipboard, reallocating to fit.
+  ;; No-op when lo >= hi (empty selection — leaves clipboard untouched so
+  ;; Ctrl+C on nothing doesn't wipe a prior copy).
+  (func $edit_copy_range (param $state_w i32) (param $lo i32) (param $hi i32)
+    (local $len i32) (local $src_g i32) (local $dst_g i32) (local $cap i32)
+    (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
+    (local.set $len (i32.sub (local.get $hi) (local.get $lo)))
+    (local.set $src_g (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $src_g)) (then (return)))
+    ;; Grow capacity if needed (round up to multiple of 64).
+    (if (i32.gt_u (local.get $len) (global.get $clipboard_cap))
+      (then
+        (if (global.get $clipboard_ptr)
+          (then (call $heap_free (global.get $clipboard_ptr))
+                (global.set $clipboard_ptr (i32.const 0))))
+        (local.set $cap (i32.and (i32.add (local.get $len) (i32.const 63)) (i32.const -64)))
+        (global.set $clipboard_ptr (call $heap_alloc (local.get $cap)))
+        (global.set $clipboard_cap (local.get $cap))))
+    (local.set $dst_g (global.get $clipboard_ptr))
+    (if (i32.eqz (local.get $dst_g)) (then (return)))
+    (call $memcpy
+      (call $g2w (local.get $dst_g))
+      (i32.add (call $g2w (local.get $src_g)) (local.get $lo))
+      (local.get $len))
+    (global.set $clipboard_len (local.get $len))
+  )
+
+  ;; Convert click (x,y) in edit client coords to a char offset.
+  ;; Uses $host_measure_text to binary-ish-search the column within a line.
+  ;; y-based line pick clamps to last line; x-based col picks the half-char
+  ;; the click falls into (standard Win32 caret behavior).
+  (func $edit_xy_to_offset (param $state_w i32) (param $hdc i32) (param $x i32) (param $y i32) (result i32)
+    (local $line_num i32) (local $line_start i32) (local $line_len i32)
+    (local $text_len i32) (local $buf_g i32) (local $line_w i32)
+    (local $i i32) (local $w i32) (local $prev_w i32) (local $mid i32)
+    (local $total_lines i32)
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $buf_g (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
+    ;; Subtract 4px text margin, clamp x>=0, y>=0.
+    (local.set $x (i32.sub (local.get $x) (i32.const 4)))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
+    (local.set $y (i32.sub (local.get $y) (i32.const 4)))
+    (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
+    (local.set $line_num (i32.div_s (local.get $y) (i32.const 16)))
+    ;; Clamp to last line: total_lines = edit_line_from_char(text_len) + 1
+    (local.set $total_lines (i32.add
+      (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
+      (i32.const 1)))
+    (if (i32.ge_u (local.get $line_num) (local.get $total_lines))
+      (then (local.set $line_num (i32.sub (local.get $total_lines) (i32.const 1)))))
+    (local.set $line_start (call $edit_line_index (local.get $state_w) (local.get $line_num)))
+    (local.set $line_len (call $edit_line_len (local.get $state_w) (local.get $line_start)))
+    (local.set $line_w (i32.add (call $g2w (local.get $buf_g)) (local.get $line_start)))
+    (local.set $prev_w (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $line_len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $w (call $host_measure_text (local.get $hdc) (local.get $line_w) (local.get $i)))
+      (local.set $mid (i32.shr_s (i32.add (local.get $prev_w) (local.get $w)) (i32.const 1)))
+      (if (i32.gt_s (local.get $mid) (local.get $x))
+        (then (return (i32.add (local.get $line_start) (i32.sub (local.get $i) (i32.const 1))))))
+      (local.set $prev_w (local.get $w))
+      (br $scan)))
+    (i32.add (local.get $line_start) (local.get $line_len)))
+
+  ;; Word-boundary classification: 1 if $ch is part of a word (alnum/underscore),
+  ;; else 0. Matches Win32 default word break for ASCII.
+  (func $edit_is_word_char (param $ch i32) (result i32)
+    (if (i32.eq (local.get $ch) (i32.const 0x5F)) (then (return (i32.const 1))))  ;; _
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30))
+                 (i32.le_u (local.get $ch) (i32.const 0x39)))
+      (then (return (i32.const 1))))  ;; 0-9
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
+                 (i32.le_u (local.get $ch) (i32.const 0x5A)))
+      (then (return (i32.const 1))))  ;; A-Z
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                 (i32.le_u (local.get $ch) (i32.const 0x7A)))
+      (then (return (i32.const 1))))  ;; a-z
+    (i32.const 0))
+
+  (func $edit_word_start (param $state_w i32) (param $pos i32) (result i32)
+    (local $buf_w i32) (local $ch i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (local.get $pos))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (block $done (loop $scan
+      (br_if $done (i32.le_s (local.get $pos) (i32.const 0)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $buf_w) (i32.sub (local.get $pos) (i32.const 1)))))
+      (br_if $done (i32.eqz (call $edit_is_word_char (local.get $ch))))
+      (local.set $pos (i32.sub (local.get $pos) (i32.const 1)))
+      (br $scan)))
+    (local.get $pos))
+
+  (func $edit_word_end (param $state_w i32) (param $pos i32) (result i32)
+    (local $buf_w i32) (local $text_len i32) (local $ch i32)
+    (local.set $buf_w (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_w)) (then (return (local.get $pos))))
+    (local.set $buf_w (call $g2w (local.get $buf_w)))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $pos) (local.get $text_len)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $buf_w) (local.get $pos))))
+      (br_if $done (i32.eqz (call $edit_is_word_char (local.get $ch))))
+      (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
+      (br $scan)))
+    (local.get $pos))
+
+  ;; True if VK_SHIFT/VK_CONTROL are physically down (uses host async state).
+  (func $edit_shift_down (result i32)
+    (i32.and (call $host_get_async_key_state (i32.const 0x10)) (i32.const 0x8000)))
+  (func $edit_ctrl_down (result i32)
+    (i32.and (call $host_get_async_key_state (i32.const 0x11)) (i32.const 0x8000)))
+
   (func $edit_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
     (local $name_ptr i32) (local $text_len i32) (local $hdc i32)
     (local $sz i32) (local $w i32) (local $h i32) (local $buf i32)
     (local $cur i32) (local $px i32) (local $lo i32) (local $hi i32)
     (local $vk i32) (local $flags i32)
+    (local $sel_lo i32) (local $sel_hi i32) (local $a i32) (local $b i32)
+    (local $line_end i32) (local $pre_w i32) (local $sel_w i32)
+    (local $line_y i32) (local $line_buf_w i32) (local $brush i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2544,6 +2725,11 @@
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
+    ;; Keyboard navigation + editing. Shift-held keeps sel_anchor so arrows
+    ;; extend the selection; plain arrows collapse. Ctrl+A/C/X/V handle
+    ;; select-all / copy / cut / paste. Ctrl+Left/Right jump word boundaries;
+    ;; Ctrl+Home/End jump to start/end of text. $a = shift_down, $b = ctrl_down
+    ;; (high bit of host_get_async_key_state, read once at top).
     (if (i32.eq (local.get $msg) (i32.const 0x0100))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
@@ -2551,14 +2737,58 @@
         (local.set $vk (local.get $wParam))
         (local.set $cur (i32.load offset=12 (local.get $state_w)))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $a (call $edit_shift_down))
+        (local.set $b (call $edit_ctrl_down))
+        ;; ---- Ctrl combos ----
+        (if (local.get $b)
+          (then
+            ;; Ctrl+A (0x41) — select all
+            (if (i32.eq (local.get $vk) (i32.const 0x41))
+              (then
+                (i32.store offset=16 (local.get $state_w) (i32.const 0))
+                (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+                (call $invalidate_hwnd (local.get $hwnd))
+                (return (i32.const 0))))
+            ;; Ctrl+C (0x43) — copy
+            (if (i32.eq (local.get $vk) (i32.const 0x43))
+              (then
+                (call $edit_copy_range (local.get $state_w)
+                  (call $edit_sel_lo (local.get $state_w))
+                  (call $edit_sel_hi (local.get $state_w)))
+                (return (i32.const 0))))
+            ;; Ctrl+X (0x58) — cut (read-only blocks deletion but copy still fires)
+            (if (i32.eq (local.get $vk) (i32.const 0x58))
+              (then
+                (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+                (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+                (call $edit_copy_range (local.get $state_w) (local.get $lo) (local.get $hi))
+                (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+                  (then
+                    (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+                    (call $invalidate_hwnd (local.get $hwnd))))
+                (return (i32.const 0))))
+            ;; Ctrl+V (0x56) — paste
+            (if (i32.eq (local.get $vk) (i32.const 0x56))
+              (then
+                (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+                  (then
+                    (if (global.get $clipboard_len)
+                      (then (call $edit_insert_bytes (local.get $state_w)
+                              (global.get $clipboard_ptr) (global.get $clipboard_len))))
+                    (call $invalidate_hwnd (local.get $hwnd))))
+                (return (i32.const 0))))))
         ;; VK_LEFT 0x25
         (if (i32.eq (local.get $vk) (i32.const 0x25))
           (then
             (if (local.get $cur)
               (then
-                (local.set $cur (i32.sub (local.get $cur) (i32.const 1)))
+                (if (local.get $b)
+                  (then (local.set $cur (call $edit_word_start (local.get $state_w)
+                          (i32.sub (local.get $cur) (i32.const 1)))))
+                  (else (local.set $cur (i32.sub (local.get $cur) (i32.const 1)))))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
-                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (if (i32.eqz (local.get $a))
+                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_RIGHT 0x27
@@ -2566,23 +2796,38 @@
           (then
             (if (i32.lt_u (local.get $cur) (local.get $text_len))
               (then
-                (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+                (if (local.get $b)
+                  (then (local.set $cur (call $edit_word_end (local.get $state_w)
+                          (i32.add (local.get $cur) (i32.const 1)))))
+                  (else (local.set $cur (i32.add (local.get $cur) (i32.const 1)))))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
-                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (if (i32.eqz (local.get $a))
+                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
-        ;; VK_HOME 0x24
+        ;; VK_HOME 0x24 — start of line (or start of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x24))
           (then
-            (i32.store offset=12 (local.get $state_w) (i32.const 0))
-            (i32.store offset=16 (local.get $state_w) (i32.const 0))
+            (if (local.get $b)
+              (then (local.set $cur (i32.const 0)))
+              (else (local.set $cur (call $edit_line_start (local.get $state_w) (local.get $cur)))))
+            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (if (i32.eqz (local.get $a))
+              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
-        ;; VK_END 0x23
+        ;; VK_END 0x23 — end of line (or end of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x23))
           (then
-            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (if (local.get $b)
+              (then (local.set $cur (local.get $text_len)))
+              (else
+                (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
+                (local.set $cur (i32.add (local.get $lo)
+                  (call $edit_line_len (local.get $state_w) (local.get $lo))))))
+            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (if (i32.eqz (local.get $a))
+              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
@@ -2635,7 +2880,8 @@
                   (then (local.set $hi (local.get $px))))
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
-                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (if (i32.eqz (local.get $a))
+                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_DOWN 0x28
@@ -2662,16 +2908,76 @@
             (return (i32.const 0))))
         (return (i32.const 0))))
 
-    ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
-    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+    ;; ---------- WM_LBUTTONDOWN (0x0201) / WM_LBUTTONDBLCLK (0x0203) ----------
+    ;; Click: hit-test via $edit_xy_to_offset, move cursor there. Shift-held
+    ;; keeps the anchor (extends selection); plain click collapses both.
+    ;; Double-click selects the word under the cursor. lParam = x | y<<16.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
+                (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (global.set $focus_hwnd (local.get $hwnd))
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        ;; Mark focused + drag-tracking bit 4 (0x10).
+        (i32.store offset=24 (local.get $state_w)
+          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (local.set $cur (call $edit_xy_to_offset
+          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
+        (if (i32.eq (local.get $msg) (i32.const 0x0203))
+          (then
+            ;; Double-click: select word spanning $cur
+            (local.set $lo (call $edit_word_start (local.get $state_w) (local.get $cur)))
+            (local.set $hi (call $edit_word_end (local.get $state_w) (local.get $cur)))
+            (i32.store offset=16 (local.get $state_w) (local.get $lo))
+            (i32.store offset=12 (local.get $state_w) (local.get $hi)))
+          (else
+            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            ;; Only collapse anchor when Shift is NOT held (extends existing selection).
+            (if (i32.eqz (call $edit_shift_down))
+              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_MOUSEMOVE (0x0200) ----------
+    ;; Extend selection while the left button is held (tracking bit 0x10
+    ;; set by LBUTTONDOWN). MK_LBUTTON in wParam confirms the button is
+    ;; actually down — guards against stray moves after a button-up we
+    ;; didn't see.
+    (if (i32.eq (local.get $msg) (i32.const 0x0200))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+        (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (i32.and (local.get $wParam) (i32.const 0x0001)))
+          (then
+            ;; Lost the button without a WM_LBUTTONUP — clear drag flag.
+            (i32.store offset=24 (local.get $state_w)
+              (i32.and (local.get $flags) (i32.const 0xFFFFFFEF)))
+            (return (i32.const 0))))
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (local.set $cur (call $edit_xy_to_offset
+          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
+        (if (i32.ne (local.get $cur) (i32.load offset=12 (local.get $state_w)))
+          (then
+            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_LBUTTONUP (0x0202) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0202))
+      (then
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
-              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
-        (call $invalidate_hwnd (local.get $hwnd))
+              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
@@ -2697,24 +3003,83 @@
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x0A) (i32.const 0x0F)))
-        ;; 3) Text — draw line by line, splitting on \n
+        ;; 3) Text — draw line by line, splitting on \n. Each line is split
+        ;; into up to three segments (pre-sel / sel / post-sel) so selected
+        ;; text renders white-on-blue while unselected text stays black.
         (local.set $buf (i32.load (local.get $state_w)))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-        (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.ne (local.get $text_len) (i32.const 0)))
+        (local.set $sel_lo (call $edit_sel_lo (local.get $state_w)))
+        (local.set $sel_hi (call $edit_sel_hi (local.get $state_w)))
+        (if (local.get $buf)
           (then
             (local.set $lo (i32.const 0))    ;; line start offset
-            (local.set $px (i32.const 4))    ;; y position
+            (local.set $line_y (i32.const 4))
             (block $lines_done (loop $line_loop
-              (br_if $lines_done (i32.ge_u (local.get $lo) (local.get $text_len)))
-              ;; Find line length (until \n or end)
+              (br_if $lines_done (i32.gt_u (local.get $lo) (local.get $text_len)))
               (local.set $hi (call $edit_line_len (local.get $state_w) (local.get $lo)))
-              (if (local.get $hi)
-                (then (drop (call $host_gdi_text_out (local.get $hdc)
-                              (i32.const 4) (local.get $px)
-                              (i32.add (call $g2w (local.get $buf)) (local.get $lo))
-                              (local.get $hi)))))
-              (local.set $lo (i32.add (local.get $lo) (i32.add (local.get $hi) (i32.const 1))))
-              (local.set $px (i32.add (local.get $px) (i32.const 16)))  ;; line height ~16px
+              (local.set $line_end (i32.add (local.get $lo) (local.get $hi)))
+              (local.set $line_buf_w (i32.add (call $g2w (local.get $buf)) (local.get $lo)))
+              ;; Selection intersection within this line (relative to line start).
+              (local.set $a (i32.const 0))
+              (local.set $b (i32.const 0))
+              (if (i32.and (i32.lt_u (local.get $sel_lo) (local.get $sel_hi))
+                           (i32.and (i32.le_u (local.get $sel_lo) (local.get $line_end))
+                                    (i32.ge_u (local.get $sel_hi) (local.get $lo))))
+                (then
+                  (local.set $a (local.get $sel_lo))
+                  (if (i32.lt_u (local.get $a) (local.get $lo)) (then (local.set $a (local.get $lo))))
+                  (local.set $a (i32.sub (local.get $a) (local.get $lo)))
+                  (local.set $b (local.get $sel_hi))
+                  (if (i32.gt_u (local.get $b) (local.get $line_end)) (then (local.set $b (local.get $line_end))))
+                  (local.set $b (i32.sub (local.get $b) (local.get $lo)))))
+              (if (i32.lt_u (local.get $a) (local.get $b))
+                (then
+                  ;; Highlight rect: measure widths up to $a and up to $b.
+                  (local.set $pre_w (i32.const 0))
+                  (if (local.get $a)
+                    (then (local.set $pre_w (call $host_measure_text
+                            (local.get $hdc) (local.get $line_buf_w) (local.get $a)))))
+                  (local.set $sel_w (i32.sub
+                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $b))
+                    (local.get $pre_w)))
+                  ;; If sel extends past the \n (to the next line), pad to right edge.
+                  (if (i32.gt_u (local.get $sel_hi) (local.get $line_end))
+                    (then (local.set $sel_w (i32.sub (local.get $w)
+                            (i32.add (local.get $pre_w) (i32.const 4))))))
+                  (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $pre_w) (i32.const 4))
+                          (local.get $line_y)
+                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+                          (i32.add (local.get $line_y) (i32.const 16))
+                          (local.get $brush)))
+                  (drop (call $host_gdi_delete_object (local.get $brush)))
+                  ;; pre-sel text (black)
+                  (if (local.get $a)
+                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                                  (i32.const 4) (local.get $line_y)
+                                  (local.get $line_buf_w) (local.get $a)))))
+                  ;; selected text (white)
+                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+                  (drop (call $host_gdi_text_out (local.get $hdc)
+                          (i32.add (local.get $pre_w) (i32.const 4)) (local.get $line_y)
+                          (i32.add (local.get $line_buf_w) (local.get $a))
+                          (i32.sub (local.get $b) (local.get $a))))
+                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+                  ;; post-sel text (black)
+                  (if (i32.lt_u (local.get $b) (local.get $hi))
+                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                                  (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+                                  (local.get $line_y)
+                                  (i32.add (local.get $line_buf_w) (local.get $b))
+                                  (i32.sub (local.get $hi) (local.get $b)))))))
+                (else
+                  (if (local.get $hi)
+                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                                  (i32.const 4) (local.get $line_y)
+                                  (local.get $line_buf_w) (local.get $hi)))))))
+              (local.set $lo (i32.add (local.get $line_end) (i32.const 1)))
+              (local.set $line_y (i32.add (local.get $line_y) (i32.const 16)))
               (br $line_loop)))))
         ;; 4) Caret (only if focused — bit 3 of flags)
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
@@ -3078,6 +3443,10 @@
     (drop (call $wnd_send_message
             (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
     (call $heap_free (local.get $cs))
+    ;; Queue an initial WM_PAINT so the control draws on next GetMessage
+    ;; cycle — same path CreateWindowExA takes for guest-created children.
+    (if (i32.and (local.get $style) (i32.const 0x10000000))  ;; WS_VISIBLE
+      (then (call $paint_queue_push (local.get $hwnd))))
     (local.get $hwnd)
   )
 
@@ -3092,7 +3461,7 @@
   ;; window table as WNDPROC_CTRL_NATIVE so $wnd_send_message routes
   ;; messages to it via $control_wndproc_dispatch.
   (func $create_findreplace_dialog (param $dlg i32) (param $owner i32) (param $fr_guest i32)
-    (local $edit i32)
+    (local $edit i32) (local $down i32)
     ;; Frame (renderer.windows[] entry, isFindDialog flag for hit-test path).
     ;; Same pattern as $create_about_dialog: WAT calls into JS via the
     ;; bare host_register_dialog_frame import — JS does no Win32 logic.
@@ -3133,10 +3502,12 @@
             (i32.const 136) (i32.const 40) (i32.const 42) (i32.const 14)
             (i32.const 0x50010009)
             (call $wat_str_to_heap (i32.const 0x1C0) (i32.const 2))))
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x421)
+    (local.set $down (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x421)
             (i32.const 184) (i32.const 40) (i32.const 48) (i32.const 14)
             (i32.const 0x50010009)
             (call $wat_str_to_heap (i32.const 0x1C3) (i32.const 4))))
+    ;; Default: Down direction checked (matches Win98 Notepad Find dialog).
+    (drop (call $wnd_send_message (local.get $down) (i32.const 0x00F1) (i32.const 1) (i32.const 0)))
     ;; Find Next + Cancel buttons
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 248) (i32.const 6) (i32.const 80) (i32.const 24)
