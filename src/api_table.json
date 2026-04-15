@@ -8571,5 +8571,96 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1452613103
+  },
+  {
+    "id": 1225,
+    "name": "GetSystemInfo",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3069927718
+  },
+  {
+    "id": 1226,
+    "name": "GetUserNameA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 950519322
+  },
+  {
+    "id": 1227,
+    "name": "GetComputerNameA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1148103228
+  },
+  {
+    "id": 1228,
+    "name": "DirectPlayCreate",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3338882626
+  },
+  {
+    "id": 1229,
+    "name": "DirectPlayEnumerate",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3702747444
+  },
+  {
+    "id": 1230,
+    "name": "DirectPlayEnumerateA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3816528687
+  },
+  {
+    "id": 1231,
+    "name": "DirectPlayLobbyCreateA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4226280081
+  },
+  {
+    "id": 1232,
+    "name": "DirectSoundEnumerateA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3780135274
+  },
+  {
+    "id": 1233,
+    "name": "mciSendStringA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2226675570
+  },
+  {
+    "id": 1234,
+    "name": "midiOutGetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2555465382
+  },
+  {
+    "id": 1235,
+    "name": "midiOutSetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1490704906
+  },
+  {
+    "id": 1236,
+    "name": "OpenMutexA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4094163651
+  },
+  {
+    "id": 1237,
+    "name": "CreateMutexA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 997118615
   }
 ]

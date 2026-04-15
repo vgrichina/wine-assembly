@@ -1298,6 +1298,76 @@
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; GetSystemInfo(lpSystemInfo) — fill SYSTEM_INFO struct (36 bytes)
+  (func $handle_GetSystemInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (call $zero_memory (local.get $wa) (i32.const 36))
+    ;; wProcessorArchitecture=0 (x86), wReserved=0 → already zero
+    (i32.store offset=4  (local.get $wa) (i32.const 4096))        ;; dwPageSize
+    (i32.store offset=8  (local.get $wa) (i32.const 0x00010000))  ;; lpMinimumApplicationAddress
+    (i32.store offset=12 (local.get $wa) (i32.const 0x7FFEFFFF))  ;; lpMaximumApplicationAddress
+    (i32.store offset=16 (local.get $wa) (i32.const 1))           ;; dwActiveProcessorMask
+    (i32.store offset=20 (local.get $wa) (i32.const 1))           ;; dwNumberOfProcessors
+    (i32.store offset=24 (local.get $wa) (i32.const 586))         ;; dwProcessorType (PROCESSOR_INTEL_PENTIUM)
+    (i32.store offset=28 (local.get $wa) (i32.const 0x10000))     ;; dwAllocationGranularity = 64K
+    (i32.store16 offset=32 (local.get $wa) (i32.const 6))         ;; wProcessorLevel
+    ;; wProcessorRevision=0 → already zero
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; GetUserNameA(lpBuffer, pcbBuffer) — write "user\0" then update *pcbBuffer = 5
+  (func $handle_GetUserNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wbuf i32) (local $wlen i32)
+    (local.set $wbuf (call $g2w (local.get $arg0)))
+    (local.set $wlen (call $g2w (local.get $arg1)))
+    (i32.store8 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
+    (i32.store8 offset=1 (local.get $wbuf) (i32.const 115)) ;; 's'
+    (i32.store8 offset=2 (local.get $wbuf) (i32.const 101)) ;; 'e'
+    (i32.store8 offset=3 (local.get $wbuf) (i32.const 114)) ;; 'r'
+    (i32.store8 offset=4 (local.get $wbuf) (i32.const 0))
+    (i32.store (local.get $wlen) (i32.const 5))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; GetComputerNameA(lpBuffer, pcbBuffer) — write "PC\0" then update *pcbBuffer = 2
+  (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wbuf i32) (local $wlen i32)
+    (local.set $wbuf (call $g2w (local.get $arg0)))
+    (local.set $wlen (call $g2w (local.get $arg1)))
+    (i32.store8 offset=0 (local.get $wbuf) (i32.const 80))  ;; 'P'
+    (i32.store8 offset=1 (local.get $wbuf) (i32.const 67))  ;; 'C'
+    (i32.store8 offset=2 (local.get $wbuf) (i32.const 0))
+    (i32.store (local.get $wlen) (i32.const 2))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; DirectPlay stubs — return DPERR_UNAVAILABLE-ish (E_FAIL 0x80004004),
+  ;; callers fall back to single-player. Out of scope per directx.md.
+  (func $handle_DirectPlayCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_DirectPlayEnumerate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_DirectPlayEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_DirectPlayLobbyCreateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004005))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+  ;; DirectSoundEnumerateA(cb, ctx) → DS_OK; no devices reported, caller
+  ;; falls back to no-audio or default device creation.
+  (func $handle_DirectSoundEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
+  (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Clear return buffer if provided
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
+      (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct
   (func $handle_GlobalMemoryStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)

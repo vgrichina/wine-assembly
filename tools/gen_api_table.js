@@ -348,6 +348,10 @@ const extra = [
   { name: 'midiOutClose', nargs: 1 },
   { name: 'midiOutShortMsg', nargs: 2 },
   { name: 'midiOutReset', nargs: 1 },
+  { name: 'midiOutGetVolume', nargs: 2 },
+  { name: 'midiOutSetVolume', nargs: 2 },
+  { name: 'OpenMutexA', nargs: 3 },
+  { name: 'CreateMutexA', nargs: 3 },
   { name: 'joyGetPos', nargs: 2 },
   { name: 'joyGetNumDevs', nargs: 0 },
   { name: 'WaitMessage', nargs: 0 },
@@ -376,6 +380,21 @@ const extra = [
   { name: 'GetKeyboardType', nargs: 1 },
   // GDI32 — inter-character spacing (trivial stub: 0 = default spacing)
   { name: 'GetTextCharacterExtra', nargs: 1 },
+  // KERNEL32 — fills SYSTEM_INFO struct (CPU count, arch, page size, etc.)
+  { name: 'GetSystemInfo', nargs: 1 },
+  // ADVAPI32 — returns a constant "user" string
+  { name: 'GetUserNameA', nargs: 2 },
+  // KERNEL32 — returns a constant "PC" string
+  { name: 'GetComputerNameA', nargs: 2 },
+  // DPLAYX — all return DPERR_UNAVAILABLE (0x80004005 E_FAIL); apps fall back to single-player.
+  { name: 'DirectPlayCreate', nargs: 4 },
+  { name: 'DirectPlayEnumerate', nargs: 2 },
+  { name: 'DirectPlayEnumerateA', nargs: 2 },
+  { name: 'DirectPlayLobbyCreateA', nargs: 5 },
+  // DSOUND — enumerate = no-op (returns DS_OK with no callback invocations)
+  { name: 'DirectSoundEnumerateA', nargs: 2 },
+  // WINMM — MCI command string interface (MIDI/CDAudio). Stub returns MCIERR_NO_ERROR (0).
+  { name: 'mciSendStringA', nargs: 4 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

@@ -91,6 +91,13 @@ const TEST_CASES = [
   // Plus! 98
   { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
   { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX, expected fail)' },
+  // Shareware / demos — DirectX titles
+  { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)' },
+  { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)' },
+  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)' },
+  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)' },
+  { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)' },
+  { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)' },
   // Plus! 98 screensavers — pure GDI
   { exe: 'test/binaries/screensavers/CATHY.SCR', name: 'Cathy (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)', extraArgs: ['--args=/s'] },

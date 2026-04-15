@@ -5,6 +5,7 @@
   ;; 67: CreateWindowExA
   (func $handle_CreateWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32)
+    (local $detected_class i32) (local $name_w i32)
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
     (if (i32.eqz (global.get $wndproc_addr))
@@ -142,22 +143,48 @@
     (if (local.get $tmp)
       (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
       (else
-        ;; Check for system "Edit" class: atom 0x0081 or string "Edit"/"edit"/"EDIT"
-        (if (i32.or
-              (i32.eq (local.get $arg1) (i32.const 0x0081))
-              (if (result i32) (i32.ge_u (local.get $arg1) (i32.const 0x10000))
-                (then
-                  ;; Case-insensitive 4-byte compare: OR with 0x20202020 → "edit" (LE: 0x74696465)
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
-                            (i32.const 0x74696465))
-                    (i32.eqz (i32.load8_u (i32.add (call $g2w (local.get $arg1)) (i32.const 4))))))
-                (else (i32.const 0))))
+        ;; System control class detection — atoms or case-insensitive name match.
+        ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082.
+        ;; ctrl class IDs (see $control_wndproc_dispatch): Button=1, Edit=2, Static=3.
+        (local.set $detected_class (i32.const 0))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0082)) (then (local.set $detected_class (i32.const 3))))
+        ;; String compare (case-insensitive via OR 0x20). Lowercase LE dwords:
+        ;;   "edit\0"   = 0x74696465, NUL at offset 4
+        ;;   "button\0" = 0x74747562, "on\0" at offset 4 (0x6e6f), NUL at offset 6
+        ;;   "static\0" = 0x74617473, "ic\0" at offset 4 (0x6369), NUL at offset 6
+        (if (i32.and (i32.eqz (local.get $detected_class))
+                     (i32.ge_u (local.get $arg1) (i32.const 0x10000)))
           (then
-            ;; System Edit class → WAT-native edit control
+            (local.set $name_w (call $g2w (local.get $arg1)))
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x74696465))
+                  (i32.eqz (i32.load8_u offset=4 (local.get $name_w))))
+              (then (local.set $detected_class (i32.const 2))))
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x74747562))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
+                            (i32.const 0x6e6f))
+                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
+              (then (local.set $detected_class (i32.const 1))))
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x74617473))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
+                            (i32.const 0x6369))
+                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
+              (then (local.set $detected_class (i32.const 3))))))
+        (if (local.get $detected_class)
+          (then
+            ;; System Edit/Button/Static class → WAT-native control
             (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
             (local.set $v (call $wnd_table_find (global.get $next_hwnd)))
-            (call $ctrl_table_set (local.get $v) (i32.const 2)   ;; class=2 (Edit)
+            (call $ctrl_table_set (local.get $v) (local.get $detected_class)
               (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; hMenu = ctrl_id for children
             (call $ctrl_geom_set (local.get $v)
               (local.get $arg4)                                          ;; x

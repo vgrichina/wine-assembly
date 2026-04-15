@@ -5625,10 +5625,23 @@
     (global.set $eax (global.get $next_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 525: ReleaseMutex — STUB: unimplemented
+  ;; 525: ReleaseMutex(hMutex) — single-threaded, always succeeds
   (func $handle_ReleaseMutex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; OpenMutexA(dwAccess, bInherit, lpName) — return 0 (not found) so single-instance checks
+  ;; let the app fall through to CreateMutexA. Sets last error to ERROR_FILE_NOT_FOUND (2).
+  (func $handle_OpenMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $last_error (i32.const 2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; CreateMutexA(lpAttr, bInitialOwner, lpName) — single-threaded, always succeeds with fresh handle
+  (func $handle_CreateMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eax (global.get $next_hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

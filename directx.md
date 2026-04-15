@@ -8,7 +8,14 @@ This is **not** a plan to implement Direct3D, DirectMusic, DirectPlay, DirectSho
 
 | Binary                          | DDRAW | DSOUND | DINPUT | Notes                                                    |
 |---------------------------------|:-----:|:------:|:------:|----------------------------------------------------------|
-| `plus98/MARBLES.EXE`            |  ✔   |   ✔   |   ✔   | Classic DX3-era layout; legacy creators; single-screen 2D |
+| `plus98/MARBLES.EXE`            |  ✔   |   ✔   |   ✔   | Classic DX3-era layout; legacy creators; single-screen 2D. Runs past title screen (2026-04-15); palette may still be off. |
+| `screensavers/*.SCR` (7 DX ones)|  ✔   |   —   |   —   | ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI — all use DDraw primary-surface + D3DRM. Window created; needs D3DRM (see `d3drm.md`) to render. |
+| `shareware/abe/ex/AbeDemo.exe`  |  ✔   |   ✔   |   —   | Abe's Oddysee demo. DX3/5-era 2D; sprite game. Not yet smoke-tested. |
+| `shareware/aoe/aoe_ex/Empires.exe` |  ✔ |   ✔   |   —   | Age of Empires 1 demo. 2D isometric; DDraw primary only. |
+| `shareware/aoe2/aoe2_ex/EMPIRES2.EXE` | ✔ |  ✔   |   —   | Age of Empires 2 demo. Larger/heavier than AoE1. |
+| `shareware/mcm/mcm_ex/MCM.EXE`  |  ✔   |   ✔   |   —   | Motocross Madness. Needs **d3drm.dll** + D3D IM (see `direct3d-im.md`). |
+| `shareware/mw3/.../mech3demo.exe` |  ✔ |   ✔   |   ✔   | MechWarrior 3 demo. Pure D3D IM (no d3drm). See `direct3d-im.md`. |
+| `shareware/rct/English/RCT.exe` |  —   |   ✔   |   ✔   | RollerCoaster Tycoon. No DDraw (its own GDI blitter); needs DSOUND+DINPUT. |
 | `wep32-community/TWorld`        |  —   |   —   |   —   | Uses `SDL.dll`, but this build of SDL is a **GDI+WinMM** backend (verified: `SDL.dll` imports are kernel32/gdi32/user32/winmm/msvcrt/advapi32 — no DX). TWorld is not actually a DirectX app in our build. |
 
 So the entire initial implementation is driven by one EXE and three `Create*` entry points:
