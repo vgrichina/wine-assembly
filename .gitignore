@@ -4,6 +4,7 @@ node_modules/
 .DS_Store
 *.exe
 *.png
+!scratch/*.png
 *.dll
 *.DLL
 *.wav

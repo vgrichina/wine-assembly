@@ -38,8 +38,12 @@ if (!fs.existsSync(EXE)) {
 //   batch 94  : type 'B'
 //   batch 96  : type 'C'
 //   batch 100 : dump dialog state
-//   batch 102 : click Find Next button (id=1) — exercises full WAT click chain
-//   batch 104 : dump FINDREPLACE struct (Flags + lpstrFindWhat)
+//   batch 102 : dump FINDREPLACE struct, then click Find Next (id=1)
+//
+// dump-fr is ordered *before* find-click in the input list but tagged at the
+// same batch: Find Next's synchronous send_message chain runs notepad through
+// MessageBox + ExitProcess, so waiting a batch to dump the struct misses it.
+// Same-batch scheduling processes events in list order, which is what we want.
 const inputSpec = [
   '50:0x111:3',
   '90:focus-find',
@@ -48,7 +52,7 @@ const inputSpec = [
   '96:keypress:67',
   '100:dump-find',
   '102:find-click:1',
-  '104:dump-fr',
+  '102:dump-fr',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=120`;

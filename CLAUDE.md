@@ -15,8 +15,28 @@ Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wa
 ## Run
 
 - **Browser:** Open `host/index.html`, select an app, click Launch
-- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
 - **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
+
+## Tracing (reach for this BEFORE editing source to add `console.log`)
+
+Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; extend them when they fall short.
+
+| Flag | What it prints |
+|---|---|
+| `--trace-api` | Every Win32 API call with args + return |
+| `--trace-gdi` | Every wrapped GDI primitive: CreateBitmap, BitBlt, StretchBlt, FillRect, DrawEdge, DrawText, TextOut, Rectangle, Ellipse, Polygon, MoveTo/LineTo, Arc, SetPixel, SetTextColor, SetBkColor, SetBkMode, SelectObject, DeleteObject, DeleteDC, GetClipBox, LoadBitmap, CreateSolidBrush, GetObject, PatBlt |
+| `--trace-host=fn1,fn2` | Generic wrap of any host import by name — logs raw args + return. Use when no category fits yet. Example: `--trace-host=gdi_draw_edge,wnd_set_state_ptr` |
+| `--trace` | Every decoded block's EIP |
+| `--trace-seh` | SEH chain operations |
+| `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
+| `--watch=0xADDR` (`--watch-value=0xVAL`) | Break when memory dword changes / equals value |
+| `--skip=0xADDR[,...]` | Simulate `ret` when EIP hits — step past a fn |
+| `--dump=0xADDR:LEN`, `--dump-seh`, `--dump-backcanvas` | Post-run memory hexdump / SEH dump / per-window back-canvas PNGs |
+
+**Extending:** the tracing infrastructure lives in `lib/host-imports.js` under `if (trace.has('gdi'))` — it uses a `wrap(name, fn, formatter)` helper. To add a category, duplicate that block for your category and add a matching `if (TRACE_X) traceCategories.add('x')` in `test/run.js`. The generic `--trace-host=` should cover most one-off investigations without needing a new category.
+
+**Rule:** before adding a `console.log` to source, check that none of the above already covers it. If tracing a new primitive that isn't wrapped yet, add a `wrap(...)` entry to the `gdi` block (or the appropriate one) — that investment pays off on every future session. Source stays clean between sessions; tracing is a runtime flag, not an edit.
 
 ## Source Parts (concatenation order)
 

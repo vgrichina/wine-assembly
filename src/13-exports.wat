@@ -326,6 +326,10 @@
   (func (export "wnd_slot_hwnd") (param $slot i32) (result i32)
     (call $wnd_slot_hwnd (local.get $slot)))
 
+  ;; Get the parent hwnd of a window (0 if none).
+  (func (export "wnd_get_parent") (param $hwnd i32) (result i32)
+    (call $wnd_get_parent (local.get $hwnd)))
+
   ;; Geometry getters: each returns x|y<<16 or w|h<<16 (i16 each).
   (func (export "ctrl_get_xy") (param $hwnd i32) (result i32)
     (call $ctrl_get_xy_packed (local.get $hwnd)))

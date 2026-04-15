@@ -1853,6 +1853,30 @@
             (return (i32.const 1))))
         (return (i32.const 0))))
 
+    ;; ---------- WM_GETTEXT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000D))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (if (i32.ge_u (local.get $text_len) (local.get $wParam))
+          (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
+        (if (i32.load (local.get $state_w))
+          (then (if (local.get $text_len)
+                  (then (call $memcpy (call $g2w (local.get $lParam))
+                                      (call $g2w (i32.load (local.get $state_w)))
+                                      (local.get $text_len))))))
+        (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
+        (return (local.get $text_len))))
+
+    ;; ---------- WM_GETTEXTLENGTH ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000E))
+      (then
+        (if (local.get $state)
+          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+        (return (i32.const 0))))
+
     ;; ---------- WM_PAINT ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then

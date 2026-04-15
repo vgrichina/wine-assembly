@@ -531,7 +531,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
-  ;; Paint queue: 16-entry array at PAINT_QUEUE (0xAD50), count in $paint_queue_count
+  ;; Paint queue: 64-entry array at PAINT_QUEUE, count in $paint_queue_count
   ;; $paint_queue_push(hwnd): add hwnd if not already in queue and queue not full
   (func $paint_queue_push (param $hwnd i32)
     (local $i i32) (local $addr i32)
@@ -544,8 +544,8 @@
         (then (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    ;; Add if room (max 16, at 0xB200 after MENU_DATA_TABLE)
-    (if (i32.lt_u (global.get $paint_queue_count) (i32.const 16))
+    ;; Add if room (max 64, at 0xB200 after WND_DLG_RECORDS)
+    (if (i32.lt_u (global.get $paint_queue_count) (i32.const 64))
       (then
         (i32.store (i32.add (global.get $PAINT_QUEUE) (i32.mul (global.get $paint_queue_count) (i32.const 4)))
           (local.get $hwnd))

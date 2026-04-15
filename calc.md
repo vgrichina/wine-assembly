@@ -1,6 +1,47 @@
 # Calc.exe Execution Analysis
 
-## Current Status (2026-04-13, evening)
+## Current Status (2026-04-15)
+
+### Button bezel investigation (followup to 2026-04-13)
+
+User challenged the premise: **real Windows does not pre-paint
+BS_OWNERDRAW buttons.** The app's WM_DRAWITEM handler is 100%
+responsible for everything, including the bezel. So pre-painting
+in button_wndproc is the wrong direction — it masks the real bug.
+
+Tried pre-painting anyway: bezels appeared on all 30 buttons, but
+a second WM_PAINT cycle overpainted the labels the app had drawn
+(flag 0x04 skipped re-posting WM_DRAWITEM but not the bezel paint).
+Reverted.
+
+**Real diagnosis via DBG_EDGE trace:**
+- Calc's SciCalc WndProc DOES call DrawEdge for all 27 non-memory
+  buttons (in addition to MC/MR/MS). Count matches exactly: 27 WAT
+  [API] DrawEdge invocations, 27 JS [gdi] DrawEdge with target=ok,
+  all with sensible per-button ox/oy offsets into the top-level
+  back canvas.
+- But the final render only shows MC/MR/MS bezels. The other 24
+  are drawn then lost.
+- No FillRect or other wipe happens in the button area between the
+  DrawEdge burst and the final render — so it's not overpaint from
+  a subsequent erase_background.
+- Hypothesis: calc top-level hwnd=65537 is the zero-size
+  "CalcMsgPumpWnd". The dialog hwnd (≈65538) is a separate top-level
+  that hosts the 30 buttons. `_resolveTopHwnd` walks child→parent
+  and lands on the dialog. `getWindowCanvas` creates the back canvas
+  sized to that dialog's w/h. If the dialog geometry changes after
+  buttons are drawn (WM_SIZE, template-driven resize, etc.), the
+  back canvas is recreated fresh and all bezels are lost. MC/MR/MS
+  being drawn LAST in a later cycle would survive. Unverified.
+
+**Next concrete step:** instrument `getWindowCanvas` to log when the
+backing canvas is recreated (size mismatch path). Re-run calc and
+check if a recreation happens between the DrawEdge burst and the
+final PNG. If yes, the fix is either (a) avoid recreating when
+contents would be lost, or (b) ensure all child paints happen after
+the final geometry is settled.
+
+## Previous Status (2026-04-13, evening)
 
 ### Summary
 All 30 owner-draw buttons now render with labels (digits 0-9, operators,

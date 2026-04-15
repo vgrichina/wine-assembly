@@ -75,6 +75,27 @@
     (if (i32.eqz (local.get $tmp))
       (then
         (local.set $i (call $class_find_slot (call $g2w (local.get $arg1))))
+        ;; Fallback: some EXEs pass a hard-coded class atom (e.g. EmPipe's
+        ;; push 0x1F5) that doesn't match any atom the emulator allocated.
+        ;; class_find_slot then returns -1. Walk the class table and pick
+        ;; the first slot with an EXE-range wndproc AND a non-zero
+        ;; lpszMenuName — matches the same heuristic the wndproc fallback
+        ;; below uses, so menu routing lines up with message dispatch.
+        (if (i32.lt_s (local.get $i) (i32.const 0))
+          (then
+            (local.set $i (i32.const 0))
+            (block $mfound (loop $mscan
+              (br_if $mfound (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+              (local.set $v (i32.load offset=12 (call $class_record_addr (local.get $i)))) ;; lpfnWndProc
+              (if (i32.and
+                    (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
+                             (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
+                    (i32.ne (i32.load offset=32 (call $class_wndclass_addr (local.get $i))) (i32.const 0)))
+                (then (br $mfound)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $mscan)))
+            (if (i32.ge_u (local.get $i) (global.get $MAX_CLASSES))
+              (then (local.set $i (i32.const -1))))))
         (if (i32.ge_s (local.get $i) (i32.const 0))
           (then
             (local.set $v (i32.load offset=32 (call $class_wndclass_addr (local.get $i)))) ;; lpszMenuName
@@ -268,6 +289,7 @@
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $hwnd i32) (local $dlg_wndproc i32)
+    (local $ctrl_count i32) (local $i i32) (local $ctrl_hwnd i32) (local $dlg_rec i32)
     ;; Allocate HWND from next_hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -300,6 +322,21 @@
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Enqueue WM_PAINT for each child control. Without this, owner-draw
+    ;; buttons never receive their first WM_PAINT and so never post
+    ;; WM_DRAWITEM to the dialog proc — calc.exe's 30-button keypad
+    ;; would stay invisible after ShowWindow(dlg).
+    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (local.get $dlg_rec)
+      (then
+        (local.set $ctrl_count (i32.load offset=28 (local.get $dlg_rec)))
+        (local.set $i (i32.const 0))
+        (block $done (loop $push_loop
+          (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
+          (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
+          (call $paint_queue_push (local.get $ctrl_hwnd))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $push_loop)))))
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then

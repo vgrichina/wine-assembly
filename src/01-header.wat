@@ -87,22 +87,13 @@
   ;; class style is hard-coded to 0x80C80000 (WS_CAPTION|WS_SYSMENU|WS_POPUP).
   ;; controls[] stays empty — children come from $ctrl_create_child and
   ;; are walked via the WAT child enumeration during paint and hit-test.
-  (import "host" "set_dlg_item_text" (func $host_set_dlg_item_text (param i32 i32 i32)))
-  ;; set_dlg_item_text(hwnd, control_id, text_ptr)
   (import "host" "richedit_stream" (func $host_richedit_stream (param i32 i32)))
   ;; richedit_stream(ctrl_hwnd, text_wasm_ptr) — set RichEdit control text
-  (import "host" "check_dlg_button" (func $host_check_dlg_button (param i32 i32 i32)))
-  ;; check_dlg_button(hwnd, ctrl_id, check_state)
-  (import "host" "is_dlg_button_checked" (func $host_is_dlg_button_checked (param i32 i32) (result i32)))
-  ;; is_dlg_button_checked(hwnd, ctrl_id) → 0=unchecked, 1=checked
   (import "host" "send_ctrl_msg" (func $host_send_ctrl_msg (param i32 i32 i32 i32)))
   ;; send_ctrl_msg(ctrl_hwnd, msg, wParam, lParam) — forward control messages to renderer
-  (import "host" "check_radio_button" (func $host_check_radio_button (param i32 i32 i32 i32)))
-  ;; check_radio_button(hwnd, first_id, last_id, check_id)
-  (import "host" "get_dlg_item_text" (func $host_get_dlg_item_text (param i32 i32 i32 i32) (result i32)))
-  ;; get_dlg_item_text(hwnd, ctrl_id, bufWA, maxLen) → chars copied
   (import "host" "get_window_text" (func $host_get_window_text (param i32 i32 i32) (result i32)))
-  ;; get_window_text(hwnd, bufWA, maxLen) → chars copied
+  ;; get_window_text(hwnd, bufWA, maxLen) → chars copied (top-level titles;
+  ;; child control text goes through WM_GETTEXT directly).
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
@@ -162,12 +153,6 @@
   ;; gdi_scroll_window(hwnd, dx, dy)
   (import "host" "show_find_dialog" (func $host_show_find_dialog (param i32 i32 i32) (result i32)))
   ;; show_find_dialog(dlgHwnd, ownerHwnd, findreplace_guest_addr) → hwnd
-  (import "host" "get_prop" (func $host_get_prop (param i32 i32) (result i32)))
-  ;; get_prop(hwnd, name_ptr) → value
-  (import "host" "set_prop" (func $host_set_prop (param i32 i32 i32) (result i32)))
-  ;; set_prop(hwnd, name_ptr, value) → 1
-  (import "host" "remove_prop" (func $host_remove_prop (param i32 i32) (result i32)))
-  ;; remove_prop(hwnd, name_ptr) → removed value
 
 
 
@@ -449,6 +434,14 @@
   ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
   ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
   (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))
+  ;; PROP_TABLE: SetPropA/GetPropA/RemovePropA storage. Linear scan (apps
+  ;; that touch Props rarely have more than a handful of live entries).
+  ;;   +0  hwnd       (0 = empty slot)
+  ;;   +4  name_hash  (atom for <64k names, FNV-1a otherwise — same as $class_name_hash)
+  ;;   +8  value
+  ;; 256 entries × 12 bytes = 0xC00 (0xB000..0xBC00)
+  (global $PROP_TABLE  i32 (i32.const 0x0000B000))
+  (global $MAX_PROPS   i32 (i32.const 256))
   ;; MENU_DATA_TABLE — parallel to WND_RECORDS, indexed by window slot.
   ;; Each entry is a guest heap pointer to that window's menu data blob
   ;; (set via $menu_set, read by $menu_paint_bar / $menu_hittest_bar /
@@ -647,7 +640,7 @@
   (global $sleep_yielded (mut i32) (i32.const 0))  ;; Set by Sleep handler; NOT cleared by run() — JS reads+clears
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
-  ;; Paint queue: 16-entry ring at 0xAD50 (64 bytes), head/count globals
+  ;; Paint queue: 64-entry ring at 0xB200 (256 bytes), head/count globals
   (global $paint_queue_count (mut i32) (i32.const 0))
   (global $PAINT_QUEUE i32 (i32.const 0x0000B200))
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)

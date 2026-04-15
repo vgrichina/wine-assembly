@@ -1238,16 +1238,64 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; ---- PROP_TABLE helpers ----
+  ;; Linear scan is fine — most apps have a handful of live props. Name
+  ;; normalisation matches $class_name_hash: atom (wa<0x10000) passes
+  ;; through; string is FNV-1a hashed.
+  (func $prop_find (param $hwnd i32) (param $key i32) (result i32)
+    (local $i i32) (local $p i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_PROPS)))
+      (local.set $p (i32.add (global.get $PROP_TABLE)
+                     (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.and (i32.eq (i32.load (local.get $p)) (local.get $hwnd))
+                   (i32.eq (i32.load offset=4 (local.get $p)) (local.get $key)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $prop_empty_slot (result i32)
+    (local $i i32) (local $p i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_PROPS)))
+      (local.set $p (i32.add (global.get $PROP_TABLE)
+                     (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.eqz (i32.load (local.get $p))) (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
   ;; 816: GetPropA(hwnd, lpString) → HANDLE
-  ;; Returns property value for the window+key pair via host import
   (func $handle_GetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_get_prop (local.get $arg0) (call $g2w (local.get $arg1))))
+    (local $idx i32)
+    (local.set $idx (call $prop_find (local.get $arg0)
+                     (call $class_name_hash (call $g2w (local.get $arg1)))))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax
+              (i32.load offset=8 (i32.add (global.get $PROP_TABLE)
+                                  (i32.mul (local.get $idx) (i32.const 12)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 817: SetPropA(hwnd, lpString, hData) → BOOL
-  ;; Stores property value for the window+key pair via host import
   (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_set_prop (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (local $key i32) (local $idx i32) (local $p i32)
+    (local.set $key (call $class_name_hash (call $g2w (local.get $arg1))))
+    (local.set $idx (call $prop_find (local.get $arg0) (local.get $key)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then (local.set $idx (call $prop_empty_slot))))
+    (if (i32.ge_s (local.get $idx) (i32.const 0))
+      (then
+        (local.set $p (i32.add (global.get $PROP_TABLE)
+                       (i32.mul (local.get $idx) (i32.const 12))))
+        (i32.store         (local.get $p) (local.get $arg0))
+        (i32.store offset=4  (local.get $p) (local.get $key))
+        (i32.store offset=8  (local.get $p) (local.get $arg2))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct
@@ -1267,7 +1315,18 @@
 
   ;; 852: RemovePropA(hwnd, lpString) → HANDLE (removed value)
   (func $handle_RemovePropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_remove_prop (local.get $arg0) (call $g2w (local.get $arg1))))
+    (local $idx i32) (local $p i32)
+    (local.set $idx (call $prop_find (local.get $arg0)
+                     (call $class_name_hash (call $g2w (local.get $arg1)))))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $p (i32.add (global.get $PROP_TABLE)
+                       (i32.mul (local.get $idx) (i32.const 12))))
+        (global.set $eax (i32.load offset=8 (local.get $p)))
+        (i32.store         (local.get $p) (i32.const 0))
+        (i32.store offset=4  (local.get $p) (i32.const 0))
+        (i32.store offset=8  (local.get $p) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 824: GetConsoleOutputCP() → UINT — returns output code page
