@@ -67,6 +67,8 @@
 
   ;; 796: waveOutClose(hwo) — 1 arg stdcall
   (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Flush deferred WHDR_DONE slot
+    (i32.store (i32.const 0xAD98) (i32.const 0))
     (drop (call $host_wave_out_close (local.get $arg0)))
     (global.set $wave_out_handle (i32.const 0))
     (global.set $eax (i32.const 0))
@@ -101,13 +103,23 @@
   ;; WAVEHDR: +0 lpData(4), +4 dwBufferLength(4), +8 dwBytesRecorded(4),
   ;;   +12 dwUser(4), +16 dwFlags(4), +20 dwLoops(4), +24 lpNext(4), +28 reserved(4)
   ;;
-  ;; In real Windows, waveOutWrite is async — WHDR_DONE is set after playback.
-  ;; We mark WHDR_DONE immediately since we consume PCM data instantly.
-  ;; The WOM_DONE callback event is fired immediately to let the buffer thread
-  ;; know it can recycle the buffer.
+  ;; Deferred WHDR_DONE: real Windows marks WHDR_DONE only after the buffer
+  ;; finishes playing (async). We defer: each waveOutWrite marks the PREVIOUS
+  ;; buffer as done, keeping ≥1 buffer outstanding. Lets out_wave.dll's
+  ;; threshold logic use the small-write path instead of waiting for 11KB chunks.
+  ;; Previous WAVEHDR guest address stored at shared memory 0xAD98.
   (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $data_ga i32) (local $data_len i32)
+    (local $wa i32) (local $data_ga i32) (local $data_len i32) (local $prev_ga i32) (local $prev_wa i32)
     (local.set $wa (call $g2w (local.get $arg1)))
+    ;; Complete the PREVIOUS buffer first (deferred WHDR_DONE)
+    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
+    (if (local.get $prev_ga)
+      (then
+        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
+        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
+          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
+          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))))
     ;; Read lpData and dwBufferLength from WAVEHDR
     (local.set $data_ga (i32.load (local.get $wa)))
     (local.set $data_len (i32.load (i32.add (local.get $wa) (i32.const 4))))
@@ -118,18 +130,24 @@
           (local.get $arg0)
           (call $g2w (local.get $data_ga))
           (local.get $data_len)))))
-    ;; Mark WHDR_DONE in dwFlags (+16)
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
-    ;; Deliver WOM_DONE notification — read callback info from shared memory
-    (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
-      (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
+    ;; Save this buffer's guest address as pending (deferred done)
+    (i32.store (i32.const 0xAD98) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 800: waveOutReset — return MMSYSERR_NOERROR
+  ;; 800: waveOutReset — flush deferred WHDR_DONE, return MMSYSERR_NOERROR
   (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $prev_ga i32) (local $prev_wa i32)
+    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
+    (if (local.get $prev_ga)
+      (then
+        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
+        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
+          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
+          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
+        (i32.store (i32.const 0xAD98) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

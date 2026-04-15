@@ -1262,6 +1262,61 @@ IDCANCEL still ends up taking the survey decline path, so playback via this inpu
 
 Regression: `test-all-exes.js` shows no new failures.
 
+## SESSION 17 — Audio Playback Verified + Deferred WHDR_DONE Reinstated (CLI)
+
+Reproduced the end-to-end audio pipeline, then restored the deferred WHDR_DONE path that had been silently dropped in commit 68b7fde (PlaySoundA / CreateDIBSection work). Playback now produces the Session-14 "17 writes / 0.444s" profile again.
+
+### Before / after
+
+| Build | waveOutWrite | PCM bytes | Duration | Per-buffer |
+|---|---|---|---|---|
+| HEAD (immediate WHDR_DONE) | 4 | 46 080 | 0.522 s | 11 520 B (~131 ms) |
+| +deferred WHDR_DONE (this session) | 17 | 39 168 | 0.444 s | 2 304 B (~26 ms) |
+| same, `--max-batches=2000` | 17 | 39 168 | 0.444 s | — T4 synth is the ceiling |
+
+More writes, smaller buffers → out_wave.dll now takes the small-write path (`[ebp+0x6c] > 0`) instead of waiting for 11KB chunks, which is what Winamp actually wants for live streaming. Total output is still capped by the in_mp3 synthesis filter at 0x5bd470; going past 0.44s needs that accelerated or host-ported.
+
+### Repro
+
+```bash
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=600 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,99:poke:0x45caa4:1,100:winamp-play:C:\demo.mp3,150:winamp-start" \
+  --audio-out=scratch/winamp-audio.pcm
+ffmpeg -f s16le -ar 22050 -ac 2 -i scratch/winamp-audio.pcm scratch/winamp-audio.wav -y
+```
+
+### waveOut call sequence (trace-api)
+
+```
+[waveOut] open: 22050Hz 2ch 16bit
+T3: waveOutGetNumDevs → waveOutOpen → waveOutRestart → waveOutSetVolume
+T4: (waveOutPrepareHeader → waveOutWrite → waveOutUnprepareHeader) × 17
+```
+
+### Change
+
+`src/09a3-handlers-audio.wat` — `$handle_waveOutWrite` now marks the **previous** WAVEHDR (stored at shared-memory slot `0xAD98`) `WHDR_DONE` and fires WOM_DONE, then stashes the current WAVEHDR guest address as the new pending buffer. `$handle_waveOutReset` flushes the slot (completing the buffer and clearing `0xAD98`); `$handle_waveOutClose` clears it unconditionally. Keeps ≥1 buffer outstanding so out_wave.dll's threshold logic picks small writes.
+
+Regression: `node test/test-all-exes.js` → 70 PASS / 14 FAIL / 7 WARN / 4 SKIP — same fail list as before (unrelated DX / VB6 / CRT crashes).
+
+### Why the ceiling is still 17 writes (new finding)
+
+With `--trace-api`, after waveOutWrite #17 T4 enters a tight loop of `EnterCriticalSection → LeaveCriticalSection → WaitForSingleObject → …` and never issues another write. The deferred scheme leaves buffer 17 pending; WOM_DONE for it only fires on write 18 or on `waveOutReset/Close`. Neither happens — T4 is blocked on the WOM_DONE event *because* it's the one that would produce write 18. Deadlock by construction of the deferral.
+
+So the real cap isn't T4's FPU throughput (it completes 17 writes briskly and idles afterwards); it's the "one-pending-forever" tail of the deferral scheme. Candidate fixes, in rough order of safety:
+
+- Fire WOM_DONE from the host after a wall-clock delay equal to the buffer's play duration (needs a JS-side timer keyed off buffer submission).
+- On `waveOutGetPosition`, if reported bytes-played ≥ submission offset + buffer length, complete the pending buffer. Requires tracking per-buffer submission offsets in shared memory.
+- Track ring-buffer fullness and complete pending when `bytes_in_flight` (out_wave state +0x48) drops below a threshold.
+
+### Open threads
+
+1. **Unblock T4 after write 17** — pick one of the completion strategies above so the deferred buffer tail doesn't deadlock the decoder. This is the cheap win that would unlock arbitrary-length playback in CLI.
+2. Browser-side Web Audio playback — the bridge in `lib/host-imports.js:471-527` already schedules PCM onto `AudioContext`; needs an actual browser run to confirm rAF pacing keeps up. `wave_out_get_pos` currently returns `bytesWritten` rather than scheduled-time, which is worth revisiting once browser playback is verified.
+3. Optimize or host-accelerate the in_mp3 synthesis filter at 0x5bd470 — only becomes the new ceiling once (1) is fixed.
+4. Trace T4 → in_mp3 call path (return addr = 0 on stack suggests thunk/tail-call) to understand whether the filter can be fast-pathed in the decoder vs. replaced wholesale.
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.
