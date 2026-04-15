@@ -94,7 +94,15 @@
       (local.set $prev_w (local.get $cur_w))
       (local.set $cur (i32.load (i32.add (local.get $cur_w) (i32.const 4))))
       (br $fl)))
-      ;; No free block found — bump allocate
+      ;; No free block found — bump allocate.
+      ;; OOM guard: refuse if the next heap byte would land within 2 MB of
+      ;; the guest stack ceiling. Pawn-style chess engines ask for 64 MB
+      ;; transposition tables that would otherwise trash the stack and
+      ;; escape WASM linear memory; return 0 so the app handles OOM.
+      (if (i32.gt_u
+            (call $g2w (i32.add (global.get $heap_ptr) (local.get $need)))
+            (i32.sub (global.get $GUEST_STACK) (i32.const 0x200000)))
+        (then (return (i32.const 0))))
       (local.set $ptr (global.get $heap_ptr))
       (i32.store (call $g2w (local.get $ptr)) (local.get $need))
       (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need))))

@@ -371,6 +371,10 @@ const extra = [
   { name: 'GetLogicalDriveStringsA', nargs: 2 },
   // KERNEL32 — locale persistence stub
   { name: 'SetLocaleInfoA', nargs: 3 },
+  // USER32 — keyboard identification (trivial stub: enhanced 101/102-key)
+  { name: 'GetKeyboardType', nargs: 1 },
+  // GDI32 — inter-character spacing (trivial stub: 0 = default spacing)
+  { name: 'GetTextCharacterExtra', nargs: 1 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

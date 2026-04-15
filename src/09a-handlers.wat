@@ -574,8 +574,9 @@
   ;; 35: HeapAlloc
   (func $handle_HeapAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $heap_alloc (local.get $arg2)))
-    ;; Zero memory if HEAP_ZERO_MEMORY (0x08)
-    (if (i32.and (local.get $arg1) (i32.const 0x08))
+    ;; Zero memory if HEAP_ZERO_MEMORY (0x08) — skip on OOM (eax=0)
+    (if (i32.and (i32.ne (global.get $eax) (i32.const 0))
+                 (i32.ne (i32.and (local.get $arg1) (i32.const 0x08)) (i32.const 0)))
     (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg2))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -5290,6 +5291,22 @@
         (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
         (global.set $eax (i32.const 4))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; GetKeyboardType(nTypeFlag) → int. Enhanced 101/102-key (type 4, 12 func keys).
+  ;; nTypeFlag: 0=type, 1=subtype, 2=num func keys. We report type=4, subtype=0, keys=12.
+  (func $handle_GetKeyboardType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (select (i32.const 12)
+        (select (i32.const 0) (i32.const 4) (i32.eq (local.get $arg0) (i32.const 1)))
+        (i32.eq (local.get $arg0) (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; GetTextCharacterExtra(hdc) → int. Inter-character spacing (0 = default).
+  (func $handle_GetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 485: GetFileAttributesA — STUB: unimplemented

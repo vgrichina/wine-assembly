@@ -8550,5 +8550,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1277596188
+  },
+  {
+    "id": 1222,
+    "name": "GetKeyboardType",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3181069110
+  },
+  {
+    "id": 1223,
+    "name": "GetTextCharacterExtra",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 315056275
   }
 ]
