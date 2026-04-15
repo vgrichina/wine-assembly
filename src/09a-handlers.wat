@@ -6043,14 +6043,33 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 591: OffsetViewportOrgEx — STUB: unimplemented
+  ;; 591: OffsetViewportOrgEx(hdc, dx, dy, lpPoint) → BOOL
   (func $handle_OffsetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $px i32) (local $py i32)
+    (local.set $px (call $host_gdi_get_viewport_org_x (local.get $arg0)))
+    (local.set $py (call $host_gdi_get_viewport_org_y (local.get $arg0)))
+    (if (local.get $arg3) (then
+      (call $gs32 (local.get $arg3) (local.get $px))
+      (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
+    ))
+    (drop (call $host_gdi_set_viewport_org (local.get $arg0)
+      (i32.add (local.get $px) (local.get $arg1))
+      (i32.add (local.get $py) (local.get $arg2))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 592: SetViewportOrgEx — STUB: unimplemented
+  ;; 592: SetViewportOrgEx(hdc, x, y, lpPoint) → BOOL
   (func $handle_SetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg3) (then
+      (call $gs32 (local.get $arg3)
+        (call $host_gdi_get_viewport_org_x (local.get $arg0)))
+      (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+        (call $host_gdi_get_viewport_org_y (local.get $arg0)))
+    ))
+    (drop (call $host_gdi_set_viewport_org (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 593: GetViewportExtEx — STUB: unimplemented

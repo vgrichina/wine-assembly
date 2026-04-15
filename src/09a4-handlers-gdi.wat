@@ -58,13 +58,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 152: GetViewportOrgEx
+  ;; 152: GetViewportOrgEx(hdc, lpPoint)
   (func $handle_GetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Fill POINT with (0,0)
-    (if (i32.ne (local.get $arg1) (i32.const 0))
-    (then
-    (call $gs32 (local.get $arg1) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+    (if (i32.ne (local.get $arg1) (i32.const 0)) (then
+      (call $gs32 (local.get $arg1)
+        (call $host_gdi_get_viewport_org_x (local.get $arg0)))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+        (call $host_gdi_get_viewport_org_y (local.get $arg0)))
+    ))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )

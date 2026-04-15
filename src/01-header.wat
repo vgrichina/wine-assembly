@@ -181,6 +181,9 @@
   (import "host" "gdi_get_text_color" (func $host_gdi_get_text_color (param i32) (result i32)))
   (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
+  (import "host" "gdi_set_viewport_org" (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_get_viewport_org_x" (func $host_gdi_get_viewport_org_x (param i32) (result i32)))
+  (import "host" "gdi_get_viewport_org_y" (func $host_gdi_get_viewport_org_y (param i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount) → 1
   (import "host" "gdi_draw_text" (func $host_gdi_draw_text (param i32 i32 i32 i32 i32 i32) (result i32)))
