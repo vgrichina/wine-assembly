@@ -229,6 +229,7 @@
           <option value="fourstones">FourStones (TicTacDrop)</option>
           <option value="cwordzap">CWordZap</option>
           <option value="bricks">Bricks (Klotski)</option>
+          <option value="empipe">EmPipe (Pipe Dream)</option>
         </optgroup>
         <optgroup label="Plus! 98">
           <option value="spider">Spider</option>
@@ -426,6 +427,13 @@ Resource-aware Win98 emulator
       fourstones: { exe: 'binaries/wep32-community/Funpack/FourStones.exe', dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
       cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
       bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      dlls: ['binaries/wep32-community/Bricks/brk1.dll'] },
+      empipe:     { exe: 'binaries/wep32-community/EmPipe/EMPIPE.EXE', files: [
+        'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
+        'binaries/wep32-community/EmPipe/EMPCLEAR.MID', 'binaries/wep32-community/EmPipe/EMPGMOV.MID',
+        'binaries/wep32-community/EmPipe/EMPSCR1.MID', 'binaries/wep32-community/EmPipe/EMPSCR2.MID',
+        'binaries/wep32-community/EmPipe/EMPSCR3.MID', 'binaries/wep32-community/EmPipe/EMPSCR4.MID',
+        'binaries/wep32-community/EmPipe/EMPSCR5.MID', 'binaries/wep32-community/EmPipe/EMPSTART.MID',
+      ] },
       spider:     { exe: 'binaries/plus98/SPIDER.EXE',                      files: ['binaries/plus98/SPIDER.CHM', 'binaries/plus98/SPIDER.HLP'] },
       marbles:    { exe: 'binaries/plus98/MARBLES.EXE', files: [
         'binaries/plus98/LLOGO.BMP', 'binaries/plus98/LSPLASH.BMP',
