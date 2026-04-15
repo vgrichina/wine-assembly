@@ -365,6 +365,8 @@ const extra = [
   { name: 'IDirectDrawFactory_Release', nargs: 1 },
   { name: 'IDirectDrawFactory_CreateDirectDraw', nargs: 6 },
   { name: 'IDirectDrawFactory_DirectDrawEnumerate', nargs: 2 },
+  // WINMM — timer device capabilities
+  { name: 'timeGetDevCaps', nargs: 2 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

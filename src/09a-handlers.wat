@@ -4983,9 +4983,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 468: IsBadCodePtr — STUB: unimplemented
+  ;; 468: IsBadCodePtr(lpfn) — 1 arg stdcall
+  ;; Returns 0 if the pointer is callable, nonzero otherwise. We trust the guest
+  ;; (any non-null pointer in the guest address space is treated as valid).
   (func $handle_IsBadCodePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.eqz (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 469: ExitThread(dwExitCode) — 1 arg, no return

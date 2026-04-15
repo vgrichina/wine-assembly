@@ -8529,5 +8529,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4219821769
+  },
+  {
+    "id": 1219,
+    "name": "timeGetDevCaps",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3847877410
   }
 ]
