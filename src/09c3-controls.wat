@@ -830,7 +830,7 @@
           (then (return (i32.const 0))))
         (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
         (i32.store (local.get $sw) (local.get $idx))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
         (if (local.get $parent)
@@ -1235,7 +1235,7 @@
     (if (local.get $lb)
       (then (call $opendlg_populate_listbox (local.get $lb) (local.get $pat_g))))
     (call $heap_free (local.get $pat_g))
-    (call $host_invalidate (local.get $dlg)))
+    (call $invalidate_hwnd (local.get $dlg)))
 
   ;; Trigger a Blob download for the current filename edit value (if any).
   ;; Builds "C:\<filename>" in a heap buffer and hands the WASM addr to
@@ -1409,7 +1409,7 @@
               ;; $hwnd itself; the caller will re-set it after this returns.
               (i32.store offset=8 (local.get $stw)
                 (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0xFFFFFFFD)))
-              (call $host_invalidate (local.get $other))))))
+              (call $invalidate_hwnd (local.get $other))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
   )
@@ -1484,7 +1484,7 @@
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
                 (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
                 (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 1)))) ;; TRUE
         (return (i32.const 0))))
 
@@ -1513,7 +1513,7 @@
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=8 (local.get $state_w)
               (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x01))) ;; pressed
-            (call $host_invalidate (local.get $hwnd))))
+            (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
@@ -1550,7 +1550,7 @@
                 (local.set $flags
                   (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
             ;; to parent. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
@@ -1814,7 +1814,7 @@
             (if (local.get $wParam)
               (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         (call $ctrl_set_check_state (local.get $hwnd) (local.get $wParam))
         (return (i32.const 0))))
@@ -1881,7 +1881,7 @@
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
                 (i32.store       (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
                 (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 1))))
         (return (i32.const 0))))
 
@@ -2065,7 +2065,7 @@
         (i32.store offset=4  (local.get $sw)
           (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
         (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $count))))  ;; index of newly inserted item
 
     ;; ---------- LB_RESETCONTENT (0x0184) ----------
@@ -2075,7 +2075,7 @@
         (i32.store offset=12 (local.get $sw) (i32.const 0))   ;; count
         (i32.store offset=16 (local.get $sw) (i32.const -1))  ;; cur_sel
         (i32.store offset=20 (local.get $sw) (i32.const 0))   ;; top_index
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- LB_GETCOUNT (0x018B) ----------
@@ -2095,7 +2095,7 @@
         (if (i32.ge_s (local.get $idx) (local.get $count))
           (then (local.set $idx (i32.const -1))))
         (i32.store offset=16 (local.get $sw) (local.get $idx))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $idx))))
 
     ;; ---------- LB_GETTEXT (0x0189) ----------
@@ -2172,7 +2172,7 @@
                     (i32.or (i32.load offset=24 (local.get $sw))
                             (i32.shl (local.get $notif) (i32.const 16)))
                     (local.get $hwnd)))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
@@ -2456,7 +2456,7 @@
             (if (i32.load (local.get $state_w))
               (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
                                 (i32.const 0))))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
     ;; ---------- WM_GETTEXT (0x000D) ----------
@@ -2492,7 +2492,7 @@
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
               (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_KILLFOCUS (0x0008) ----------
@@ -2505,7 +2505,7 @@
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
               (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_CHAR (0x0102) ----------
@@ -2527,7 +2527,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (i32.sub (local.get $lo) (i32.const 1))
                           (local.get $lo))))))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))
@@ -2535,12 +2535,12 @@
             (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01))
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
-                (call $host_invalidate (local.get $hwnd))))
+                (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
@@ -2559,7 +2559,7 @@
                 (local.set $cur (i32.sub (local.get $cur) (i32.const 1)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (i32.store offset=16 (local.get $state_w) (local.get $cur))
-                (call $host_invalidate (local.get $hwnd))))
+                (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_RIGHT 0x27
         (if (i32.eq (local.get $vk) (i32.const 0x27))
@@ -2569,21 +2569,21 @@
                 (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (i32.store offset=16 (local.get $state_w) (local.get $cur))
-                (call $host_invalidate (local.get $hwnd))))
+                (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_HOME 0x24
         (if (i32.eq (local.get $vk) (i32.const 0x24))
           (then
             (i32.store offset=12 (local.get $state_w) (i32.const 0))
             (i32.store offset=16 (local.get $state_w) (i32.const 0))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_END 0x23
         (if (i32.eq (local.get $vk) (i32.const 0x23))
           (then
             (i32.store offset=12 (local.get $state_w) (local.get $text_len))
             (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
         ;; so WM_CHAR 0x08 never arrives for WAT-native edits; handle it here.
@@ -2600,7 +2600,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (i32.sub (local.get $cur) (i32.const 1))
                           (local.get $cur))))))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_DELETE 0x2E
         (if (i32.eq (local.get $vk) (i32.const 0x2E))
@@ -2616,7 +2616,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (local.get $cur)
                           (i32.add (local.get $cur) (i32.const 1)))))))
-            (call $host_invalidate (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_UP 0x26
         (if (i32.eq (local.get $vk) (i32.const 0x26))
@@ -2636,7 +2636,7 @@
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (i32.store offset=16 (local.get $state_w) (local.get $cur))
-                (call $host_invalidate (local.get $hwnd))))
+                (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_DOWN 0x28
         (if (i32.eq (local.get $vk) (i32.const 0x28))
@@ -2658,7 +2658,7 @@
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (i32.store offset=16 (local.get $state_w) (local.get $cur))
-                (call $host_invalidate (local.get $hwnd))))
+                (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (return (i32.const 0))))
 
@@ -2671,7 +2671,7 @@
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
               (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
@@ -2769,7 +2769,7 @@
           (then (local.set $hi (local.get $text_len))))
         (i32.store offset=16 (local.get $state_w) (local.get $lo))  ;; sel_anchor = start
         (i32.store offset=12 (local.get $state_w) (local.get $hi))  ;; cursor = end
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- EM_REPLACESEL (0x00C2) ----------
@@ -2792,7 +2792,7 @@
               (call $edit_insert_char (local.get $state_w) (local.get $vk))
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
-        (call $host_invalidate (local.get $hwnd))
+        (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- EM_LINEFROMCHAR (0x00C9) ----------

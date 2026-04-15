@@ -531,6 +531,21 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; $invalidate_hwnd(hwnd): mark $hwnd dirty so a WM_PAINT gets delivered on
+  ;; the next GetMessageA cycle. For the main top-level, GetMessageA reads
+  ;; $paint_pending directly; for child controls we push the hwnd onto
+  ;; PAINT_QUEUE so GetMessageA can pop it. Call $host_invalidate too so the
+  ;; JS-side renderer schedules a repaint composite. This mirrors what
+  ;; $handle_InvalidateRect does, but as a helper for WAT-internal paint
+  ;; triggers (WM_CHAR, button clicks, etc.) that don't go through the
+  ;; Win32 InvalidateRect API.
+  (func $invalidate_hwnd (param $hwnd i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 1)))
+      (else (call $paint_queue_push (local.get $hwnd))))
+    (call $host_invalidate (local.get $hwnd)))
+
   ;; Paint queue: 64-entry array at PAINT_QUEUE, count in $paint_queue_count
   ;; $paint_queue_push(hwnd): add hwnd if not already in queue and queue not full
   (func $paint_queue_push (param $hwnd i32)

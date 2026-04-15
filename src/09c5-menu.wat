@@ -384,7 +384,7 @@
                 (then
                   (if (i32.eq (local.get $prev) (i32.const -1))
                     (then (local.set $prev (local.get $r))))
-                  (call $host_invalidate (local.get $hwnd))))))))
+                  (call $invalidate_hwnd (local.get $hwnd))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $loop)))
     (local.get $prev))

@@ -316,7 +316,7 @@
     (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (local.get $delta)))
     (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
       (then (global.set $help_scroll_y (i32.const 0))))
-    (call $host_invalidate (local.get $hwnd)))
+    (call $invalidate_hwnd (local.get $hwnd)))
 
   ;; Help window WndProc (WAT-native, called directly — not via x86)
   (func $help_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -510,7 +510,7 @@
     (global.set $help_topic_len (local.get $len))
     (global.set $help_cur_topic (local.get $index))
     (global.set $help_scroll_y (i32.const 0))
-    (call $host_invalidate (global.get $help_hwnd))
+    (call $invalidate_hwnd (global.get $help_hwnd))
   )
 
   ;; Go back in navigation history
@@ -528,7 +528,7 @@
     (global.set $help_topic_len (local.get $len))
     (global.set $help_cur_topic (local.get $prev))
     (global.set $help_scroll_y (i32.const 0))
-    (call $host_invalidate (global.get $help_hwnd))
+    (call $invalidate_hwnd (global.get $help_hwnd))
   )
 
   ;; Create help window via host
