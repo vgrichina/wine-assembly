@@ -1827,8 +1827,10 @@
     ;; Allocate HWND
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    ;; Set as dialog hwnd
+    ;; Set as dialog hwnd (and dedicated modal-pump hwnd so nested
+    ;; CreateDialogParamA can't hijack the pump's hwnd-less fallback)
     (global.set $dlg_hwnd (local.get $hwnd))
+    (global.set $dlg_pump_hwnd (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
     (global.set $dlg_proc (local.get $arg3))

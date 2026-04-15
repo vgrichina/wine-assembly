@@ -1239,6 +1239,29 @@ Survey's modal `DialogBoxParamA` loop blocks the main message pump. Until the **
 
 Option 1 — fix `$dlg_hwnd` so the modal pump (`09b-dispatch.wat:131-134`) routes hwnd-less input to the topmost MODAL dialog (DialogBoxParamA), not whatever non-modal `CreateDialogParamA` ran most recently. This is the actual regression introduced or exposed by recent dialog/threading changes; the IDCANCEL path that worked in prior sessions worked because that nested-dialog architecture either didn't exist or `$dlg_hwnd` wasn't being clobbered yet.
 
+## SESSION 16 — Modal Pump HWND Fix, Survey Dismissible Again
+
+Implemented Option 1 from Session 15. Added a dedicated `$dlg_pump_hwnd` global, set only by `DialogBoxParamA`, used by the pump's hwnd-less fallback in `09b-dispatch.wat`. Nested modeless `CreateDialogParamA` still updates `$dlg_hwnd` (so `IsChild` / `DefWindowProc` routing for the "most recent" dialog still works) but no longer hijacks the modal pump.
+
+### Result
+
+`--input=10:273:2` now dismisses the outer survey cleanly:
+
+- EndDialog fires at API #492 on hwnd `0x10003` (the outer survey). Previously routed to `0x10009` (inner sub-dialog) at API #665.
+- After EndDialog, winamp continues into its post-survey code path (SetWindowPos, SetWindowLong, CreateWindowEx for the main Winamp window, SetPriorityClass, skin/GDI drawing). Execution reaches API #6117 before the standard shutdown (`RevokeDragDrop → OleUninitialize → ExitProcess(0x27)`) fires.
+
+IDCANCEL still ends up taking the survey decline path, so playback via this input still doesn't happen — winamp exits. To get audio playback, a different input (IDOK through all three pages, or bypassing via page-counter poke + IDOK) is needed. That's independent of the pump routing bug.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `src/01-header.wat` | Added `$dlg_pump_hwnd` global with docstring |
+| `src/09a-handlers.wat` | `$handle_DialogBoxParamA` sets `$dlg_pump_hwnd` alongside `$dlg_hwnd` |
+| `src/09b-dispatch.wat` | Pump fallback uses `$dlg_pump_hwnd`; dlg_ended cleanup destroys that hwnd and clears it |
+
+Regression: `test-all-exes.js` shows no new failures.
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.

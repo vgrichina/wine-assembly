@@ -64,11 +64,14 @@
             ;; Destroy WAT-managed child controls (sends WM_DESTROY to each)
             ;; but not the dialog itself — its x86 dlg_proc would interpret
             ;; WM_DESTROY as app shutdown and call PostQuitMessage.
-            (call $wnd_destroy_children (global.get $dlg_hwnd))
-            (call $wnd_table_remove (global.get $dlg_hwnd))
-            (call $host_destroy_window (global.get $dlg_hwnd))
+            ;; Use $dlg_pump_hwnd: $dlg_hwnd may have been clobbered by a
+            ;; nested modeless CreateDialogParamA inside the modal's dlgproc.
+            (call $wnd_destroy_children (global.get $dlg_pump_hwnd))
+            (call $wnd_table_remove (global.get $dlg_pump_hwnd))
+            (call $host_destroy_window (global.get $dlg_pump_hwnd))
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
+            (global.set $dlg_pump_hwnd (i32.const 0))
             (global.set $dlg_ended (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))
@@ -129,8 +132,11 @@
                 (if (i32.eqz (local.get $arg4))
                   (then (local.set $arg4 (global.get $dlg_proc)))))
               (else
-                ;; No target hwnd — dispatch to the modal dialog proc
-                (local.set $arg0 (global.get $dlg_hwnd))
+                ;; No target hwnd — dispatch to the modal dialog proc.
+                ;; Use $dlg_pump_hwnd (set only by DialogBoxParamA) so nested
+                ;; modeless CreateDialogParamA inside the modal's dlgproc
+                ;; can't reroute input to the inner sub-dialog.
+                (local.set $arg0 (global.get $dlg_pump_hwnd))
                 (local.set $arg4 (global.get $dlg_proc))))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))

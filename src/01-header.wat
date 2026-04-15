@@ -681,7 +681,13 @@
   (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
-  (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle
+  (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle (most recent, modal or modeless)
+  ;; DialogBoxParamA-only hwnd for the modal message pump in 09b-dispatch.wat.
+  ;; Unlike $dlg_hwnd, this is NOT clobbered by nested CreateDialogParamA
+  ;; calls — so when a modal survey/registration dialog creates a modeless
+  ;; child sub-dialog, hwnd-less input in the pump still routes to the outer
+  ;; modal dialog's dlgproc. Cleared when the modal ends (dlg_ended).
+  (global $dlg_pump_hwnd (mut i32) (i32.const 0))   ;; Modal pump hwnd (DialogBoxParamA only)
   (global $dlg_result   (mut i32) (i32.const 0))    ;; EndDialog return value
   (global $dlg_ended    (mut i32) (i32.const 0))    ;; Flag: EndDialog was called
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
