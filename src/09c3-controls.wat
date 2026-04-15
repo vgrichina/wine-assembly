@@ -2903,7 +2903,8 @@
                   (then (local.set $hi (local.get $px))))
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
-                (i32.store offset=16 (local.get $state_w) (local.get $cur))
+                (if (i32.eqz (local.get $a))
+                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (return (i32.const 0))))
@@ -3012,7 +3013,10 @@
         (local.set $sel_hi (call $edit_sel_hi (local.get $state_w)))
         (if (local.get $buf)
           (then
-            (local.set $lo (i32.const 0))    ;; line start offset
+            ;; Start at the scroll_top line (multi-line scroll). scroll_top is
+            ;; 0 for single-line and by default for multi-line.
+            (local.set $lo (call $edit_line_index (local.get $state_w)
+                             (i32.load offset=20 (local.get $state_w))))
             (local.set $line_y (i32.const 4))
             (block $lines_done (loop $line_loop
               (br_if $lines_done (i32.gt_u (local.get $lo) (local.get $text_len)))
@@ -3086,21 +3090,26 @@
         (if (i32.and (local.get $flags) (i32.const 0x08))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
-            ;; Find which line the cursor is on and the offset within that line
+            ;; Find which line the cursor is on and the offset within that line.
+            ;; Subtract scroll_top so the caret tracks the visible viewport.
             (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
-            (local.set $hi (i32.mul (call $edit_line_from_char (local.get $state_w) (local.get $cur))
-                                     (i32.const 16)))
+            (local.set $a (i32.sub
+                            (call $edit_line_from_char (local.get $state_w) (local.get $cur))
+                            (i32.load offset=20 (local.get $state_w))))
+            (local.set $hi (i32.mul (local.get $a) (i32.const 16)))
             (local.set $px (i32.const 0))
             (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.gt_u (local.get $cur) (local.get $lo)))
               (then (local.set $px (call $host_measure_text (local.get $hdc)
                                         (i32.add (call $g2w (local.get $buf)) (local.get $lo))
                                         (i32.sub (local.get $cur) (local.get $lo))))))
+            (if (i32.ge_s (local.get $a) (i32.const 0))
+              (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
                     (i32.add (local.get $hi) (i32.const 5))
                     (i32.add (local.get $px) (i32.const 5))
                     (i32.add (local.get $hi) (i32.const 18))
-                    (i32.const 0x30014))))) ;; BLACK_BRUSH
+                    (i32.const 0x30014))))))) ;; BLACK_BRUSH
         (return (i32.const 0))))
 
     ;; ---------- EM_GETSEL (0x00B0) ----------
@@ -3116,6 +3125,58 @@
           (then (call $gs32 (local.get $lParam) (local.get $hi))))
         (return (i32.or (i32.and (local.get $lo) (i32.const 0xFFFF))
                         (i32.shl (local.get $hi) (i32.const 16))))))
+
+    ;; ---------- WM_COPY (0x0301) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0301))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (call $edit_copy_range (local.get $state_w)
+          (call $edit_sel_lo (local.get $state_w))
+          (call $edit_sel_hi (local.get $state_w)))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_CUT (0x0300) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0300))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+        (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+        (call $edit_copy_range (local.get $state_w) (local.get $lo) (local.get $hi))
+        (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+          (then
+            (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_PASTE (0x0302) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0302))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+          (then (return (i32.const 0))))
+        (if (global.get $clipboard_len)
+          (then (call $edit_insert_bytes (local.get $state_w)
+                  (global.get $clipboard_ptr) (global.get $clipboard_len))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_CLEAR (0x0303) — delete selection without copying ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0303))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+          (then (return (i32.const 0))))
+        (local.set $lo (call $edit_sel_lo (local.get $state_w)))
+        (local.set $hi (call $edit_sel_hi (local.get $state_w)))
+        (if (i32.ne (local.get $lo) (local.get $hi))
+          (then
+            (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
 
     ;; ---------- EM_SETSEL (0x00B1) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00B1))
@@ -3207,7 +3268,45 @@
 
     ;; ---------- EM_GETFIRSTVISIBLELINE (0x00CE) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00CE))
-      (then (return (i32.const 0))))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (i32.load offset=20 (call $g2w (local.get $state))))))
+
+    ;; ---------- WM_MOUSEWHEEL (0x020A) ----------
+    ;; wParam hi-word = signed wheel delta (120 per notch, positive = scroll up).
+    ;; Only multi-line edits (flags bit 0) scroll; otherwise no-op.
+    (if (i32.eq (local.get $msg) (i32.const 0x020A))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01)))
+          (then (return (i32.const 0))))
+        ;; lines_delta = -delta_raw / 40  (120/3 = 40 → 3 lines per notch)
+        (local.set $vk (i32.div_s
+                         (i32.sub (i32.const 0)
+                           (i32.shr_s (local.get $wParam) (i32.const 16)))
+                         (i32.const 40)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        ;; visible_lines = max(1, (h - 8) / 16)
+        (local.set $a (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
+        (if (i32.eqz (local.get $a)) (then (local.set $a (i32.const 1))))
+        ;; total_lines = edit_line_from_char(text_len) + 1
+        (local.set $b (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
+                               (i32.const 1)))
+        ;; max_scroll = max(0, total_lines - visible_lines)
+        (local.set $lo (i32.sub (local.get $b) (local.get $a)))
+        (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))
+        ;; new_scroll = clamp(scroll_top + lines_delta, 0, max_scroll)
+        (local.set $hi (i32.add (i32.load offset=20 (local.get $state_w)) (local.get $vk)))
+        (if (i32.lt_s (local.get $hi) (i32.const 0)) (then (local.set $hi (i32.const 0))))
+        (if (i32.gt_s (local.get $hi) (local.get $lo)) (then (local.set $hi (local.get $lo))))
+        (if (i32.ne (local.get $hi) (i32.load offset=20 (local.get $state_w)))
+          (then
+            (i32.store offset=20 (local.get $state_w) (local.get $hi))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
 
     ;; Default
     (i32.const 0)
