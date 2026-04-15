@@ -3425,6 +3425,57 @@
     (return (global.get $eax))
   )
 
+  ;; Route a client-relative mouse event to the first WAT-managed child
+  ;; under (x,y). Returns 1 if a child was hit and the message dispatched,
+  ;; 0 otherwise. lParam is the client-relative cursor position packed as
+  ;; x|(y<<16); the child receives a child-relative lParam. Button kind=7
+  ;; (group-box) is skipped as non-interactive. Used by JS to avoid
+  ;; reimplementing CONTROL_GEOM hit-testing for WAT-managed dialogs.
+  (func $dialog_route_mouse (export "dialog_route_mouse")
+    (param $parent i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $cls i32)
+    (local $xy i32) (local $wh i32)
+    (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
+    (local $px i32) (local $py i32) (local $style i32) (local $ch_lp i32)
+    (local $hit i32)
+    (local.set $px (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+    (local.set $py (i32.shr_s (local.get $lParam) (i32.const 16)))
+    (block $done (loop $walk
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $cls (call $ctrl_table_get_class (local.get $ch)))
+      (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
+      (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+      (local.set $cx (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
+      (local.set $cy (i32.shr_s (local.get $xy) (i32.const 16)))
+      (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+      (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
+      (local.set $hit (i32.and
+        (i32.and (i32.ge_s (local.get $px) (local.get $cx))
+                 (i32.lt_s (local.get $px) (i32.add (local.get $cx) (local.get $cw))))
+        (i32.and (i32.ge_s (local.get $py) (local.get $cy))
+                 (i32.lt_s (local.get $py) (i32.add (local.get $cy) (local.get $chh))))))
+      ;; Button group-box (kind=7) is non-interactive; ignore hits on it.
+      (if (i32.and (local.get $hit) (i32.eq (local.get $cls) (i32.const 1)))
+        (then
+          (local.set $style (call $wnd_get_style (local.get $ch)))
+          (if (i32.eq (i32.and (local.get $style) (i32.const 0x0F)) (i32.const 7))
+            (then (local.set $hit (i32.const 0))))))
+      (if (local.get $hit)
+        (then
+          (local.set $ch_lp (i32.or
+            (i32.and (i32.sub (local.get $px) (local.get $cx)) (i32.const 0xFFFF))
+            (i32.shl
+              (i32.and (i32.sub (local.get $py) (local.get $cy)) (i32.const 0xFFFF))
+              (i32.const 16))))
+          (drop (call $wnd_send_message (local.get $ch)
+                  (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
+          (return (i32.const 1))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $walk)))
+    (i32.const 0))
+
   ;; Recursively destroy a window and all of its WAT-managed descendants.
   ;; For each descendant (depth-first), sends WM_DESTROY so the wndproc
   ;; can free its per-window state struct + sub-allocations, then clears
