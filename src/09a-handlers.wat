@@ -2578,11 +2578,22 @@
 
   ;; 243: BeginPaint
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $brush i32)
+    ;; Win98: BeginPaint sends WM_ERASEBKGND before returning. The default
+    ;; handler fills the client area with the class's hbrBackground. Our
+    ;; wndproc plumbing doesn't round-trip SendMessage cleanly for every
+    ;; hwnd, so do the default erase inline: dialogs default to COLOR_BTNFACE+1,
+    ;; other windows use the last-registered class brush. This is the
+    ;; single source of dialog/client background fill — it replaces both
+    ;; the old JS screen-canvas fallback and $dlg_fill_bkgnd creation-time
+    ;; hooks.
+    (local.set $brush (global.get $wndclass_bg_brush))
+    (if (i32.eqz (local.get $brush)) (then (local.set $brush (i32.const 16)))) ;; COLOR_BTNFACE+1
+    (drop (call $host_erase_background (local.get $arg0) (local.get $brush)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (call $gs32 (local.get $arg1) (i32.add (local.get $arg0) (i32.const 0x40000))) ;; hdc = hwnd + 0x40000
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1)) ;; fErase = TRUE
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase = FALSE (we erased)
     ;; rcPaint = {0, 0, clientW, clientH} — query host for per-window client size
     ;; left(+8) and top(+12) already 0 from zero_memory
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
@@ -3799,10 +3810,9 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; SetTextAlign(hdc, fMode) — return previous alignment (0 = TA_LEFT|TA_TOP|TA_NOUPDATECP default).
-  ;; No text-alignment state is tracked host-side; TextOut always draws LEFT/TOP.
+  ;; SetTextAlign(hdc, fMode) — store alignment on the DC and return the previous value.
   (func $handle_SetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_gdi_set_text_align (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -6093,9 +6103,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 596: GetTextAlign — STUB: unimplemented
+  ;; GetTextAlign(hdc) — return current alignment flags.
   (func $handle_GetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_get_text_align (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 597: GetPolyFillMode — STUB: unimplemented
