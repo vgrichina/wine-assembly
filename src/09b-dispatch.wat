@@ -243,6 +243,12 @@
         (global.set $eax (i32.const 0))  ;; DD_OK
         (return)))
 
+    ;; EnumDisplayModes continuation — callback returned, try next mode
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0008))
+      (then
+        (call $enum_modes_continue)
+        (return)))
+
     ;; Unresolved ordinal import from a system DLL (marker "ORD\0")
     ;; — $api_id holds the actual ordinal. Format "KERNEL32.#NNNNN" into
     ;; the scratch buffer at 0x2DA and crash with that name so the user
@@ -274,7 +280,8 @@
     (if (i32.and (local.get $name_rva) (i32.const 0x80000000))
       (then
         (local.set $name_ptr (i32.const 0x2E0))
-        (call $host_log (local.get $name_ptr) (i32.const 5)))
+        (call $host_log (local.get $name_ptr) (i32.const 5))
+        (call $host_log_i32 (i32.or (i32.const 0xC0DE0000) (local.get $api_id))))
       (else
         (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
         (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))

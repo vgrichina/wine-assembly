@@ -3870,7 +3870,7 @@
   (func $handle_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $src_wa i32) (local $num_entries i32) (local $pal_idx i32) (local $dst i32) (local $copy_bytes i32)
     (local.set $src_wa (call $g2w (local.get $arg0)))
-    (local.set $num_entries (i32.and (i32.load16_u (i32.add (local.get $src_wa) (i32.const 2))) (i32.const 0xFF)))
+    (local.set $num_entries (i32.load16_u (i32.add (local.get $src_wa) (i32.const 2))))
     ;; Cap at 256 entries
     (if (i32.gt_u (local.get $num_entries) (i32.const 256))
       (then (local.set $num_entries (i32.const 256))))
@@ -4025,7 +4025,13 @@
 
   ;; 383: ValidateRect — STUB: unimplemented
   (func $handle_ValidateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; ValidateRect(hWnd, lpRect) — 2 args stdcall
+    ;; Marks the window region as valid (clears paint_pending).
+    ;; If hWnd is main_hwnd, clear paint_pending.
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
   ;; 384: GetWindowDC — STUB: unimplemented
@@ -4206,7 +4212,9 @@
 
   ;; 397: GetCapture — STUB: unimplemented
   (func $handle_GetCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; GetCapture() — 0 args, returns hwnd that has mouse capture (or NULL)
+    (global.set $eax (global.get $capture_hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; 0 args
   )
 
   ;; 398: RegisterClipboardFormatW(lpszFormat) → UINT
@@ -4362,7 +4370,10 @@
 
   ;; 414: FileTimeToSystemTime — STUB: unimplemented
   (func $handle_FileTimeToSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; FileTimeToSystemTime(lpFileTime, lpSystemTime) — 2 args
+    (global.set $eax (call $host_fs_filetime_to_systemtime
+      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
   ;; 415: FileTimeToLocalFileTime — STUB: unimplemented

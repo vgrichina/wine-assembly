@@ -315,6 +315,7 @@ async function main() {
     renderer,
     apiTable,
     verbose: VERBOSE,
+    _debugReadFile: TRACE_API,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
@@ -470,8 +471,15 @@ async function main() {
 
   h.log_i32 = val => {
     if (TRACE_API && lastApiName) {
-      logs.push(`  => ${hex(val)}`);
-      lastApiName = null;
+      // COM method api_id marker: 0xC0DE0000 | api_id
+      if (((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>') {
+        const apiId = (val >>> 0) & 0xFFFF;
+        const entry = apiTable.find(e => e.id === apiId);
+        logs.push(`  [COM api_id=${apiId} => ${entry ? entry.name : '???'}]`);
+      } else {
+        logs.push(`  => ${hex(val)}`);
+        lastApiName = null;
+      }
     } else {
       logs.push('[i32] ' + hex(val));
     }
@@ -607,7 +615,7 @@ async function main() {
   h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: 1024, maximum: 1024, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 
@@ -676,6 +684,7 @@ async function main() {
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
       _sharedAudio: ctx._sharedAudio,  // share waveOut state across threads
+      _debugReadFile: TRACE_API,
       sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
     };
     const workerBase = createHostImports(workerCtx);

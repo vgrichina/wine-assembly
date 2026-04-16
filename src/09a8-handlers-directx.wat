@@ -37,6 +37,7 @@
   (global $DX_VTBL_D3DMAT3    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -50,6 +51,14 @@
   ;; WASM address of the palette data for the primary surface (256 RGBQUAD entries)
   ;; Set by IDirectDrawSurface::SetPalette
   (global $dx_primary_pal_wa (mut i32) (i32.const 0))
+
+  ;; EnumDisplayModes continuation state
+  (global $enum_modes_idx (mut i32) (i32.const 0))       ;; current mode index
+  (global $enum_modes_callback (mut i32) (i32.const 0))  ;; callback guest addr
+  (global $enum_modes_context (mut i32) (i32.const 0))   ;; lpContext
+  (global $enum_modes_ddsd (mut i32) (i32.const 0))      ;; DDSURFACEDESC guest addr
+  (global $enum_modes_ret (mut i32) (i32.const 0))       ;; saved caller return addr
+  (global $enum_modes_thunk (mut i32) (i32.const 0))     ;; CACA0008 thunk guest addr
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
@@ -404,8 +413,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; CreateClipper — stub
+  ;; CreateClipper(this, dwFlags, lplpDDClipper, pUnkOuter) — type 10 = DDClipper
   (func $handle_IDirectDraw_CreateClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDCLIP)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $gs32 (local.get $arg2) (local.get $obj))
+    (global.set $eax (i32.const 0)) ;; DD_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; CreatePalette(this, dwFlags, lpDDColorArray, lplpDDPalette, pUnkOuter)
   (func $handle_IDirectDraw_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -527,49 +546,103 @@
     (call $crash_unimplemented (local.get $name_ptr)))
 
   ;; EnumDisplayModes(this, dwFlags, lpDDSD, lpContext, lpEnumModesCallback)
+  ;; Uses continuation thunk CACA0008 to iterate through a table of modes.
+  ;; Mode table: (w, h, bpp) tuples — common Win98 modes.
   (func $handle_IDirectDraw_EnumDisplayModes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ddsd_guest i32) (local $ddsd_wa i32) (local $w i32)
-    ;; Allocate a DDSURFACEDESC on the heap to pass to the callback
-    (local.set $ddsd_guest (call $heap_alloc (i32.const 108)))
-    (local.set $ddsd_wa (call $g2w (local.get $ddsd_guest)))
+    (local $ret_addr i32)
+    ;; Save state for continuation
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    ;; Clean up stdcall args: 5 args + ret = 24 bytes
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ;; Allocate a DDSURFACEDESC on the heap (reused for each callback)
+    (global.set $enum_modes_ddsd (call $heap_alloc (i32.const 108)))
+    (global.set $enum_modes_callback (local.get $arg4))
+    (global.set $enum_modes_context (local.get $arg3))
+    (global.set $enum_modes_ret (local.get $ret_addr))
+    (global.set $enum_modes_idx (i32.const 0))
+    ;; Start enumeration — call $enum_modes_dispatch for the first mode
+    (call $enum_modes_dispatch))
+
+  ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
+  ;; Mode table: idx 0=640×480×8, 1=640×480×16, 2=800×600×8, 3=800×600×16
+  (func $enum_modes_dispatch
+    (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
+    (local $pitch i32) (local $idx i32)
+    (local.set $idx (global.get $enum_modes_idx))
+    ;; Mode table
+    (if (i32.eq (local.get $idx) (i32.const 0))
+      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 8))))
+    (if (i32.eq (local.get $idx) (i32.const 1))
+      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 16))))
+    (if (i32.eq (local.get $idx) (i32.const 2))
+      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 8))))
+    (if (i32.eq (local.get $idx) (i32.const 3))
+      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 16))))
+    ;; If past end of table, done — return DD_OK to caller
+    (if (i32.ge_u (local.get $idx) (i32.const 4))
+      (then
+        (global.set $eip (global.get $enum_modes_ret))
+        (global.set $eax (i32.const 0))  ;; DD_OK
+        (return)))
+    ;; Compute pitch: align (w * bytes_per_pixel) to 4 bytes
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (local.set $pitch (i32.and (i32.add (local.get $w) (i32.const 3)) (i32.const 0xFFFFFFFC))))
+      (else (local.set $pitch (i32.and (i32.add (i32.mul (local.get $w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))))
+    ;; Fill DDSURFACEDESC
+    (local.set $ddsd_wa (call $g2w (global.get $enum_modes_ddsd)))
     (call $zero_memory (local.get $ddsd_wa) (i32.const 108))
-    ;; dwSize
-    (i32.store (local.get $ddsd_wa) (i32.const 108))
+    (i32.store (local.get $ddsd_wa) (i32.const 108))  ;; dwSize
     ;; dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_PITCH
     (i32.store (i32.add (local.get $ddsd_wa) (i32.const 4)) (i32.const 0x1006))
-    ;; dwHeight, dwWidth
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 8)) (global.get $dx_display_h))
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 12)) (global.get $dx_display_w))
-    ;; lPitch
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 16))
-      (i32.and (i32.add (i32.mul (global.get $dx_display_w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))
+    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 8)) (local.get $h))     ;; dwHeight
+    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 12)) (local.get $w))    ;; dwWidth
+    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 16)) (local.get $pitch)) ;; lPitch
     ;; ddpfPixelFormat at offset 72
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 72)) (i32.const 32)) ;; dwSize of DDPIXELFORMAT
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x40)) ;; dwFlags = DDPF_RGB
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 16)) ;; dwRGBBitCount = 16
-    ;; RGB565 masks
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0xF800)) ;; R mask
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x07E0)) ;; G mask
-    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x001F)) ;; B mask
-    ;; Call callback(lpDDSD, lpContext)
-    ;; The current stack has [ret_addr, this, flags, lpDDSD_filter, lpContext, callback]
-    ;; at ESP. We need to set up: [ret_addr, lpDDSD, lpContext] and jump to callback.
-    ;; Rewrite the stack: pop 5 API args, push callback args, push original ret addr
-    ;; Original return addr is at [ESP]
-    (local.set $w (call $gl32 (global.get $esp))) ;; save ret addr (reuse $w as temp)
-    ;; Adjust ESP past the 5 args + ret = ESP + 24
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    ;; Push callback args: lpContext, lpDDSD (pushed right to left)
+    (i32.store (i32.add (local.get $ddsd_wa) (i32.const 72)) (i32.const 32))  ;; dwSize
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then
+        ;; 8bpp palettized: DDPF_RGB | DDPF_PALETTEINDEXED8
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x60))
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 8)))
+      (else
+        ;; 16bpp RGB565
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x40))  ;; DDPF_RGB
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 16))    ;; dwRGBBitCount
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0xF800)) ;; R
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x07E0)) ;; G
+        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x001F)))) ;; B
+    ;; Push saved caller return addr (popped on enum complete)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $arg3)) ;; lpContext
+    (call $gs32 (global.get $esp) (global.get $enum_modes_ret))
+    ;; Push callback args: lpContext, lpDDSD (right to left, __stdcall)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $ddsd_guest)) ;; lpDDSD
-    ;; Push original return address
+    (call $gs32 (global.get $esp) (global.get $enum_modes_context))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $w))
+    (call $gs32 (global.get $esp) (global.get $enum_modes_ddsd))
+    ;; Push continuation thunk as callback's return address
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_modes_thunk))
     ;; Jump to callback
-    (global.set $eip (local.get $arg4))
+    (global.set $eip (global.get $enum_modes_callback))
     (global.set $steps (i32.const 0)))
+
+  ;; CACA0008 continuation: callback returned, advance to next mode
+  (func $enum_modes_continue
+    ;; The callback is __stdcall(2 args), so it already popped lpDDSD + lpContext (8 bytes).
+    ;; Stack now has [saved_caller_ret] at ESP.
+    ;; Pop the saved caller return addr
+    (global.set $enum_modes_ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    ;; If callback returned 0 (DDENUMRET_CANCEL), stop enumeration
+    (if (i32.eqz (global.get $eax))
+      (then
+        (global.set $eip (global.get $enum_modes_ret))
+        (global.set $eax (i32.const 0))  ;; DD_OK
+        (return)))
+    ;; Advance to next mode
+    (global.set $enum_modes_idx (i32.add (global.get $enum_modes_idx) (i32.const 1)))
+    ;; Dispatch next mode (or finish if past end)
+    (call $enum_modes_dispatch))
 
   ;; EnumSurfaces — stub
   (func $handle_IDirectDraw_EnumSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1329,6 +1402,68 @@
         (i32.mul (local.get $arg3) (i32.const 4)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; IDirectDrawClipper methods
+  ;; ════════════════════════════════════════════════════════════
+
+  (func $handle_IDirectDrawClipper_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Return same object for IUnknown / IDirectDrawClipper
+    (call $gs32 (local.get $arg2) (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectDrawClipper_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (global.set $eax (i32.load (i32.add (local.get $entry) (i32.const 4))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IDirectDrawClipper_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
+    (if (i32.le_s (local.get $rc) (i32.const 0))
+      (then (call $dx_free (local.get $entry))))
+    (global.set $eax (local.get $rc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; GetClipList(this, lpRect, lpClipList, lpdwSize) — stub, return DDERR_NOCLIPLIST
+  (func $handle_IDirectDrawClipper_GetClipList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x887600CD)) ;; DDERR_NOCLIPLIST
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; GetHWnd(this, lphWnd)
+  (func $handle_IDirectDrawClipper_GetHWnd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (global.get $main_hwnd))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; Initialize(this, lpDD, dwFlags) — no-op
+  (func $handle_IDirectDrawClipper_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IsClipListChanged(this, lpbChanged) — always return FALSE
+  (func $handle_IDirectDrawClipper_IsClipListChanged (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; SetClipList(this, lpClipList, dwFlags) — no-op
+  (func $handle_IDirectDrawClipper_SetClipList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; SetHWnd(this, dwFlags, hWnd) — no-op
+  (func $handle_IDirectDrawClipper_SetHWnd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectSound methods
@@ -2638,6 +2773,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DMaterial3_Reserved2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ============================================================
+  ;; VIDEO FOR WINDOWS (VFW) — codec enumeration stubs
+  ;; ============================================================
+
+  ;; ICInfo(fccType, fccHandler, lpicinfo) — 3 args
+  ;; Returns FALSE: no codecs available
+  (func $handle_ICInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; ICOpen(fccType, fccHandler, wMode, ...) — 4 args
+  ;; Returns NULL: no codec handle
+  (func $handle_ICOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; ICClose(hic) — 1 arg
+  (func $handle_ICClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 

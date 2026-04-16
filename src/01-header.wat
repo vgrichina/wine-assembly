@@ -270,6 +270,8 @@
   ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
   ;; fs_unmap_view(baseAddr) → BOOL
+  (import "host" "fs_filetime_to_systemtime" (func $host_fs_filetime_to_systemtime (param i32 i32) (result i32)))
+  ;; fs_filetime_to_systemtime(ftWasmAddr, stWasmAddr) → BOOL
 
   ;; DLL file check (for dynamic LoadLibrary)
   (import "host" "has_dll_file" (func $host_has_dll_file (param i32) (result i32)))
@@ -322,7 +324,7 @@
   (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))
   (import "host" "voice_set_freq" (func $host_voice_set_freq (param i32 i32)))
 
-  (import "host" "memory" (memory 1024 1024 shared))
+  (import "host" "memory" (memory 2048 2048 shared))
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
@@ -412,7 +414,8 @@
   ;; 0x02252000  64KB    Block cache index (4096 slots × 16 bytes)
   ;; 0x02262000  2MB     PE staging area (supports PEs up to 2MB)
   ;; 0x02462000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x02462200  ...     Free
+  ;; 0x02462200  ...     File mapping zone (MapViewOfFile allocations)
+  ;; Total: 2048 pages = 128MB
 
   ;; Memory region bases
   (global $PE_STAGING   i32 (i32.const 0x02262000))

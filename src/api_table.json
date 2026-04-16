@@ -8760,5 +8760,89 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1251232729
+  },
+  {
+    "id": 1252,
+    "name": "IDirectDrawClipper_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3492942158
+  },
+  {
+    "id": 1253,
+    "name": "IDirectDrawClipper_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2611172029
+  },
+  {
+    "id": 1254,
+    "name": "IDirectDrawClipper_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2400996634
+  },
+  {
+    "id": 1255,
+    "name": "IDirectDrawClipper_GetClipList",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2073144121
+  },
+  {
+    "id": 1256,
+    "name": "IDirectDrawClipper_GetHWnd",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3220739368
+  },
+  {
+    "id": 1257,
+    "name": "IDirectDrawClipper_Initialize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 890549391
+  },
+  {
+    "id": 1258,
+    "name": "IDirectDrawClipper_IsClipListChanged",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 803689933
+  },
+  {
+    "id": 1259,
+    "name": "IDirectDrawClipper_SetClipList",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 406686165
+  },
+  {
+    "id": 1260,
+    "name": "IDirectDrawClipper_SetHWnd",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3048796964
+  },
+  {
+    "id": 1261,
+    "name": "ICInfo",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 957179781
+  },
+  {
+    "id": 1262,
+    "name": "ICOpen",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4239926601
+  },
+  {
+    "id": 1263,
+    "name": "ICClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3212715171
   }
 ]
