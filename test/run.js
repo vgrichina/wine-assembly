@@ -316,6 +316,7 @@ async function main() {
     apiTable,
     verbose: VERBOSE,
     _debugReadFile: TRACE_API,
+    _debugFindFile: TRACE_API,
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
@@ -845,6 +846,27 @@ async function main() {
       }
     };
     loadDir(exeDir, 'c:\\');
+
+    // Also load sibling directories from parent — games like RCT have the exe
+    // in a subdirectory (English/) but data in a sibling (Data/).
+    const parentDir = path.dirname(exeDir);
+    if (parentDir !== exeDir) {
+      try {
+        for (const f of fs.readdirSync(parentDir)) {
+          const fpath = path.join(parentDir, f);
+          try {
+            const stat = fs.statSync(fpath);
+            if (stat.isDirectory() && f !== '.' && f !== '..' && fpath !== exeDir) {
+              const vfsDir = 'c:\\' + f.toLowerCase() + '\\';
+              if (!ctx.vfs.dirs.has(vfsDir)) {
+                ctx.vfs.dirs.add(vfsDir);
+                loadDir(fpath, vfsDir);
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
   }
 
   const regs = () => {
@@ -1467,6 +1489,17 @@ async function main() {
 
     if (TRACE) {
       console.log(`[${batch}] >> ${hex(eipBefore)} ESP=${hex(instance.exports.get_esp())}`);
+    }
+
+    // Fire multimedia timer callback if due (timeSetEvent fires asynchronously on real Win32)
+    if (instance.exports.fire_mm_timer) {
+      const fired = instance.exports.fire_mm_timer();
+      if (fired && TRACE_API) {
+        const mem32 = new Uint32Array(memory.buffer);
+        const g2wOff = 0x12000 - instance.exports.get_image_base();
+        const trampVal = mem32[(0xa5a058 + g2wOff) >> 2];
+        console.log(`[mm_timer] fired at batch ${batch}, EIP=${hex(instance.exports.get_eip())}, [0xa5a058]=${hex(trampVal)}`);
+      }
     }
 
     try {

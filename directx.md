@@ -263,8 +263,41 @@ No separate input host imports — DirectInput state is scraped from the existin
 
 Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFACEDESC.lpSurface` and blts into it. A stub that returns `DD_OK` without writing a valid surface pointer will crash the guest. COM is the kind of API where half-working is not working. Either we implement enough of a surface that its bits can be written and re-presented, or the app is broken. Step 2 above (null backend) is the minimum viable implementation *because* that's where the guest's own code starts accessing the object contents.
 
+## Implementation status (2026-04-16)
+
+| Feature | Status |
+|---------|--------|
+| COM vtable infra | Done — init_com_vtable + extend_com_vtable + 64-slot DX_OBJECTS pool |
+| IDirectDraw (27 methods) | Done — all methods have handlers |
+| IDirectDraw2 (extends DD1) | Done — vtable extension with GetAvailableVidMem |
+| IDirectDrawSurface (34 methods) | Done — Lock/Unlock/Blt/BltFast/Flip/GetAttachedSurface/SetPalette/SetClipper/etc. |
+| IDirectDrawPalette (7 methods) | Done — GetEntries/SetEntries with 256-color support |
+| IDirectDrawClipper (9 methods) | Done — stub-functional (SetHWnd/SetClipList no-ops) |
+| IDirectSound (10 methods) | Done — CreateSoundBuffer works, no audio output |
+| IDirectSoundBuffer (18 methods) | Done — Lock/Unlock/Play/Stop stubs |
+| IDirectInput (9 methods) | Done — CreateDevice for keyboard/mouse |
+| IDirectInputDevice (17 methods) | Done — GetDeviceState returns current input |
+| IDirect3D/IDirect3D3 | Phase 0 stubs only (E_FAIL/D3D_OK) |
+| EnumDisplayModes | Done — multi-mode enumeration (640×480×8/16, 800×600×8/16) with CACA0008 continuation |
+| 8bpp palette rendering | Done — SetPaletteEntries → dx_present → RGBA expansion → SetDIBitsToDevice |
+| 16bpp RGB565 rendering | Done — pitch/format support in CreateSurface/Lock |
+| Color-key transparency | Done — BltFast checks color-key during copy |
+
+### Per-game status
+
+| Game | Status | Blocker |
+|------|--------|---------|
+| **MARBLES** (Plus! 98) | **Rendering game screen** — 173K API calls, sprites visible | Needs mouse input to start gameplay |
+| **AoE** (Age of Empires) | DD init succeeds, creates surfaces/palette/clipper | `MapViewOfFile` for DRS data files; VFS path resolution |
+| **RCT** (RollerCoaster Tycoon) | Dialog renders, EndDialog works | Data files (CSG1.DAT etc.) not found via VFS |
+| **Abe's Oddworld demo** | PE load crash | 32MB sizeOfImage overflows WASM memory layout |
+| **AoE2** | Not tested | Likely same issues as AoE1 |
+| **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
+| **MCM / MW3** | Blocked | Need D3D Immediate Mode (see `direct3d-im.md`) |
+
 ## Open questions
 
-- **Refcount correctness.** Games that call `AddRef`/`Release` asymmetrically will leak DX_OBJECTs. We have 32 slots; MARBLES probably stays well under that, but a long session could exhaust them. Worth adding a refcount-leak warning to `test/run.js`.
-- **Primary surface aliasing.** If the game locks the primary directly and writes to it (some older apps do), we need the renderer to poll the surface DIB at present time rather than reacting to Blt-to-primary events. MARBLES uses a back-buffer chain, so this probably doesn't apply — but it's the first thing to test in step 3.
+- **Refcount correctness.** Games that call `AddRef`/`Release` asymmetrically will leak DX_OBJECTs. We have 64 slots; expanded from 32 after MARBLES exhausted the original pool.
+- **MapViewOfFile.** AoE and potentially other games use memory-mapped files for data. Need to implement CreateFileMappingA + MapViewOfFile → allocate guest memory, read file into it, return pointer.
+- **Large PE images.** Abe's demo has a 32MB PE image (`_winzip_` section = self-extracting archive). Current memory layout (GUEST_BASE=0x12000, stack at 0xE12000) can't fit it. Needs dynamic memory layout or larger WASM memory.
 - **Thunk pressure.** Each method gets its own THUNK_BASE slot. ~150 methods across all interfaces × ~8 bytes per thunk ≈ 1.2 KB. The thunk zone is 256 KB, so fine.

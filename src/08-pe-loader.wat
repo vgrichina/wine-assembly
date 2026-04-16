@@ -202,6 +202,15 @@
       (i32.const 0xCACA0007))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate EnumDisplayModes continuation thunk (marker 0xCACA0008)
+    (global.set $enum_modes_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0008))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
         (call $update_thunk_end)
   )
 

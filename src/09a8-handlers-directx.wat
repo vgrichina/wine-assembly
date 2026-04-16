@@ -1556,9 +1556,44 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; DuplicateSoundBuffer — stub
+  ;; DuplicateSoundBuffer(this, pOriginalBuffer, ppDuplicateBuffer)
   (func $handle_IDirectSound_DuplicateSoundBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
+    (local $src_entry i32) (local $obj i32) (local $dst_entry i32)
+    (local $buf_size i32) (local $buf_guest i32)
+    ;; Look up source buffer entry
+    (local.set $src_entry (call $dx_from_this (local.get $arg1)))
+    ;; Create new DSBuffer COM object
+    (local.set $obj (call $dx_create_com_obj (i32.const 5) (global.get $DX_VTBL_DSBUF)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004005))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $dst_entry (call $dx_from_this (local.get $obj)))
+    ;; Copy format info from source: bufsize(+12), channels(+16), bits(+18), sampleRate(+24)
+    (local.set $buf_size (i32.load (i32.add (local.get $src_entry) (i32.const 12))))
+    (i32.store (i32.add (local.get $dst_entry) (i32.const 12)) (local.get $buf_size))
+    (i32.store16 (i32.add (local.get $dst_entry) (i32.const 16))
+      (i32.load16_u (i32.add (local.get $src_entry) (i32.const 16))))
+    (i32.store16 (i32.add (local.get $dst_entry) (i32.const 18))
+      (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
+    (i32.store (i32.add (local.get $dst_entry) (i32.const 24))
+      (i32.load (i32.add (local.get $src_entry) (i32.const 24))))
+    (i32.store (i32.add (local.get $dst_entry) (i32.const 28))
+      (i32.load (i32.add (local.get $src_entry) (i32.const 28))))
+    ;; Allocate new buffer and copy data
+    (if (i32.gt_u (local.get $buf_size) (i32.const 0)) (then
+      (local.set $buf_guest (call $heap_alloc (local.get $buf_size)))
+      (memory.copy
+        (call $g2w (local.get $buf_guest))
+        (i32.load (i32.add (local.get $src_entry) (i32.const 20)))
+        (local.get $buf_size))
+      (i32.store (i32.add (local.get $dst_entry) (i32.const 20))
+        (call $g2w (local.get $buf_guest)))))
+    ;; *ppDuplicateBuffer = obj
+    (call $gs32 (local.get $arg2) (local.get $obj))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; SetCooperativeLevel — no-op
   (func $handle_IDirectSound_SetCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

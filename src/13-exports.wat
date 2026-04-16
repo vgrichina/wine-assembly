@@ -223,6 +223,38 @@
     (global.set $eip (local.get $addr))
   )
 
+  ;; fire_mm_timer: check if multimedia timer is due, inject callback if so.
+  ;; Saves current EIP as return address so execution resumes after callback returns.
+  ;; Returns 1 if timer was fired, 0 if not due or no timer active.
+  (func (export "fire_mm_timer") (result i32)
+    (local $elapsed i32)
+    (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
+    (global.set $tick_count (call $host_get_ticks))
+    (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
+    (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
+      (then (return (i32.const 0))))
+    ;; Timer is due — update last tick
+    (global.set $mm_timer_last_tick (global.get $tick_count))
+    (if (global.get $mm_timer_oneshot)
+      (then (global.set $mm_timer_id (i32.const 0))))
+    ;; Push 5 args: dw2=0, dw1=0, dwUser, uMsg=0, uTimerID
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw2
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw1
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))   ;; dwUser
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                   ;; uMsg
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_id))       ;; uTimerID
+    ;; Push return address = current EIP (resume after callback returns)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $eip))
+    ;; Redirect EIP to callback
+    (global.set $eip (global.get $mm_timer_callback))
+    (i32.const 1))
+
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)
     (call $gs32 (local.get $ga) (local.get $val)))
