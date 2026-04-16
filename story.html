@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wine-Assembly — The Whole Story</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: #f5f2ea;
+      color: #1a1a1a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.55;
+      font-size: 16px;
+      -webkit-text-size-adjust: 100%;
+    }
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px 18px 64px;
+    }
+    nav.top {
+      font-size: 13px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #d8d2c4;
+      margin-bottom: 24px;
+    }
+    nav.top a { color: #0645ad; text-decoration: none; }
+    nav.top a:hover { text-decoration: underline; }
+    h1, h2, h3, h4 { line-height: 1.25; margin: 1.6em 0 0.5em; }
+    h1 { font-size: 1.9em; border-bottom: 2px solid #1a1a1a; padding-bottom: 6px; }
+    h2 { font-size: 1.45em; border-bottom: 1px solid #d8d2c4; padding-bottom: 4px; }
+    h3 { font-size: 1.15em; }
+    p, ul, ol { margin: 0.7em 0; }
+    ul, ol { padding-left: 1.4em; }
+    li { margin: 0.2em 0; }
+    hr { border: 0; border-top: 1px solid #d8d2c4; margin: 2em 0; }
+    a { color: #0645ad; }
+    strong { color: #000; }
+    code {
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+      background: #ece7db;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    pre {
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      background: #1e1e1e;
+      color: #e6e6e6;
+      padding: 12px 14px;
+      border-radius: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
+    blockquote {
+      margin: 1em 0;
+      padding: 0.2em 1em;
+      border-left: 4px solid #c8bfa6;
+      background: #ece7db;
+      color: #333;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+      font-size: 14px;
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    th, td { border: 1px solid #c8bfa6; padding: 6px 10px; text-align: left; vertical-align: top; }
+    th { background: #ece7db; }
+    img { max-width: 100%; height: auto; }
+    #content.loading { opacity: 0.4; }
+    .err { color: #a00; font-family: monospace; white-space: pre-wrap; }
+    @media (max-width: 480px) {
+      .wrap { padding: 16px 12px 48px; }
+      h1 { font-size: 1.55em; }
+      h2 { font-size: 1.25em; }
+      pre { font-size: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="top"><a href="index.html">&larr; Back to emulator</a></nav>
+    <div id="content" class="loading">Loading…</div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+  <script>
+    (async () => {
+      const el = document.getElementById('content');
+      try {
+        const res = await fetch('PROJECT_STORY.md', { cache: 'no-cache' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const md = await res.text();
+        if (typeof marked === 'undefined') {
+          // Fallback: show raw text in a <pre> so the page is still useful if CDN blocked.
+          el.innerHTML = '';
+          const pre = document.createElement('pre');
+          pre.textContent = md;
+          el.appendChild(pre);
+        } else {
+          marked.setOptions({ gfm: true, breaks: false });
+          el.innerHTML = marked.parse(md);
+        }
+        el.classList.remove('loading');
+        document.title = 'Wine-Assembly — The Whole Story';
+      } catch (e) {
+        el.classList.remove('loading');
+        el.innerHTML = '<p class="err">Failed to load PROJECT_STORY.md: ' + (e && e.message || e) + '</p>';
+      }
+    })();
+  </script>
+</body>
+</html>
