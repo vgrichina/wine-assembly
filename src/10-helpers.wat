@@ -583,6 +583,181 @@
       (br $shift)))
     (local.get $hwnd))
 
+  ;; ---- NC_FLAGS / TITLE_TABLE / CLIENT_RECT (parallel to WND_RECORDS) ----
+  ;; All three are indexed by the WND_RECORDS slot (0..MAX_WINDOWS-1).
+  ;; Values are kept in sync with the wnd slot lifecycle.
+
+  ;; $nc_flags_set(hwnd, bits): OR $bits into the slot's flag word.
+  ;; Bumps $nc_flags_count if the slot transitions from 0 → non-zero.
+  (func $nc_flags_set (param $hwnd i32) (param $bits i32)
+    (local $idx i32) (local $addr i32) (local $old i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $idx) (i32.const 4))))
+    (local.set $old (i32.load (local.get $addr)))
+    (i32.store (local.get $addr) (i32.or (local.get $old) (local.get $bits)))
+    (if (i32.and (i32.eqz (local.get $old))
+                 (i32.ne (i32.load (local.get $addr)) (i32.const 0)))
+      (then (global.set $nc_flags_count (i32.add (global.get $nc_flags_count) (i32.const 1))))))
+
+  ;; $nc_flags_clear(hwnd, bits): clear the specified bits; adjust count.
+  (func $nc_flags_clear (param $hwnd i32) (param $bits i32)
+    (local $idx i32) (local $addr i32) (local $old i32) (local $new i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $idx) (i32.const 4))))
+    (local.set $old (i32.load (local.get $addr)))
+    (local.set $new (i32.and (local.get $old) (i32.xor (local.get $bits) (i32.const -1))))
+    (i32.store (local.get $addr) (local.get $new))
+    (if (i32.and (i32.ne (local.get $old) (i32.const 0))
+                 (i32.eqz (local.get $new)))
+      (then (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
+
+  ;; $nc_flags_test(hwnd) → i32 flag word (0 if slot missing).
+  (func $nc_flags_test (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  ;; $nc_flags_scan(mask) → hwnd of first slot with any $mask bit set, else 0.
+  (func $nc_flags_scan (param $mask i32) (result i32)
+    (local $i i32) (local $ptr i32) (local $flags i32) (local $hwnd i32)
+    (if (i32.eqz (global.get $nc_flags_count)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $i) (i32.const 4))))
+      (local.set $flags (i32.load (local.get $ptr)))
+      (if (i32.and (local.get $flags) (local.get $mask))
+        (then
+          (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+          (if (local.get $hwnd) (then (return (local.get $hwnd))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Clear all NC_FLAGS for a window — called from $wnd_table_remove path.
+  (func $nc_flags_reset_slot (param $slot i32)
+    (local $addr i32)
+    (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $slot) (i32.const 4))))
+    (if (i32.load (local.get $addr))
+      (then
+        (i32.store (local.get $addr) (i32.const 0))
+        (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
+
+  ;; $title_table_set(hwnd, wa_ptr, len): copy title bytes into a heap buffer
+  ;; and store ptr/len in the slot. Frees any prior heap buffer. wa_ptr=0
+  ;; clears the slot.
+  (func $title_table_set (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
+    (local $idx i32) (local $rec i32) (local $old_ptr i32)
+    (local $buf i32) (local $i i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $rec (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8))))
+    (local.set $old_ptr (i32.load (local.get $rec)))
+    (if (local.get $old_ptr) (then (call $heap_free (local.get $old_ptr))))
+    (if (i32.or (i32.eqz (local.get $wa_ptr)) (i32.eqz (local.get $len)))
+      (then
+        (i32.store         (local.get $rec) (i32.const 0))
+        (i32.store offset=4 (local.get $rec) (i32.const 0))
+        (return)))
+    ;; Cap length to 255 to fit in a reasonable buffer.
+    (if (i32.gt_u (local.get $len) (i32.const 255))
+      (then (local.set $len (i32.const 255))))
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $buf)) (then (return)))
+    ;; memcpy $wa_ptr → $buf, $len bytes
+    (local.set $i (i32.const 0))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (local.get $buf) (local.get $i))
+                  (i32.load8_u (i32.add (local.get $wa_ptr) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (local.get $buf) (local.get $len)) (i32.const 0))
+    (i32.store         (local.get $rec) (local.get $buf))
+    (i32.store offset=4 (local.get $rec) (local.get $len)))
+
+  ;; $title_table_get_ptr(hwnd) → WASM heap ptr to title bytes (0 if none).
+  (func $title_table_get_ptr (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8)))))
+
+  (func $title_table_get_len (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8))) (i32.const 4))))
+
+  ;; Called from $wnd_table_remove slot teardown to drop the heap buffer.
+  (func $title_table_reset_slot (param $slot i32)
+    (local $rec i32) (local $ptr i32)
+    (local.set $rec (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $slot) (i32.const 8))))
+    (local.set $ptr (i32.load (local.get $rec)))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (i32.store         (local.get $rec) (i32.const 0))
+    (i32.store offset=4 (local.get $rec) (i32.const 0)))
+
+  ;; $client_rect_set(hwnd, l, t, r, b): store window-local client rect.
+  (func $client_rect_set (param $hwnd i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32)
+    (local $idx i32) (local $rec i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $rec (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))))
+    (i32.store          (local.get $rec) (local.get $l))
+    (i32.store offset=4  (local.get $rec) (local.get $t))
+    (i32.store offset=8  (local.get $rec) (local.get $r))
+    (i32.store offset=12 (local.get $rec) (local.get $b)))
+
+  (func $client_rect_get_l (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16)))))
+  (func $client_rect_get_t (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 4))))
+  (func $client_rect_get_r (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 8))))
+  (func $client_rect_get_b (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 12))))
+
+  (func $client_rect_reset_slot (param $slot i32)
+    (local $rec i32)
+    (local.set $rec (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $slot) (i32.const 16))))
+    (i32.store          (local.get $rec) (i32.const 0))
+    (i32.store offset=4  (local.get $rec) (i32.const 0))
+    (i32.store offset=8  (local.get $rec) (i32.const 0))
+    (i32.store offset=12 (local.get $rec) (i32.const 0)))
+
+  ;; $post_queue_push(hwnd, msg, wParam, lParam): append to the ring at 0x400.
+  ;; Same layout as PostMessageA. Returns 1 on success, 0 if full.
+  (func $post_queue_push
+        (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+        (result i32)
+    (local $slot i32)
+    (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.add (i32.const 0x400)
+      (i32.mul (global.get $post_queue_count) (i32.const 16))))
+    (i32.store          (local.get $slot) (local.get $hwnd))
+    (i32.store offset=4  (local.get $slot) (local.get $msg))
+    (i32.store offset=8  (local.get $slot) (local.get $wParam))
+    (i32.store offset=12 (local.get $slot) (local.get $lParam))
+    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))
+    (i32.const 1))
+
   ;; Skip a DLGTEMPLATE variable-length field (OrdOrString):
   ;;   0x0000 → null (skip 2 bytes)
   ;;   0xFFFF → ordinal (skip 4 bytes: 0xFFFF + u16 value)

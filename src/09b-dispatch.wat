@@ -120,6 +120,9 @@
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $msg_phase (i32.const 5))  ;; skip all activation phases
+        ;; Phase 2: seed paint_pending so first WM_PAINT arrives once the
+        ;; WM_SETFOCUS handler returns (replaces legacy msg_phase==6 block).
+        (global.set $paint_pending (i32.const 1))
         (global.set $steps (i32.const 0))
         (return)))
 

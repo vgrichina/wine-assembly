@@ -120,6 +120,40 @@
   (func (export "set_post_queue_count") (param i32) (global.set $post_queue_count (local.get 0)))
   (func (export "wnd_table_set") (param i32) (param i32) (call $wnd_table_set (local.get 0) (local.get 1)))
 
+  ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
+  (func (export "nc_post_paint") (param $hwnd i32)
+    (call $nc_flags_set (local.get $hwnd) (i32.const 1)))   ;; bit 0
+  (func (export "nc_post_erase") (param $hwnd i32)
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2)))   ;; bit 1
+  (func (export "nc_post_calcsize") (param $hwnd i32)
+    (call $nc_flags_set (local.get $hwnd) (i32.const 4)))   ;; bit 2
+  (func (export "nc_flags_test") (param $hwnd i32) (result i32)
+    (call $nc_flags_test (local.get $hwnd)))
+  (func (export "post_message_q")
+        (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
+    (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
+  ;; Client rect (window-local) written by WM_NCCALCSIZE; read by JS drawWindow.
+  (func (export "get_client_rect_l") (param $hwnd i32) (result i32) (call $client_rect_get_l (local.get $hwnd)))
+  (func (export "get_client_rect_t") (param $hwnd i32) (result i32) (call $client_rect_get_t (local.get $hwnd)))
+  (func (export "get_client_rect_r") (param $hwnd i32) (result i32) (call $client_rect_get_r (local.get $hwnd)))
+  (func (export "get_client_rect_b") (param $hwnd i32) (result i32) (call $client_rect_get_b (local.get $hwnd)))
+  ;; Packed client width|height (low 16 | high 16) — convenience for host_imports.
+  (func (export "get_client_rect_wh") (param $hwnd i32) (result i32)
+    (i32.or
+      (i32.and
+        (i32.sub (call $client_rect_get_r (local.get $hwnd)) (call $client_rect_get_l (local.get $hwnd)))
+        (i32.const 0xFFFF))
+      (i32.shl
+        (i32.sub (call $client_rect_get_b (local.get $hwnd)) (call $client_rect_get_t (local.get $hwnd)))
+        (i32.const 16))))
+  ;; Title storage — JS writes via set_window_title_wa; DefWindowProc reads during NCPAINT.
+  (func (export "set_window_title_wa") (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
+    (call $title_table_set (local.get $hwnd) (local.get $wa_ptr) (local.get $len)))
+  (func (export "get_window_title_ptr") (param $hwnd i32) (result i32)
+    (call $title_table_get_ptr (local.get $hwnd)))
+  (func (export "get_window_title_len") (param $hwnd i32) (result i32)
+    (call $title_table_get_len (local.get $hwnd)))
+
   ;; Thread init — called by host after creating worker instance
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)

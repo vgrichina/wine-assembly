@@ -204,7 +204,7 @@
   ;; dialog face shows in gaps between child controls. Equivalent to the
   ;; default WM_ERASEBKGND handler for a class with hbrBackground = BTNFACE.
   (func $dlg_fill_bkgnd (param $hwnd i32)
-    (drop (call $host_erase_background (local.get $hwnd) (i32.const 16))))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2)))
 
   ;; ---- Control WndProc dispatch ----
 

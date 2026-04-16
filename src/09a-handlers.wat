@@ -1467,7 +1467,14 @@
 
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_set_window_text (local.get $arg0) (call $g2w (local.get $arg1)))
+    (local $wa i32) (local $len i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (local.set $len (call $guest_strlen (local.get $arg1)))
+    ;; Store in TITLE_TABLE so DefWindowProc WM_NCPAINT can redraw the
+    ;; caption text from WAT-side state. Also post WM_NCPAINT.
+    (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
+    (call $nc_flags_set (local.get $arg0) (i32.const 1))
+    (call $host_set_window_text (local.get $arg0) (local.get $wa))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )

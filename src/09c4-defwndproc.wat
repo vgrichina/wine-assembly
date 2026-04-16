@@ -263,3 +263,91 @@
             (i32.const 0x30014)))
 
     (local.get $cap_h))
+
+  ;; ============================================================
+  ;; Default WM_NCPAINT handler — invoked by DefWindowProcA.
+  ;; Fetches window width/height from JS via $host_get_window_rect,
+  ;; pulls title from TITLE_TABLE, derives flags from style + auxiliary
+  ;; tables, then calls $defwndproc_ncpaint. No JS-side plumbing.
+  ;; ============================================================
+  (func $defwndproc_do_ncpaint (param $hwnd i32)
+    (local $rect i32) (local $w i32) (local $h i32)
+    (local $style i32) (local $flags i32)
+    (local $title_wa i32) (local $title_len i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
+    ;; between the GetWindowRect/DrawText overlap here.
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
+                            (i32.load         (local.get $rect))))
+    (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
+                            (i32.load offset=4  (local.get $rect))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    ;; Flags
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $flags (i32.const 1))                                ;; active (TODO: focus-aware)
+    (if (call $get_flash_state_slot (local.get $hwnd))
+      (then (local.set $flags (i32.xor (local.get $flags) (i32.const 1)))))
+    (if (i32.and (local.get $style) (i32.const 0x00C00000))         ;; WS_CAPTION
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 8)))))
+    ;; Dialog style (WS_DLGFRAME 0x00400000 without WS_THICKFRAME 0x00040000
+    ;; and without WS_MINIMIZEBOX/MAXIMIZEBOX 0x00010000/0x00020000).
+    (if (i32.and
+          (i32.and (i32.and (local.get $style) (i32.const 0x00400000))
+                   (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000))))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
+    ;; Title
+    (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+    (local.set $title_len (call $title_table_get_len (local.get $hwnd)))
+    (drop (call $defwndproc_ncpaint
+      (local.get $hwnd) (local.get $w) (local.get $h)
+      (local.get $title_wa) (local.get $title_len)
+      (local.get $flags) (i32.const 0))))
+
+  ;; Default WM_NCCALCSIZE: compute the client rect (window-local) from
+  ;; window rect minus standard borders / caption / menu bar.  Writes the
+  ;; result to CLIENT_RECT for JS (and later WAT) consumers.
+  (func $defwndproc_do_nccalcsize (param $hwnd i32)
+    (local $rect i32) (local $w i32) (local $h i32)
+    (local $style i32)
+    (local $has_cap i32) (local $has_border i32)
+    (local $bw i32) (local $cy i32) (local $bot i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
+                            (i32.load         (local.get $rect))))
+    (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
+                            (i32.load offset=4  (local.get $rect))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $has_cap   (i32.and (local.get $style) (i32.const 0x00C00000)))
+    (local.set $has_border (i32.or (local.get $has_cap)
+                                    (i32.and (local.get $style) (i32.const 0x00800000))))
+    (local.set $bw (select (i32.const 3) (i32.const 0) (local.get $has_border)))
+    (local.set $cy (local.get $bw))
+    (if (local.get $has_cap) (then (local.set $cy (i32.add (local.get $cy) (i32.const 19)))))
+    (if (i32.gt_s (call $menu_bar_count (local.get $hwnd)) (i32.const 0))
+      (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
+    (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
+    (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))
+    ;; Store window-local l/t/r/b.
+    (call $client_rect_set (local.get $hwnd)
+      (local.get $bw) (local.get $cy)
+      (i32.sub (local.get $w) (local.get $bw))
+      (i32.sub (local.get $h) (local.get $bot))))
+
+  ;; Tiny wrapper so $defwndproc_do_ncpaint can peek FLASH_TABLE without
+  ;; reaching into the table address directly (keeps the layout private
+  ;; to help.wat and avoids leaking the offset into two files).
+  (func $get_flash_state_slot (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))

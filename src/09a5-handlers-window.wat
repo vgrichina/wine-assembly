@@ -206,6 +206,15 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
+    ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
+    (if (local.get $arg2)
+      (then (call $title_table_set (global.get $next_hwnd)
+                (call $g2w (local.get $arg2))
+                (call $guest_strlen (local.get $arg2)))))
+    ;; Queue an initial WM_NCPAINT (bit 0), WM_ERASEBKGND (bit 1), and
+    ;; WM_NCCALCSIZE (bit 2) so the first repaint delivers chrome, background
+    ;; fill, and client-rect computation via the message loop rather than JS.
+    (call $nc_flags_set (global.get $next_hwnd) (i32.const 7))
     ;; Eagerly load the menu blob now that the WND_RECORDS slot exists —
     ;; otherwise a CheckMenuItem fired from WM_CREATE (e.g. FreeCell
     ;; initialising the Messages toggle) would see an empty blob and the
@@ -474,6 +483,7 @@
                 (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
                 (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
                 (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+                (call $nc_flags_set (global.get $main_hwnd) (i32.const 4)) ;; NCCALCSIZE pending
                 (global.set $eip (local.get $wndproc))
                 (global.set $eax (i32.const 1))
                 (global.set $steps (i32.const 0))
@@ -498,6 +508,7 @@
                 (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005))
                 (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))
                 (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed))
+                (call $nc_flags_set (local.get $arg0) (i32.const 4)) ;; NCCALCSIZE pending
                 (global.set $eip (local.get $wndproc))
                 (global.set $eax (i32.const 1))
                 (global.set $steps (i32.const 0))
@@ -548,6 +559,7 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
+    (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire
@@ -577,31 +589,55 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+    (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phases 0-4 (WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS) now delivered
     ;; synchronously during CreateWindowExA via CACA0007→CACA000A chain.
     ;; msg_phase is set to 5 after the chain completes.
-    ;; Phase 5: send WM_ERASEBKGND (wParam = hdc)
-    (if (i32.eq (global.get $msg_phase) (i32.const 5))
+    ;; ---- NC_FLAGS scans ----
+    ;; WM_NCCALCSIZE (0x83) — bit 2
+    (if (global.get $nc_flags_count)
     (then
-    (global.set $msg_phase (i32.const 6))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000))) ;; wParam = hdc
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 6: send WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 6))
+    (local.set $tmp (call $nc_flags_scan (i32.const 4)))
+    (if (local.get $tmp)
     (then
-    (global.set $msg_phase (i32.const 7))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+    (call $nc_flags_clear (local.get $tmp) (i32.const 4))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
+    ;; WM_NCPAINT (0x85) — bit 0
+    (if (global.get $nc_flags_count)
+    (then
+    (local.set $tmp (call $nc_flags_scan (i32.const 1)))
+    (if (local.get $tmp)
+    (then
+    (call $nc_flags_clear (local.get $tmp) (i32.const 1))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0085))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))   ;; hrgn=1 (entire window)
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
+    ;; WM_ERASEBKGND (0x14) — bit 1
+    (if (global.get $nc_flags_count)
+    (then
+    (local.set $tmp (call $nc_flags_scan (i32.const 2)))
+    (if (local.get $tmp)
+    (then
+    (call $nc_flags_clear (local.get $tmp) (i32.const 2))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (local.get $tmp) (i32.const 0x40000))) ;; hdc
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
+    ;; msg_phase 5/6 (WM_ERASEBKGND + WM_PAINT bootstrap) retired in Phase 2;
+    ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
+    ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
     ;; Poll for input events — consume pending cache first, then host
     (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
       (then
@@ -698,7 +734,9 @@
     (then
     (local.set $packed (global.get $pending_child_size))
     (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (global.set $pending_child_size (i32.const 0))))
+      (then
+        (global.set $pending_child_size (i32.const 0))
+        (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4))))
     (call $gs32 (local.get $arg0) (global.get $pending_child_size_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
@@ -710,35 +748,59 @@
     (then
     (local.set $packed (global.get $pending_wm_size))
     (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (global.set $pending_wm_size (i32.const 0))))
+      (then
+        (global.set $pending_wm_size (i32.const 0))
+        (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))))
     (call $gs32 (local.get $arg0) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $packed))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Phase-based initial message delivery
-    ;; Phases 0-4 (activation) now delivered synchronously during CreateWindowExA.
-    ;; Phase 5: WM_ERASEBKGND
-    (if (i32.eq (global.get $msg_phase) (i32.const 5))
+    ;; ---- NC_FLAGS scans (mirrors GetMessageA) ----
+    (if (global.get $nc_flags_count)
     (then
-    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 6))))
-    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0014)) ;; WM_ERASEBKGND
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000)))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Phase 6: WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 6))
+    (local.set $tmp (call $nc_flags_scan (i32.const 4)))
+    (if (local.get $tmp)
     (then
-    (if (i32.and (local.get $arg4) (i32.const 1)) (then (global.set $msg_phase (i32.const 7))))
-    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (call $nc_flags_clear (local.get $tmp) (i32.const 4))))
+    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
+    (if (global.get $nc_flags_count)
+    (then
+    (local.set $tmp (call $nc_flags_scan (i32.const 1)))
+    (if (local.get $tmp)
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (call $nc_flags_clear (local.get $tmp) (i32.const 1))))
+    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0085))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
+    (if (global.get $nc_flags_count)
+    (then
+    (local.set $tmp (call $nc_flags_scan (i32.const 2)))
+    (if (local.get $tmp)
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (call $nc_flags_clear (local.get $tmp) (i32.const 2))))
+    (call $gs32 (local.get $arg0) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0014))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.add (local.get $tmp) (i32.const 0x40000)))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
+    ;; Phase-based initial message delivery
+    ;; Phases 0-4 (activation) delivered synchronously during CreateWindowExA.
+    ;; Phases 5/6 (WM_ERASEBKGND/WM_PAINT bootstrap) retired in Phase 2 —
+    ;; NC_FLAGS bit 1 + $paint_pending provide equivalent delivery.
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
@@ -1037,6 +1099,20 @@
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
     (global.set $eax (call $host_erase_background (local.get $arg0) (global.get $wndclass_bg_brush)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_NCPAINT (0x85): redraw chrome.  Handler reads title/style/flags
+    ;; from WAT-side tables and paints into the back-canvas.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0085))
+    (then
+    (call $defwndproc_do_ncpaint (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_NCCALCSIZE (0x83): default is a no-op (client rect equals window
+    ;; rect minus our standard borders; see $defwndproc_do_nccalcsize).
+    (if (i32.eq (local.get $arg1) (i32.const 0x0083))
+    (then
+    (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)

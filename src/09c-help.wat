@@ -47,7 +47,11 @@
         (i32.store offset=8  (local.get $ptr) (i32.const 0))
         (i32.store offset=12 (local.get $ptr) (i32.const 0))
         (i32.store offset=16 (local.get $ptr) (i32.const 0))
-        (i32.store offset=20 (local.get $ptr) (i32.const 0))))
+        (i32.store offset=20 (local.get $ptr) (i32.const 0))
+        ;; Clear parallel-table state for the recycled slot.
+        (call $nc_flags_reset_slot (local.get $empty))
+        (call $title_table_reset_slot (local.get $empty))
+        (call $client_rect_reset_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -76,6 +80,10 @@
           ;; Free control state if any
           (local.set $state (i32.load offset=20 (local.get $ptr)))
           (if (local.get $state) (then (call $heap_free (local.get $state))))
+          ;; Drop parallel-table state tied to this slot.
+          (call $nc_flags_reset_slot (local.get $i))
+          (call $title_table_reset_slot (local.get $i))
+          (call $client_rect_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
@@ -305,6 +313,12 @@
     ;; 0xFFFF0002 = built-in control wndproc
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
       (then (return (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; WM_NCPAINT / WM_NCCALCSIZE default chrome for WAT-native top-levels.
+    ;; Help wndproc never overrides these so we take the default directly.
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0083))
+      (then (call $defwndproc_do_nccalcsize (local.get $hwnd)) (return (i32.const 0))))
     ;; 0xFFFF0001 = help wndproc
     (call $help_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
   )

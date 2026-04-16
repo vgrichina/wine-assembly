@@ -410,7 +410,13 @@
   ;; 0x0000AD98  4B      WAVE_OUT_PENDING_HDR (deferred WHDR_DONE — guest addr of last submitted WAVEHDR)
   ;; 0x0000D170  6KB     SCROLL_TABLE   (256 entries × 24 bytes, ends 0xE970)
   ;; 0x0000E970  256B    FLASH_TABLE    (256 entries × 1 byte,  ends 0xEA70)
-  ;; 0x0000EA70  5.4KB   Free (up to GUEST_BASE)
+  ;; 0x0000EA70  1KB     NC_FLAGS       (256 entries × 4 bytes, ends 0xEE70)
+  ;;   bit 0: WM_NCPAINT pending; bit 1: WM_ERASEBKGND pending; bit 2: WM_NCCALCSIZE pending
+  ;; 0x0000EE70  2KB     TITLE_TABLE    (256 entries × 8 bytes — WASM title ptr + len, ends 0xF670)
+  ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
+  ;; 0x00010670  400B    Free
+  ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
+  ;; 0x00010900  ~3KB    Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FF0000  8KB     DX_OBJECTS     (256 entries × 32 bytes, ends 0x07FF2000)
   ;; 0x07FF2000  2KB     COM_WRAPPERS   (256 entries × 8 bytes, ends 0x07FF2800)
@@ -452,6 +458,19 @@
   ;; 256 entries × 24 bytes = 0x1800 (0x7000..0x8800)
   (global $WND_RECORDS   i32 (i32.const 0x00007000))
   (global $MAX_WINDOWS   i32 (i32.const 256))
+  ;; NC_FLAGS: parallel to WND_RECORDS, 4 bytes per slot (bits track
+  ;; pending WM_NC* messages that GetMessageA synthesises before WM_PAINT).
+  (global $NC_FLAGS      i32 (i32.const 0x0000EA70))
+  ;; NC_FLAGS_COUNT: running count of slots with any bit set, so the
+  ;; per-GetMessageA-call scan can early-out when the table is empty.
+  (global $nc_flags_count (mut i32) (i32.const 0))
+  ;; TITLE_TABLE: parallel to WND_RECORDS, 8 bytes per slot = { wa_ptr:i32, len:i32 }
+  ;; ptr is a WASM linear address of a heap-allocated ASCII title (no NUL).
+  ;; Written by SetWindowTextA; read by $defwndproc_handle_ncpaint.
+  (global $TITLE_TABLE   i32 (i32.const 0x0000EE70))
+  ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
+  ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
+  (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
   ;; CONTROL_TABLE: per-slot control metadata, parallel-indexed to WND_RECORDS.
   ;; 256 entries × 16 bytes = 0x1000 (0x8800..0x9800)
   (global $CONTROL_TABLE i32 (i32.const 0x00008800))
