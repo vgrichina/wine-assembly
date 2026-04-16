@@ -802,7 +802,7 @@
 
       ;; ---- 0xA8: TEST AL, imm8 ----
       (if (i32.eq (local.get $op) (i32.const 0xA8))
-        (then (call $te (i32.const 73) (i32.const 0)) (call $te_raw (call $sign_ext8 (call $d_fetch8))) (br $decode)))
+        (then (call $te (i32.const 217) (i32.const 0)) (call $te_raw (call $d_fetch8)) (br $decode)))
       ;; ---- 0xA9: TEST EAX, imm32 / TEST AX, imm16 (with 66h prefix) ----
       (if (i32.eq (local.get $op) (i32.const 0xA9))
         (then
@@ -965,8 +965,6 @@
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x6A))
         (then
-          (call $host_log_i32 (i32.const 0xDEC0DE6A))
-          (call $host_log_i32 (global.get $d_pc))
           (call $te (i32.const 34) (i32.const 0))
           (call $te_raw (call $sign_ext8 (call $d_fetch8)))
           (br $decode)))
