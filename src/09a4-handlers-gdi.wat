@@ -254,13 +254,25 @@
   )
 
   ;; 169: CreateDCA — STUB: unimplemented
+  ;; CreateDCA(lpszDriver, lpszDevice, lpszOutput, lpInitData) — 4 args stdcall.
+  ;; Return the same fake screen DC as GetDC(NULL) (0x40000) for any driver; we don't
+  ;; model per-device DCs, and callers (KVDD, printer probes) just query GetDeviceCaps.
   (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0x40000))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 170: SetAbortProc — STUB: unimplemented
   (func $handle_SetAbortProc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; ExtEscape(hdc, nEscape, cbInput, lpszInData, cbOutput, lpszOutData) — 6 args stdcall.
+  ;; Return 0 (escape not implemented); KVDD and DirectX probes treat that as
+  ;; "no special escape support" and fall back to generic GDI.
+  (func $handle_ExtEscape (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 171: SetBkColor(hdc, color) → prev color

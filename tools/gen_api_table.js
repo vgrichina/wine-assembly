@@ -158,6 +158,7 @@ const extra = [
   { name: 'GetPixel', nargs: 3 },
   { name: 'SetPixel', nargs: 4 },
   { name: 'SetROP2', nargs: 2 },
+  { name: 'ExtEscape', nargs: 6 },
   // String W-suffix
   { name: 'lstrlenW', nargs: 1 },
   { name: 'lstrcpyW', nargs: 2 },

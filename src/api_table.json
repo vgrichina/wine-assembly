@@ -8704,5 +8704,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 551866330
+  },
+  {
+    "id": 1244,
+    "name": "ExtEscape",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3581342023
   }
 ]

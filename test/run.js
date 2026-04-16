@@ -753,7 +753,8 @@ async function main() {
     const required = detectRequiredDlls(exeBytes);
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
-      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll', 'd3drm.dll']);
+      'msvcp60.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll', 'd3drm.dll',
+      'kvdd.dll']);
     const dllSearchDirs = [dllDir, path.dirname(EXE_PATH), path.join(__dirname, 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {
