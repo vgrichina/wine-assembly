@@ -2,7 +2,9 @@ build/
 node_modules/
 .env*
 .DS_Store
+.claude/
 scratch/
+binaries
 *.exe
 *.png
 *.dll
@@ -13,8 +15,12 @@ scratch/
 *.MID
 *.DAT
 *.bmp
+*.mp3
 test/binaries/pinball/
 test/binaries/pinball-plus95/
+test/binaries/plus98/
+test/binaries/shareware/
+test/binaries/wep32-community/
 test/binaries/dlls/
 !test/binaries/dlls/SOURCES.md
 !test/binaries/SOURCES.md
