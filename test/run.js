@@ -7,8 +7,18 @@ const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 let createCanvas, Win98Renderer;
 try {
-  createCanvas = require('canvas').createCanvas;
+  const canvasMod = require('canvas');
+  createCanvas = canvasMod.createCanvas;
   Win98Renderer = require('../lib/renderer').Win98Renderer;
+  const fontsDir = path.join(__dirname, '..', 'fonts');
+  const fontFiles = [
+    { file: 'W95FA.otf',    family: 'W95FA' },
+    { file: 'FSEX302.ttf',  family: 'Fixedsys Excelsior' },
+  ];
+  for (const { file, family } of fontFiles) {
+    const p = path.join(fontsDir, file);
+    if (fs.existsSync(p)) canvasMod.registerFont(p, { family });
+  }
 } catch (_) {}
 
 const ROOT = path.join(__dirname, '..');
