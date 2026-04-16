@@ -569,14 +569,32 @@
 
   ;; GetCaps(this, lpDDDriverCaps, lpDDHELCaps)
   (func $handle_IDirectDraw_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    ;; Fill driver caps if requested
+    (local $wa i32) (local $sz i32)
+    (call $host_log_i32 (i32.const 0xDDCA9001))
+    ;; Fill driver caps if requested. CRITICAL: respect caller's dwSize —
+    ;; DDraw v1 = 316, DDraw v5 = 380. Writing past it clobbers the caller's
+    ;; stack frame (and return address). Read dwSize from [arg1], clamp.
     (if (local.get $arg1) (then
+      (call $host_log_i32 (i32.const 0xDDCA9002))
+      (call $host_log_i32 (i32.load (call $g2w (local.get $arg1))))
       (local.set $wa (call $g2w (local.get $arg1)))
-      ;; Zero the struct, then set dwSize and some caps
-      (call $zero_memory (local.get $wa) (i32.const 380))
-      (i32.store (local.get $wa) (i32.const 380)) ;; dwSize
+      (local.set $sz (i32.load (local.get $wa)))
+      (if (i32.or (i32.lt_u (local.get $sz) (i32.const 16))
+                  (i32.gt_u (local.get $sz) (i32.const 380)))
+        (then (local.set $sz (i32.const 380))))
+      (call $zero_memory (local.get $wa) (local.get $sz))
+      (i32.store (local.get $wa) (local.get $sz)) ;; preserve dwSize
       ;; dwCaps = DDCAPS_BLT | DDCAPS_BLTCOLORFILL | DDCAPS_COLORKEY
+      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))))
+    ;; Same for HEL caps
+    (if (local.get $arg2) (then
+      (local.set $wa (call $g2w (local.get $arg2)))
+      (local.set $sz (i32.load (local.get $wa)))
+      (if (i32.or (i32.lt_u (local.get $sz) (i32.const 16))
+                  (i32.gt_u (local.get $sz) (i32.const 380)))
+        (then (local.set $sz (i32.const 380))))
+      (call $zero_memory (local.get $wa) (local.get $sz))
+      (i32.store (local.get $wa) (local.get $sz))
       (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
