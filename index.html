@@ -235,6 +235,11 @@
           <option value="spider">Spider</option>
           <option value="marbles">Marbles</option>
         </optgroup>
+        <optgroup label="DirectX Shareware">
+          <option value="abedemo">Abe's Oddysee (demo)</option>
+          <option value="aoe2">Age of Empires II (demo)</option>
+          <option value="rct">RollerCoaster Tycoon</option>
+        </optgroup>
         <optgroup label="Plus! 98 Screensavers">
           <option value="scr_architec">Architecture</option>
           <option value="scr_cathy">Cathy</option>
@@ -449,6 +454,19 @@ Resource-aware Win98 emulator
         'binaries/plus98/2.WAV', 'binaries/plus98/MARBLES.ICO',
       ] },
       winamp:     { exe: 'binaries/winamp.exe', files: ['binaries/plugins/in_mp3.dll', 'binaries/plugins/out_wave.dll'] },
+      abedemo:    { exe: 'binaries/shareware/abe/ex/AbeDemo.exe', files: [
+        'binaries/shareware/abe/ex/GAMEBGN.ddv',
+        'binaries/shareware/abe/ex/R1P18P19.ddv',
+        'binaries/shareware/abe/ex/R1P19P18.ddv',
+        'binaries/shareware/abe/ex/demoopen.ddv',
+        'binaries/shareware/abe/ex/c1.lvl',
+        'binaries/shareware/abe/ex/r1.lvl',
+        'binaries/shareware/abe/ex/s1.lvl',
+      ] },
+      aoe2:       { exe: 'binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', files: [
+        'binaries/shareware/aoe2/aoe2_ex/language.dll',
+      ] },
+      rct:        { exe: 'binaries/shareware/rct/English/RCT.exe' },
       scr_architec: { exe: 'binaries/screensavers/ARCHITEC.SCR', args: '/s' },
       scr_cathy:    { exe: 'binaries/screensavers/CATHY.SCR', args: '/s' },
       scr_cityscap: { exe: 'binaries/screensavers/CITYSCAP.SCR', args: '/s' },
