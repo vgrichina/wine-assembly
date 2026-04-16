@@ -7362,6 +7362,78 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; CharUpperA(lpsz) — if high word is 0, uppercase the single char; else
+  ;; lpsz is a pointer to a nul-terminated ANSI string uppercased in place.
+  ;; Returns the input unchanged (char or pointer).
+  (func $handle_CharUpperA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $c i32)
+    (global.set $eax (local.get $arg0))
+    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
+      (then
+        ;; Single-char mode: uppercase the low byte
+        (local.set $c (i32.and (local.get $arg0) (i32.const 0xff)))
+        (if (i32.and
+              (i32.ge_u (local.get $c) (i32.const 0x61))
+              (i32.le_u (local.get $c) (i32.const 0x7a)))
+          (then (global.set $eax (i32.sub (local.get $c) (i32.const 0x20))))))
+      (else
+        (local.set $p (call $g2w (local.get $arg0)))
+        (block $done (loop $lp
+          (local.set $c (i32.load8_u (local.get $p)))
+          (br_if $done (i32.eqz (local.get $c)))
+          (if (i32.and
+                (i32.ge_u (local.get $c) (i32.const 0x61))
+                (i32.le_u (local.get $c) (i32.const 0x7a)))
+            (then (i32.store8 (local.get $p) (i32.sub (local.get $c) (i32.const 0x20)))))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (br $lp)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; IME stubs — we never inject IME composition, so Immm* are no-ops.
+  ;; ImmAssociateContext(hWnd, hIMC) → prev HIMC (we always return 0 — no previous)
+  (func $handle_ImmAssociateContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ImmGetContext(hWnd) → HIMC (return 0 = no IME context)
+  (func $handle_ImmGetContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ImmReleaseContext(hWnd, hIMC) → BOOL
+  (func $handle_ImmReleaseContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CharLowerA(lpsz) — mirror of CharUpperA.
+  (func $handle_CharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $c i32)
+    (global.set $eax (local.get $arg0))
+    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
+      (then
+        (local.set $c (i32.and (local.get $arg0) (i32.const 0xff)))
+        (if (i32.and
+              (i32.ge_u (local.get $c) (i32.const 0x41))
+              (i32.le_u (local.get $c) (i32.const 0x5a)))
+          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
+      (else
+        (local.set $p (call $g2w (local.get $arg0)))
+        (block $done (loop $lp
+          (local.set $c (i32.load8_u (local.get $p)))
+          (br_if $done (i32.eqz (local.get $c)))
+          (if (i32.and
+                (i32.ge_u (local.get $c) (i32.const 0x41))
+                (i32.le_u (local.get $c) (i32.const 0x5a)))
+            (then (i32.store8 (local.get $p) (i32.add (local.get $c) (i32.const 0x20)))))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (br $lp)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented
   (func $handle_??1type_info@@UAE@XZ (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))

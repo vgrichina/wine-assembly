@@ -8669,5 +8669,40 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1992772342
+  },
+  {
+    "id": 1239,
+    "name": "CharUpperA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 505419018
+  },
+  {
+    "id": 1240,
+    "name": "CharLowerA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3575899993
+  },
+  {
+    "id": 1241,
+    "name": "ImmAssociateContext",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3996975227
+  },
+  {
+    "id": 1242,
+    "name": "ImmGetContext",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 117298633
+  },
+  {
+    "id": 1243,
+    "name": "ImmReleaseContext",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 551866330
   }
 ]
