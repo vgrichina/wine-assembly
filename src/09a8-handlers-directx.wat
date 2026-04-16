@@ -4,7 +4,7 @@
   ;; ============================================================
 
   ;; ── DX_OBJECTS table ─────────────────────────────────────────
-  ;; 64 entries × 32 bytes at 0xE970 (free region below GUEST_BASE)
+  ;; 256 entries × 32 bytes at 0x07FF0000 (high memory, safe from guest writes)
   ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
@@ -13,11 +13,11 @@
   ;; +20 dib_ptr (WASM addr of pixel data, 0 if none)
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
-  (global $DX_OBJECTS i32 (i32.const 0x0000E970))
+  (global $DX_OBJECTS i32 (i32.const 0x07FF0000))
   (global $DX_MAX i32 (i32.const 256))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
-  ;; COM wrapper stubs: 256 × 8 bytes below GUEST_BASE (avoids guest heap overlap)
-  (global $COM_WRAPPERS i32 (i32.const 0x00010A80))
+  ;; COM wrapper stubs: 256 × 8 bytes in high memory (safe from guest address collision)
+  (global $COM_WRAPPERS i32 (i32.const 0x07FF2000))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.

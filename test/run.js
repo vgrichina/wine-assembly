@@ -1053,6 +1053,7 @@ async function main() {
 
   const debugPrompt = async (reason) => {
     console.log('  ' + regs());
+    console.log('  prev_eip: ' + hex(instance.exports.get_dbg_prev_eip()));
     dumpStack(reason);
     disasmAt(instance.exports.get_eip());
     if (TRACE_SEH) dumpSEH();
@@ -1492,7 +1493,7 @@ async function main() {
     }
 
     // Fire multimedia timer callback if due (timeSetEvent fires asynchronously on real Win32)
-    if (instance.exports.fire_mm_timer) {
+    if (instance.exports.fire_mm_timer && !hasFlag('no-timer')) {
       const comBefore = instance.exports.guest_read32(0x003fea90);
       const fired = instance.exports.fire_mm_timer();
       const comAfter = instance.exports.guest_read32(0x003fea90);

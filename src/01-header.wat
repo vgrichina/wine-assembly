@@ -529,7 +529,7 @@
   ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte = 0x100 (0xF170..0xF270)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
-  (global $FLASH_TABLE i32 (i32.const 0x00010970))
+  (global $FLASH_TABLE i32 (i32.const 0x0000E970))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)

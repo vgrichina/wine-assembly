@@ -65,7 +65,7 @@
     (local $wa i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x4000000))) ;; 64MB (full WASM memory)
+                (i32.ge_u (local.get $wa) (i32.const 0x8000000))) ;; 128MB (full WASM memory)
       (then
         ;; Re-zero the sentinel (in case a prior bad write landed here)
         (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
