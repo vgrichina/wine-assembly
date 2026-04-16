@@ -941,6 +941,45 @@
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $tmp))
     (return_call $next))
 
+  ;; 234: INC r8
+  (func $th_inc_r8 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (call $get_reg8 (local.get $op)))
+    (local.set $r (i32.and (i32.add (local.get $old) (i32.const 1)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $op) (local.get $r))
+    (call $set_flags_inc (local.get $old) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
+  ;; 235: DEC r8
+  (func $th_dec_r8 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (call $get_reg8 (local.get $op)))
+    (local.set $r (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFF)))
+    (call $set_reg8 (local.get $op) (local.get $r))
+    (call $set_flags_dec (local.get $old) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
+  ;; 236: MOV r16, imm16 — preserves upper 16 bits
+  (func $th_mov_r16_i16 (param $op i32)
+    (local $imm i32)
+    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
+    (call $set_reg (local.get $op) (i32.or (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF0000)) (local.get $imm)))
+    (return_call $next))
+  ;; 237: XCHG [addr], r8
+  (func $th_xchg_m8_r (param $op i32)
+    (local $addr i32) (local $tmp i32)
+    (local.set $addr (call $read_thread_word))
+    (local.set $tmp (call $gl8 (local.get $addr)))
+    (call $gs8 (local.get $addr) (call $get_reg8 (local.get $op)))
+    (call $set_reg8 (local.get $op) (local.get $tmp))
+    (return_call $next))
+  ;; 238: XCHG [base+disp], r8
+  (func $th_xchg_m8_r_ro (param $op i32)
+    (local $addr i32) (local $tmp i32)
+    (local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
+    (local.set $tmp (call $gl8 (local.get $addr)))
+    (call $gs8 (local.get $addr) (call $get_reg8 (i32.shr_u (local.get $op) (i32.const 4))))
+    (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $tmp))
+    (return_call $next))
+
   ;; --- TEST ---
   (func $th_test_r_r (param $op i32)
     (call $set_flags_logic (i32.and

@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 234 funcref)
+  (table $handlers 239 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -286,5 +286,10 @@
     $th_pop_m32            ;; 231: pop [addr] (addr in next word)
     $th_pop_m32_ro         ;; 232: pop [base+disp] (op=base, disp in word)
     $th_emms               ;; 233
+    $th_inc_r8             ;; 234: INC r8 (op=byte_reg)
+    $th_dec_r8             ;; 235: DEC r8 (op=byte_reg)
+    $th_mov_r16_i16        ;; 236: MOV r16, imm16 (op=reg, imm in next word) — preserves upper 16
+    $th_xchg_m8_r          ;; 237: XCHG [addr], r8 (op=byte_reg, addr in next word)
+    $th_xchg_m8_r_ro       ;; 238: XCHG [base+disp], r8 (op=reg<<4|base, disp in next word)
   )
 
