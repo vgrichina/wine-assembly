@@ -10,26 +10,26 @@
            │                        │  (high memory — outside g2w bounds)
            ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
            │       ...gap...        │
-0x02462200 ├────────────────────────┤
-           │  File mapping zone     │  MapViewOfFile allocations
-0x02462000 ├────────────────────────┤
+0x04462200 ├────────────────────────┤
+           │  File mapping zone     │  MapViewOfFile allocations (high region)
+0x04462000 ├────────────────────────┤
            │  DLL table (512B)      │  16 DLL slots x 32 bytes
-0x02262000 ├────────────────────────┤
+0x04262000 ├────────────────────────┤
            │  PE staging (2MB)      │  Temp buffer for PE/DLL loading
-0x02252000 ├────────────────────────┤
+0x04252000 ├────────────────────────┤
            │  Cache index (64KB)    │  4096 decoded-block lookup slots
-0x01E52000 ├────────────────────────┤
+0x03E52000 ├────────────────────────┤
            │  Thread cache (4MB)    │  Decoded x86 -> threaded code pairs
-0x01E12000 ├────────────────────────┤
+0x03E12000 ├────────────────────────┤
            │  Thunk zone (256KB)    │  API import trampolines (8 bytes each)
-0x01D12000 ├────────────────────────┤
+0x03D12000 ├────────────────────────┤
            │  Heap (1MB)            │  HeapAlloc / malloc bump allocator
-0x01C12000 ├────────────────────────┤
+0x03C12000 ├────────────────────────┤
            │  Stack (1MB, grows ↓)  │  Single guest ESP
-0x00E12000 ├────────────────────────┤
+           ├────────────────────────┤
            │                        │
            │  Guest address space   │  PE .text/.data/.rsrc/.rdata + DLLs
-           │  (28MB)                │  g2w(addr) = addr - ImageBase + 0x12000
+           │  (60MB)                │  g2w(addr) = addr - ImageBase + 0x12000
            │                        │
 0x00012000 ├────────────────────────┤  <- GUEST_BASE
            │  TEXT_SCRATCH (1KB)    │  Unicode conversion buffer

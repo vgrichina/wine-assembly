@@ -4,40 +4,42 @@
 **Image base:** 0x00400000
 **Data files:** `test/binaries/shareware/rct/Data/` — CSG1.DAT, CSG1i.DAT, CSS*.DAT, etc.
 **Window:** Fullscreen 640x480 8bpp (Chris Sawyer's custom engine)
-**Status (2026-04-16):** Game starts, all data files load, scenario index loads, DD surfaces created. Game immediately quits because WM_ACTIVATEAPP hasn't been delivered yet — game checks "app active" flag in its first tick, finds it false, exits with "Unable to start game in a minimized state". Screen is black: palette is grayscale ramp, game never calls SetEntries because it quits before reaching the title sequence.
+**Status (2026-04-16):** WM_ACTIVATEAPP fix unblocked startup. Game loads all data files, maps CSG1.DAT (15MB) and CSS1.DAT (4.6MB) via MapViewOfFile, decompresses CSG sprites, enters main rendering loop. Crashes due to memory layout collision — game's large data writes (CSG decompression + rendering copy loop) overflow into emulator-private regions (thread cache, thunks). Memory layout relocated +32MB and MapViewOfFile changed to use guest heap, but game still reaches thunk zone. Need further investigation of how the game computes its large buffer destination addresses.
 
 ## What works
 
 - CRT startup, registry, file system setup
+- WM_ACTIVATEAPP/WM_ACTIVATE delivered synchronously during CreateWindowExA (CACA0020-0023 thunks)
 - DirectDraw: DirectDrawCreate, EnumDisplayModes, SetCooperativeLevel, SetDisplayMode(640,480,8), CreateSurface (primary + 2 offscreen), CreateClipper, CreatePalette, SetPalette, Lock/Unlock
 - DirectPlay: DirectPlayEnumerate (stub)
 - DirectInput: CreateDevice (keyboard + mouse), SetDataFormat, GetDeviceState, SetCooperativeLevel, Acquire
 - VFS: All data files load via root-relative paths (`\Data\CSG1.DAT`). Sibling dirs (Data/, Scenarios/, Saved Games/) mapped from parent.
 - Registry: Demo key `HKLM\Software\Fish Technology Group\RollerCoaster Tycoon Demo Setup` with Path=`C:\`
 - Scenario loading: SC.IDX index + 9 .SC4 scenario files enumerated via FindFirstFile(`\Scenarios\*.SC4`)
-- CSG1.DAT memory-mapped via MapViewOfFile, CSG1I.DAT index processed
-- Rendering pipeline: dx_present → SetDIBitsToDevice 640x480 8bpp with palette conversion (fires but palette is grayscale)
+- CSG1.DAT memory-mapped via MapViewOfFile (15MB), CSG1I.DAT index processed and rebased
+- CSS1.DAT memory-mapped (4.6MB sound data)
+- CSG sprite decompression runs to completion (~50K batches)
+- Main rendering/tick loop enters and runs (InterlockedExchange-based frame sync, mm_timer callback)
 - Custom cursors loaded from PE resources (20+ LoadCursorA calls)
 - GAME.CFG read/write
-- Message loop: PeekMessage/TranslateMessage/DispatchMessage (runs after PostQuitMessage because PeekMessageA doesn't deliver WM_QUIT)
+- Message loop: PeekMessage/TranslateMessage/DispatchMessage
 
-## Current blocker: WM_ACTIVATEAPP timing
+## Current blocker: memory layout collision
 
-The game calls PostQuitMessage (exits) on its **first game tick** — before PeekMessage ever delivers WM_ACTIVATEAPP. The exit message at 0x568960 says "Unable to start game in a minimized state", meaning the WndProc never processed WM_ACTIVATEAPP and the game's "app active" flag stayed false.
+The game's rendering copy loop (0x00444600-area) writes data to addresses that collide with emulator-private regions (thread cache at WASM 0x03E52000). The `0xCAC4BAD0` cache corruption marker fires, then EIP goes to 0 or garbage.
 
-**Root cause:** Our CreateWindowExA sends WM_CREATE synchronously, but WM_ACTIVATEAPP/WM_ACTIVATE are deferred until the first PeekMessage/GetMessage call (phase-based delivery). RCT's init code runs between CreateWindowExA and the first PeekMessage, checking the active state during that window. On real Windows, WM_ACTIVATEAPP arrives during or immediately after CreateWindowEx.
+**What was tried:**
+1. Relocated all emulator internal regions +32MB (GUEST_STACK 0x01C12000→0x03C12000, THUNK_BASE 0x01E12000→0x03E12000, etc.)
+2. Changed MapViewOfFile to allocate from guest heap (via `guest_alloc`) instead of high MAP_ALLOC zone
 
-**Call chain:** 0x004010FC → 0x438248 (main tick) → checks active flag → 0x555AB8 (decompress exit msg + quit) → 0x555B75 (write GAME.CFG + PostQuitMessage)
+**Why it still fails:** The crash destination (ESI) tracks the relocation — it moved by exactly 32MB when we moved internal regions 32MB. This means the game computes the destination address relative to something that changes with our layout. Likely candidate: the CSG1I.DAT index rebase loop at 0x008FA065 adds a base address (from MapViewOfFile or similar) to each index entry. If that base comes from a pointer that's near the thunk zone, the rebased entries point into the thread cache.
 
-**Fix:** Deliver WM_ACTIVATEAPP and WM_ACTIVATE synchronously during CreateWindowExA (after WM_CREATE returns via CACA0001), or via the CBT hook continuation (CACA0002), so the WndProc sets its "active" flag before the game's main tick runs.
+**Key observation:** `heap_ptr` reaches 0x021becf8 after mapping CSG1.DAT (15MB) + CSS1.DAT (4.6MB). The copy loop writes to ESI~0x042889e4 which is past heap_ptr but in the thunk zone (thunk_guest_base=0x04200000). There must be additional large allocations not tracked, or the game computes addresses by adding offsets to a thunk-derived pointer.
 
-## Secondary issue: 8bpp palette
-
-Once the activation fix lets the game run past init, the palette still needs fixing:
-- GetSystemPaletteEntries currently zeros the buffer — should return Win98 standard 20 system colors
-- The game creates palette with system colors from GetSystemPaletteEntries (entries 0-9 and 246-255), middle entries stay as grayscale ramp
-- The game will call IDirectDrawPalette::SetEntries to load the real palette from CSG data during the title sequence — COM dispatch is confirmed working for palette methods
-- dx_present at 0xAD40 builds BITMAPINFO with palette from `$dx_primary_pal_wa` and calls host SetDIBitsToDevice
+**Possible fixes:**
+- Increase WASM memory beyond 128MB to push internal regions higher
+- Trace the exact origin of the copy loop destination pointer (ESI at 0x00444600)
+- Check if game uses GetModuleHandle/GetProcAddress return values as base addresses for data access
 
 ## Key addresses
 
@@ -47,13 +49,11 @@ Once the activation fix lets the game run past init, the palette still needs fix
 | 0x00403B2E | PeekMessage-based message check (called from main loop) |
 | 0x004010FC | Main function: calls init check, game init, game tick loop |
 | 0x00438248 | Main game tick function |
-| 0x00555AB8 | Quit wrapper: decompresses exit msg to 0x568720/0x568960, calls 0x555B75 |
-| 0x00555B75 | Quit: call 0x452345 (write GAME.CFG), call 0x4045AD (PostQuitMessage) |
+| 0x0042F5A5-0x0042F5D9 | CSG sprite decompression inner loop |
+| 0x00444600-0x0044463E | Rendering copy loop (memcpy-like, fires per frame) |
+| 0x0040C7A6 | mm_timer callback (InterlockedExchange at 0x00562F2C) |
 | 0x008FA065 | CSG1I index rebase loop |
 | 0x00458720 | CSG data decompression function |
-| 0x00568960 | Exit message string buffer ("Unable to start game in a minimized state") |
-| 0x00560194 | Game exit state flag (set to 1 by quit wrapper) |
-| 0x00560198 | Game exit state flag (set to 0 by quit wrapper) |
 
 ## DirectX usage
 
@@ -79,7 +79,7 @@ RCT uses DirectDraw for display mode selection and surface management, but its r
 
 ## Next steps
 
-1. **Fix WM_ACTIVATEAPP timing** — deliver activation messages synchronously during CreateWindowExA so the WndProc sets its active flag before the game's first tick
-2. **Fix GetSystemPaletteEntries** — return standard Win98 20 system colors instead of zeros
-3. **Verify palette update** — once the game runs past init, confirm SetEntries is called and palette updates work
-4. **Investigate demo timeout** — the demo version may have a time-based exit check
+1. **Trace copy loop destination** — instrument 0x00444600 to log ESI source; find which allocation or computation produces the thunk-zone address
+2. **Fix memory collision** — either increase WASM memory to 256MB, or find and fix the pointer that leads into the thunk zone
+3. **Fix GetSystemPaletteEntries** — return standard Win98 20 system colors instead of zeros
+4. **Verify palette update** — once rendering works, confirm SetEntries loads the real palette

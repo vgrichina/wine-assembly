@@ -36,6 +36,7 @@
   (func $defwndproc_ncpaint (export "defwndproc_ncpaint")
         (param $hwnd i32) (param $w i32) (param $h i32)
         (param $title_wa i32) (param $title_len i32) (param $flags i32)
+        (param $client_top i32)
         (result i32)
     (local $hdc i32)
     (local $has_caption i32)
