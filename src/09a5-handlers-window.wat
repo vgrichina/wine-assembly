@@ -1222,3 +1222,31 @@
   (func $handle_SetMessageQueue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BOOL FlashWindow(HWND hWnd, BOOL bInvert)
+  ;; If bInvert is TRUE, toggles the titlebar between active and inactive.
+  ;; If bInvert is FALSE, restores the titlebar to its original state (inactive appearance).
+  ;; Returns TRUE if the window was active before the call.
+  (func $handle_FlashWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $addr i32) (local $prev i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.eq (local.get $slot) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $addr (i32.add (global.get $FLASH_TABLE) (local.get $slot)))
+    (local.set $prev (i32.load8_u (local.get $addr)))
+    (if (local.get $arg1)
+      (then
+        ;; bInvert=TRUE: toggle flash state
+        (i32.store8 (local.get $addr) (i32.xor (local.get $prev) (i32.const 1))))
+      (else
+        ;; bInvert=FALSE: restore to normal (not flashing)
+        (i32.store8 (local.get $addr) (i32.const 0))))
+    ;; Trigger repaint so the caption redraws with inverted active state
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 1)))
+      (else (call $paint_queue_push (local.get $arg0))))
+    (global.set $eax (local.get $prev))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))

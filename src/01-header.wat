@@ -401,7 +401,9 @@
   ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
   ;; 0x0000AD98  4B      WAVE_OUT_PENDING_HDR (deferred WHDR_DONE — guest addr of last submitted WAVEHDR)
   ;; 0x0000D170  6KB     SCROLL_TABLE   (256 entries × 24 bytes, ends 0xE970)
-  ;; 0x0000E970  14KB    Free (up to GUEST_BASE)
+  ;; 0x0000E970  2KB     DX_OBJECTS     (64  entries × 32 bytes, ends 0xF170)
+  ;; 0x0000F170  256B    FLASH_TABLE    (256 entries × 1 byte,  ends 0xF270)
+  ;; 0x0000F270  11KB    Free (up to GUEST_BASE)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -513,6 +515,10 @@
   ;;   +16  v_min     SB_VERT range min
   ;;   +20  v_max     SB_VERT range max
   (global $SCROLL_TABLE i32 (i32.const 0x0000D170))
+  ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
+  ;; 256 entries × 1 byte = 0x100 (0xF170..0xF270)
+  ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
+  (global $FLASH_TABLE i32 (i32.const 0x0000F170))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)

@@ -110,6 +110,12 @@
   (func (export "get_heap_base") (result i32) (global.get $heap_base))
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
+  (func (export "get_flash_state") (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (result i32) (i32.eq (local.get $slot) (i32.const -1))
+      (then (i32.const 0))
+      (else (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $slot))))))
   (func (export "get_post_queue_count") (result i32) (global.get $post_queue_count))
   (func (export "set_post_queue_count") (param i32) (global.set $post_queue_count (local.get 0)))
   (func (export "wnd_table_set") (param i32) (param i32) (call $wnd_table_set (local.get 0) (local.get 1)))

@@ -8753,5 +8753,12 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2047766143
+  },
+  {
+    "id": 1251,
+    "name": "FlashWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1251232729
   }
 ]
