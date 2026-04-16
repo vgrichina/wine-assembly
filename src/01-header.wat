@@ -409,9 +409,11 @@
   ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
   ;; 0x0000AD98  4B      WAVE_OUT_PENDING_HDR (deferred WHDR_DONE — guest addr of last submitted WAVEHDR)
   ;; 0x0000D170  6KB     SCROLL_TABLE   (256 entries × 24 bytes, ends 0xE970)
-  ;; 0x0000E970  2KB     DX_OBJECTS     (64  entries × 32 bytes, ends 0xF170)
-  ;; 0x0000F170  256B    FLASH_TABLE    (256 entries × 1 byte,  ends 0xF270)
-  ;; 0x0000F270  11KB    Free (up to GUEST_BASE)
+  ;; 0x0000E970  256B    FLASH_TABLE    (256 entries × 1 byte,  ends 0xEA70)
+  ;; 0x0000EA70  5.4KB   Free (up to GUEST_BASE)
+  ;; --- DX tables moved to high memory to avoid guest address collision ---
+  ;; 0x07FF0000  8KB     DX_OBJECTS     (256 entries × 32 bytes, ends 0x07FF2000)
+  ;; 0x07FF2000  2KB     COM_WRAPPERS   (256 entries × 8 bytes, ends 0x07FF2800)
   ;; 0x00012000  28MB    Guest address space (PE sections + DLLs)
   ;; 0x01C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x01D12000  1MB     Guest heap
@@ -527,7 +529,7 @@
   ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte = 0x100 (0xF170..0xF270)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
-  (global $FLASH_TABLE i32 (i32.const 0x0000F170))
+  (global $FLASH_TABLE i32 (i32.const 0x00010970))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)
@@ -702,6 +704,8 @@
   (global $mm_timer_last_tick (mut i32) (i32.const 0))
   (global $mm_timer_oneshot  (mut i32) (i32.const 0))  ;; 1 = TIME_ONESHOT
   (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
+  (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
+  (global $mm_timer_saved_esp (mut i32) (i32.const 0)) ;; ESP before callback injection
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated

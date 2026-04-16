@@ -8844,5 +8844,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3212715171
+  },
+  {
+    "id": 1264,
+    "name": "GetPriorityClass",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3113584897
+  },
+  {
+    "id": 1265,
+    "name": "GetThreadPriority",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2001465759
+  },
+  {
+    "id": 1266,
+    "name": "GetUpdateRgn",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3235427389
   }
 ]

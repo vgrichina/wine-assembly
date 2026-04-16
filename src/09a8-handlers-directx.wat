@@ -14,10 +14,10 @@
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
   (global $DX_OBJECTS i32 (i32.const 0x0000E970))
-  (global $DX_MAX i32 (i32.const 64))
+  (global $DX_MAX i32 (i32.const 256))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
-  ;; COM wrapper stubs: 64 × 8 bytes below GUEST_BASE (avoids guest heap overlap)
-  (global $COM_WRAPPERS i32 (i32.const 0x0000F200))
+  ;; COM wrapper stubs: 256 × 8 bytes below GUEST_BASE (avoids guest heap overlap)
+  (global $COM_WRAPPERS i32 (i32.const 0x00010A80))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.

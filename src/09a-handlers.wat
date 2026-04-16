@@ -3672,6 +3672,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; 1264: GetPriorityClass(hProcess) — return NORMAL_PRIORITY_CLASS (0x20)
+  (func $handle_GetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x20))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 1265: GetThreadPriority(hThread) — return THREAD_PRIORITY_NORMAL (0)
+  (func $handle_GetThreadPriority (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — return SIMPLEREGION (2)
+  (func $handle_GetUpdateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 2))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 346: IsDebuggerPresent — return 0 — STUB: unimplemented
   (func $handle_IsDebuggerPresent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))

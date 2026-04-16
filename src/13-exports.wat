@@ -229,6 +229,11 @@
   (func (export "fire_mm_timer") (result i32)
     (local $elapsed i32)
     (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
+    ;; Re-entrancy guard: if callback is running, check if it returned
+    (if (global.get $mm_timer_in_cb) (then
+      (if (i32.ge_u (global.get $esp) (global.get $mm_timer_saved_esp))
+        (then (global.set $mm_timer_in_cb (i32.const 0)))  ;; callback returned
+        (else (return (i32.const 0))))))                    ;; still running
     (global.set $tick_count (call $host_get_ticks))
     (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
     (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
@@ -237,6 +242,9 @@
     (global.set $mm_timer_last_tick (global.get $tick_count))
     (if (global.get $mm_timer_oneshot)
       (then (global.set $mm_timer_id (i32.const 0))))
+    ;; Save ESP before pushing callback frame
+    (global.set $mm_timer_saved_esp (global.get $esp))
+    (global.set $mm_timer_in_cb (i32.const 1))
     ;; Push 5 args: dw2=0, dw1=0, dwUser, uMsg=0, uTimerID
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw2

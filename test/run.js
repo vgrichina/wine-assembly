@@ -1046,7 +1046,7 @@ async function main() {
       return false;
     }
     console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
-    console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}`);
+    console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
     watchPrevVal = newVal;
     return true;
   };
@@ -1493,12 +1493,27 @@ async function main() {
 
     // Fire multimedia timer callback if due (timeSetEvent fires asynchronously on real Win32)
     if (instance.exports.fire_mm_timer) {
+      const comBefore = instance.exports.guest_read32(0x003fea90);
       const fired = instance.exports.fire_mm_timer();
+      const comAfter = instance.exports.guest_read32(0x003fea90);
+      if (comBefore !== comAfter) {
+        console.log(`[TIMER-CORRUPT] batch=${batch} before=${hex(comBefore)} after=${hex(comAfter)} fired=${fired} EIP=${hex(instance.exports.get_eip())}`);
+      }
       if (fired && TRACE_API) {
         const mem32 = new Uint32Array(memory.buffer);
         const g2wOff = 0x12000 - instance.exports.get_image_base();
         const trampVal = mem32[(0xa5a058 + g2wOff) >> 2];
         console.log(`[mm_timer] fired at batch ${batch}, EIP=${hex(instance.exports.get_eip())}, [0xa5a058]=${hex(trampVal)}`);
+      }
+    }
+
+    // DEBUG: check COM wrapper for DDraw offscreen surface corruption
+    if (TRACE_API && instance.exports.guest_read32) {
+      const comSlot2 = 0x003fea90;
+      const vtbl = instance.exports.guest_read32(comSlot2);
+      if (vtbl !== 0 && vtbl < 0x02200000) {
+        console.log(`[CORRUPT-PRE] batch=${batch} COM slot2 vtable=${hex(vtbl)} EIP=${hex(instance.exports.get_eip())}`);
+        break;
       }
     }
 
@@ -1521,6 +1536,15 @@ async function main() {
         frames.slice(0, 8).forEach(f => console.log('    ' + f.trim()));
       }
       process.exit(1);
+    }
+
+    // DEBUG: check COM wrapper after run
+    if (TRACE_API && instance.exports.guest_read32) {
+      const comSlot2 = 0x003fea90;
+      const vtbl = instance.exports.guest_read32(comSlot2);
+      if (vtbl !== 0 && vtbl < 0x02200000) {
+        console.log(`[CORRUPT-POST] batch=${batch} COM slot2 vtable=${hex(vtbl)} EIP=${hex(instance.exports.get_eip())}`);
+      }
     }
 
     // Flush deferred repaint so back canvas composites after all GDI writes
