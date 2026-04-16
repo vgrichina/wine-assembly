@@ -145,7 +145,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 ## Tools
 
-- `tools/gen_dispatch.js` — Generates `09b2-dispatch-table.generated.wat` (br_table + calls) from `api_table.json`
+- `tools/gen_dispatch.js` — Generates `09b2-dispatch-table.generated.wat` (br_table + calls + `$init_dx_com_thunks`) from `api_table.json`. COM vtable start IDs are auto-computed from interface prefixes (e.g. `IDirectDraw_*`), so adding a new API never requires manual ID fixups.
 - `tools/gen_api_table.js` — Generates the API hash table (`01b-api-hashes.generated.wat`)
 - `tools/disasm.js` — x86 disassembler for debugging (importable module)
 - `tools/hexdump.js` — Memory hexdump utility

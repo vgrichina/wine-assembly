@@ -191,38 +191,8 @@
     (call $update_thunk_end)
     (local.get $vtbl_guest))
 
-  (func $init_dx_com_thunks (export "init_dx_com_thunks")
-    ;; IDirectDraw: 23 methods starting at api_id 977
-    (global.set $DX_VTBL_DDRAW (call $init_com_vtable (i32.const 977) (i32.const 23)))
-    ;; IDirectDraw2: extends IDirectDraw with 1 extra method (GetAvailableVidMem) at api_id 1250
-    (global.set $DX_VTBL_DDRAW2 (call $extend_com_vtable
-      (global.get $DX_VTBL_DDRAW) (i32.const 23) (i32.const 1250) (i32.const 24)))
-    ;; IDirectDrawSurface: 36 methods starting at api_id 1000
-    (global.set $DX_VTBL_DDSURF (call $init_com_vtable (i32.const 1000) (i32.const 36)))
-    ;; IDirectDrawPalette: 7 methods starting at api_id 1036
-    (global.set $DX_VTBL_DDPAL (call $init_com_vtable (i32.const 1036) (i32.const 7)))
-    ;; IDirectSound: 11 methods starting at api_id 1043
-    (global.set $DX_VTBL_DSOUND (call $init_com_vtable (i32.const 1043) (i32.const 11)))
-    ;; IDirectSoundBuffer: 21 methods starting at api_id 1054
-    (global.set $DX_VTBL_DSBUF (call $init_com_vtable (i32.const 1054) (i32.const 21)))
-    ;; IDirectInput: 8 methods starting at api_id 1075
-    (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1075) (i32.const 8)))
-    ;; IDirectInputDevice: 18 methods starting at api_id 1083
-    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1083) (i32.const 18)))
-    ;; IDirect3D: 9 methods starting at api_id 1115
-    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1115) (i32.const 9)))
-    ;; IDirect3D3: 10 methods starting at api_id 1124
-    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1124) (i32.const 10)))
-    ;; IDirectDrawFactory: 5 methods starting at api_id 1137
-    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1137) (i32.const 5)))
-    ;; IDirect3DDevice3: 42 methods starting at api_id 1143
-    (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1143) (i32.const 42)))
-    ;; IDirect3DViewport3: 21 methods starting at api_id 1185
-    (global.set $DX_VTBL_D3DVP3 (call $init_com_vtable (i32.const 1185) (i32.const 21)))
-    ;; IDirect3DLight: 6 methods starting at api_id 1206
-    (global.set $DX_VTBL_D3DLIGHT (call $init_com_vtable (i32.const 1206) (i32.const 6)))
-    ;; IDirect3DMaterial3: 8 methods starting at api_id 1212
-    (global.set $DX_VTBL_D3DMAT3 (call $init_com_vtable (i32.const 1212) (i32.const 8))))
+  ;; $init_dx_com_thunks is now auto-generated in 09b2-dispatch-table.generated.wat
+  ;; by tools/gen_dispatch.js — COM vtable start IDs are computed from api_table.json
 
   ;; ════════════════════════════════════════════════════════════
   ;; CREATORS
