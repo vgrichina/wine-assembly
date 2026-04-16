@@ -96,19 +96,23 @@ Don't add a second drawing surface. If a GDI call needs to hit the screen, route
 
 ## Memory Layout
 
-Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at its preferred `image_base` (typically `0x400000`) which maps to `GUEST_BASE + (image_base - image_base)` via `g2w` (guest-to-WASM address translation).
+128 MB flat WASM linear memory. Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at its preferred `image_base` (typically `0x400000`) which maps to `GUEST_BASE + (image_base - image_base)` via `g2w` (guest-to-WASM address translation): `g2w(guest) = guest - image_base + GUEST_BASE`.
 
 Key regions:
 - `0x00000100` — String constants (win.ini path, help strings, exe name buffer)
-- `0x00004000` — API hash table (12KB, API_HASH_TABLE — below GUEST_BASE, safe from guest writes)
-- `0x00007000` — WND_RECORDS (256 × 24 bytes), CONTROL_TABLE, CONTROL_GEOM, CLASS_RECORDS (64), TIMER_TABLE, PAINT_SCRATCH (all below GUEST_BASE, end at 0xAD50)
+- `0x00004000` — API hash table (12KB, API_HASH_TABLE)
+- `0x00007000` — WND_RECORDS, CONTROL_TABLE, CONTROL_GEOM, CLASS_RECORDS, TIMER_TABLE, PAINT_SCRATCH, SCROLL_TABLE, FLASH_TABLE, WND_DLG_RECORDS (all below GUEST_BASE, end at 0xF000)
 - `0x00012000` — Guest memory (GUEST_BASE, maps guest addresses)
-- `0x00E12000` — Guest stack (grows down)
-- `0x01012000` — API thunk zone (256KB, THUNK_BASE)
-- `0x01052000` — Threaded code cache (1MB, THREAD_BASE)
-- `0x01152000` — Block cache index (CACHE_INDEX)
-- `0x01162000` — PE staging buffer (2MB, PE_STAGING)
+- `0x01C12000` — Guest stack (1MB, grows down)
 - `0x01D12000` — Heap region (1MB)
+- `0x01E12000` — API thunk zone (256KB, THUNK_BASE)
+- `0x01E52000` — Threaded code cache (4MB, THREAD_BASE)
+- `0x02252000` — Block cache index (64KB, CACHE_INDEX)
+- `0x02262000` — PE staging buffer (2MB, PE_STAGING)
+- `0x02462000` — DLL table (512B)
+- `0x07FF0000` — DX_OBJECTS / COM_WRAPPERS (high memory, outside g2w bounds)
+
+See [docs/memory-map.md](docs/memory-map.md) for the full annotated layout, comparison with Windows 98 kernel/user memory model, and analysis of what's emulator-private vs guest-accessible.
 
 ## Message / Event Handling
 
