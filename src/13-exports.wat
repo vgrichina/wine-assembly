@@ -653,4 +653,5 @@
                                   (local.get $len))))))
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
+
 )

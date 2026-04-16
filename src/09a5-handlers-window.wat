@@ -674,6 +674,20 @@
     (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Check cross-thread message queue (shared memory at 0xB400)
+    (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+    (then
+      (local.set $tmp (i32.const 0xB410))
+      (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))
+      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12))))
+      (i32.store (i32.const 0xB400) (i32.sub (i32.load (i32.const 0xB400)) (i32.const 1)))
+      (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+        (then (call $memcpy (i32.const 0xB410) (i32.const 0xB420)
+          (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No timer due — return WM_NULL and yield to let browser process input events
     (global.set $yield_flag (i32.const 1))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))

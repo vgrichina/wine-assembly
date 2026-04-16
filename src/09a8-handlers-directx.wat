@@ -4,7 +4,7 @@
   ;; ============================================================
 
   ;; ── DX_OBJECTS table ─────────────────────────────────────────
-  ;; 32 entries × 32 bytes at 0xE970 (free region below GUEST_BASE)
+  ;; 64 entries × 32 bytes at 0xE970 (free region below GUEST_BASE)
   ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
@@ -14,8 +14,10 @@
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
   (global $DX_OBJECTS i32 (i32.const 0x0000E970))
-  (global $DX_MAX i32 (i32.const 32))
+  (global $DX_MAX i32 (i32.const 64))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
+  ;; COM wrapper stubs: 64 × 8 bytes below GUEST_BASE (avoids guest heap overlap)
+  (global $COM_WRAPPERS i32 (i32.const 0x0000F200))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -34,6 +36,7 @@
   (global $DX_VTBL_D3DLIGHT   (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DMAT3    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -54,7 +57,7 @@
     (local $i i32) (local $ptr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
       (local.set $ptr (i32.add (global.get $DX_OBJECTS)
         (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.eqz (i32.load (local.get $ptr)))
@@ -88,11 +91,11 @@
     (local.set $slot (i32.load (i32.add (local.get $wa) (i32.const 4))))
     (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
 
-  ;; Create a guest COM object: allocate heap block, write vtbl + slot
+  ;; Create a guest COM object using fixed COM_WRAPPERS area (not guest heap).
   ;; vtbl_guest is the guest address of the vtable (from DX_VTBL_* globals)
   ;; Returns guest address of the object
   (func $dx_create_com_obj (param $type i32) (param $vtbl_guest i32) (result i32)
-    (local $entry_wa i32) (local $slot i32) (local $obj_guest i32) (local $obj_wa i32)
+    (local $entry_wa i32) (local $slot i32) (local $obj_wa i32)
     ;; Allocate DX_OBJECTS entry
     (local.set $entry_wa (call $dx_alloc (local.get $type)))
     (if (i32.eqz (local.get $entry_wa)) (then (return (i32.const 0))))
@@ -100,21 +103,23 @@
     (local.set $slot (i32.div_u
       (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS))
       (i32.const 32)))
-    ;; Allocate guest heap block for the COM object (8 bytes: vtbl ptr + slot)
-    (local.set $obj_guest (call $heap_alloc (i32.const 8)))
-    (local.set $obj_wa (call $g2w (local.get $obj_guest)))
+    ;; COM wrapper at fixed WASM address: COM_WRAPPERS + slot * 8
+    (local.set $obj_wa (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8))))
     ;; Write lpVtbl (already a guest address)
     (i32.store (local.get $obj_wa) (local.get $vtbl_guest))
     ;; Write slot index
     (i32.store (i32.add (local.get $obj_wa) (i32.const 4)) (local.get $slot))
-    (local.get $obj_guest))
+    ;; Return guest address: WASM_addr - GUEST_BASE + image_base
+    (i32.add (i32.sub (local.get $obj_wa) (global.get $GUEST_BASE)) (global.get $image_base)))
 
-  ;; Free a DX object (zero the type field)
+  ;; Free a DX object (zero the type field and COM wrapper)
   (func $dx_free (param $entry_wa i32)
-    (local $dib i32)
-    ;; Free DIB if any
-    (local.set $dib (i32.load (i32.add (local.get $entry_wa) (i32.const 20))))
-    ;; (DIB is in heap, will be reclaimed — no explicit free needed for now)
+    (local $slot i32) (local $wrapper_wa i32)
+    ;; Zero COM wrapper
+    (local.set $slot (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
+    (local.set $wrapper_wa (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8))))
+    (i64.store (local.get $wrapper_wa) (i64.const 0))
+    ;; Zero the DX_OBJECTS entry type
     (i32.store (local.get $entry_wa) (i32.const 0)))
 
   ;; ── Init COM vtables ─────────────────────────────────────────
@@ -157,35 +162,67 @@
     (call $update_thunk_end)
     (local.get $vtbl_guest))
 
+  ;; Extend a parent vtable: copy parent entries, append new thunks for extra methods.
+  (func $extend_com_vtable (param $parent_vtbl i32) (param $parent_count i32)
+                           (param $ext_api_id i32) (param $total_count i32) (result i32)
+    (local $vtbl_guest i32) (local $vtbl_wa i32) (local $parent_wa i32)
+    (local $i i32) (local $thunk_wa i32) (local $thunk_guest i32)
+    (local.set $vtbl_guest (call $heap_alloc (i32.mul (local.get $total_count) (i32.const 4))))
+    (local.set $vtbl_wa (call $g2w (local.get $vtbl_guest)))
+    (local.set $parent_wa (call $g2w (local.get $parent_vtbl)))
+    (call $memcpy (local.get $vtbl_wa) (local.get $parent_wa)
+      (i32.mul (local.get $parent_count) (i32.const 4)))
+    (local.set $i (local.get $parent_count))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $total_count)))
+      (local.set $thunk_wa (i32.add (global.get $THUNK_BASE)
+        (i32.mul (global.get $num_thunks) (i32.const 8))))
+      (i32.store (local.get $thunk_wa) (i32.const 0xCACA0010))
+      (i32.store (i32.add (local.get $thunk_wa) (i32.const 4))
+        (i32.add (local.get $ext_api_id) (i32.sub (local.get $i) (local.get $parent_count))))
+      (local.set $thunk_guest (i32.add
+        (i32.sub (local.get $thunk_wa) (global.get $GUEST_BASE))
+        (global.get $image_base)))
+      (i32.store (i32.add (local.get $vtbl_wa) (i32.mul (local.get $i) (i32.const 4)))
+        (local.get $thunk_guest))
+      (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (call $update_thunk_end)
+    (local.get $vtbl_guest))
+
   (func $init_dx_com_thunks (export "init_dx_com_thunks")
-    ;; IDirectDraw: 23 methods starting at api_id 976
-    (global.set $DX_VTBL_DDRAW (call $init_com_vtable (i32.const 976) (i32.const 23)))
-    ;; IDirectDrawSurface: 36 methods starting at api_id 999
-    (global.set $DX_VTBL_DDSURF (call $init_com_vtable (i32.const 999) (i32.const 36)))
-    ;; IDirectDrawPalette: 7 methods starting at api_id 1035
-    (global.set $DX_VTBL_DDPAL (call $init_com_vtable (i32.const 1035) (i32.const 7)))
-    ;; IDirectSound: 11 methods starting at api_id 1042
-    (global.set $DX_VTBL_DSOUND (call $init_com_vtable (i32.const 1042) (i32.const 11)))
-    ;; IDirectSoundBuffer: 21 methods starting at api_id 1053
-    (global.set $DX_VTBL_DSBUF (call $init_com_vtable (i32.const 1053) (i32.const 21)))
-    ;; IDirectInput: 8 methods starting at api_id 1074
-    (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1074) (i32.const 8)))
-    ;; IDirectInputDevice: 18 methods starting at api_id 1082
-    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1082) (i32.const 18)))
-    ;; IDirect3D: 9 methods starting at api_id 1114
-    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1114) (i32.const 9)))
-    ;; IDirect3D3: 10 methods starting at api_id 1123
-    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1123) (i32.const 10)))
-    ;; IDirectDrawFactory: 5 methods starting at api_id 1136 (after Direct3DRMCreate, EnumWindows, PlaySoundA)
-    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1136) (i32.const 5)))
-    ;; IDirect3DDevice3: 42 methods starting at api_id 1142
-    (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1142) (i32.const 42)))
-    ;; IDirect3DViewport3: 21 methods starting at api_id 1184
-    (global.set $DX_VTBL_D3DVP3 (call $init_com_vtable (i32.const 1184) (i32.const 21)))
-    ;; IDirect3DLight: 6 methods starting at api_id 1205
-    (global.set $DX_VTBL_D3DLIGHT (call $init_com_vtable (i32.const 1205) (i32.const 6)))
-    ;; IDirect3DMaterial3: 8 methods starting at api_id 1211
-    (global.set $DX_VTBL_D3DMAT3 (call $init_com_vtable (i32.const 1211) (i32.const 8))))
+    ;; IDirectDraw: 23 methods starting at api_id 977
+    (global.set $DX_VTBL_DDRAW (call $init_com_vtable (i32.const 977) (i32.const 23)))
+    ;; IDirectDraw2: extends IDirectDraw with 1 extra method (GetAvailableVidMem) at api_id 1250
+    (global.set $DX_VTBL_DDRAW2 (call $extend_com_vtable
+      (global.get $DX_VTBL_DDRAW) (i32.const 23) (i32.const 1250) (i32.const 24)))
+    ;; IDirectDrawSurface: 36 methods starting at api_id 1000
+    (global.set $DX_VTBL_DDSURF (call $init_com_vtable (i32.const 1000) (i32.const 36)))
+    ;; IDirectDrawPalette: 7 methods starting at api_id 1036
+    (global.set $DX_VTBL_DDPAL (call $init_com_vtable (i32.const 1036) (i32.const 7)))
+    ;; IDirectSound: 11 methods starting at api_id 1043
+    (global.set $DX_VTBL_DSOUND (call $init_com_vtable (i32.const 1043) (i32.const 11)))
+    ;; IDirectSoundBuffer: 21 methods starting at api_id 1054
+    (global.set $DX_VTBL_DSBUF (call $init_com_vtable (i32.const 1054) (i32.const 21)))
+    ;; IDirectInput: 8 methods starting at api_id 1075
+    (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1075) (i32.const 8)))
+    ;; IDirectInputDevice: 18 methods starting at api_id 1083
+    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1083) (i32.const 18)))
+    ;; IDirect3D: 9 methods starting at api_id 1115
+    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1115) (i32.const 9)))
+    ;; IDirect3D3: 10 methods starting at api_id 1124
+    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1124) (i32.const 10)))
+    ;; IDirectDrawFactory: 5 methods starting at api_id 1137
+    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1137) (i32.const 5)))
+    ;; IDirect3DDevice3: 42 methods starting at api_id 1143
+    (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1143) (i32.const 42)))
+    ;; IDirect3DViewport3: 21 methods starting at api_id 1185
+    (global.set $DX_VTBL_D3DVP3 (call $init_com_vtable (i32.const 1185) (i32.const 21)))
+    ;; IDirect3DLight: 6 methods starting at api_id 1206
+    (global.set $DX_VTBL_D3DLIGHT (call $init_com_vtable (i32.const 1206) (i32.const 6)))
+    ;; IDirect3DMaterial3: 8 methods starting at api_id 1212
+    (global.set $DX_VTBL_D3DMAT3 (call $init_com_vtable (i32.const 1212) (i32.const 8))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; CREATORS
@@ -328,17 +365,24 @@
   (func $handle_IDirectDraw_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $iid_dword i32) (local $obj i32)
     (local.set $iid_dword (call $gl32 (local.get $arg1)))
-    ;; DDraw family: IUnknown, IDirectDraw, IDirectDraw2, IDirectDraw4, IDirectDraw7
-    (if (i32.or (i32.or
-          (i32.eqz (local.get $iid_dword))
-          (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
-        (i32.or (i32.or
-          (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
-          (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A)))
-          (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+    ;; IUnknown / IDirectDraw — return same object
+    (if (i32.or (i32.eqz (local.get $iid_dword))
+                (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
       (then
         (call $gs32 (local.get $arg2) (local.get $arg0))
-        ;; COM rule: QI must AddRef the returned interface
+        (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (i32.store (i32.add (local.get $obj) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; IDirectDraw2/4/7 — upgrade vtable in-place and return same object
+    (if (i32.or (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
+        (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
+                (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+      (then
+        (i32.store (call $g2w (local.get $arg0)) (global.get $DX_VTBL_DDRAW2))
+        (call $gs32 (local.get $arg2) (local.get $arg0))
         (local.set $obj (call $dx_from_this (local.get $arg0)))
         (i32.store (i32.add (local.get $obj) (i32.const 4))
           (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
@@ -685,6 +729,13 @@
   (func $handle_IDirectDraw_WaitForVerticalBlank (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; GetAvailableVidMem(this, lpDDSCaps, lpdwTotal, lpdwFree) — IDirectDraw2+ only
+  (func $handle_IDirectDraw2_GetAvailableVidMem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0x00800000))))
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0x00800000))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDrawSurface methods
@@ -1199,7 +1250,7 @@
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
-    (local $dib_wa i32) (local $bmi_wa i32)
+    (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -1216,11 +1267,23 @@
       (i32.sub (i32.const 0) (local.get $h)))
     (i32.store16 (i32.add (local.get $bmi_wa) (i32.const 12)) (i32.const 1)) ;; biPlanes
     (i32.store16 (i32.add (local.get $bmi_wa) (i32.const 14)) (local.get $bpp))
-    ;; For 8bpp, copy palette data (256 RGBQUAD entries) after the header
+    ;; For 8bpp, convert PALETTEENTRY (R,G,B,flags) → RGBQUAD (B,G,R,0)
     (if (i32.and (i32.le_u (local.get $bpp) (i32.const 8)) (i32.ne (global.get $dx_primary_pal_wa) (i32.const 0)))
       (then
-        (call $memcpy (i32.add (local.get $bmi_wa) (i32.const 40))
-          (global.get $dx_primary_pal_wa) (i32.const 1024)))) ;; 256 * 4
+        (local.set $i (i32.const 0))
+        (block $pd (loop $pl
+          (br_if $pd (i32.ge_u (local.get $i) (i32.const 256)))
+          (local.set $val (i32.load (i32.add (global.get $dx_primary_pal_wa)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          ;; swap byte0 (R) and byte2 (B), keep byte1 (G), clear byte3
+          (i32.store (i32.add (i32.add (local.get $bmi_wa) (i32.const 40))
+              (i32.shl (local.get $i) (i32.const 2)))
+            (i32.or (i32.or
+              (i32.shl (i32.and (local.get $val) (i32.const 0xFF)) (i32.const 16))
+              (i32.and (local.get $val) (i32.const 0xFF00)))
+              (i32.and (i32.shr_u (local.get $val) (i32.const 16)) (i32.const 0xFF))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $pl)))))
     ;; For 16bpp, set BI_BITFIELDS compression and write masks after header
     (if (i32.eq (local.get $bpp) (i32.const 16))
       (then

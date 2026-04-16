@@ -244,6 +244,7 @@ async function main() {
     if (name === '<ord>') {
       const o = dxLookupThis(a[0], dv, g2w);
       if (!o) return `[this=${hex(a[0])}]`;
+      try { const vtbl = dv.getUint32(g2w(a[0]), true); console.error(`  DBG: this=${hex(a[0])} vtbl=${hex(vtbl)} slot=${o.slot} type=${o.type}`); } catch(_) {}
       // Type 2 = IDirectDrawSurface. Disambiguate common methods by arg shape.
       if (o.type === 2) {
         // BltFast: a[1],a[2] are small x,y coords, a[3] is another DDSurface
@@ -617,6 +618,7 @@ async function main() {
   // Wire thread/event imports to ThreadManager
   h.create_thread = (startAddr, param, stackSize) => threadManager.createThread(startAddr, param, stackSize);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
+  h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.create_event = (manualReset, initialState) => threadManager.createEvent(manualReset, initialState);
   h.set_event = (handle) => threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
@@ -682,6 +684,7 @@ async function main() {
     // Wire thread/event to same ThreadManager
     wh.create_thread = h.create_thread;
     wh.exit_thread = h.exit_thread;
+    wh.get_exit_code_thread = h.get_exit_code_thread;
     wh.create_event = h.create_event;
     wh.set_event = h.set_event;
     wh.reset_event = h.reset_event;
@@ -1603,8 +1606,15 @@ async function main() {
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
-      const slices = installingFiles ? 1000 : 1;
-      for (let s = 0; s < slices; s++) threadManager.runSlice(BATCH_SIZE);
+      const slices = installingFiles ? 1000 : 4;
+      for (let s = 0; s < slices; s++) {
+        threadManager.runSlice(BATCH_SIZE);
+        // Re-run main thread between worker slices so producer/consumer
+        // patterns (main posts messages, worker processes) progress together.
+        if (s < slices - 1 && !stopped) {
+          try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
+        }
+      }
     }
     // Check if main thread is waiting on an event
     if (threadManager.checkMainYield()) {

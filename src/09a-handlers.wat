@@ -503,13 +503,13 @@
   ;; 25: Sleep — STUB: unimplemented
   (func $handle_Sleep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Sleep(dwMilliseconds) — 1 arg stdcall.
-    ;; Set yield_flag so the run loop halts after the current block completes,
-    ;; giving other threads a chance to run (important for producer/consumer
-    ;; spin-wait patterns like out_wave.dll ring buffer).
+    ;; Always yield so other threads get execution time.
+    ;; Sleep(0) only sets yield_flag (not sleep_yielded) — it won't deprioritize.
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (global.set $yield_flag (i32.const 1))
-    (global.set $sleep_yielded (i32.const 1))
+    (if (local.get $arg0)
+      (then (global.set $sleep_yielded (i32.const 1))))
   )
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
@@ -5832,6 +5832,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; 1250: GetExitCodeThread(hThread, lpExitCode) — 2 args stdcall
+  (func $handle_GetExitCodeThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Write exit code to lpExitCode
+    (call $gs32 (local.get $arg1) (call $host_get_exit_code_thread (local.get $arg0)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 540: SuspendThread — STUB: unimplemented
   ;; SuspendThread(hThread) — 1 arg stdcall, return previous suspend count (0 = not suspended)
   (func $handle_SuspendThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7351,9 +7359,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 686: PostThreadMessageW — STUB: unimplemented
+  ;; PostThreadMessageA/W(threadId, msg, wParam, lParam) — post to thread queue with hwnd=0
+  ;; If target is a thread handle (0xE0000 mask), write to shared-memory XTHREAD queue
+  ;; at 0xB400 (count) / 0xB410 (entries) so the target WASM instance sees it.
+  ;; Otherwise fall back to the local post_queue.
+  (func $handle_PostThreadMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $tmp i32) (local $cnt i32)
+    (if (i32.eq (i32.and (local.get $arg0) (i32.const 0xFFFF0000)) (i32.const 0x000E0000))
+    (then
+      (local.set $cnt (i32.load (i32.const 0xB400)))
+      (if (i32.lt_u (local.get $cnt) (i32.const 32))
+      (then
+        (local.set $tmp (i32.add (i32.const 0xB410)
+          (i32.mul (local.get $cnt) (i32.const 16))))
+        (i32.store (local.get $tmp) (i32.const 0))
+        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1))
+        (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2))
+        (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3))
+        (i32.store (i32.const 0xB400) (i32.add (local.get $cnt) (i32.const 1))))))
+    (else
+      (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
+      (then
+        (local.set $tmp (i32.add (i32.const 0x400)
+          (i32.mul (global.get $post_queue_count) (i32.const 16))))
+        (i32.store (local.get $tmp) (i32.const 0))
+        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1))
+        (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2))
+        (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3))
+        (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
   (func $handle_PostThreadMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_PostThreadMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 687: CreateMenu() — allocate opaque HMENU. No backing state: AppendMenu/InsertMenu

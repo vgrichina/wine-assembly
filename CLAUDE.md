@@ -110,6 +110,28 @@ Key regions:
 - `0x01162000` — PE staging buffer (2MB, PE_STAGING)
 - `0x01D12000` — Heap region (1MB)
 
+## Message / Event Handling
+
+GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based phased sequence:
+
+1. **WM_QUIT** — if `$quit_flag` is set
+2. **Pending child WM_CREATE** — queued during CreateWindowExA for child controls
+3. **Pending child WM_SIZE** — follows child WM_CREATE
+4. **Post queue** (`$post_queue_count`, memory at 0x400) — drained FIFO, 64-slot ring of {hwnd, msg, wParam, lParam} 16-byte entries. PostMessageA and TranslateAcceleratorA write here.
+5. **Pending main WM_SIZE** (`$pending_wm_size`) — set by CreateWindowExA, consumed after post queue drain
+6. **Startup phases** — sequential one-shot messages: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS → WM_ERASEBKGND
+7. **Host input poll** — `$host_check_input()` returns packed `(wParam<<16)|(msg&0xFFFF)`, with hwnd/lParam via separate imports
+8. **WM_PAINT** — if `$paint_pending` is set for main window
+9. **Paint queue** — per-child-hwnd paint queue (`$paint_queue_pop`)
+10. **Timers** — `$timer_table` walk, delivers WM_TIMER
+11. **WM_NULL** (idle) — returned when nothing is pending
+
+**ShowWindow** delivers WM_SIZE synchronously by redirecting EIP to the wndproc (not via the message queue). This happens inside `$handle_ShowWindow` when the target is `$main_hwnd` and `$pending_wm_size` is non-zero.
+
+**SendMessageA** (`$handle_SendMessageA`) dispatches synchronously: pushes wndproc args on the guest stack, sets EIP to the target wndproc, and uses a CACA0005 continuation thunk to resume the caller when the wndproc returns.
+
+**Input injection (test harness):** `test/run.js` supports `--input=BATCH:ACTION:ARGS,...` for keydown/keyup/keypress/click/dblclick/post-cmd/png and more. The renderer's `inputQueue` feeds into `check_input()`. See lines 82-159 in run.js for the full list.
+
 ## Key Concepts
 
 - **Threaded code:** x86 is decoded into a sequence of (opcode, operand) pairs stored in the thread cache. The `$next` function advances the thread pointer and dispatches via indirect call through the handler table.

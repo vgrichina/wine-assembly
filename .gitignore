@@ -2,9 +2,9 @@ build/
 node_modules/
 .env*
 .DS_Store
+scratch/
 *.exe
 *.png
-!scratch/*.png
 *.dll
 *.DLL
 *.wav
