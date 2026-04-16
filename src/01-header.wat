@@ -175,8 +175,9 @@
   (import "host" "gdi_set_viewport_org" (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32)))
   (import "host" "gdi_get_viewport_org_x" (func $host_gdi_get_viewport_org_x (param i32) (result i32)))
   (import "host" "gdi_get_viewport_org_y" (func $host_gdi_get_viewport_org_y (param i32) (result i32)))
-  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount) → 1
+  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
+  ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
   (import "host" "gdi_draw_text" (func $host_gdi_draw_text (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_draw_text(hdc, textWA, nCount, rectWA, uFormat, isWide) → height
   (import "host" "gdi_set_pixel" (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)))
@@ -776,6 +777,18 @@
 
   ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
   (global $bp_addr (mut i32) (i32.const 0))
+
+  ;; 1KB scratch for UTF-16→ANSI conversion in Unicode text handlers (ExtTextOutW,
+  ;; TextOutW, etc.). Below GUEST_BASE so guest cannot reach via image-relative pointers.
+  (global $TEXT_SCRATCH i32 (i32.const 0x00011B00))
+
+  ;; EIP hit counters: passive per-block counter at 16 slots (HIT_COUNT_BASE=0x11F00,
+  ;; 8 bytes each: +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n
+  ;; slots per block dispatch. Addresses must be x86 block-entry boundaries.
+  ;; Placed just below GUEST_BASE (0x12000) in the last free 4KB page; nothing else
+  ;; uses that range.
+  (global $HIT_COUNT_BASE i32 (i32.const 0x00011F00))
+  (global $hit_count_n (mut i32) (i32.const 0))
 
   (global $clipboard_fmt_counter (mut i32) (i32.const 0))
 

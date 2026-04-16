@@ -3,6 +3,7 @@
   ;; ============================================================
   (func $run (export "run") (param $max_blocks i32)
     (local $thread i32) (local $blocks i32)
+    (local $hc_i i32) (local $hc_slot i32)
     (local.set $blocks (local.get $max_blocks))
     (block $halt (loop $main
       (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
@@ -28,6 +29,22 @@
       ;; EIP breakpoint
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
         (then (br $halt)))
+      ;; EIP hit counters (passive): increment count for any slot whose addr==eip.
+      ;; Early-out via $hit_count_n (0 when no --count= flags active).
+      (if (global.get $hit_count_n)
+        (then
+          (local.set $hc_i (i32.const 0))
+          (block $hc_done (loop $hc_loop
+            (br_if $hc_done (i32.ge_u (local.get $hc_i) (global.get $hit_count_n)))
+            (local.set $hc_slot (i32.add (global.get $HIT_COUNT_BASE)
+                                         (i32.shl (local.get $hc_i) (i32.const 3))))
+            (if (i32.eq (i32.load (local.get $hc_slot)) (global.get $eip))
+              (then
+                (i32.store offset=4 (local.get $hc_slot)
+                  (i32.add (i32.load offset=4 (local.get $hc_slot)) (i32.const 1)))))
+            (local.set $hc_i (i32.add (local.get $hc_i) (i32.const 1)))
+            (br $hc_loop))))
+        )
       ;; Exit if WaitForSingleObject yielded (yield_reason=1)
       (br_if $halt (i32.eq (global.get $yield_reason) (i32.const 1)))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
@@ -157,6 +174,22 @@
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+
+  ;; Hit counters: set_count writes addr into slot N and zeros its count,
+  ;; bumping $hit_count_n so the run loop includes this slot. Caller passes
+  ;; slots 0..N-1 in order (contiguous); $hit_count_n = max(slot+1).
+  (func (export "set_count") (param $slot i32) (param $addr i32)
+    (local $base i32)
+    (local.set $base (i32.add (global.get $HIT_COUNT_BASE)
+                              (i32.shl (local.get $slot) (i32.const 3))))
+    (i32.store          (local.get $base) (local.get $addr))
+    (i32.store offset=4 (local.get $base) (i32.const 0))
+    (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
+      (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1))))))
+  (func (export "get_count") (param $slot i32) (result i32)
+    (i32.load offset=4 (i32.add (global.get $HIT_COUNT_BASE)
+                                (i32.shl (local.get $slot) (i32.const 3)))))
+  (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)))
   (func (export "set_watchpoint") (param $addr i32)
     (global.set $watch_addr (local.get $addr))
     (if (local.get $addr)

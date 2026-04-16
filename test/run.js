@@ -37,6 +37,7 @@ const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: bre
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
+const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save back canvases alongside PNG snapshots
@@ -56,6 +57,8 @@ const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
+const countAddrs = COUNT_SPEC ? COUNT_SPEC.split(',').map(s => parseInt(s, 16)) : [];
+if (countAddrs.length > 16) { console.error('--count supports max 16 addresses'); process.exit(1); }
 
 async function main() {
   let wasmBytes;
@@ -170,7 +173,20 @@ async function main() {
   }
 
   // String APIs where we want to log content
-  const STRING_APIS = ['lstrlenA', 'lstrcpyA', 'lstrcpynA', 'LoadStringA', 'GetWindowTextA', 'SetWindowTextA', 'SetDlgItemTextA'];
+  const STRING_APIS = [
+    'lstrlenA', 'lstrcpyA', 'lstrcpynA', 'LoadStringA', 'GetWindowTextA',
+    'SetWindowTextA', 'SetDlgItemTextA',
+    // File I/O — first arg is the path/pattern
+    'CreateFileA', 'OpenFile', 'DeleteFileA', 'FindFirstFileA', 'GetFileAttributesA',
+    'SetFileAttributesA', 'MoveFileA', 'CopyFileA', 'CreateDirectoryA', 'RemoveDirectoryA',
+    '_lopen', '_lcreat', 'LoadLibraryA', 'LoadLibraryExA', 'GetModuleHandleA',
+    'GetModuleFileNameA',
+    // Registry — first arg is hkey, but name arg is #2; separate handling below
+    // INI — first arg is section name string
+    'GetPrivateProfileStringA', 'WritePrivateProfileStringA', 'GetProfileStringA',
+    // Misc
+    'OutputDebugStringA', 'MessageBoxA',
+  ];
 
   // DX_OBJECTS is at WASM addr 0xE970 (below GUEST_BASE); 32 entries × 32 bytes.
   // Matches src/09a8-handlers-directx.wat layout.
@@ -355,7 +371,7 @@ async function main() {
         try {
           const mem = new Uint8Array(memory.buffer);
           const strPtr = dv.getUint32(g2w(esp + 4), true);
-          const strVal = readStr(g2w(strPtr), 64);
+          const strVal = readStr(g2w(strPtr), 200);
           if (strVal) strInfo = ` str="${strVal}"`;
         } catch (_) {}
       }
@@ -1410,6 +1426,12 @@ async function main() {
     if (breakAddrs.length === 1 && batch === 0 && instance.exports.set_bp) {
       instance.exports.set_bp(breakAddrs[0]);
     }
+    // Hit counters: register once
+    if (countAddrs.length && batch === 0 && instance.exports.set_count) {
+      for (let i = 0; i < countAddrs.length; i++) {
+        instance.exports.set_count(i, countAddrs[i]);
+      }
+    }
     // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
       console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
@@ -1647,6 +1669,13 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  if (countAddrs.length && instance.exports.get_count) {
+    console.log('Hit counts:');
+    for (let i = 0; i < countAddrs.length; i++) {
+      console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
+    }
+  }
 
   if (DUMP_VFS && ctx.vfs) {
     console.log('\n[VFS] Files (' + ctx.vfs.files.size + '):');

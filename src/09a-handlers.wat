@@ -3822,9 +3822,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 364: ExtTextOutW — STUB: unimplemented
+  ;; 364: ExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
+  ;; Delegates to gdi_text_out in wide mode; clipping rect and lpDx are ignored
+  ;; (matches ExtTextOutA behaviour — host reads UTF-16 LE directly).
   (func $handle_ExtTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $lpString i32) (local $count i32)
+    (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
+    (local.set $count    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; arg6 (wchar count)
+    (global.set $eax (call $host_gdi_text_out
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (call $g2w (local.get $lpString)) (local.get $count) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
   ;; 365: PlayMetaFile — STUB: unimplemented
@@ -3931,9 +3939,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 375: TextOutW — STUB: unimplemented
+  ;; 375: TextOutW(hdc, x, y, lpString, c) — 5 args stdcall, host reads UTF-16 LE.
   (func $handle_TextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_text_out
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (call $g2w (local.get $arg3)) (local.get $arg4) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 376: Escape — STUB: unimplemented
@@ -8211,7 +8222,7 @@
     (local.set $count (call $gl32 (i32.add (global.get $esp) (i32.const 28))))    ;; arg6
     (global.set $eax (call $host_gdi_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $lpString)) (local.get $count)))
+      (call $g2w (local.get $lpString)) (local.get $count) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; 8 args + ret
   )
 
