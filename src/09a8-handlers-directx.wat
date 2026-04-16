@@ -1411,12 +1411,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectSoundBuffer_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
+    (local $entry i32) (local $rc i32) (local $handle i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
+      (then
+        (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
+        (if (local.get $handle) (then (drop (call $host_voice_close (local.get $handle)))))
+        (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1440,7 +1443,7 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (local.get $handle)
-      (then (local.set $pos (call $host_wave_out_get_pos (local.get $handle))))
+      (then (local.set $pos (call $host_voice_get_pos (local.get $handle))))
       (else (local.set $pos (i32.const 0))))
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $pos))))
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $pos))))
@@ -1530,31 +1533,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))) ;; 8 args
 
   ;; Play(this, dwReserved1, dwReserved2, dwFlags)
+  ;; Snapshot the buffer's PCM via voice_play_ring. Each DSBuffer owns its own
+  ;; voice (allocated lazily here), so multiple buffers mix instead of clobbering
+  ;; each other the way the old single-waveOut routing did.
   (func $handle_IDirectSoundBuffer_Play (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $handle i32) (local $dib_wa i32) (local $buf_size i32)
-    (local $channels i32) (local $bits i32) (local $rate i32)
+    (local $channels i32) (local $bits i32) (local $rate i32) (local $loop i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dib_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    ;; Read format from entry
     (local.set $channels (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
     (local.set $bits (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
     (local.set $rate (i32.load (i32.add (local.get $entry) (i32.const 24))))
     (if (i32.eqz (local.get $channels)) (then (local.set $channels (i32.const 1))))
     (if (i32.eqz (local.get $bits)) (then (local.set $bits (i32.const 16))))
     (if (i32.eqz (local.get $rate)) (then (local.set $rate (i32.const 22050))))
-    ;; Open waveOut if not already open, then submit data
     (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (i32.eqz (local.get $handle)) (then
-      (local.set $handle (call $host_wave_out_open (local.get $rate) (local.get $channels) (local.get $bits) (i32.const 0)))
+      (local.set $handle (call $host_voice_open (local.get $rate) (local.get $channels) (local.get $bits)))
       (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $handle))))
-    ;; Submit PCM data
+    ;; DSBPLAY_LOOPING = 1
+    (local.set $loop (i32.and (local.get $arg3) (i32.const 1)))
     (if (i32.and (local.get $dib_wa) (local.get $buf_size)) (then
-      (drop (call $host_wave_out_write (local.get $handle) (local.get $dib_wa) (local.get $buf_size)))))
-    ;; Mark as playing; DSBPLAY_LOOPING = 1
+      (drop (call $host_voice_play_ring
+        (local.get $handle) (local.get $dib_wa) (local.get $buf_size)
+        (i32.const 0) (local.get $loop)))))
     (i32.store (i32.add (local.get $entry) (i32.const 28))
-      (i32.or (i32.const 1) ;; playing
-              (i32.shl (i32.and (local.get $arg3) (i32.const 1)) (i32.const 1)))) ;; looping bit
+      (i32.or (i32.const 1) (i32.shl (local.get $loop) (i32.const 1))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -1568,40 +1573,44 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetVolume(this, lVolume) — convert from dB centibels to linear
+  ;; SetVolume(this, lVolume) — DSOUND attenuation centibels (0=full, -10000=silent)
   (func $handle_IDirectSoundBuffer_SetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $handle i32) (local $vol i32)
+    (local $entry i32) (local $handle i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
-    ;; arg1 = volume in hundredths of dB (0 = full, -10000 = silence)
-    ;; Simple linear mapping: vol = (arg1 + 10000) * 65535 / 10000
-    (local.set $vol (i32.div_u
-      (i32.mul (i32.add (local.get $arg1) (i32.const 10000)) (i32.const 65535))
-      (i32.const 10000)))
     (if (local.get $handle) (then
-      (call $host_wave_out_set_volume (local.get $handle) (local.get $vol))))
+      (call $host_voice_set_volume_db (local.get $handle) (local.get $arg1))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetPan — no-op
+  ;; SetPan(this, lPan) — centibels, -10000=left .. +10000=right
   (func $handle_IDirectSoundBuffer_SetPan (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $handle i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (local.get $handle) (then
+      (call $host_voice_set_pan (local.get $handle) (local.get $arg1))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetFrequency — no-op
+  ;; SetFrequency(this, dwFrequency) — playback rate in Hz; 0 = original
   (func $handle_IDirectSoundBuffer_SetFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $handle i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (local.get $handle) (then
+      (call $host_voice_set_freq (local.get $handle) (local.get $arg1))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; Stop(this)
+  ;; Stop(this) — stop playback but keep the voice; Play() may be called again
   (func $handle_IDirectSoundBuffer_Stop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $handle i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (local.get $handle) (then
-      (drop (call $host_wave_out_close (local.get $handle)))
-      (i32.store (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))))
-    (i32.store (i32.add (local.get $entry) (i32.const 28)) (i32.const 0)) ;; clear playing
+      (drop (call $host_voice_stop (local.get $handle)))))
+    (i32.store (i32.add (local.get $entry) (i32.const 28)) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 

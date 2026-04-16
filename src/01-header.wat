@@ -299,6 +299,23 @@
   (import "host" "wave_out_set_volume" (func $host_wave_out_set_volume (param i32 i32)))
   ;; wave_out_set_volume(handle, volume_0_to_65535)
 
+  ;; Unified voice API — used by both wave_out_* (STREAM) and DSOUND (SNAPSHOT).
+  ;; Each voice is one mixer slot in the host AudioContext with its own format
+  ;; + gain/pan/playbackRate. waveOut handlers above are now thin shims.
+  (import "host" "voice_open" (func $host_voice_open (param i32 i32 i32) (result i32)))
+  ;; voice_open(sampleRate, channels, bitsPerSample) → voice_id
+  (import "host" "voice_write_stream" (func $host_voice_write_stream (param i32 i32 i32) (result i32)))
+  ;; voice_write_stream(id, pcmDataWA, byteLength) → 0
+  (import "host" "voice_play_ring" (func $host_voice_play_ring (param i32 i32 i32 i32 i32) (result i32)))
+  ;; voice_play_ring(id, pcmDataWA, byteLength, startOffset, loop) → 0
+  (import "host" "voice_stop" (func $host_voice_stop (param i32) (result i32)))
+  (import "host" "voice_close" (func $host_voice_close (param i32) (result i32)))
+  (import "host" "voice_get_pos" (func $host_voice_get_pos (param i32) (result i32)))
+  (import "host" "voice_set_volume_linear" (func $host_voice_set_volume_linear (param i32 i32)))
+  (import "host" "voice_set_volume_db" (func $host_voice_set_volume_db (param i32 i32)))
+  (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))
+  (import "host" "voice_set_freq" (func $host_voice_set_freq (param i32 i32)))
+
   (import "host" "memory" (memory 1024 1024 shared))
   (export "memory" (memory 0))
 
