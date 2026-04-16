@@ -973,10 +973,54 @@
     (global.set $steps (i32.const 0))
   )
 
-  ;; 76: TranslateAcceleratorA(hwnd, hAccel, lpMsg) — return 0 (no accel match)
-  ;; TODO: implement real accelerator table lookup
+  ;; 76: TranslateAcceleratorA(hwnd, hAccel, lpMsg)
+  ;; If lpMsg is WM_KEYDOWN/WM_SYSKEYDOWN and its VK matches an accel entry,
+  ;; queue WM_COMMAND(cmd, 0) to hwnd via post_queue and return 1 (msg consumed).
+  ;; Modifier bits (Shift/Ctrl/Alt) aren't tracked here — entries that require
+  ;; them are skipped, so plain F-keys work but Ctrl+F10-style accels don't yet.
   (func $handle_TranslateAcceleratorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $msg_wa i32) (local $umsg i32) (local $wparam i32)
+    (local $tbl i32) (local $n i32) (local $i i32) (local $e i32)
+    (local $fv i32) (local $key i32) (local $cmd i32) (local $slot i32)
     (global.set $eax (i32.const 0))
+    (if (i32.eqz (global.get $haccel_data))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $msg_wa (call $g2w (local.get $arg2)))
+    (local.set $umsg (i32.load offset=4 (local.get $msg_wa)))
+    ;; WM_KEYDOWN=0x100, WM_SYSKEYDOWN=0x104
+    (if (i32.and (i32.ne (local.get $umsg) (i32.const 0x100))
+                 (i32.ne (local.get $umsg) (i32.const 0x104)))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $wparam (i32.load offset=8 (local.get $msg_wa)))
+    (local.set $tbl (global.get $haccel_data))
+    (local.set $n (global.get $haccel_count))
+    (block $done (loop $walk
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $e (i32.add (local.get $tbl) (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $fv  (i32.load8_u  (local.get $e)))
+      (local.set $key (i32.load16_u offset=2 (local.get $e)))
+      (local.set $cmd (i32.load16_u offset=4 (local.get $e)))
+      ;; Match requirements: FVIRTKEY(0x01) must be set, no modifier bits
+      ;; (FSHIFT=0x04, FCONTROL=0x08, FALT=0x10) since we don't track modifiers,
+      ;; and key == wParam. FLAST(0x80) is ignored for iteration — we use $n.
+      (if (i32.and
+            (i32.eq (i32.and (local.get $fv) (i32.const 0x1D)) (i32.const 0x01))
+            (i32.eq (local.get $key) (local.get $wparam)))
+        (then
+          ;; Queue WM_COMMAND(cmd, 0) to arg0 via post_queue (same layout as PostMessageA).
+          (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
+            (then
+              (local.set $slot (i32.add (i32.const 0x400)
+                (i32.mul (global.get $post_queue_count) (i32.const 16))))
+              (i32.store          (local.get $slot) (local.get $arg0))
+              (i32.store offset=4 (local.get $slot) (i32.const 0x111))
+              (i32.store offset=8 (local.get $slot) (local.get $cmd))
+              (i32.store offset=12 (local.get $slot) (i32.const 0))
+              (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
+          (global.set $eax (i32.const 1))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $walk)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

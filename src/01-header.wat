@@ -706,6 +706,8 @@
   (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
+  (global $haccel_data  (mut i32) (i32.const 0))    ;; WASM addr of accel table bytes (0 if none)
+  (global $haccel_count (mut i32) (i32.const 0))    ;; Number of ACCEL entries (8 bytes each)
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle (most recent, modal or modeless)
   ;; DialogBoxParamA-only hwnd for the modal message pump in 09b-dispatch.wat.
   ;; Unlike $dlg_hwnd, this is NOT clobbered by nested CreateDialogParamA

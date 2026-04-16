@@ -1547,8 +1547,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 111: LoadAcceleratorsA
+  ;; 111: LoadAcceleratorsA(hInstance, lpTableName)
+  ;; Look up RT_ACCELERATOR=9 via $rsrc_find_data_wa; on hit, cache the
+  ;; WASM addr + entry count so TranslateAcceleratorA can walk the table.
+  ;; arg1 = lpTableName (MAKEINTRESOURCE int or guest string ptr).
   (func $handle_LoadAcceleratorsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32)
+    (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
+    (global.set $haccel_data (local.get $data))
+    (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
     (global.set $haccel (i32.const 0x60001))
     (global.set $eax (i32.const 0x60001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -6723,17 +6730,23 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 638: LoadAcceleratorsW — same as A: set haccel and return fake handle
+  ;; 638: LoadAcceleratorsW — same as A (resource name may be int or UTF-16 string;
+  ;; $rsrc_find_data_wa via $find_resource handles int IDs and ASCII, wide names fall
+  ;; through as miss — freecell/solitaire use ASCII-compatible names).
   (func $handle_LoadAcceleratorsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32)
+    (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
+    (global.set $haccel_data (local.get $data))
+    (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
     (global.set $haccel (i32.const 0x60001))
     (global.set $eax (i32.const 0x60001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 639: TranslateAcceleratorW — return 0, 3 args stdcall
+  ;; 639: TranslateAcceleratorW — identical behaviour to A (MSG layout is the same).
   (func $handle_TranslateAcceleratorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $handle_TranslateAcceleratorA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 640: IsWindowEnabled — STUB: unimplemented
