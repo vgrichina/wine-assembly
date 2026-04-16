@@ -59,6 +59,7 @@ const extra = [
   { name: 'GetTextExtentPoint32A', nargs: 4 },
   { name: 'wsprintfA', nargs: -1 },  // varargs, handled specially
   { name: 'GetPrivateProfileStringA', nargs: 6 },
+  { name: 'PaintRgn', nargs: 2 },
   // Wide-char CRT APIs
   { name: '__wgetmainargs', nargs: 5 },
   { name: '__p__wcmdln', nargs: 0 },

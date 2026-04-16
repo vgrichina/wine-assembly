@@ -133,6 +133,10 @@
   ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
   (import "host" "gdi_combine_rgn" (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)))
   ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
+  (import "host" "gdi_offset_rgn" (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32)))
+  ;; gdi_offset_rgn(hrgn, dx, dy) -> region complexity
+  (import "host" "gdi_fill_rgn" (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32)))
+  ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
   (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))

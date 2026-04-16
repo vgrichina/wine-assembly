@@ -8662,5 +8662,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 997118615
+  },
+  {
+    "id": 1238,
+    "name": "PaintRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1992772342
   }
 ]
