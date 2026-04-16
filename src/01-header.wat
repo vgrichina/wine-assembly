@@ -678,6 +678,14 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   (global $auto_timer_id (mut i32) (i32.const 0x1000))  ;; Auto-generated timer IDs start here
+  ;; Multimedia timer (timeSetEvent) — single slot, globals only
+  (global $mm_timer_id       (mut i32) (i32.const 0))  ;; 0 = inactive
+  (global $mm_timer_interval (mut i32) (i32.const 0))
+  (global $mm_timer_callback (mut i32) (i32.const 0))
+  (global $mm_timer_dwuser   (mut i32) (i32.const 0))
+  (global $mm_timer_last_tick (mut i32) (i32.const 0))
+  (global $mm_timer_oneshot  (mut i32) (i32.const 0))  ;; 1 = TIME_ONESHOT
+  (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated

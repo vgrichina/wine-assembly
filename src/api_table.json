@@ -8711,5 +8711,26 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3581342023
+  },
+  {
+    "id": 1245,
+    "name": "SetMessageQueue",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 156967389
+  },
+  {
+    "id": 1246,
+    "name": "timeSetEvent",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 682150372
+  },
+  {
+    "id": 1247,
+    "name": "timeKillEvent",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3662307660
   }
 ]

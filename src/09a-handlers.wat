@@ -116,6 +116,22 @@
         (br $loop)
       )
     )
+    ;; Check multimedia timer (timeSetEvent)
+    (if (global.get $mm_timer_id)
+      (then
+        (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
+        (if (i32.ge_u (local.get $elapsed) (global.get $mm_timer_interval))
+          (then
+            (if (local.get $consume)
+              (then
+                (global.set $mm_timer_last_tick (global.get $tick_count))
+                (if (global.get $mm_timer_oneshot)
+                  (then (global.set $mm_timer_id (i32.const 0))))))
+            (call $gs32 (local.get $msg_ptr) (i32.const 0))                                        ;; hwnd=0
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x7FF0))           ;; internal MM_TIMER
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $mm_timer_id))    ;; wParam=timerID
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $mm_timer_callback)) ;; lParam=callback
+            (return (i32.const 1))))))
     (i32.const 0)
   )
 
@@ -6603,6 +6619,26 @@
     (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (then (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; MM_TIMER (0x7FF0): multimedia timer callback — TimeProc(uTimerID, uMsg=0, dwUser, 0, 0)
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x7FF0))
+    (then
+    (local.set $tmp (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $tmp))
+    (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+    (global.set $steps (i32.const 0))
+    (return)))
     ;; WM_TIMER with callback (lParam != 0): call callback(hwnd, WM_TIMER, timerID, tickcount)
     (if (i32.and (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
     (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 0)))

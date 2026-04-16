@@ -560,3 +560,31 @@
   (func $handle_waveInGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; 1246: timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent)
+  ;; Returns timer ID (non-zero) on success, 0 on error
+  (func $handle_timeSetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $tid i32)
+    (local.set $tid (global.get $mm_timer_next_id))
+    (global.set $mm_timer_next_id (i32.add (local.get $tid) (i32.const 1)))
+    (global.set $mm_timer_id (local.get $tid))
+    (global.set $mm_timer_interval (local.get $arg0))
+    (global.set $mm_timer_callback (local.get $arg2))
+    (global.set $mm_timer_dwuser (local.get $arg3))
+    (global.set $mm_timer_last_tick (call $host_get_ticks))
+    (global.set $mm_timer_oneshot (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+    (global.set $eax (local.get $tid))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 1247: timeKillEvent(uTimerID)
+  ;; Returns TIMERR_NOERROR (0) if found, MMSYSERR_INVALPARAM (11) if not
+  (func $handle_timeKillEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg0) (global.get $mm_timer_id))
+      (then
+        (global.set $mm_timer_id (i32.const 0))
+        (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax (i32.const 11))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
