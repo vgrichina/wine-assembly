@@ -733,6 +733,7 @@
   (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   (global $mm_timer_saved_esp (mut i32) (i32.const 0)) ;; ESP before callback injection
+  (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated

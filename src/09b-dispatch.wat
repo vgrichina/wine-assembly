@@ -348,6 +348,12 @@
         (call $enum_modes_continue)
         (return)))
 
+    ;; mm_timer callback returned — restore caller-saved regs + flags
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
+      (then
+        (call $restore_caller_regs)
+        (return)))
+
     ;; Unresolved ordinal import from a system DLL (marker "ORD\0")
     ;; — $api_id holds the actual ordinal. Format "KERNEL32.#NNNNN" into
     ;; the scratch buffer at 0x2DA and crash with that name so the user

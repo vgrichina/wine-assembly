@@ -212,3 +212,29 @@
         (else (global.set $flag_res (i32.const 1))))))
   )
 
+  ;; Save caller-saved registers + lazy flags onto guest stack (9 dwords = 36 bytes)
+  (func $save_caller_regs
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 36)))
+    (call $gs32 (global.get $esp)                         (global.get $eip))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4))  (global.get $eax))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8))  (global.get $ecx))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (global.get $edx))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (global.get $flag_op))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 20)) (global.get $flag_res))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (global.get $flag_a))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (global.get $flag_b))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 32)) (global.get $flag_sign_shift)))
+
+  ;; Restore caller-saved registers + lazy flags from guest stack
+  (func $restore_caller_regs
+    (global.set $eip             (call $gl32 (global.get $esp)))
+    (global.set $eax             (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+    (global.set $ecx             (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $edx             (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $flag_op         (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $flag_res        (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (global.set $flag_a          (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $flag_b          (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $flag_sign_shift (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
+

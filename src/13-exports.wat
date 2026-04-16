@@ -281,9 +281,11 @@
     (global.set $mm_timer_last_tick (global.get $tick_count))
     (if (global.get $mm_timer_oneshot)
       (then (global.set $mm_timer_id (i32.const 0))))
-    ;; Save ESP before pushing callback frame
+    ;; Save ESP before pushing anything (re-entrancy guard compares against this)
     (global.set $mm_timer_saved_esp (global.get $esp))
     (global.set $mm_timer_in_cb (i32.const 1))
+    ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
+    (call $save_caller_regs)
     ;; Push 5 args: dw2=0, dw1=0, dwUser, uMsg=0, uTimerID
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw2
@@ -295,9 +297,9 @@
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; uMsg
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $mm_timer_id))       ;; uTimerID
-    ;; Push return address = current EIP (resume after callback returns)
+    ;; Push return address = CACA000A thunk (restores regs when callback returns)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $eip))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     ;; Redirect EIP to callback
     (global.set $eip (global.get $mm_timer_callback))
     (i32.const 1))

@@ -246,6 +246,15 @@
       (i32.const 0xCACA0008))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate mm_timer callback return thunk (marker 0xCACA000A)
+    (global.set $mm_timer_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000A))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
         (call $update_thunk_end)
   )
 
