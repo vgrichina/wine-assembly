@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 239 funcref)
+  (table $handlers 270 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -291,5 +291,36 @@
     $th_mov_r16_i16        ;; 236: MOV r16, imm16 (op=reg, imm in next word) — preserves upper 16
     $th_xchg_m8_r          ;; 237: XCHG [addr], r8 (op=byte_reg, addr in next word)
     $th_xchg_m8_r_ro       ;; 238: XCHG [base+disp], r8 (op=reg<<4|base, disp in next word)
+    $th_mul8               ;; 239: MUL AL, r8 → AX (op=byte_reg)
+    $th_imul8              ;; 240: IMUL AL, r8 → AX signed (op=byte_reg)
+    $th_div8               ;; 241: DIV AX by r8 → AL=quot,AH=rem (op=byte_reg)
+    $th_idiv8              ;; 242: IDIV AX by r8 → AL=quot,AH=rem signed (op=byte_reg)
+    $th_muldiv_m8          ;; 243: 8-bit MUL/DIV [addr] (op=type 0-3, addr next word)
+    $th_muldiv_m8_ro       ;; 244: 8-bit MUL/DIV [base+disp] (op=type<<4|base, disp next word)
+    $th_shift_m8_ro        ;; 245: shift [base+disp] 8-bit (op=base, disp+shift_info in words)
+    $th_shift_m16_ro       ;; 246: shift [base+disp] 16-bit (op=base, disp+shift_info in words)
+    $th_cmpsw              ;; 247: CMPSW single
+    $th_rep_cmpsw          ;; 248: REP CMPSW (op=0 REPE, 1 REPNE)
+    $th_scasw              ;; 249: SCASW single
+    $th_rep_scasw          ;; 250: REP SCASW (op=0 REPE, 1 REPNE)
+    $th_imul_r16_r16_i     ;; 251: IMUL r16, r16, imm16 (op=dst<<4|src, imm next word)
+    $th_cmpxchg8           ;; 252: CMPXCHG r/m8, r8 (same encoding as th_cmpxchg but 8-bit)
+    $th_pushf16            ;; 253: PUSHF (16-bit flags)
+    $th_popf16             ;; 254: POPF (16-bit flags)
+    $th_xchg_ax_r16        ;; 255: XCHG AX, r16 (op=reg, preserves upper 16 of both)
+    $th_cmovcc_rr16        ;; 256: CMOVcc r16, r16 (op=cc<<8|dst<<4|src)
+    $th_cmovcc_rm16        ;; 257: CMOVcc r16, [mem] (op=cc<<4|dst, addr next word)
+    $th_shld16             ;; 258: SHLD r16, r16, count (op=dst<<4|src, count next word)
+    $th_shrd16             ;; 259: SHRD r16, r16, count
+    $th_shld16_m           ;; 260: SHLD [mem], r16, count (op=src, addr+count in words)
+    $th_shrd16_m           ;; 261: SHRD [mem], r16, count
+    $th_bsf16              ;; 262: BSF r16, r16 (op=dst<<4|src)
+    $th_bsr16              ;; 263: BSR r16, r16
+    $th_bsf16_m            ;; 264: BSF r16, [mem] (op=dst, addr next word)
+    $th_bsr16_m            ;; 265: BSR r16, [mem]
+    $th_call_rel16         ;; 266: CALL rel16
+    $th_push_m16           ;; 267: PUSH [addr] 16-bit (addr next word)
+    $th_pop_m16            ;; 268: POP [addr] 16-bit (addr next word)
+    $th_push_m16_ro        ;; 269: PUSH [base+disp] 16-bit (op=base, disp next word)
   )
 
