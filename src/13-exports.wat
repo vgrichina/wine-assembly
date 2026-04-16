@@ -132,6 +132,11 @@
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
+  ;; Synchronous NCHITTEST helper — JS calls before generating mouse
+  ;; events so classification lives in WAT. Returns HT* code.
+  (func (export "hittest_sync")
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (call $defwndproc_do_nchittest (local.get $hwnd) (local.get $sx) (local.get $sy)))
   ;; Client rect (window-local) written by WM_NCCALCSIZE; read by JS drawWindow.
   (func (export "get_client_rect_l") (param $hwnd i32) (result i32) (call $client_rect_get_l (local.get $hwnd)))
   (func (export "get_client_rect_t") (param $hwnd i32) (result i32) (call $client_rect_get_t (local.get $hwnd)))

@@ -1517,6 +1517,14 @@
     (local $wndproc i32) (local $prev i32) (local $ret_addr i32)
     (local.set $prev (global.get $focus_hwnd))
     (global.set $eax (local.get $prev))
+    ;; Focus change: post WM_KILLFOCUS to outgoing window. The incoming
+    ;; WM_SETFOCUS is delivered synchronously below (EIP redirect).
+    (if (i32.and (i32.ne (local.get $prev) (local.get $arg0))
+                 (i32.ne (local.get $prev) (i32.const 0)))
+      (then
+        (drop (call $post_queue_push
+                (local.get $prev) (i32.const 0x0008)
+                (local.get $arg0) (i32.const 0)))))
     (global.set $focus_hwnd (local.get $arg0))
     (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
     ;; WAT-native wndproc: dispatch inline

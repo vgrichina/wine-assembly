@@ -343,6 +343,92 @@
       (i32.sub (local.get $w) (local.get $bw))
       (i32.sub (local.get $h) (local.get $bot))))
 
+  ;; Default WM_NCHITTEST: classify (screen_x, screen_y) against window
+  ;; chrome. Returns a HT* code. Button geometry matches
+  ;; $defwndproc_ncpaint exactly — single source of truth.
+  ;;
+  ;; HT codes: HTNOWHERE=0 HTCLIENT=1 HTCAPTION=2 HTSYSMENU=3 HTBORDER=18
+  ;;           HTCLOSE=20 HTMINBUTTON=8 HTMAXBUTTON=9
+  (func $defwndproc_do_nchittest
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $rect i32) (local $wx i32) (local $wy i32)
+    (local $w i32) (local $h i32) (local $lx i32) (local $ly i32)
+    (local $style i32) (local $has_cap i32) (local $is_dialog i32)
+    (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
+    (local $btn_y i32) (local $btn_bot i32)
+    (local $close_x i32) (local $max_x i32) (local $min_x i32)
+    (local $bw i32) (local $bh i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $wx (i32.load         (local.get $rect)))
+    (local.set $wy (i32.load offset=4 (local.get $rect)))
+    (local.set $w  (i32.sub (i32.load offset=8  (local.get $rect)) (local.get $wx)))
+    (local.set $h  (i32.sub (i32.load offset=12 (local.get $rect)) (local.get $wy)))
+    (local.set $lx (i32.sub (local.get $sx) (local.get $wx)))
+    (local.set $ly (i32.sub (local.get $sy) (local.get $wy)))
+    ;; Outside window
+    (if (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 0))
+                         (i32.lt_s (local.get $ly) (i32.const 0)))
+                 (i32.or (i32.ge_s (local.get $lx) (local.get $w))
+                         (i32.ge_s (local.get $ly) (local.get $h))))
+      (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $has_cap (i32.and (local.get $style) (i32.const 0x00C00000)))
+    ;; Title bar region: (3, 3)-(w-3, 3+18); button strip (3+2)..(3+16) high.
+    (if (local.get $has_cap)
+      (then
+        (local.set $cap_l (i32.const 3))
+        (local.set $cap_r (i32.sub (local.get $w) (i32.const 3)))
+        (local.set $cap_top (i32.const 3))
+        (local.set $cap_bot (i32.add (local.get $cap_top) (i32.const 18)))
+        (if (i32.and (i32.and (i32.ge_s (local.get $lx) (local.get $cap_l))
+                                (i32.lt_s (local.get $lx) (local.get $cap_r)))
+                       (i32.and (i32.ge_s (local.get $ly) (local.get $cap_top))
+                                (i32.lt_s (local.get $ly) (local.get $cap_bot))))
+          (then
+            (local.set $bw (i32.const 16))
+            (local.set $bh (i32.const 14))
+            (local.set $btn_y (i32.add (local.get $cap_top) (i32.const 2)))
+            (local.set $btn_bot (i32.add (local.get $btn_y) (local.get $bh)))
+            (local.set $close_x (i32.sub (local.get $cap_r)
+                                   (i32.add (local.get $bw) (i32.const 2))))
+            (local.set $max_x   (i32.sub (local.get $cap_r)
+                                   (i32.add (i32.mul (local.get $bw) (i32.const 2)) (i32.const 4))))
+            (local.set $min_x   (i32.sub (local.get $cap_r)
+                                   (i32.add (i32.mul (local.get $bw) (i32.const 3)) (i32.const 4))))
+            ;; Dialog style: close only (matches $defwndproc_ncpaint dialog branch).
+            (local.set $is_dialog (i32.and
+              (i32.and
+                (i32.and (local.get $style) (i32.const 0x00400000))
+                (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
+              (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000)))))
+            (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                  (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                          (i32.and (i32.ge_s (local.get $lx) (local.get $close_x))
+                                   (i32.lt_s (local.get $lx) (i32.add (local.get $close_x) (local.get $bw)))))
+              (then (return (i32.const 20)))) ;; HTCLOSE
+            (if (i32.eqz (local.get $is_dialog))
+              (then
+                (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                      (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                              (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
+                                       (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw)))))
+                  (then (return (i32.const 9)))) ;; HTMAXBUTTON
+                (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                      (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                              (i32.and (i32.ge_s (local.get $lx) (local.get $min_x))
+                                       (i32.lt_s (local.get $lx) (i32.add (local.get $min_x) (local.get $bw)))))
+                  (then (return (i32.const 8)))))) ;; HTMINBUTTON
+            (return (i32.const 2)))))) ;; HTCAPTION
+    ;; 3px border
+    (if (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 3))
+                        (i32.lt_s (local.get $ly) (i32.const 3)))
+                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (i32.const 3)))
+                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3)))))
+      (then (return (i32.const 18)))) ;; HTBORDER
+    (i32.const 1))                    ;; HTCLIENT
+
   ;; Tiny wrapper so $defwndproc_do_ncpaint can peek FLASH_TABLE without
   ;; reaching into the table address directly (keeps the layout private
   ;; to help.wat and avoids leaking the offset into two files).

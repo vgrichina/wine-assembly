@@ -447,6 +447,11 @@
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $wndproc i32) (local $client_size i32)
+    ;; WM_SHOWWINDOW(fShow=wParam, status=lParam=0 for ShowWindow API) before
+    ;; the host toggles visibility, so wndprocs can observe the transition.
+    (drop (call $post_queue_push
+            (local.get $arg0) (i32.const 0x0018)
+            (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 0)))
     (local.set $client_size (call $host_show_window (local.get $arg0) (local.get $arg1)))
     ;; Showing a window should trigger WM_PAINT — invalidate it
     ;; cmd != SW_HIDE (0) → mark for paint
@@ -1114,6 +1119,54 @@
     (call $defwndproc_do_nccalcsize (local.get $arg0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_NCHITTEST (0x84): classify screen (x,y) against chrome.
+    ;; lParam = MAKELONG(x16, y16) — sign-extend each.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0084))
+    (then
+    (global.set $eax (call $defwndproc_do_nchittest
+      (local.get $arg0)
+      (i32.shr_s (i32.shl (i32.and (local.get $arg3) (i32.const 0xFFFF)) (i32.const 16)) (i32.const 16))
+      (i32.shr_s (i32.shl (i32.and (i32.shr_u (local.get $arg3) (i32.const 16)) (i32.const 0xFFFF)) (i32.const 16)) (i32.const 16))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_NCLBUTTONDOWN (0xA1): wParam=hit_code. Translate sysbutton hits
+    ;; into WM_SYSCOMMAND posts so guest wndprocs can intercept via
+    ;; the standard path.
+    (if (i32.eq (local.get $arg1) (i32.const 0x00A1))
+    (then
+      (if (i32.eq (local.get $arg2) (i32.const 20))  ;; HTCLOSE
+        (then (drop (call $post_queue_push (local.get $arg0)
+                (i32.const 0x0112) (i32.const 0xF060) (i32.const 0)))))
+      (if (i32.eq (local.get $arg2) (i32.const 8))   ;; HTMINBUTTON
+        (then (drop (call $post_queue_push (local.get $arg0)
+                (i32.const 0x0112) (i32.const 0xF020) (i32.const 0)))))
+      (if (i32.eq (local.get $arg2) (i32.const 9))   ;; HTMAXBUTTON
+        (then (drop (call $post_queue_push (local.get $arg0)
+                (i32.const 0x0112) (i32.const 0xF030) (i32.const 0)))))
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_SYSCOMMAND (0x0112): SC_CLOSE → post WM_CLOSE; MIN/MAX/RESTORE →
+    ;; update host window state. JS still owns the rendering-side geometry
+    ;; via host_sys_command (see lib/host-imports.js).
+    (if (i32.eq (local.get $arg1) (i32.const 0x0112))
+    (then
+      (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF060))
+        (then
+          (drop (call $post_queue_push (local.get $arg0)
+                  (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (if (i32.or
+            (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF020))
+            (i32.or
+              (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
+              (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120))))
+        (then
+          (call $host_sys_command (local.get $arg0)
+                (i32.and (local.get $arg2) (i32.const 0xFFF0)))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )

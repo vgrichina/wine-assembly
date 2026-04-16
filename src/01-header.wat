@@ -24,6 +24,9 @@
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
   (import "host" "show_window" (func $host_show_window (param i32 i32) (result i32)))
   ;; show_window(hwnd, cmd) → packed client size (w | h<<16) after resize
+  (import "host" "sys_command" (func $host_sys_command (param i32 i32)))
+  ;; sys_command(hwnd, sc_code) — JS updates renderer geometry for
+  ;; SC_MINIMIZE (0xF020), SC_MAXIMIZE (0xF030), SC_RESTORE (0xF120).
   (import "host" "dialog_loaded" (func $host_dialog_loaded (param i32 i32)))
   ;; dialog_loaded(dlg_hwnd, parent_hwnd) — called after $dlg_load has
   ;; parsed the RT_DIALOG template into WND_DLG_RECORDS + CONTROL_TABLE.
