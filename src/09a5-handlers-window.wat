@@ -1245,6 +1245,7 @@
         ;; bInvert=FALSE: restore to normal (not flashing)
         (i32.store8 (local.get $addr) (i32.const 0))))
     ;; Trigger repaint so the caption redraws with inverted active state
+    (call $host_invalidate (local.get $arg0))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_queue_push (local.get $arg0))))

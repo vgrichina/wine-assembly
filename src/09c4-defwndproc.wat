@@ -55,7 +55,10 @@
     (local $min_x i32)
     (local $cx i32) (local $cy i32) (local $cs i32)
 
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    ;; Use whole-window DC (0xC0000 offset) so _getDrawTarget returns
+    ;; ox=0,oy=0 — ncpaint draws at window-local coords without needing
+    ;; _activeChildDraw override from JS.
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0xC0000)))
     (local.set $has_caption (i32.and (local.get $flags) (i32.const 0x08)))
     (local.set $is_active   (i32.and (local.get $flags) (i32.const 0x01)))
     (local.set $is_dialog   (i32.and (local.get $flags) (i32.const 0x02)))
@@ -63,28 +66,13 @@
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
 
     ;; -------------------------------------------------
-    ;; Frame fill (btnFace strips). Mirrors drawWindow's
-    ;; pre-WAT layout: top strip covers border + caption,
-    ;; L/R/B strips are 3px wide.
+    ;; Fill entire window rect with btnFace. The 3D edge,
+    ;; caption gradient, and client-area WM_PAINT all draw
+    ;; on top. One fill eliminates all gap rows between
+    ;; caption/menu/client/border.
     ;; -------------------------------------------------
-    ;; Top strip: 0..w, 0..(3 + cap_h)
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (i32.const 0) (i32.const 0)
-            (local.get $w) (i32.add (i32.const 3) (local.get $cap_h))
-            (i32.const 0x30011)))
-    ;; Left strip: 0..3, 0..h
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 0) (i32.const 0)
-            (i32.const 3) (local.get $h)
-            (i32.const 0x30011)))
-    ;; Right strip: w-3..w, 0..h
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.sub (local.get $w) (i32.const 3)) (i32.const 0)
-            (local.get $w) (local.get $h)
-            (i32.const 0x30011)))
-    ;; Bottom strip: 0..w, h-3..h
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 0) (i32.sub (local.get $h) (i32.const 3))
             (local.get $w) (local.get $h)
             (i32.const 0x30011)))
 
