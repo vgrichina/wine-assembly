@@ -570,13 +570,10 @@
   ;; GetCaps(this, lpDDDriverCaps, lpDDHELCaps)
   (func $handle_IDirectDraw_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $sz i32)
-    (call $host_log_i32 (i32.const 0xDDCA9001))
     ;; Fill driver caps if requested. CRITICAL: respect caller's dwSize —
     ;; DDraw v1 = 316, DDraw v5 = 380. Writing past it clobbers the caller's
     ;; stack frame (and return address). Read dwSize from [arg1], clamp.
     (if (local.get $arg1) (then
-      (call $host_log_i32 (i32.const 0xDDCA9002))
-      (call $host_log_i32 (i32.load (call $g2w (local.get $arg1))))
       (local.set $wa (call $g2w (local.get $arg1)))
       (local.set $sz (i32.load (local.get $wa)))
       (if (i32.or (i32.lt_u (local.get $sz) (i32.const 16))
@@ -668,19 +665,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; SetDisplayMode(this, dwWidth, dwHeight, dwBPP, [dwRefreshRate, dwFlags])
-  ;; IDirectDraw has 4 args (this+3), IDirectDraw2+ has 6 args (this+5).
-  ;; QI returns same object for both, so always pop 6 args (IDirectDraw2 style).
+  ;; IDirectDraw v1 has 4 args (this+3), IDirectDraw2+ has 6 args (this+5).
+  ;; Pop 4 args (v1) — over-popping by 8 bytes shifts caller's ESP and later
+  ;; calls (e.g. GetCaps) write their buffers to the wrong location, clobbering
+  ;; the caller's return address. When a v2+ caller appears, we'll need to track
+  ;; the interface version per-object (set on QI) and pop accordingly.
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
-    ;; Resize main window via existing host import
     (if (global.get $main_hwnd) (then
       (call $host_move_window (global.get $main_hwnd)
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 1))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; this + 5 args (IDirectDraw2)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; this + 3 args (IDirectDraw v1)
 
   ;; WaitForVerticalBlank — no-op
   (func $handle_IDirectDraw_WaitForVerticalBlank (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1372,10 +1371,16 @@
 
   ;; GetCaps(this, lpDSCaps)
   (func $handle_IDirectSound_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $sz i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    (call $zero_memory (local.get $wa) (i32.const 96))
-    (i32.store (local.get $wa) (i32.const 96)) ;; dwSize
+    ;; Respect caller's dwSize — DSCAPS shrank/grew across DX versions; writing
+    ;; past the caller's buffer clobbers their stack frame (see GetCaps fix).
+    (local.set $sz (i32.load (local.get $wa)))
+    (if (i32.or (i32.lt_u (local.get $sz) (i32.const 16))
+                (i32.gt_u (local.get $sz) (i32.const 96)))
+      (then (local.set $sz (i32.const 96))))
+    (call $zero_memory (local.get $wa) (local.get $sz))
+    (i32.store (local.get $wa) (local.get $sz))
     ;; dwFlags: DSCAPS_PRIMARYSTEREO|DSCAPS_PRIMARY16BIT|DSCAPS_SECONDARYSTEREO|DSCAPS_SECONDARY16BIT
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0xF0))
     ;; dwMaxSecondarySampleRate = 44100
