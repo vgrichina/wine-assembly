@@ -230,6 +230,9 @@
     ;; Class 7 = ScrollBar control
     (if (i32.eq (local.get $class) (i32.const 7))
       (then (return (call $scrollbar_ctrl_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 8 = TreeView (SysTreeView32)
+    (if (i32.eq (local.get $class) (i32.const 8))
+      (then (return (call $treeview_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))

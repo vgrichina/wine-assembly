@@ -178,7 +178,15 @@
                     (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
                             (i32.const 0x6369))
                     (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 3))))))
+              (then (local.set $detected_class (i32.const 3))))
+            ;; "SysTreeView32" → class 8 (TreeView)
+            ;; LE dwords: "syst"=0x74737973, "reev"=0x76656572
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x74737973))
+                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x76656572)))
+              (then (local.set $detected_class (i32.const 8))))))
         (if (local.get $detected_class)
           (then
             ;; System Edit/Button/Static class → WAT-native control

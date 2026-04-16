@@ -6030,10 +6030,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 564: ExtSelectClipRgn — STUB: unimplemented
+  ;; 564: ExtSelectClipRgn(hdc, hrgn, fnMode) — 3 args stdcall
   (func $handle_ExtSelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_gdi_ext_select_clip_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 565: SelectClipPath — STUB: unimplemented
   (func $handle_SelectClipPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6048,10 +6049,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 567: GetClipRgn — STUB: unimplemented
+  ;; 567: GetClipRgn(hdc, hrgn) — 2 args stdcall. Returns 1 if clip region set, 0 if none, -1 on error.
   (func $handle_GetClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    ;; For now return 0 = no clip region (clip is applied JS-side, not visible as guest HRGN)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 568: PolyBezierTo — STUB: unimplemented
   (func $handle_PolyBezierTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6108,10 +6110,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 579: SelectClipRgn — STUB: unimplemented
+  ;; 579: SelectClipRgn(hdc, hrgn) — 2 args stdcall
   (func $handle_SelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_gdi_select_clip_rgn
+      (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 580: OffsetWindowOrgEx — STUB: unimplemented
   (func $handle_OffsetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6284,10 +6287,42 @@
   )
 
   ;; 607: MsgWaitForMultipleObjects(nCount, pHandles, fWaitAll, dwMilliseconds, dwWakeMask) → DWORD
-  ;; Returns WAIT_OBJECT_0 + nCount (= QS_* message available) to wake up the message loop
+  ;; 5 args stdcall = 24 bytes. Returns WAIT_OBJECT_0+i for signaled handle, or nCount for messages.
   (func $handle_MsgWaitForMultipleObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))  ;; WAIT_OBJECT_0 + nCount = "message available"
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (local $result i32)
+    ;; Check if messages are pending first (post queue, paint, timers, host input)
+    (if (i32.or
+          (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (i32.or (global.get $paint_pending)
+                  (i32.ne (call $host_check_input) (i32.const 0))))
+      (then
+        ;; Message available: return WAIT_OBJECT_0 + nCount
+        (global.set $eax (local.get $arg0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; No messages — try waiting on handles (if any)
+    (if (i32.gt_u (local.get $arg0) (i32.const 0))
+      (then
+        (local.set $result (call $host_wait_multiple
+          (local.get $arg0) (call $g2w (local.get $arg1))
+          (local.get $arg2) (i32.const 0)))  ;; poll with 0 timeout
+        (if (i32.ne (local.get $result) (i32.const 0xFFFF))
+          (then
+            ;; A handle is signaled (or timeout=0 returned immediately)
+            (if (i32.ne (local.get $result) (i32.const 0x102))  ;; not WAIT_TIMEOUT
+              (then
+                (global.set $eax (local.get $result))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+                (return)))))))
+    ;; Nothing ready — if timeout is 0, return WAIT_TIMEOUT
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0x102))  ;; WAIT_TIMEOUT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Non-zero timeout: yield to JS event loop, will re-enter
+    (global.set $yield_reason (i32.const 1))
+    (global.set $steps (i32.const 0)))
 
   ;; 608: GetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
   ;; Fill WINDOWPLACEMENT with defaults: SW_SHOWNORMAL, zero min/max pts, 0,0,640,480 rect

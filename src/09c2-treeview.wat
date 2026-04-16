@@ -10,7 +10,7 @@
   ;;   +16: prevSib
   ;;   +20: state       (checkbox bits 12-15: 0x2000=checked)
   ;;   +24: lParam      (app-defined data)
-  ;;   +28: reserved
+  ;;   +28: pszText     (guest pointer to NUL-terminated text)
 
   (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
@@ -82,6 +82,11 @@
       (then
         (i32.store offset=24 (local.get $base)
           (i32.load (i32.add (local.get $lParam_wa) (i32.const 44))))))  ;; TVITEMA.lParam at +36 from TVITEMA = +44 from struct start
+    ;; pszText: if mask includes TVIF_TEXT (0x1), store guest pointer at +28
+    (if (i32.and (local.get $mask) (i32.const 0x1))
+      (then
+        (i32.store offset=28 (local.get $base)
+          (i32.load (i32.add (local.get $lParam_wa) (i32.const 24))))))
     ;; Link into parent's child list
     (if (local.get $hParent)
       (then
@@ -235,4 +240,21 @@
     (if (i32.eq (local.get $msg) (i32.const 0x110d))
       (then (return (call $tv_set_item (call $g2w (local.get $lParam))))))
     ;; Default
+    (i32.const 0))
+
+  ;; TreeView control wndproc — handles WM_PAINT and TreeView messages
+  (func $treeview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    ;; WM_PAINT (0x000F) — draw the tree into the parent's back canvas
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (call $host_treeview_paint (local.get $hwnd))
+        (return (i32.const 0))))
+    ;; WM_ERASEBKGND (0x0014)
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (i32.const 1))))
+    ;; TreeView messages (0x1100-0x1150)
+    (if (i32.and (i32.ge_u (local.get $msg) (i32.const 0x1100))
+                 (i32.le_u (local.get $msg) (i32.const 0x1150)))
+      (then (return (call $treeview_dispatch
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     (i32.const 0))

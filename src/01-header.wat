@@ -139,6 +139,12 @@
   ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
   (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
+  (import "host" "gdi_select_clip_rgn" (func $host_gdi_select_clip_rgn (param i32 i32) (result i32)))
+  ;; gdi_select_clip_rgn(hdc, hrgn) -> complexity
+  (import "host" "gdi_ext_select_clip_rgn" (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32)))
+  ;; gdi_ext_select_clip_rgn(hdc, hrgn, fnMode) -> complexity
+  (import "host" "treeview_paint" (func $host_treeview_paint (param i32)))
+  ;; treeview_paint(hwnd) — draw treeview control into parent's back canvas
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
