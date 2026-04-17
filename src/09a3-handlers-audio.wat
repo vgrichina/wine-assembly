@@ -403,16 +403,57 @@
   )
 
   ;; 810: GetSystemPaletteEntries(hdc, iStart, nEntries, lppe) — 4 args stdcall
-  ;; Return default 20 system colors
+  ;; Fill the 20 reserved Windows system-palette entries (indices 0-9 and 246-255)
+  ;; with the standard Win98 colors, zero elsewhere. Apps (e.g. RCT) use these to
+  ;; confirm we're on a palettized display; returning all zeros makes them quit.
   (func $handle_GetSystemPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; If lppe is NULL, return number of entries (256 for 8-bit display)
+    (local $buf i32)      ;; wasm addr of caller buffer
+    (local $i i32)        ;; index inside buffer (0..nEntries)
+    (local $pal i32)      ;; palette index (iStart + i)
+    (local $rgb i32)      ;; packed 0x00BBGGRR
     (if (i32.eqz (local.get $arg3))
       (then
         (global.set $eax (i32.const 256))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Fill with standard VGA colors for first 20 entries, black for rest
-    (call $zero_memory (call $g2w (local.get $arg3)) (i32.mul (local.get $arg2) (i32.const 4)))
+    (local.set $buf (call $g2w (local.get $arg3)))
+    (call $zero_memory (local.get $buf) (i32.mul (local.get $arg2) (i32.const 4)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $pal (i32.add (local.get $arg1) (local.get $i)))
+      (local.set $rgb (i32.const 0))
+      (if (i32.lt_u (local.get $pal) (i32.const 10))
+        (then
+          (block $f
+            (if (i32.eq (local.get $pal) (i32.const 0)) (then (local.set $rgb (i32.const 0x000000)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 1)) (then (local.set $rgb (i32.const 0x000080)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 2)) (then (local.set $rgb (i32.const 0x008000)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 3)) (then (local.set $rgb (i32.const 0x008080)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 4)) (then (local.set $rgb (i32.const 0x800000)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 5)) (then (local.set $rgb (i32.const 0x800080)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 6)) (then (local.set $rgb (i32.const 0x808000)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 7)) (then (local.set $rgb (i32.const 0xC0C0C0)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 8)) (then (local.set $rgb (i32.const 0xC0DCC0)) (br $f)))
+            (if (i32.eq (local.get $pal) (i32.const 9)) (then (local.set $rgb (i32.const 0xF0CAA6)) (br $f)))
+          )))
+      (if (i32.ge_u (local.get $pal) (i32.const 246))
+        (then
+          (block $g
+            (if (i32.eq (local.get $pal) (i32.const 246)) (then (local.set $rgb (i32.const 0xF0FBFF)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 247)) (then (local.set $rgb (i32.const 0xA4A0A0)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 248)) (then (local.set $rgb (i32.const 0x808080)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 249)) (then (local.set $rgb (i32.const 0x0000FF)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 250)) (then (local.set $rgb (i32.const 0x00FF00)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 251)) (then (local.set $rgb (i32.const 0x00FFFF)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 252)) (then (local.set $rgb (i32.const 0xFF0000)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 253)) (then (local.set $rgb (i32.const 0xFF00FF)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 254)) (then (local.set $rgb (i32.const 0xFFFF00)) (br $g)))
+            (if (i32.eq (local.get $pal) (i32.const 255)) (then (local.set $rgb (i32.const 0xFFFFFF)) (br $g)))
+          )))
+      (call $gs32 (i32.add (local.get $arg3) (i32.mul (local.get $i) (i32.const 4))) (local.get $rgb))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
     (global.set $eax (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

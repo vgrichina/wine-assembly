@@ -4,7 +4,7 @@
 **Image base:** 0x00400000
 **Data files:** `test/binaries/shareware/rct/Data/` — CSG1.DAT, CSG1i.DAT, CSS*.DAT, etc.
 **Window:** Fullscreen 640x480 8bpp (Chris Sawyer's custom engine)
-**Status (2026-04-16):** WM_ACTIVATEAPP fix unblocked startup. Game loads all data files, maps CSG1.DAT (15MB) and CSS1.DAT (4.6MB), decompresses CSG sprites, enters main rendering loop. **Fixed:** `src/04-cache.wat` threshold check was `fn >= 270` but recent 16-bit opcode commit (b5b73ee) grew handler table to 280 — caused spurious `0xCAC4BAD0` "cache corruption" resets whenever the game used any 270–279 handler (looked like an infinite loop at `0x008fb473`, a sprite-blit fn). Raised check to `fn >= 280`. Game now runs its rendering copy loop (0x004446cb) cleanly; heap_ptr grows to 0x021becf8 (CSG1+CSS1 mapped). Browser should now show actual menu content instead of the clipped/broken dialog.
+**Status (2026-04-16):** WM_ACTIVATEAPP fix unblocked startup. Game loads all data files, maps CSG1.DAT (15MB) and CSS1.DAT (4.6MB), decompresses CSG sprites, enters main rendering loop. **Fixed:** `src/04-cache.wat` threshold check was `fn >= 270` but recent 16-bit opcode commit (b5b73ee) grew handler table to 280 — caused spurious `0xCAC4BAD0` "cache corruption" resets whenever the game used any 270–279 handler (looked like an infinite loop at `0x008fb473`, a sprite-blit fn). Raised check to `fn >= 280`. **Also fixed:** `GetSystemPaletteEntries` now returns the real 20 reserved Win98 system colors (was zeroing the buffer). Did not change the PostQuit behavior — break-on-PostQuit still fires at batch 12473 with the same trace as before, so palette-entry detection is not what gates the quit. Still exits after ~6216 API calls / GAME.CFG 95-byte write.
 
 ## What works
 
@@ -24,7 +24,43 @@
 - GAME.CFG read/write
 - Message loop: PeekMessage/TranslateMessage/DispatchMessage
 
-## Current status: reached splash/menu, idle event loop
+## Current blocker: game PostQuitMessage's almost immediately after init
+
+Trace summary (after the cache-guard fix shipped in 0004f79):
+
+1. CRT/init/data-file discovery — all fine.
+2. CSG1I rebase at 0x008fa065 completes (~33k iters).
+3. CreateWindowExA creates `hwnd=0x10002 "RollerCoaster Tycoon"` 640x480 with menu ≠ 0 — *suspicious for a fullscreen DDraw game*.
+4. DirectDraw chain: GetCaps → SetCooperativeLevel → SetDisplayMode → CreateSurface (primary) → CreateClipper → Clipper_SetHWnd → CreatePalette → SetPalette.
+5. Second CreateSurface (offscreen) → LoadImageA (logo bitmap) → Restore → GetDC → BitBlt(GDI→DDraw surface) → ReleaseDC → SetColorKey → another CreateSurface → SetPalette → Lock/Unlock on something.
+6. **CreateFileA("\\Data\\GAME.CFG", GENERIC_WRITE) → WriteFile(95 bytes) → PostQuitMessage(0)** — game saves a 95-byte config and exits cleanly.
+7. Shutdown pump (PeekMessage/IsWindow/Translate/Dispatch ×4, DefWindowProc) drains.
+8. After WinMain returns, EIP lands in a fill helper at 0x008fa0d5 with EDI=0, EDX=0xfffffeef (a 4-billion-iter spin) — looks like stale-register execution after an incorrect return target or CRT exit path that we mis-dispatch. Interpreter-visible infinite loop, not an RCT bug per se.
+
+**Key observation:** `SetDIBitsToDevice` fires **exactly once** in the entire 49k-batch run (at the first Unlock, with `nonZero=false`). No frames are ever actually rendered to the back-canvas, which is why the PNG stays black. The game quits before it ever presents real content.
+
+**Why it quits is the real mystery:**
+- The 95-byte GAME.CFG write is a config-save. RCT demo's WinMain probably saves cfg whenever WinMain unwinds.
+- PostQuitMessage(0) = graceful exit. Something in our environment convinces the game to take the exit branch before it ever runs a real frame.
+- Likely suspects: a) WM_ACTIVATEAPP delivered with wParam=FALSE, b) a COM call returning a failure HRESULT that RCT treats as "DirectDraw unavailable, abort", c) GetSystemPaletteEntries returning zeros, making palette detection fail (rct.md prior note mentioned this), d) a malformed surface desc for the offscreen surface causing the image-blit step to set a fatal flag.
+
+**API sequence right before quit** (from `--break-api=PostQuitMessage --trace-api`):
+```
+#6188 GetSystemPaletteEntries(hdc, 0,   10, buf)
+#6189 GetSystemPaletteEntries(hdc, 246, 10, buf)
+#6213 CreateFileA("\\Data\\GAME.CFG", GENERIC_WRITE, ..., CREATE_ALWAYS)
+#6214 WriteFile(h, buf, 0x5f)           ;; 95-byte config
+#6216 PostQuitMessage(0)
+```
+So whatever decision the game makes, it makes it in the ~24 blocks between the second GetSystemPaletteEntries return and the GAME.CFG write. Not the palette call itself (we now return proper data and PostQuit still fires at the same batch).
+
+**Next steps:**
+1. Break at CreateFileA for GAME.CFG-write (filter `str="\Data\GAME.CFG"` *AND* `arg1==0x40000000`) and walk back guest stack to find the decision site.
+2. Try `--break=0x005c2b1a` (return site listed by trace) and step backwards through block cache to find the branch that led into the exit path.
+3. Revisit COM HRESULTs: any of the 4 `CreateSurface`, `Restore`, `SetColorKey`, `Lock/Unlock`, `BitBlt` calls in the offscreen-logo setup could return a non-OK HRESULT we're miscomputing. Dump all DDraw call returns in the 0-6213 API range and compare against real Win98 expected values.
+4. Once quit is avoided, revisit why the render-copy loop writes aren't landing in the primary DIB (the `nonZero=false` from the only Unlock).
+
+## Prior status (resolved)
 
 The game now starts up fully. Prior "memory collision" and "stuck at 0x00440b9f" hypotheses were misreadings:
 
@@ -82,5 +118,5 @@ RCT uses DirectDraw for display mode selection and surface management, but its r
 
 1. **Trace copy loop destination** — instrument 0x00444600 to log ESI source; find which allocation or computation produces the thunk-zone address
 2. **Fix memory collision** — either increase WASM memory to 256MB, or find and fix the pointer that leads into the thunk zone
-3. **Fix GetSystemPaletteEntries** — return standard Win98 20 system colors instead of zeros
+3. **Fix GetSystemPaletteEntries** — DONE (2026-04-16). Now returns standard 20 reserved system colors for indices 0-9 and 246-255.
 4. **Verify palette update** — once rendering works, confirm SetEntries loads the real palette
