@@ -5,7 +5,13 @@
 **Entry point:** 0x0051CD60
 **Data files:** `test/binaries/shareware/aoe/aoe_ex/data/` — sounds.drs, graphics.drs, Terrain.drs, Border.drs, Interfac.drs
 **Window:** 640×480 (or 800×600), title "Age of Empires"
-**Status (2026-04-16):** CLI runs 628 API calls cleanly through CRT, registry, DRS loading, DDraw+DSound init, surface/palette setup, sound buffer population. Game then enters a busy wait loop that calls a game-state serialization routine repeatedly via `0x005196A0` → `0x0051F570` (vsprintf). Over 20,000 batches (~200M x86 blocks) only 4 additional API calls fire. **Not an emulator bug** — verified via `--trace-at=0x0051F67C` that each entry to the %-spec parser has identical state (ECX=`0x0054c401`, ESI=`'s'`), and from `0x005196A0` the return address is `0x004583D2`. The `inc byte [esp+0x13]` exit flag IS persisting (verified by dumping `[esp+0x1a]=1` after an `l` flag-char write). The earlier "ECX walks to `0x9FB020`" observation was one specific tight inner-loop iteration caught without BP; with BP the loop advances normally each invocation.
+**Status (2026-04-16):** CLI now reaches 1195 API calls after fix to `inc byte [esp+0x13]` decoder bug (see below). Next failure is EIP=0 after a long bounce-loop between `0x49d9d1` ↔ `0x49dd56` (~2500 iterations) returns through a multi-level epilogue cascade. At block entry to `0x49dd56` the stack shows `[esp]=0` (saved edi=0), with return address `0x43d0c0` just above — so the null gets popped as EIP from a higher frame after several `ret`s. Fn containing `0x49dd56` starts at `0x49dd20` (thiscall, 3 stack args + `ecx=this`). Stack layout at crash entry: ESP=0x3ffd678, frame=[0, 0x7a8b30, 0x258, 0x258, 0x43d0c0, 0, ...]. Need to walk further up — likely a caller didn't push a real ret addr, or the unit-grid loop corrupted its own frame. Didn't pursue further this session.
+
+## vsprintf loop — FIXED (decoder bug)
+
+Root cause: `$emit_unary_m8` (opcode 0xFE group, INC/DEC r/m8) in `src/07-decoder.wat` was missing the `$mr_simple_base` fast-path that every other `emit_*_m*` helper has. So for `inc byte [esp+0x13]`, it fell through to `$emit_sib_or_abs`, whose "no index" branch returned raw `mr_disp` (0x13) as the address — causing `inc` to read/write guest address 0x13 instead of ESP+0x13. The exit flag `[esp+0x13]` therefore stayed 0 forever, so the format-parser loop never exited.
+
+Fix: widened `$emit_sib_or_abs` to also emit the `compute_ea_sib` prefix when `mr_base != -1` (base-only `[reg+disp]`). That route sets `ea_temp = base + disp` correctly, and `th_unary_m8` (via `$read_addr`) picks it up via the SIB sentinel. Callers with the `mr_simple_base` fast-path return before reaching `emit_sib_or_abs`, so they're unaffected. Regression-tested notepad/calc/mspaint/ski32/FreeCell.
 
 ## What works
 

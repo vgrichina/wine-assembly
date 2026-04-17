@@ -125,10 +125,12 @@
       (else (global.set $mr_base (local.get $base)))))
 
   ;; Emit SIB EA compute prefix if needed, then return the address word to emit.
-  ;; If SIB: emits compute_ea_sib handler and returns sentinel 0xEADEAD.
+  ;; If SIB (index set) or base-only [reg+disp]: emits compute_ea_sib handler and returns sentinel 0xEADEAD.
   ;; If absolute: returns mr_disp directly.
+  ;; (callers that want a fast [reg+disp] opcode check $mr_simple_base before calling this.)
   (func $emit_sib_or_abs (result i32)
-    (if (i32.ne (global.get $mr_index) (i32.const -1))
+    (if (i32.or (i32.ne (global.get $mr_index) (i32.const -1))
+                (i32.ne (global.get $mr_base) (i32.const -1)))
       (then
         (call $te (i32.const 149) (i32.const 0))
         (call $te_raw (i32.or
