@@ -578,16 +578,12 @@ Resource-aware Win98 emulator
       canvas.onmousemove = e => {
         const rr = canvas.getBoundingClientRect();
         const ssx = canvas.width / rr.width, ssy = canvas.height / rr.height;
-        renderer.handleMenuHover(
-          Math.floor((e.clientX - rr.left) * ssx),
-          Math.floor((e.clientY - rr.top) * ssy)
-        );
-        if (e.buttons & 1) {
-          renderer.handleMouseMove(
-            Math.floor((e.clientX - rr.left) * ssx),
-            Math.floor((e.clientY - rr.top) * ssy)
-          );
-        }
+        const mx = Math.floor((e.clientX - rr.left) * ssx);
+        const my = Math.floor((e.clientY - rr.top) * ssy);
+        renderer.handleMenuHover(mx, my);
+        // Always deliver mouse moves — WM_SETCURSOR depends on it, and games
+        // like Reversi key their "valid move" cross cursor on WM_MOUSEMOVE.
+        renderer.handleMouseMove(mx, my);
       };
     }
 
