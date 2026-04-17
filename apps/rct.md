@@ -63,6 +63,38 @@ So RCT is taking a `longjmp`-based **fatal-exit** path — the `mov esp,[0x8d8fa
 
 **To find *why* the longjmp fires:** watch on `[0x008d8fac]` to find the **setjmp** point (should be reached exactly once during init, likely right after WinMain's main-try entry), then watch on `[0x560194]` (currently 0 → becomes 1) to find the **raise** site. The latter is the real culprit branch.
 
+**Raise site located (2026-04-16, after 84236e4).** `--watch=0x560194 --watch-value=0x1` fires at batch 12473. Two fatal-exit trampolines exist, both pattern `mov [0x560194],1 ; call 0x555b75 ; mov esp,[0x8d8fac] ; pop ebp ; ret`:
+
+| Entry | Raise instruction | Error-code regs |
+|---|---|---|
+| 0x00555a84 (or nearby, via call)  | `mov [0x560194],1` at 0x00555a9f | uses BX error ID |
+| 0x00555ab6 (entered via `jmp`)    | `mov [0x560194],1` at 0x00555ae0 | uses EAX,EBX pair |
+
+RCT takes the **second** one. Call site: **0x009026dc — `jmp 0x555ab6`** after setting `EAX=0x344, EBX=0x346` (error-message string IDs). This is inside a **video-mode probe chain** at 0x009026af:
+
+```
+0x009026af  call 0x8fa000         ; init
+0x009026b4  call 0x457d3c
+0x009026b9  call 0x90252c
+0x009026be  mov  al, [0x56fd6b]   ; currently-chosen mode flag
+0x009026c3  cmp  al, 0xff ; jnz +2 ; mov al, 1     ; default to mode 1
+0x009026c9  call 0x9024b4         ; TRY the selected mode
+0x009026ce  or   al, al
+0x009026d0  jnz  0x9026e1         ; success → continue init
+0x009026d2  mov  eax, 0x344
+0x009026d7  mov  ebx, 0x346
+0x009026dc  jmp  0x555ab6         ; FATAL EXIT
+```
+
+`0x009024b4` dispatches on `al` (1/2/3 branches) and ultimately calls `0x00401220(mode_id)` with `mode_id ∈ {1,3,4,5}`. That callee returns nonzero on success; `[0x56fd6b]` records which mode succeeded. **Our DDraw returns 0/failure for every mode**, so the chain falls through to the fatal `jmp`.
+
+`0x00401220` prologue reads `[0x560100]` (a handle — probably an existing surface/DD object) and calls through IAT slot `[0x562dd4]` before continuing at `0x00401416`. That IAT slot is the video-mode setup import (likely `SetDisplayMode` or `CreateSurface`), and its return is what ultimately decides success.
+
+**Next concrete steps:**
+1. `--break=0x00401220` + dump EIP trail: see what mode ids get tried and what return value lands in AL at `0x009024d1`/`0x9024fa`/`0x902522`.
+2. Check `[0x00562dd4]` — **NOT an IAT entry**. The .data section is 0x560000-0x56aeb4; PE imports live at RVAs 0x15e000-0x15e2ff (IAT bases for USER32/GDI32/KERNEL32/DINPUT/DPLAYX/DSOUND/etc. are all 0x15e000+). `[0x00562dd4]` is a **runtime-populated function pointer**, set by earlier init code. Find its writer via a store-watch on 0x562dd4 before this code runs.
+3. Compare DDraw return chain (SetCooperativeLevel, SetDisplayMode, CreateSurface primary) HRESULTs against real Win98 to find the one we're getting wrong.
+
 **API sequence right before quit** (from `--break-api=PostQuitMessage --trace-api`):
 ```
 #6188 GetSystemPaletteEntries(hdc, 0,   10, buf)
