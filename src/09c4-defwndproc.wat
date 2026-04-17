@@ -429,11 +429,20 @@
       (then (return (i32.const 18)))) ;; HTBORDER
     (i32.const 1))                    ;; HTCLIENT
 
-  ;; Default WM_SETCURSOR handler: pick an IDC_* based on the hit code and
-  ;; apply it via $set_cursor_internal (shared with $handle_SetCursor).
-  ;; Phase 7 keeps everything on IDC_ARROW — class-cursor lookup for HTCLIENT
-  ;; is deferred.
+  ;; Default WM_SETCURSOR handler.
+  ;;
+  ;; HTCLIENT (1): leave the cursor alone. Real Win32 would apply
+  ;; WNDCLASS.hCursor here — class-cursor lookup is deferred. Leaving it
+  ;; alone is better than forcing arrow: apps that call SetCursor(IDC_X)
+  ;; from WM_MOUSEMOVE (e.g. Reversi's cross over valid moves) would
+  ;; otherwise flicker back to arrow on every subsequent tick because
+  ;; WM_SETCURSOR is dispatched ahead of the next WM_MOUSEMOVE.
+  ;;
+  ;; Chrome hits (HTCAPTION/HTBORDER/HTSYSMENU/HTCLOSE/HTMIN/HTMAX):
+  ;; apply IDC_ARROW.
   (func $defwndproc_do_setcursor (param $hwnd i32) (param $hit i32) (result i32)
+    (if (i32.eq (local.get $hit) (i32.const 1))
+      (then (return (i32.const 1)))) ;; HTCLIENT — leave cursor alone
     (drop (call $set_cursor_internal (i32.const 0x67F00))) ;; IDC_ARROW
     (i32.const 1))
 
