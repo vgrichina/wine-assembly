@@ -43,6 +43,7 @@ const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
+const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
@@ -65,6 +66,8 @@ const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw 
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
+const traceAtAddr = TRACE_AT ? parseInt(TRACE_AT, 16) : 0; // set_bp supports only one addr
+let traceAtHits = 0;
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 const countAddrs = COUNT_SPEC ? COUNT_SPEC.split(',').map(s => parseInt(s, 16)) : [];
@@ -1479,6 +1482,10 @@ async function main() {
     if (breakAddrs.length === 1 && batch === 0 && instance.exports.set_bp) {
       instance.exports.set_bp(breakAddrs[0]);
     }
+    // --trace-at: arm set_bp once (mutually exclusive with --break; --break wins)
+    if (traceAtAddr && !breakAddrs.length && batch === 0 && instance.exports.set_bp) {
+      instance.exports.set_bp(traceAtAddr);
+    }
     // Hit counters: register once
     if (countAddrs.length && batch === 0 && instance.exports.set_count) {
       for (let i = 0; i < countAddrs.length; i++) {
@@ -1571,6 +1578,18 @@ async function main() {
         dumpStack();
         // Re-arm WASM bp so subsequent hits also fire
         if (instance.exports.set_bp) instance.exports.set_bp(breakAddrs[0]);
+      }
+      // --trace-at: one-line register dump per hit, no stop
+      if (traceAtAddr && eipNow === traceAtAddr) {
+        traceAtHits++;
+        const e = instance.exports;
+        const esp = e.get_esp() >>> 0;
+        const wEsp = g2w(esp);
+        const mem32 = new Uint32Array(memory.buffer);
+        let stk = '';
+        for (let i = 0; i < 6; i++) stk += hex(mem32[(wEsp >> 2) + i]) + ' ';
+        console.log(`[TRACE-AT #${traceAtHits}] ${regs()} [esp..]=${stk}`);
+        if (e.set_bp) e.set_bp(traceAtAddr);
       }
     }
 
