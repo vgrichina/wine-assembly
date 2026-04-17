@@ -5565,6 +5565,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; GetKeyboardLayoutList(nBuff, lpList) — report one layout (US English).
+  ;; If lpList non-NULL and nBuff>=1, write HKL 0x04090409. Return total count (1).
+  (func $handle_GetKeyboardLayoutList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ge_s (local.get $arg0) (i32.const 1)))
+      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 0x04090409))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; GetTextCharacterExtra(hdc) → int. Inter-character spacing (0 = default).
   (func $handle_GetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -7669,9 +7678,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 692: ClipCursor — STUB: unimplemented
+  ;; 692: ClipCursor(lprc) — we don't confine the cursor; accept and return TRUE.
   (func $handle_ClipCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 693: EnumChildWindows — STUB: unimplemented
@@ -7768,6 +7778,22 @@
           (local.set $p (i32.add (local.get $p) (i32.const 1)))
           (br $lp)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; OemToCharA(lpSrc, lpDst) — for US codepage, OEM ≡ ANSI; strcpy.
+  (func $handle_OemToCharA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32) (local $c i32)
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    (block $done (loop $lp
+      (local.set $c (i32.load8_u (local.get $src)))
+      (i32.store8 (local.get $dst) (local.get $c))
+      (br_if $done (i32.eqz (local.get $c)))
+      (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (br $lp)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented

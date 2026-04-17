@@ -8886,5 +8886,19 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2934215533
+  },
+  {
+    "id": 1270,
+    "name": "OemToCharA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 304757724
+  },
+  {
+    "id": 1271,
+    "name": "GetKeyboardLayoutList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 940384968
   }
 ]
