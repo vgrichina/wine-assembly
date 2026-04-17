@@ -3,19 +3,58 @@
 Binary: `test/binaries/entertainment-pack/sol.exe`
 Test: `test/test-solitaire-deal.js`
 
-## Status (2026-04-16 late)
+## Status (2026-04-17)
 
-**Startup assertion still fires.** Correction to the earlier "resolved" note: I was fooled by the plain `--max-batches=5000` run (no `--no-close`) because WM_CLOSE is injected when the main window is idle (see `test/run.js:579`), which tears sol down before the assertion-dialog flow completes in output visibility. With `--no-close` and sufficient batches, `DialogBoxParamA(0x01000000, 0x3e7, …)` still fires exactly once at API #1235 — identical to the original bisect finding.
+**Fixed.** Restored synchronous main-window `WM_SIZE` delivery by extending the activation chain with a new `CACA0024` step between `CACA0023` (WM_SETFOCUS) and `CACA0001` (done). `WM_SIZE` is now sent synchronously to the main wndproc before the message loop runs, matching real Win32 semantics and ensuring pile rects are populated before the posted Deal fires. `test/test-solitaire-deal.js` passes 6/6; no assertion dialog.
 
-The test at `test/test-solitaire-deal.js` passes 5/6 checks because it uses `--no-close` + 20× `WM_COMMAND wParam=1` (IDOK) posts at batches 50..810 and again 1000..1760 to dismiss assertion dialogs, and this still works (one dismissal is enough — the debug-build 17-assertion flow referenced in the test comments no longer fires that many).
+### Historical root cause — WM_SIZE / Deal ordering regression from 869248d (pre-2026-04-17)
 
-### Remaining failure — Deal (WM_COMMAND 1000) leaves the snapshot identical
+Wndproc address confirmed as **`0x01001cd0`** (from `RegisterClassExA` at `0x01001a77`; `WNDCLASSEX.lpfnWndProc` set by `mov dword [ebp-0x74], 0x1001cd0` at `0x01001a18`). The earlier "951 hits all msg=1" observation was `--trace-at` misfiring; probing `$handle_DispatchMessageA` directly with `$host_log_i32` confirms that path resolves to `0x01001cd0` and successfully sets `$eip` on the WM_COMMAND Deal dispatch. `--break=0x01002790` also confirms the Deal function itself (`0x01002790`) runs, reaches `msvcrt!time` / `srand` / `rand`, and writes the new game# to `[0x0100d060]`.
 
-`sol_initial.png` and `sol_deal.png` are byte-identical (10238 bytes, 0px diff). Injection of `WM_COMMAND wParam=0x3e8` at batch 950 is confirmed (`[input] injected msg=0x111 wParam=0x3e8 at batch 950`), but no extra `GetSystemTime` / `GetLocalTime` calls fire after injection vs. a no-injection baseline. That suggests the Deal command isn't being dispatched to sol's wndproc — or it is, but the re-deal path doesn't re-seed via `time()`.
+What actually breaks is message ordering:
 
-Caveat: sol's wndproc address still unknown. A `--trace-at=0x01001cd0` (addr suggested by the old doc) reports 951 hits all with `msg=1 wParam=0`, which is clearly not the main wndproc. Need to find the real one (from `WNDCLASS.lpfnWndProc` stored during RegisterClassA) before we can confirm Deal dispatch.
+1. `sol` posts `WM_COMMAND wParam=0x3e8 (Deal)` during `WinMain` via `PostMessageA` (before the message loop starts).
+2. Main-window `WM_SIZE` is deferred onto `$pending_wm_size`, delivered later by `$handle_GetMessageA`.
+3. `$handle_GetMessageA` (`src/09a5-handlers-window.wat:601-630`) drains the post queue **before** `pending_wm_size`, by design — the in-source comment states this order is intentional so that apps that create game objects in response to posted WM_COMMANDs have them ready when WM_SIZE lays things out.
+4. Pre-regression (before `869248d`), `ShowWindow` delivered `WM_SIZE` synchronously via EIP redirect, so pile rects were populated before the message loop ran. `869248d` moved main-window activation to the CACA0020-0023 chain, which only covers `WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS` — it dropped the synchronous `WM_SIZE`.
+5. Net effect: Deal now runs against an un-sized wndproc state. The pile rects are still zero-init, `left > right` fails the `Assert` at `util.c:125`, and `DialogBoxParamA(0x01000000, 0x3e7, …)` fires at API #1235 — the debug-build assertion dialog with the file path, `"125"`, `"17280"` (game#) strings. The emulator gets stuck waiting in that modal dialog; on the web the deck back and status bar are drawn but the tableau never appears.
 
-**Next step:** find the real wndproc address via the `RegisterClassA` call site or the stored `WNDCLASS` struct, then `--trace-at` it and look for `msg=0x111, wParam=0x3e8` around batch 950.
+Message-trace probe output showing the miss (no `msg=0x0005` ever dispatched to `0x10001`):
+
+```
+hwnd=0x10002 msg=0x001 wndproc=0x01009fa0   # child WM_CREATE
+hwnd=0x10002 msg=0x005 wndproc=0x01009fa0   # child WM_SIZE
+hwnd=0x10001 msg=0x018 wndproc=0x01001cd0   # main WM_SHOWWINDOW
+hwnd=0x10002 msg=0x018 wndproc=0x01009fa0   # child WM_SHOWWINDOW
+hwnd=0x10001 msg=0x111 wndproc=0x01001cd0   # main WM_COMMAND 0x3e8 (Deal)  ← fires with no prior WM_SIZE
+```
+
+### Comparison with real Win32
+
+In a standard `WinMain` → `CreateWindowEx` → `ShowWindow` → message loop flow, real USER32 delivers messages in this order (all messages before step 7 are **SendMessage-style**, i.e. synchronous calls into the wndproc on the creating thread's stack):
+
+1. `CreateWindowEx` internally sends:
+   - `WM_GETMINMAXINFO` → `WM_NCCREATE` → `WM_NCCALCSIZE` → `WM_CREATE`
+   - (sol's `WM_CREATE` handler calls `PostMessageA(hwnd, WM_COMMAND, Deal, 0)` — this only *queues* the message; it does not run now.)
+2. `CreateWindowEx` returns.
+3. `ShowWindow` internally sends:
+   - `WM_SHOWWINDOW` → `WM_WINDOWPOSCHANGING` → `WM_ACTIVATEAPP` → `WM_NCACTIVATE` → `WM_ACTIVATE` → `WM_SETFOCUS` → `WM_NCPAINT` → `WM_ERASEBKGND` → `WM_WINDOWPOSCHANGED` → **`WM_SIZE`** → `WM_MOVE`.
+4. `ShowWindow` returns.
+5. `UpdateWindow` → synchronous `WM_PAINT`.
+6. App enters `GetMessage` / `DispatchMessage` loop.
+7. First dequeued message is the posted `WM_COMMAND Deal`.
+
+Critical property: `WM_SIZE` is **always** dispatched before any `PostMessage`d message, because it rides the synchronous ShowWindow call chain while `PostMessage` only touches the queue. Sol relies on this — Deal reads pile rects that the `WM_SIZE` handler populates.
+
+Wine-Assembly before `869248d` matched this: `ShowWindow` redirected EIP to the wndproc with `WM_SIZE` before returning, so by the time the message loop dequeued the posted Deal, the wndproc had already run `WM_SIZE`.
+
+`869248d` moved the synchronous chain to `CreateWindowExA` (CACA0020-0023) but dropped `WM_SIZE` from it; the current chain only covers `WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS`. `WM_SIZE` got demoted to async delivery via `$pending_wm_size` in `GetMessageA`, **after** the post-queue drain — which inverts the real-Win32 ordering and is why Deal now runs before sol has sized state.
+
+The in-source comment on `$handle_GetMessageA:601-603` ("drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire PostMessage Deal during WM_CREATE, and the subsequent WM_SIZE needs those objects to exist for layout") is backwards relative to Win32. In real Win32, `WM_SIZE` wins against any `PostMessage`d command by construction; the rationale as written only makes sense if WM_SIZE is already async, which is itself the regression.
+
+### Fix applied (2026-04-17)
+
+Chose Option B: extended the synchronous activation chain with a new `CACA0024` step. Chain is now `ShowWindow → CACA0022 (WM_ACTIVATE) → CACA0023 (WM_SETFOCUS) → CACA0024 (WM_SIZE) → CACA0001 (done)`. `CACA0024` consumes `$pending_wm_size` as lParam, sets `NC_FLAGS` bit 2 (WM_NCCALCSIZE pending), then zeroes `$pending_wm_size` so `$handle_GetMessageA`'s drain path doesn't replay it.
 
 ## Status (2026-04-11) — (pre-regression snapshot)
 
@@ -151,7 +190,8 @@ node test/run.js --exe=test/binaries/entertainment-pack/sol.exe --trace-gdi --du
 6. **Mouse capture routing** (2026-04-10): handleMouseMove/handleMouseUp respect `$capture_hwnd` for drag outside window bounds.
 7. **Dialog control style** (2026-04-11): Dialog creation now stores the control's style from the dialog template into the WND_RECORD. Fixes groupbox labels and any style-dependent button rendering.
 8. **Browser double-click** (2026-04-11): handleMouseDown detects double-clicks and sends WM_LBUTTONDBLCLK for auto-move to foundation.
-9. **WM_DRAWITEM for owner-draw buttons** (2026-04-11): BS_OWNERDRAW buttons now post WM_DRAWITEM to parent dialog proc. ButtonState extended to 64 bytes with embedded DRAWITEMSTRUCT. Owner-draw buttons registered as child windows in renderer for GDI routing. Fixes card back preview in Select Card Back dialog (101).
+9. **Synchronous main-window WM_SIZE** (2026-04-17): Added `CACA0024` step to the first-ShowWindow activation chain so `WM_SIZE` is delivered to the main wndproc synchronously (before the message loop), matching Win32 `SetWindowPos → WM_WINDOWPOSCHANGED → WM_SIZE` ordering. Restores the pre-`869248d` invariant: pile rects populated before the posted `WM_COMMAND Deal` fires, so the debug-build `Assert(left <= right && top <= bottom)` at `util.c:125` no longer trips.
+10. **WM_DRAWITEM for owner-draw buttons** (2026-04-11): BS_OWNERDRAW buttons now post WM_DRAWITEM to parent dialog proc. ButtonState extended to 64 bytes with embedded DRAWITEMSTRUCT. Owner-draw buttons registered as child windows in renderer for GDI routing. Fixes card back preview in Select Card Back dialog (101).
 
 ## Architecture Notes
 

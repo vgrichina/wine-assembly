@@ -67,7 +67,7 @@
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+        (call $gs32 (global.get $esp) (global.get $createwnd_size_thunk))
         (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
@@ -75,6 +75,32 @@
         ;; Phase 2: seed paint_pending so first WM_PAINT arrives once the
         ;; WM_SETFOCUS handler returns (replaces legacy msg_phase==6 block).
         (global.set $paint_pending (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; CACA0024: WM_SETFOCUS returned → send WM_SIZE synchronously
+    ;; Restores Win32 invariant: ShowWindow's SetWindowPos delivers WM_SIZE
+    ;; before any message loop / PostMessage'd command runs.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0024))
+      (then
+        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_RESTORED(0), lParam=pending_wm_size
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $pending_wm_size))  ;; lParam = cx|(cy<<16)
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0))                  ;; wParam = SIZE_RESTORED
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x0005))             ;; WM_SIZE
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+        ;; Consume pending_wm_size so GetMessageA drain path doesn't replay it.
+        (global.set $pending_wm_size (i32.const 0))
+        ;; Match what the GetMessageA-drain path does: set WM_NCCALCSIZE pending.
+        (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
+        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
+        (if (i32.eqz (global.get $eip))
+          (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $steps (i32.const 0))
         (return)))
 
