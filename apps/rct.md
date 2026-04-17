@@ -95,6 +95,33 @@ RCT takes the **second** one. Call site: **0x009026dc — `jmp 0x555ab6`** after
 2. Check `[0x00562dd4]` — **NOT an IAT entry**. The .data section is 0x560000-0x56aeb4; PE imports live at RVAs 0x15e000-0x15e2ff (IAT bases for USER32/GDI32/KERNEL32/DINPUT/DPLAYX/DSOUND/etc. are all 0x15e000+). `[0x00562dd4]` is a **runtime-populated function pointer**, set by earlier init code. Find its writer via a store-watch on 0x562dd4 before this code runs.
 3. Compare DDraw return chain (SetCooperativeLevel, SetDisplayMode, CreateSurface primary) HRESULTs against real Win98 to find the one we're getting wrong.
 
+**Deeper trace (2026-04-16 session 2).** The initial "0x00401220 returns 0" hypothesis was wrong. Inside the mode-3 path, 0x00401220 actually returns EAX=1 (via 0x4014d3 success branch) — `call 0x4029c4` returned 1 and `call 0x402a68` ran. So the fatal is NOT from the `jz 0x9024c0` branch. Trace-at on 0x00555ad6 captured the actual raise-site state: **EAX=0x300, EBX=0x345**, and the only site in the binary setting `mov ebx, 0x345` is at 0x00902702 (confirmed by byte-pattern scan).
+
+So the real flow is the OTHER fatal branch:
+
+```
+0x009026e1  mov [0x560184], 0
+0x009026eb  cmp [0x560178], 0    ; [0x560178]=0 at hit → jnz NOT taken
+0x009026f2  jnz 0x9026fd
+0x009026f4  cmp [0x568504], 0x40 ; [0x568504]=0 at hit → jge NOT taken
+0x009026fb  jge 0x90270c
+0x009026fd  mov eax, 0x344       ; (then mov eax,0x300 overwrites AL via fatal-trampoline setup — EAX=0x300 at raise)
+0x00902702  mov ebx, 0x345
+0x00902707  jmp 0x555ab6         ; FATAL
+```
+
+**Real gate: `[0x00568504] >= 0x40` (64)**. At fatal-hit batch 12473 it's 0; at batch 12600 it's 0x27a (634). So RCT *does* eventually populate it — the check just runs too early.
+
+**The sole writer is at 0x00404199** (`mov [0x568504], eax`, found via `tools/xrefs.js`). Its enclosing function entry is **0x00404148** (found via `tools/find_fn.js` — `CC`-padding boundary). Function at 0x00404148 sets several resolution-related globals (`[0x568504]`, `[0x568a74]`, `[0x56017c]=1`, conditionally `[0x560178]=1`). Strong signal: this is the **"accept current display mode"** callback that normally runs during DD setup but isn't being invoked in our environment before the probe at 0x9026af.
+
+**Next concrete step:** `tools/xrefs.js RCT.exe 0x00404148 --near=0 --code` to find who calls 0x00404148, then trace whether that caller runs at all before batch 12473 (`--trace-at=<entry>`). That path almost certainly depends on some DDraw call whose return we're mishandling.
+
+## Debugging tools that paid off this session
+
+- `tools/xrefs.js` — cheap way to answer "who writes/reads/branches-to address X". Replaces ad-hoc Python byte-scans.
+- `tools/find_fn.js` — given an interior EIP (e.g. from a watch/trace hit), jumps to the containing function's entry. Avoids manual backward `55 8B EC` searches.
+- `--trace-at=0xADDR` — fires on every instruction execution at the given EIP (unlike `--break=`, which only fires at block boundaries and silently misses mid-block addresses like 0x555ab6). Use trace-at when a breakpoint "should fire" but doesn't.
+
 **API sequence right before quit** (from `--break-api=PostQuitMessage --trace-api`):
 ```
 #6188 GetSystemPaletteEntries(hdc, 0,   10, buf)

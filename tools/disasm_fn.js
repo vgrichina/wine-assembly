@@ -32,9 +32,28 @@ function va2off(va) {
   return -1;
 }
 
+// Heuristic: if the first instructions look like a known desync pattern
+// (executing zero-bytes or jmp/call far), emit a warning. Mid-instruction
+// starts usually produce one of these within the first 3 lines.
+function looksDesync(lines) {
+  const head = lines.slice(0, 3).join('\n');
+  return (
+    /\badd \[eax\], (eax|al)\b/.test(head) ||    // 00 00 = add [eax], al
+    /\bjmp far\b/.test(head) ||
+    /\bcall far\b/.test(head) ||
+    /\?\?/.test(head) ||                         // unknown opcode marker
+    /\badc al, 0x/.test(head)                    // 14 XX often garbage
+  );
+}
+
 for (const va of vaList) {
   const off = va2off(va);
   if (off < 0) { console.error(`VA 0x${va.toString(16)} not found in any section`); continue; }
   if (vaList.length > 1) console.log(`--- 0x${va.toString(16)} ---`);
-  disasmAt(buf, off, va, count).forEach(l => console.log(l));
+  const lines = disasmAt(buf, off, va, count);
+  if (looksDesync(lines)) {
+    console.log(`[WARN] output may be desynchronized — start VA is likely mid-instruction.`);
+    console.log(`       Try \`node tools/find_fn.js <exe> 0x${va.toString(16)}\` to locate a known entry.`);
+  }
+  lines.forEach(l => console.log(l));
 }

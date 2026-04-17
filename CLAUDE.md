@@ -152,6 +152,9 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/gen_dispatch.js` — Generates `09b2-dispatch-table.generated.wat` (br_table + calls + `$init_dx_com_thunks`) from `api_table.json`. COM vtable start IDs are auto-computed from interface prefixes (e.g. `IDirectDraw_*`), so adding a new API never requires manual ID fixups.
 - `tools/gen_api_table.js` — Generates the API hash table (`01b-api-hashes.generated.wat`)
 - `tools/disasm.js` — x86 disassembler for debugging (importable module)
+- `tools/disasm_fn.js` — disassemble at one or more VAs: `node tools/disasm_fn.js <exe> 0xADDR[,0xADDR,...] [count]`. Warns when the start looks like a mid-instruction desync.
+- `tools/xrefs.js` — find all references to a data/code VA: `node tools/xrefs.js <exe> 0xADDR [--near=0xN] [--code]`. Classifies each ref as `load`/`store`/`branch`/`other`; handles Borland-style code-in-data sections (sections named `CodeSeg`/`DataSeg` even when flagged data). Use `--near` to catch branches into any byte of a trampoline region.
+- `tools/find_fn.js` — given an interior VA, locate the enclosing function's entry: `node tools/find_fn.js <exe> 0xADDR[,0xADDR,...]`. Walks back to the nearest `55 8B EC` prologue, `CC`/`90` padding boundary, or `C3`/`C2` ret. Use when a trace hit lands mid-function and you need the entry for `--break=` or a clean `disasm_fn` start.
 - `tools/hexdump.js` — Memory hexdump utility
 - `tools/parse-rsrc.js` — PE resource section parser
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)
