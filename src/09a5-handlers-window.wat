@@ -206,16 +206,23 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Child window: hMenu param is the control ID. Store it so GetDlgCtrlID /
     ;; GetDlgItem work for arbitrary child wndprocs (not just the system
-    ;; Edit/Button/Static classes handled above).
-    (if (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-                 (i32.and (local.get $arg3) (i32.const 0x40000000))) ;; WS_CHILD
+    ;; Edit/Button/Static classes handled above). Guard with logical booleans
+    ;; (i32.and on raw pointers/style masks is a bitwise op — coerce to 0/1
+    ;; first per feedback_wat_bitwise_and).
+    (if (i32.and
+          (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
+                  (i32.const 0))
+          (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000))
+                  (i32.const 0)))
       (then
-        (i32.store
-          (i32.add (i32.add (global.get $CONTROL_TABLE)
-                            (i32.mul (call $wnd_table_find (global.get $next_hwnd))
-                                     (i32.const 16)))
-                   (i32.const 4))
-          (call $gl32 (i32.add (global.get $esp) (i32.const 40))))))
+        (local.set $v (call $wnd_table_find (global.get $next_hwnd)))
+        (if (i32.ne (local.get $v) (i32.const -1))
+          (then
+            (i32.store
+              (i32.add (i32.add (global.get $CONTROL_TABLE)
+                                (i32.mul (local.get $v) (i32.const 16)))
+                       (i32.const 4))
+              (call $gl32 (i32.add (global.get $esp) (i32.const 40))))))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.

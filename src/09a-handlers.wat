@@ -4391,9 +4391,22 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 404: EqualRect — STUB: unimplemented
+  ;; 404: EqualRect(lprc1, lprc2) → BOOL. Compares 4 LONGs (16 bytes).
   (func $handle_EqualRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $a i32) (local $b i32)
+    (global.set $eax (i32.const 1))
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $a (call $g2w (local.get $arg0)))
+        (local.set $b (call $g2w (local.get $arg1)))
+        (if (i32.or
+              (i32.or (i32.ne (i32.load (local.get $a)) (i32.load (local.get $b)))
+                      (i32.ne (i32.load offset=4 (local.get $a)) (i32.load offset=4 (local.get $b))))
+              (i32.or (i32.ne (i32.load offset=8 (local.get $a)) (i32.load offset=8 (local.get $b)))
+                      (i32.ne (i32.load offset=12 (local.get $a)) (i32.load offset=12 (local.get $b)))))
+          (then (global.set $eax (i32.const 0))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 405: ClientToScreen
