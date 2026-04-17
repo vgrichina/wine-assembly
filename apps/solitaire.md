@@ -3,21 +3,19 @@
 Binary: `test/binaries/entertainment-pack/sol.exe`
 Test: `test/test-solitaire-deal.js`
 
-## Status (2026-04-16 late) — Startup assertion is RESOLVED
+## Status (2026-04-16 late)
 
-Sol now boots cleanly at HEAD: 4662 API calls, zero `DialogBoxParamA`, initial table renders with 91329 non-green pixels. `test/test-solitaire-deal.js` → 5/6 checks pass.
+**Startup assertion still fires.** Correction to the earlier "resolved" note: I was fooled by the plain `--max-batches=5000` run (no `--no-close`) because WM_CLOSE is injected when the main window is idle (see `test/run.js:579`), which tears sol down before the assertion-dialog flow completes in output visibility. With `--no-close` and sufficient batches, `DialogBoxParamA(0x01000000, 0x3e7, …)` still fires exactly once at API #1235 — identical to the original bisect finding.
 
-The assertion regression introduced in `869248d` was incidentally fixed somewhere between `869248d` and HEAD (candidates: `c808539` ctrl_id/EqualRect, `3c13d60` DeferWindowPos client-rect refresh, `ddcd54d` Win98 reserved sys colors, or one of the message-queue-routing phase commits `d8cf3b3`/`8e8e6f5`/`c5952e6`). No explicit solitaire fix was authored — leave as-is.
+The test at `test/test-solitaire-deal.js` passes 5/6 checks because it uses `--no-close` + 20× `WM_COMMAND wParam=1` (IDOK) posts at batches 50..810 and again 1000..1760 to dismiss assertion dialogs, and this still works (one dismissal is enough — the debug-build 17-assertion flow referenced in the test comments no longer fires that many).
 
-### Remaining failure — Deal (WM_COMMAND 1000) is a no-op in the test
+### Remaining failure — Deal (WM_COMMAND 1000) leaves the snapshot identical
 
-`test/test-solitaire-deal.js` fails its one diff check: `sol_initial.png` and `sol_deal.png` are byte-identical (10238 bytes, 0px diff). The test posts `WM_COMMAND wParam=1000` at batch 950 to re-deal; injection is confirmed (`[input] injected msg=0x111 wParam=0x3e8 at batch 950`), but no `GetSystemTime` / `GetLocalTime` calls fire after injection, which means sol is not re-running its `srand(time()); shuffle; redeal` path.
+`sol_initial.png` and `sol_deal.png` are byte-identical (10238 bytes, 0px diff). Injection of `WM_COMMAND wParam=0x3e8` at batch 950 is confirmed (`[input] injected msg=0x111 wParam=0x3e8 at batch 950`), but no extra `GetSystemTime` / `GetLocalTime` calls fire after injection vs. a no-injection baseline. That suggests the Deal command isn't being dispatched to sol's wndproc — or it is, but the re-deal path doesn't re-seed via `time()`.
 
-Also: the test was written when the debug build fired ~17 startup assertions and dismissed them with 20× `WM_COMMAND(1)`. Assertions no longer fire, so those inert `WM_COMMAND(1)` posts may be corrupting state or the test's timing assumptions. Rewrite the test (simplify: no dismissal, longer delays between initial snapshot and Deal so `time()` ticks, maybe use keyboard F2 instead of `WM_COMMAND(1000)`).
+Caveat: sol's wndproc address still unknown. A `--trace-at=0x01001cd0` (addr suggested by the old doc) reports 951 hits all with `msg=1 wParam=0`, which is clearly not the main wndproc. Need to find the real one (from `WNDCLASS.lpfnWndProc` stored during RegisterClassA) before we can confirm Deal dispatch.
 
-**Next step:** either
-1. Fix the test — send `F2` keydown at a later batch; insert a real delay so `time()` advances between the two `srand` calls.
-2. Or verify Deal reaches the wndproc by breaking at sol's main wndproc (find its real address — `0x01001cd0` dumps 951 identical `msg=1` entries, so that's not the main wndproc, it's something else being called by a thunk). Disassemble `WNDCLASS.lpfnWndProc` from the RegisterClassA call to get the right address.
+**Next step:** find the real wndproc address via the `RegisterClassA` call site or the stored `WNDCLASS` struct, then `--trace-at` it and look for `msg=0x111, wParam=0x3e8` around batch 950.
 
 ## Status (2026-04-11) — (pre-regression snapshot)
 
