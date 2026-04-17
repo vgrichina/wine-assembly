@@ -402,6 +402,12 @@ const extra = [
   { name: 'DirectSoundEnumerateA', nargs: 2 },
   // WINMM — MCI command string interface (MIDI/CDAudio). Stub returns MCIERR_NO_ERROR (0).
   { name: 'mciSendStringA', nargs: 4 },
+  // USER32 — rect subtraction used by Task Manager update-region math
+  { name: 'SubtractRect', nargs: 3 },
+  // USER32 — keyboard layout lookup (Tetravex asks before GetKeyState dispatch)
+  { name: 'GetKeyboardLayout', nargs: 1 },
+  // KERNEL32 — Telnet sets thread locale at startup; accept & ignore
+  { name: 'SetThreadLocale', nargs: 1 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

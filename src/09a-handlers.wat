@@ -354,6 +354,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
+  ;; SetThreadLocale(Locale) → BOOL. We don't track thread locales; accept and return TRUE.
+  (func $handle_SetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
   ;; 12: LoadLibraryA
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32)
@@ -582,9 +588,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 34: HeapDestroy — STUB: unimplemented
+  ;; 34: HeapDestroy(hHeap) → BOOL. We use a single shared heap; pretend success.
   (func $handle_HeapDestroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 35: HeapAlloc
@@ -4381,6 +4388,45 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; SubtractRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL. Only well-defined when src2 fully covers
+  ;; src1 in one axis; apps use it for update-region math. Approximation: copy src1→dst unless
+  ;; src2 fully contains src1 (→ empty). Returns FALSE for empty result.
+  (func $handle_SubtractRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $s1 i32) (local $s2 i32)
+    (local $s1l i32) (local $s1t i32) (local $s1r i32) (local $s1b i32)
+    (local $s2l i32) (local $s2t i32) (local $s2r i32) (local $s2b i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (local.set $s1 (call $g2w (local.get $arg1)))
+    (local.set $s2 (call $g2w (local.get $arg2)))
+    (local.set $s1l (i32.load (local.get $s1)))
+    (local.set $s1t (i32.load offset=4 (local.get $s1)))
+    (local.set $s1r (i32.load offset=8 (local.get $s1)))
+    (local.set $s1b (i32.load offset=12 (local.get $s1)))
+    (local.set $s2l (i32.load (local.get $s2)))
+    (local.set $s2t (i32.load offset=4 (local.get $s2)))
+    (local.set $s2r (i32.load offset=8 (local.get $s2)))
+    (local.set $s2b (i32.load offset=12 (local.get $s2)))
+    ;; If src2 fully contains src1, result is empty.
+    (if (i32.and
+          (i32.and (i32.le_s (local.get $s2l) (local.get $s1l))
+                   (i32.le_s (local.get $s2t) (local.get $s1t)))
+          (i32.and (i32.ge_s (local.get $s2r) (local.get $s1r))
+                   (i32.ge_s (local.get $s2b) (local.get $s1b))))
+      (then
+        (i32.store (local.get $dst) (i32.const 0))
+        (i32.store offset=4 (local.get $dst) (i32.const 0))
+        (i32.store offset=8 (local.get $dst) (i32.const 0))
+        (i32.store offset=12 (local.get $dst) (i32.const 0))
+        (global.set $eax (i32.const 0)))
+      (else
+        (i32.store (local.get $dst) (local.get $s1l))
+        (i32.store offset=4 (local.get $dst) (local.get $s1t))
+        (i32.store offset=8 (local.get $dst) (local.get $s1r))
+        (i32.store offset=12 (local.get $dst) (local.get $s1b))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
   ;; 402: WindowFromPoint — STUB: unimplemented
   (func $handle_WindowFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
@@ -5513,6 +5559,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; GetKeyboardLayout(idThread) → HKL. Return US English (0x04090409, device+lang both en-US).
+  (func $handle_GetKeyboardLayout (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x04090409))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
   ;; GetTextCharacterExtra(hdc) → int. Inter-character spacing (0 = default).
   (func $handle_GetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -6222,9 +6274,20 @@
       (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 580: OffsetWindowOrgEx — STUB: unimplemented
+  ;; 580: OffsetWindowOrgEx(hdc, dx, dy, lpPoint) → BOOL
   (func $handle_OffsetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $px i32) (local $py i32)
+    (local.set $px (call $host_gdi_get_window_org_x (local.get $arg0)))
+    (local.set $py (call $host_gdi_get_window_org_y (local.get $arg0)))
+    (if (local.get $arg3) (then
+      (call $gs32 (local.get $arg3) (local.get $px))
+      (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
+    ))
+    (drop (call $host_gdi_set_window_org (local.get $arg0)
+      (i32.add (local.get $px) (local.get $arg1))
+      (i32.add (local.get $py) (local.get $arg2))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 581: SetPolyFillMode — STUB: unimplemented
@@ -6252,14 +6315,30 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 586: GetWindowOrgEx — STUB: unimplemented
+  ;; 586: GetWindowOrgEx(hdc, lpPoint) → BOOL
   (func $handle_GetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg1) (then
+      (call $gs32 (local.get $arg1)
+        (call $host_gdi_get_window_org_x (local.get $arg0)))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+        (call $host_gdi_get_window_org_y (local.get $arg0)))
+    ))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 587: SetWindowOrgEx — STUB: unimplemented
+  ;; 587: SetWindowOrgEx(hdc, X, Y, lpPoint) → BOOL. Stores new logical origin; subsequent GDI
+  ;; calls translate by (viewport_org - window_org). lpPoint receives the previous origin.
   (func $handle_SetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg3) (then
+      (call $gs32 (local.get $arg3)
+        (call $host_gdi_get_window_org_x (local.get $arg0)))
+      (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+        (call $host_gdi_get_window_org_y (local.get $arg0)))
+    ))
+    (drop (call $host_gdi_set_window_org (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 588: GetCurrentPositionEx — STUB: unimplemented

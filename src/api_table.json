@@ -8865,5 +8865,26 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3235427389
+  },
+  {
+    "id": 1267,
+    "name": "SubtractRect",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2053040163
+  },
+  {
+    "id": 1268,
+    "name": "GetKeyboardLayout",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2590156960
+  },
+  {
+    "id": 1269,
+    "name": "SetThreadLocale",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2934215533
   }
 ]

@@ -185,6 +185,9 @@
   (import "host" "gdi_set_viewport_org" (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32)))
   (import "host" "gdi_get_viewport_org_x" (func $host_gdi_get_viewport_org_x (param i32) (result i32)))
   (import "host" "gdi_get_viewport_org_y" (func $host_gdi_get_viewport_org_y (param i32) (result i32)))
+  (import "host" "gdi_set_window_org" (func $host_gdi_set_window_org (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_get_window_org_x" (func $host_gdi_get_window_org_x (param i32) (result i32)))
+  (import "host" "gdi_get_window_org_y" (func $host_gdi_get_window_org_y (param i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
