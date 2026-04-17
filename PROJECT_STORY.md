@@ -460,7 +460,7 @@ tools/parse-rsrc.js         PE resource section parser
 tools/pe-imports.js         PE import table dumper (--all, --dll=NAME)
 tools/pe-sections.js        PE section header dumper
 tools/render-png.js         Headless PNG renderer
-tools/check-parens.py       WAT paren balance checker
+tools/check-parens.js       WAT paren balance checker
 tools/find-refs.js          Reference finder
 tools/deploy-berrry.js      Ship to berrry.app with sha256-diff incremental
                             uploads (Apr 11)

@@ -157,7 +157,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)
 - `tools/pe-sections.js` — PE section header dumper
 - `tools/render-png.js` — Headless PNG renderer
-- `tools/check-parens.py` — WAT parenthesis balance checker
+- `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
 - `tools/build.sh` — Build script (concat + wat2wasm)
 - `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app and by default fetches the server's sha256 manifest, then uploads only files whose hash differs (so a no-op redeploy ships zero files). `--full` forces a complete reupload. `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths and skips diffing. Note: by default `--update` *will* push uncommitted working-tree changes, since the diff is against the live server, not git.
 
