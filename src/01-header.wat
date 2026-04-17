@@ -640,6 +640,13 @@
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $show_window_activated (mut i32) (i32.const 0))      ;; first-ShowWindow gate
+  ;; Set by CreateWindowExA when main_hwnd is created with WS_VISIBLE; consumed by
+  ;; CACA0001 (after WM_CREATE returns) to kick off the implicit-show activation
+  ;; chain (WM_ACTIVATEAPP → ACTIVATE → SETFOCUS → SIZE → done) without requiring
+  ;; the app to call ShowWindow. RCT and other DDraw fullscreen games rely on this
+  ;; — they probe display state immediately after CreateWindowEx and expect WM_SIZE
+  ;; to have populated client-rect globals before they look at them.
+  (global $createwnd_implicit_show (mut i32) (i32.const 0))
   (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   (global $guid_counter (mut i32) (i32.const 0))

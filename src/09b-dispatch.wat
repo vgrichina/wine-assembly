@@ -21,6 +21,31 @@
     ;; Stack layout: [ESP] = saved_ret, [ESP+4] = saved_hwnd (pushed before WndProc args)
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))
       (then
+        ;; If WS_VISIBLE was set on main_hwnd's style, kick off the implicit-show
+        ;; activation chain (matches real Win32 CreateWindowEx behavior). Leaves
+        ;; saved_ret/saved_hwnd in place at [ESP]/[ESP+4]; the chain ends by
+        ;; re-entering CACA0001 with this flag cleared, which then pops them.
+        (if (global.get $createwnd_implicit_show)
+          (then
+            (global.set $createwnd_implicit_show (i32.const 0))
+            (global.set $show_window_activated (i32.const 1))
+            ;; Push WndProc args: hwnd, WM_ACTIVATEAPP(0x001C), TRUE, 0
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))                ;; lParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 1))                ;; wParam = TRUE
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x001C))           ;; WM_ACTIVATEAPP
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $main_hwnd))      ;; hwnd
+            ;; Push CACA0022 as WndProc return — chains to ACTIVATE→SETFOCUS→SIZE→0001.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
+            (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
+            (if (i32.eqz (global.get $eip))
+              (then (global.set $eip (global.get $wndproc_addr))))
+            (global.set $steps (i32.const 0))
+            (return)))
         ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA)
         (global.set $eip (call $gl32 (global.get $esp)))
         (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))

@@ -270,6 +270,15 @@
     (global.set $pending_wm_size (i32.or
       (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
       (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
+    ;; If WS_VISIBLE (0x10000000) is set on the main window's style and the activation
+    ;; chain hasn't already run (no prior ShowWindow), arm CACA0001 to run the
+    ;; implicit-show activation chain after WM_CREATE returns. This matches real
+    ;; Win32, where CreateWindowEx with WS_VISIBLE implicitly calls ShowWindow.
+    (if (i32.and (i32.and
+                   (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
+                   (i32.ne (i32.and (local.get $arg3) (i32.const 0x10000000)) (i32.const 0)))
+                 (i32.eqz (global.get $show_window_activated)))
+      (then (global.set $createwnd_implicit_show (i32.const 1))))
     ;; Save state for continuation thunk
     (global.set $createwnd_saved_hwnd (global.get $next_hwnd))
     (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
