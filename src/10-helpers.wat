@@ -667,24 +667,22 @@
       (then (local.set $len (i32.const 255))))
     (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
     (if (i32.eqz (local.get $buf)) (then (return)))
-    ;; memcpy $wa_ptr → $buf, $len bytes
-    (local.set $i (i32.const 0))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $buf) (local.get $i))
-                  (i32.load8_u (i32.add (local.get $wa_ptr) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
-    (i32.store8 (i32.add (local.get $buf) (local.get $len)) (i32.const 0))
+    ;; $buf is a guest pointer; convert to WASM for memory.copy.
+    (memory.copy (call $g2w (local.get $buf)) (local.get $wa_ptr) (local.get $len))
+    (i32.store8 (i32.add (call $g2w (local.get $buf)) (local.get $len)) (i32.const 0))
     (i32.store         (local.get $rec) (local.get $buf))
     (i32.store offset=4 (local.get $rec) (local.get $len)))
 
   ;; $title_table_get_ptr(hwnd) → WASM heap ptr to title bytes (0 if none).
+  ;; The stored slot holds a guest pointer (from $heap_alloc); convert to WASM
+  ;; here so callers can read bytes directly from linear memory.
   (func $title_table_get_ptr (param $hwnd i32) (result i32)
-    (local $idx i32)
+    (local $idx i32) (local $gp i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.load (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8)))))
+    (local.set $gp (i32.load (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8)))))
+    (if (i32.eqz (local.get $gp)) (then (return (i32.const 0))))
+    (call $g2w (local.get $gp)))
 
   (func $title_table_get_len (param $hwnd i32) (result i32)
     (local $idx i32)
