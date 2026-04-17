@@ -3,7 +3,18 @@
 Binary: `test/binaries/entertainment-pack/sol.exe`
 Test: `test/test-solitaire-deal.js`
 
-## Status (2026-04-11)
+## Status (2026-04-16) — REGRESSION: Assertion on startup
+
+Sol hits the `Assert(left <= right)` dialog (util.c:125, dialog 999) before the game becomes playable. Args at the failing `push 0x7d` are `(left=81, top=0, right=0, bottom=0)` — the column descriptor's enclosing rect (struct[+0x10], [+0x14]) is uninitialized.
+
+**Bisect:** introduced by `869248d` ("Relocate memory layout +32MB, sync CreateWindowExA activation, RCT progress"). Pre-869 sol runs clean (4662 API calls, no DialogBoxParamA). 869 through HEAD: DialogBoxParamA(0x01000000, 0x3e7, …) fires → "Assertion Failure" dialog at hwnd=65539. Persists at current HEAD and is unaffected by `--screen=800x600` / `1024x768` (CreateWindow still picks 593×431, so the window size is not the variable).
+
+**Working hypothesis:** GetClientRect now returns the real post-NCCALCSIZE client (587×386) earlier than before. Pre-869 the first GetClientRect ran before NCCALCSIZE and the JS fell back to the 640×480 renderer default; sol's column-layout code degenerates when width drops below some threshold and leaves column rects with `right=0`. Needs confirmation — trace sol's column-layout (callers of 0x01004f50) and see what input path leaves the rect zeroed.
+
+**Red herrings ruled out:**
+- GetDeviceCaps(HORZRES) scaling: sol calls GetDeviceCaps but CreateWindow size is fixed at 593×431 regardless of reported HORZRES. Not the cause.
+
+## Status (2026-04-11) — (pre-regression snapshot)
 
 Game is fully playable in the browser. Cards deal, render, and respond to all mouse interactions: click to select, double-click to auto-move to foundation, drag cards between piles, click deck to flip. Score and game number update correctly. Re-deal produces unique game numbers. All 6 test checks pass.
 
