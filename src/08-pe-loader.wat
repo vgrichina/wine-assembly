@@ -182,25 +182,8 @@
       (i32.const 0xCACA0002))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
-    ;; Allocate CreateWindowExA post-WM_CREATE chain thunks (0xCACA0020..0xCACA0023)
-    ;; Chain: WM_CREATE returns → CACA0020 (WM_SIZE) → CACA0021 (WM_ACTIVATEAPP)
-    ;;      → CACA0022 (WM_ACTIVATE) → CACA0023 (WM_SETFOCUS) → CACA0001 (done)
-    (global.set $createwnd_size_thunk (i32.add
-      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-               (global.get $GUEST_BASE))
-      (global.get $image_base)))
-    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-      (i32.const 0xCACA0020))
-    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
-
-    (global.set $createwnd_actapp_thunk (i32.add
-      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-               (global.get $GUEST_BASE))
-      (global.get $image_base)))
-    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-      (i32.const 0xCACA0021))
-    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
-
+    ;; Allocate first-ShowWindow activation chain thunks (0xCACA0022..0xCACA0023)
+    ;; Chain: ShowWindow → CACA0022 (WM_ACTIVATE) → CACA0023 (WM_SETFOCUS) → CACA0001 (done)
     (global.set $createwnd_activate_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                (global.get $GUEST_BASE))

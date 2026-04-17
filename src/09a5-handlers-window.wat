@@ -307,9 +307,10 @@
     (call $gs32 (global.get $esp) (i32.const 0x0001))               ;; WM_CREATE
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $next_hwnd))          ;; hwnd
-    ;; Push return thunk: chain through SIZE→ACTIVATE for main window, direct return otherwise
+    ;; Push return thunk: WM_CREATE returns directly to caller (CACA0001 pops saved_ret+hwnd).
+    ;; Activation chain (WM_ACTIVATEAPP/ACTIVATE/SETFOCUS) is now triggered by first ShowWindow.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $createwnd_size_thunk))
+    (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
     ;; Jump to WndProc (use class wndproc from lookup, not global wndproc_addr)
     (global.set $eip (local.get $tmp))
     ))
@@ -460,39 +461,50 @@
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else (call $paint_queue_push (local.get $arg0))))))
-    ;; ShowWindow on main window delivers WM_SIZE synchronously,
-    ;; matching real Win32 where ShowWindow → SetWindowPos → WM_SIZE.
-    ;; For SW_MAXIMIZE (cmd=3), use the client size returned by the host
-    ;; (which has already resized the window). Otherwise use pending_wm_size.
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+    ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
+    ;; with the new client dimensions so GetMessageA delivers correct values.
+    (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
                  (i32.eq (local.get $arg0) (global.get $main_hwnd)))
+      (then (global.set $pending_wm_size (local.get $client_size))))
+    ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
+    ;; chain: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS. WM_SIZE (from
+    ;; pending_wm_size) is delivered later by GetMessageA's drain.
+    (if (i32.and (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                          (i32.eq (local.get $arg0) (global.get $main_hwnd)))
+                 (i32.eqz (global.get $show_window_activated)))
       (then
-        (if (i32.eq (local.get $arg1) (i32.const 3))
+        (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
+        (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
+                     (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then
-            (local.set $packed (local.get $client_size))
-            (global.set $pending_wm_size (i32.const 0)))
-          (else
-            (local.set $packed (global.get $pending_wm_size))
-            (global.set $pending_wm_size (i32.const 0))))
-        (if (local.get $packed)
-          (then
-            (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
-            (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
-                         (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
-              (then
-                ;; Redirect EIP to wndproc with WM_SIZE args, return to ShowWindow's caller.
-                (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; pop ShowWindow frame
-                (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
-                (call $gs32 (global.get $esp) (call $gl32 (i32.add (global.get $esp) (i32.const 8)))) ;; ret addr
-                (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
-                (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0005)) ;; WM_SIZE
-                (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))     ;; wParam=SIZE_RESTORED
-                (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $packed)) ;; lParam=cx|(cy<<16)
-                (call $nc_flags_set (global.get $main_hwnd) (i32.const 4)) ;; NCCALCSIZE pending
-                (global.set $eip (local.get $wndproc))
-                (global.set $eax (i32.const 1))
-                (global.set $steps (i32.const 0))
-                (return)))))))
+            (global.set $show_window_activated (i32.const 1))
+            ;; Save ShowWindow's return address; pop ShowWindow frame (ret + 2 args = 12).
+            (local.set $packed (call $gl32 (global.get $esp)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            ;; Push saved_hwnd (=1, ShowWindow's BOOL retval) and saved_ret
+            ;; for CACA0001 to pop at end of chain.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 1))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $packed))
+            (global.set $createwnd_saved_hwnd (i32.const 1))
+            (global.set $createwnd_saved_ret (local.get $packed))
+            ;; Push WndProc args: hwnd, WM_ACTIVATEAPP(0x001C), TRUE, 0
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))                ;; lParam
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 1))                ;; wParam = TRUE
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x001C))           ;; WM_ACTIVATEAPP
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $main_hwnd))      ;; hwnd
+            ;; Push CACA0022 as WndProc return — chains to WM_ACTIVATE then WM_SETFOCUS.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
+            (global.set $eip (local.get $wndproc))
+            (global.set $eax (i32.const 1))
+            (global.set $steps (i32.const 0))
+            (return)))))
     ;; Deliver pending MoveWindow WM_SIZE for non-main windows
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
                  (i32.eq (local.get $arg0) (global.get $movewindow_pending_hwnd)))

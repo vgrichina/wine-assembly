@@ -27,60 +27,12 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
 
-    ;; ── Post-WM_CREATE synchronous chain (main window only) ────────
+    ;; ── First-ShowWindow synchronous activation chain (main window only) ──
+    ;; Triggered by $handle_ShowWindow on the first non-hide call for main_hwnd.
     ;; Each thunk: wndproc returned → push next message → call wndproc again.
     ;; Stack invariant: saved_ret and saved_hwnd sit at bottom throughout.
-    ;; Chain: CACA0020 (WM_SIZE) → CACA0021 (WM_ACTIVATEAPP) → CACA0022 (WM_ACTIVATE)
-    ;;      → CACA0023 (WM_SETFOCUS) → CACA0001 (done, pop saved_ret+hwnd)
-    ;; For non-main windows, CACA0020 skips straight to CACA0001 behavior.
-
-    ;; CACA0020: WM_CREATE returned → send WM_SIZE synchronously
-    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0020))
-      (then
-        ;; Only chain activation for main_hwnd; others skip to final return
-        (if (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (global.get $main_hwnd))
-          (then
-            (global.set $eip (call $gl32 (global.get $esp)))
-            (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-            (return)))
-        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_RESTORED(0), MAKELPARAM(cx,cy)
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $pending_wm_size))  ;; lParam = cx|(cy<<16)
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0))                  ;; wParam = SIZE_RESTORED
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0x0005))             ;; WM_SIZE
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_actapp_thunk))
-        (global.set $pending_wm_size (i32.const 0))
-        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
-        (if (i32.eqz (global.get $eip))
-          (then (global.set $eip (global.get $wndproc_addr))))
-        (global.set $steps (i32.const 0))
-        (return)))
-
-    ;; CACA0021: WM_SIZE returned → send WM_ACTIVATEAPP synchronously
-    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0021))
-      (then
-        ;; Push WndProc args: hwnd, WM_ACTIVATEAPP(0x001C), TRUE(1), 0
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0))                  ;; lParam = thread ID
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 1))                  ;; wParam = TRUE (activating)
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0x001C))             ;; WM_ACTIVATEAPP
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
-        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
-        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
-        (if (i32.eqz (global.get $eip))
-          (then (global.set $eip (global.get $wndproc_addr))))
-        (global.set $steps (i32.const 0))
-        (return)))
+    ;; Chain: ShowWindow → CACA0022 (WM_ACTIVATE) → CACA0023 (WM_SETFOCUS)
+    ;;      → CACA0001 (done, pop saved_ret+hwnd)
 
     ;; CACA0022: WM_ACTIVATEAPP returned → send WM_ACTIVATE synchronously
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0022))
@@ -143,9 +95,10 @@
         (call $gs32 (global.get $esp) (i32.const 0x0001))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
-        ;; Push return thunk: chain through SIZE→ACTIVATE for main window, direct return otherwise
+        ;; Push return thunk: WM_CREATE returns directly (CACA0001).
+        ;; Activation chain runs later from first ShowWindow.
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_size_thunk))
+        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
         ;; Get WndProc from window table (may have been updated by CBT hook)
         (global.set $eip (call $wnd_table_get (global.get $createwnd_saved_hwnd)))
         (if (i32.eqz (global.get $eip))
