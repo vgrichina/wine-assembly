@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 
 mkdir -p build
 
+node tools/check-handler-count.js
+
 echo "Concatenating WAT parts..."
 cat src/*.wat > build/combined.wat
 
