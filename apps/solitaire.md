@@ -9,10 +9,16 @@ Sol hits the `Assert(left <= right)` dialog (util.c:125, dialog 999) before the 
 
 **Bisect:** introduced by `869248d` ("Relocate memory layout +32MB, sync CreateWindowExA activation, RCT progress"). Pre-869 sol runs clean (4662 API calls, no DialogBoxParamA). 869 through HEAD: DialogBoxParamA(0x01000000, 0x3e7, …) fires → "Assertion Failure" dialog at hwnd=65539. Persists at current HEAD and is unaffected by `--screen=800x600` / `1024x768` (CreateWindow still picks 593×431, so the window size is not the variable).
 
-**Working hypothesis:** GetClientRect now returns the real post-NCCALCSIZE client (587×386) earlier than before. Pre-869 the first GetClientRect ran before NCCALCSIZE and the JS fell back to the 640×480 renderer default; sol's column-layout code degenerates when width drops below some threshold and leaves column rects with `right=0`. Needs confirmation — trace sol's column-layout (callers of 0x01004f50) and see what input path leaves the rect zeroed.
+**Failing drawing path:** `0x01004f50` is a tree-walker that, for each non-leaf node, reads `[node+0xc]`, `[node+0x10]`, `[node+0x14]` and passes them to the PatBlt-wrapper at `0x010030f0`. At failure, one node has those fields zero — so the PatBlt gets `(left=81, top=0, right=0, bottom=0)` and trips the assertion in the wrapper.
 
 **Red herrings ruled out:**
-- GetDeviceCaps(HORZRES) scaling: sol calls GetDeviceCaps but CreateWindow size is fixed at 593×431 regardless of reported HORZRES. Not the cause.
+- GetDeviceCaps(HORZRES) scaling: CreateWindow size is fixed at 593×431 regardless of reported HORZRES. Not the cause.
+- GetClientRect returning the NCCALCSIZE client early: `get_window_client_size(0x10001)` returns `0x01e00280` (640×480 default) in both pre-869 and HEAD. Identical — not the cause.
+- Synchronous WM_SIZE/WM_ACTIVATE delivery in CreateWindowExA (one half of 869248d): already reverted in 2348f47 (which is an ancestor of HEAD), so no longer in play.
+
+**Remaining suspect:** the other half of 869248d — relocating the emulator-private regions (stack, heap, thunks, thread cache, block cache, PE staging, DLL table) from `0x01C–0x024xxxxx` to `0x03C–0x044xxxxx` to give guest apps 60MB of address space. Sol may have been (accidentally) relying on specific absolute addresses in the old layout — e.g. uninitialized-memory reads that happened to land on zero pre-869 and now land on garbage, or vice-versa — which is consistent with "tree node's enclosing rect is just-never-initialized garbage."
+
+**Next step:** break at `0x010030f0` on HEAD and pre-869 with the same input, dump the offending node (EAX at entry points at the failing arg list; the node itself is one stack frame up, at `[ebp+8]` in `0x01004f50`). Diff the node contents byte-by-byte. If the node sits on the guest heap, trace which HeapAlloc/LocalAlloc returned it and confirm the allocation is the same size / initialized the same way in both builds.
 
 ## Status (2026-04-11) — (pre-regression snapshot)
 
