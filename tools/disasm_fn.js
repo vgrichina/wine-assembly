@@ -1,9 +1,9 @@
-// Usage: node tools/disasm_fn.js <exe> <VA_hex> [count=30]
+// Usage: node tools/disasm_fn.js <exe> <VA_hex>[,VA_hex,...] [count=30]
 const { disasmAt } = require('./disasm');
 const fs = require('fs');
 
 const exe = process.argv[2] || 'test/binaries/winamp.exe';
-const vaStart = parseInt(process.argv[3], 16);
+const vaList = (process.argv[3] || '').split(',').map(s => parseInt(s, 16));
 const count = parseInt(process.argv[4] || '30', 10);
 
 const buf = fs.readFileSync(exe);
@@ -32,6 +32,9 @@ function va2off(va) {
   return -1;
 }
 
-const off = va2off(vaStart);
-if (off < 0) { console.error('VA not found in any section'); process.exit(1); }
-disasmAt(buf, off, vaStart, count).forEach(l => console.log(l));
+for (const va of vaList) {
+  const off = va2off(va);
+  if (off < 0) { console.error(`VA 0x${va.toString(16)} not found in any section`); continue; }
+  if (vaList.length > 1) console.log(`--- 0x${va.toString(16)} ---`);
+  disasmAt(buf, off, va, count).forEach(l => console.log(l));
+}
