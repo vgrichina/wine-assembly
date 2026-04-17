@@ -65,11 +65,12 @@ function findEntry(va) {
     if (b === 0x55 && buf[i+1] === 0x8B && buf[i+2] === 0xEC) {
       return { entry: sect.vaddr + (i - sect.rawOff), distance: off - i, reason: 'prologue (push ebp; mov ebp,esp)' };
     }
-    // Padding boundary: previous byte is CC or 90, current is neither → entry
-    if (b !== 0xCC && b !== 0x90 && i > sect.rawOff) {
-      const p = buf[i - 1];
-      if (p === 0xCC || p === 0x90) {
-        return { entry: sect.vaddr + (i - sect.rawOff), distance: off - i, reason: `after padding (0x${p.toString(16)})` };
+    // Padding boundary: previous ≥2 bytes are CC (or ≥2 are 90), current is neither → entry.
+    // Requiring two is important: a lone CC/90 is usually a byte inside a disp32 or imm, not padding.
+    if (b !== 0xCC && b !== 0x90 && i - 2 >= sect.rawOff) {
+      const p1 = buf[i - 1], p2 = buf[i - 2];
+      if ((p1 === 0xCC && p2 === 0xCC) || (p1 === 0x90 && p2 === 0x90)) {
+        return { entry: sect.vaddr + (i - sect.rawOff), distance: off - i, reason: `after padding (${p1 === 0xCC ? 'int3' : 'nop'} run)` };
       }
     }
     // ret boundary: preceding byte is C3 (ret) or C2 XX XX (ret imm16)
