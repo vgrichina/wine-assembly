@@ -6563,6 +6563,11 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    ;; Refresh CLIENT_RECT now (MFC's AfxWndProc may not forward NCCALCSIZE to
+    ;; DefWindowProc, so queuing the message alone doesn't update our table),
+    ;; and queue a paint so the moved child redraws.
+    (call $defwndproc_do_nccalcsize (local.get $arg1))
+    (call $paint_queue_push (local.get $arg1))
     (global.set $eax (local.get $arg0))  ;; return same HDWP handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
