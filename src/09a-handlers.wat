@@ -1357,9 +1357,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 94: GetDlgCtrlID — STUB: unimplemented
+  ;; 94: GetDlgCtrlID(hwnd) → control ID stored in CONTROL_TABLE[slot]+4
   (func $handle_GetDlgCtrlID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $arg0)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax (i32.load
+          (i32.add (i32.add (global.get $CONTROL_TABLE)
+                            (i32.mul (local.get $idx) (i32.const 16)))
+                   (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 95: GetDlgItemTextA(hDlg, nIDDlgItem, lpString, nMaxCount) → int
@@ -3306,13 +3315,44 @@
   ;; Returns related window (sibling, child, owner). No sibling/child tracking,
   ;; so return NULL for all commands. GW_OWNER(4) returns parent if set.
   (func $handle_GetWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $parent i32)
+    ;; GW_HWNDFIRST(0) / GW_HWNDLAST(1): first/last sibling at same parent.
+    (if (i32.eq (local.get $arg1) (i32.const 0))
+      (then
+        (local.set $parent (call $wnd_get_parent (local.get $arg0)))
+        (global.set $eax (call $wnd_find_first_child (local.get $parent)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eq (local.get $arg1) (i32.const 1))
+      (then
+        (local.set $parent (call $wnd_get_parent (local.get $arg0)))
+        (global.set $eax (call $wnd_find_last_child (local.get $parent)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; GW_HWNDNEXT = 2
+    (if (i32.eq (local.get $arg1) (i32.const 2))
+      (then
+        (global.set $eax (call $wnd_find_next_sibling (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; GW_HWNDPREV = 3
+    (if (i32.eq (local.get $arg1) (i32.const 3))
+      (then
+        (global.set $eax (call $wnd_find_prev_sibling (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; GW_OWNER = 4 → return parent hwnd
     (if (i32.eq (local.get $arg1) (i32.const 4))
       (then
         (global.set $eax (call $wnd_get_parent (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    ;; All others (FIRST/LAST/NEXT/PREV/CHILD) → NULL
+    ;; GW_CHILD = 5 → first child of hwnd
+    (if (i32.eq (local.get $arg1) (i32.const 5))
+      (then
+        (global.set $eax (call $wnd_find_first_child (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -6572,7 +6612,7 @@
   ;; 622: GetTopWindow(hWnd) — 1 arg stdcall, return NULL
   ;; GetTopWindow(hWnd) → NULL (no child windows tracked)
   (func $handle_GetTopWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $wnd_find_first_child (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 

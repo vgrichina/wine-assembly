@@ -1,6 +1,92 @@
 # MSPaint Debugging Notes
 
-## Current Status (2026-04-03)
+## Current Status (2026-04-16)
+
+### Symptom
+
+Runs crash-free into MFC message loop (~1390 API calls during init, then spins
+`DefWindowProcA(0,0,0,0)` ~860/batch on WM_NULL). PNG render: solid teal —
+class `hbrBackground` via `WM_ERASEBKGND`, no chrome, no toolbar/statusbar, no
+canvas. Two windows created:
+
+- `0x10001` — main frame "Paint", `275x400` at CW_USEDEFAULT pos
+- `0x10002` — class **"AfxFrameOrView42"** (MFC view), style `WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS`, ID `0xE900` (AFX_IDW_PANE_FIRST), size **0×0**
+
+### Root cause: `GetTopWindow` returns 0 → RecalcLayout walks no children
+
+At `09a-handlers.wat:6574`, `GetTopWindow` is a return-0 stub (violates
+`feedback_fail_fast_stubs`). Observed in trace during CFrameWnd::RecalcLayout
+(runs when WM_SIZE hits the main frame after ShowWindow → GetMessageA drain):
+
+```
+BeginDeferWindowPos(8, 0)  → 0xdef00001
+GetTopWindow(0x10001)      → 0            ← walk terminates here
+EndDeferWindowPos(0xdef00001)
+```
+
+With no child returned, MFC never calls `DeferWindowPos` on the view, so the
+`AfxFrameOrView42` child stays at 0×0 and is never invalidated. No `BeginPaint`
+/`EndPaint`/`InvalidateRect` ever appears in the trace. The teal the user sees
+is only the main frame's class background brush.
+
+**Fix applied (this session):**
+
+1. Added z-order-by-slot helpers in `09c-help.wat`: `$wnd_find_first_child`,
+   `$wnd_find_last_child`, `$wnd_find_next_sibling`, `$wnd_find_prev_sibling`.
+2. `$handle_GetTopWindow` → `$wnd_find_first_child(hwnd)`.
+3. `$handle_GetWindow` → full GW_HWNDFIRST/LAST/NEXT/PREV/OWNER/CHILD coverage.
+4. `$handle_GetDlgCtrlID` → reads `CONTROL_TABLE[slot]+4` (ctrl_id).
+5. CreateWindowExA now stores the hMenu-as-ctrl_id into `CONTROL_TABLE[slot]+4`
+   for every child (WS_CHILD + non-null parent), not just the
+   detected Edit/Button/Static classes. This lets `GetDlgCtrlID` return the
+   pane ID (e.g. 0xE900 AFX_IDW_PANE_FIRST) for real-wndproc children.
+
+**Result (still teal):** RecalcLayout now enumerates correctly:
+
+```
+BeginDeferWindowPos(8)              → 0xdef00001
+GetTopWindow(0x10001)               → 0x10002    ✓ (was 0)
+GetDlgCtrlID(0x10002)               → 0xe900     ✓ (was crash)
+GetWindow(0x10002, GW_HWNDNEXT)     → 0          ✓
+EndDeferWindowPos
+```
+
+But MFC still never calls `DeferWindowPos`/`MoveWindow`/`SetWindowPos` on the
+view — the enumeration completes and the view stays at 0×0. Likely the
+`RepositionBars(..., AFX_IDW_PANE_FIRST, reposDefault, ...)` second pass is
+either short-circuited or we're only seeing its query pass (`reposQuery`). No
+`BeginPaint`/`EndPaint`/`InvalidateRect` ever fires.
+
+**Next step:** trace between `EndDeferWindowPos` (API #1204) and the idle
+DefWindowProcA spin (~#1400) to find why the pane-reposition pass never issues
+a position call. Candidates to inspect: the client rect returned by
+`GetClientRect(main, ...)` (must be non-zero for RepositionBars to compute a
+pane rect), and whether MFC actually re-enters layout with `reposDefault` vs.
+only `reposQuery`.
+
+### Secondary: only view is created, no toolbar/statusbar/palette
+
+Only 2 CreateWindowExA calls observed. MSPaint's `CMainFrame::OnCreate` should
+create a toolbar, status bar, tool box, and color palette. The single
+AfxFrameOrView42 child strongly suggests we're running `CFrameWnd::OnCreate`
+(base, which creates the view via `OnCreateClient`), not the derived
+`CMainFrame::OnCreate` — matching the stale 2026-04-03 diagnosis that the
+CMainFrame vtable is never installed over the CFrameWnd vtable.
+
+After fixing GetTopWindow, re-check whether the vtable issue still stands — it
+may have been fixed incidentally by recent MFC-path changes (MFC did get further
+this session: before = 1 window, now = 2; init = 1634 calls, now ~1390).
+
+### Uncommitted changes affecting this
+
+`src/09b-dispatch.wat` (this session): dropped synchronous WM_SIZE during
+CreateWindowExA's WM_CREATE chain — WM_SIZE now only arrives via ShowWindow
+→ GetMessageA drain of `pending_wm_size`. Confirmed WM_SIZE still reaches the
+main frame (RecalcLayout runs). Change did not regress paint.
+
+### Historical notes below (2026-04-03 and earlier, partially stale)
+
+## Previous Status (2026-04-03)
 
 ### Three major fixes this session — MFC OnCreate now runs
 
