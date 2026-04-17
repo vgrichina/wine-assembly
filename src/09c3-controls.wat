@@ -2618,6 +2618,16 @@
           (then (global.set $focus_hwnd (i32.const 0))))
         (return (i32.const 0))))
 
+    ;; ---------- WM_SETCURSOR (0x0020) ----------
+    ;; Show the I-beam over the edit client area (HTCLIENT=1).
+    (if (i32.eq (local.get $msg) (i32.const 0x0020))
+      (then
+        (if (i32.eq (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 1))
+          (then
+            (drop (call $set_cursor_internal (i32.const 0x67F01))) ;; IDC_IBEAM
+            (return (i32.const 1))))
+        (return (i32.const 0))))
+
     ;; ---------- WM_SETTEXT (0x000C) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000C))
       (then

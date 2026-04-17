@@ -1506,9 +1506,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 106: SetCursor(hCursor) — 1 arg stdcall, return previous cursor (fake)
+  ;; Helper: apply a new cursor and return the previous handle. Shared by
+  ;; $handle_SetCursor and DefWindowProc's WM_SETCURSOR path.
+  (func $set_cursor_internal (param $hcur i32) (result i32)
+    (local $prev i32)
+    (local.set $prev (global.get $current_cursor))
+    (global.set $current_cursor (local.get $hcur))
+    (call $host_set_cursor (local.get $hcur))
+    (local.get $prev))
+
+  ;; 106: SetCursor(hCursor) — 1 arg stdcall, returns previous HCURSOR.
   (func $handle_SetCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $set_cursor_internal (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1556,9 +1565,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 108: LoadCursorA(hInstance, lpCursorName) — return fake cursor handle
+  ;; 108: LoadCursorA(hInstance, lpCursorName) — return HCURSOR encoding the IDC_*.
+  ;; System cursors: hInstance=0, lpCursorName is an ordinal (MAKEINTRESOURCE,
+  ;; value < 0x10000) in the IDC_* range (32512..). Encoded handle:
+  ;;   0x60000 | (IDC_X & 0xFFFF) — matches the JS load_cursor stub encoding.
+  ;; App-resource cursors collapse to IDC_ARROW (bitmap cursor rendering deferred).
   (func $handle_LoadCursorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x60002)) ;; fake HCURSOR
+    (if (i32.and (i32.eqz (local.get $arg0))
+                 (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
+      (then (global.set $eax (i32.or (i32.const 0x60000)
+                                     (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
+      (else (global.set $eax (i32.const 0x67F00)))) ;; IDC_ARROW fallback
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -3177,10 +3194,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 290: LoadCursorW — return fake handle — STUB: unimplemented
+  ;; 290: LoadCursorW(hInstance, lpCursorName) — same IDC encoding as LoadCursorA.
   (func $handle_LoadCursorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; LoadCursorW(hInstance, lpCursorName) → HCURSOR. Same as LoadCursorA
-    (global.set $eax (i32.const 0x60002))
+    (if (i32.and (i32.eqz (local.get $arg0))
+                 (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
+      (then (global.set $eax (i32.or (i32.const 0x60000)
+                                     (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
+      (else (global.set $eax (i32.const 0x67F00))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

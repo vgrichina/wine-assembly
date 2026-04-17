@@ -429,6 +429,14 @@
       (then (return (i32.const 18)))) ;; HTBORDER
     (i32.const 1))                    ;; HTCLIENT
 
+  ;; Default WM_SETCURSOR handler: pick an IDC_* based on the hit code and
+  ;; apply it via $set_cursor_internal (shared with $handle_SetCursor).
+  ;; Phase 7 keeps everything on IDC_ARROW — class-cursor lookup for HTCLIENT
+  ;; is deferred.
+  (func $defwndproc_do_setcursor (param $hwnd i32) (param $hit i32) (result i32)
+    (drop (call $set_cursor_internal (i32.const 0x67F00))) ;; IDC_ARROW
+    (i32.const 1))
+
   ;; Tiny wrapper so $defwndproc_do_ncpaint can peek FLASH_TABLE without
   ;; reaching into the table address directly (keeps the layout private
   ;; to help.wat and avoids leaking the offset into two files).

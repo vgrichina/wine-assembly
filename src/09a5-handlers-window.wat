@@ -1144,6 +1144,14 @@
                 (i32.const 0x0112) (i32.const 0xF030) (i32.const 0)))))
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_SETCURSOR (0x0020): wParam=hwnd under cursor, LOWORD(lParam)=hit code.
+    ;; Delegate to shared helper (applies IDC_* via $set_cursor_internal).
+    (if (i32.eq (local.get $arg1) (i32.const 0x0020))
+    (then
+      (global.set $eax (call $defwndproc_do_setcursor
+        (local.get $arg0)
+        (i32.and (local.get $arg3) (i32.const 0xFFFF))))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_SYSCOMMAND (0x0112): SC_CLOSE → post WM_CLOSE; MIN/MAX/RESTORE →
     ;; update host window state. JS still owns the rendering-side geometry
     ;; via host_sys_command (see lib/host-imports.js).
