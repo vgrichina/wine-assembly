@@ -3,22 +3,21 @@
 Binary: `test/binaries/entertainment-pack/sol.exe`
 Test: `test/test-solitaire-deal.js`
 
-## Status (2026-04-16) — REGRESSION: Assertion on startup
+## Status (2026-04-16 late) — Startup assertion is RESOLVED
 
-Sol hits the `Assert(left <= right)` dialog (util.c:125, dialog 999) before the game becomes playable. Args at the failing `push 0x7d` are `(left=81, top=0, right=0, bottom=0)` — the column descriptor's enclosing rect (struct[+0x10], [+0x14]) is uninitialized.
+Sol now boots cleanly at HEAD: 4662 API calls, zero `DialogBoxParamA`, initial table renders with 91329 non-green pixels. `test/test-solitaire-deal.js` → 5/6 checks pass.
 
-**Bisect:** introduced by `869248d` ("Relocate memory layout +32MB, sync CreateWindowExA activation, RCT progress"). Pre-869 sol runs clean (4662 API calls, no DialogBoxParamA). 869 through HEAD: DialogBoxParamA(0x01000000, 0x3e7, …) fires → "Assertion Failure" dialog at hwnd=65539. Persists at current HEAD and is unaffected by `--screen=800x600` / `1024x768` (CreateWindow still picks 593×431, so the window size is not the variable).
+The assertion regression introduced in `869248d` was incidentally fixed somewhere between `869248d` and HEAD (candidates: `c808539` ctrl_id/EqualRect, `3c13d60` DeferWindowPos client-rect refresh, `ddcd54d` Win98 reserved sys colors, or one of the message-queue-routing phase commits `d8cf3b3`/`8e8e6f5`/`c5952e6`). No explicit solitaire fix was authored — leave as-is.
 
-**Failing drawing path:** `0x01004f50` is a tree-walker that, for each non-leaf node, reads `[node+0xc]`, `[node+0x10]`, `[node+0x14]` and passes them to the PatBlt-wrapper at `0x010030f0`. At failure, one node has those fields zero — so the PatBlt gets `(left=81, top=0, right=0, bottom=0)` and trips the assertion in the wrapper.
+### Remaining failure — Deal (WM_COMMAND 1000) is a no-op in the test
 
-**Red herrings ruled out:**
-- GetDeviceCaps(HORZRES) scaling: CreateWindow size is fixed at 593×431 regardless of reported HORZRES. Not the cause.
-- GetClientRect returning the NCCALCSIZE client early: `get_window_client_size(0x10001)` returns `0x01e00280` (640×480 default) in both pre-869 and HEAD. Identical — not the cause.
-- Synchronous WM_SIZE/WM_ACTIVATE delivery in CreateWindowExA (one half of 869248d): already reverted in 2348f47 (which is an ancestor of HEAD), so no longer in play.
+`test/test-solitaire-deal.js` fails its one diff check: `sol_initial.png` and `sol_deal.png` are byte-identical (10238 bytes, 0px diff). The test posts `WM_COMMAND wParam=1000` at batch 950 to re-deal; injection is confirmed (`[input] injected msg=0x111 wParam=0x3e8 at batch 950`), but no `GetSystemTime` / `GetLocalTime` calls fire after injection, which means sol is not re-running its `srand(time()); shuffle; redeal` path.
 
-**Remaining suspect:** the other half of 869248d — relocating the emulator-private regions (stack, heap, thunks, thread cache, block cache, PE staging, DLL table) from `0x01C–0x024xxxxx` to `0x03C–0x044xxxxx` to give guest apps 60MB of address space. Sol may have been (accidentally) relying on specific absolute addresses in the old layout — e.g. uninitialized-memory reads that happened to land on zero pre-869 and now land on garbage, or vice-versa — which is consistent with "tree node's enclosing rect is just-never-initialized garbage."
+Also: the test was written when the debug build fired ~17 startup assertions and dismissed them with 20× `WM_COMMAND(1)`. Assertions no longer fire, so those inert `WM_COMMAND(1)` posts may be corrupting state or the test's timing assumptions. Rewrite the test (simplify: no dismissal, longer delays between initial snapshot and Deal so `time()` ticks, maybe use keyboard F2 instead of `WM_COMMAND(1000)`).
 
-**Next step:** break at `0x010030f0` on HEAD and pre-869 with the same input, dump the offending node (EAX at entry points at the failing arg list; the node itself is one stack frame up, at `[ebp+8]` in `0x01004f50`). Diff the node contents byte-by-byte. If the node sits on the guest heap, trace which HeapAlloc/LocalAlloc returned it and confirm the allocation is the same size / initialized the same way in both builds.
+**Next step:** either
+1. Fix the test — send `F2` keydown at a later batch; insert a real delay so `time()` advances between the two `srand` calls.
+2. Or verify Deal reaches the wndproc by breaking at sol's main wndproc (find its real address — `0x01001cd0` dumps 951 identical `msg=1` entries, so that's not the main wndproc, it's something else being called by a thunk). Disassemble `WNDCLASS.lpfnWndProc` from the RegisterClassA call to get the right address.
 
 ## Status (2026-04-11) — (pre-regression snapshot)
 
