@@ -927,7 +927,7 @@
   ;; 196: xchg [addr], reg (op=reg, addr in next word)
   (func $th_xchg_m_r (param $op i32)
     (local $addr i32) (local $tmp i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $tmp (call $gl32 (local.get $addr)))
     (call $gs32 (local.get $addr) (call $get_reg (local.get $op)))
     (call $set_reg (local.get $op) (local.get $tmp))
@@ -966,7 +966,7 @@
   ;; 237: XCHG [addr], r8
   (func $th_xchg_m8_r (param $op i32)
     (local $addr i32) (local $tmp i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $tmp (call $gl8 (local.get $addr)))
     (call $gs8 (local.get $addr) (call $get_reg8 (local.get $op)))
     (call $set_reg8 (local.get $op) (local.get $tmp))
@@ -983,7 +983,7 @@
   ;; 270: XCHG [addr], r16 (op=reg, addr in next word)
   (func $th_xchg_m16_r (param $op i32)
     (local $addr i32) (local $tmp i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $tmp (call $gl16 (local.get $addr)))
     (call $gs16 (local.get $addr) (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
     (call $set_reg (local.get $op) (i32.or (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF0000)) (local.get $tmp)))
@@ -1061,7 +1061,7 @@
             (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000)) (local.get $dst_val))))))
       (else
         (local.set $src_reg (local.get $op))
-        (local.set $addr (call $read_thread_word))
+        (local.set $addr (call $read_addr))
         (local.set $dst_val (i32.and (call $gl16 (local.get $addr)) (i32.const 0xFFFF)))
         (if (i32.eq (local.get $ax16) (local.get $dst_val))
           (then
@@ -1090,7 +1090,7 @@
         (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $sum)))
       (else
         (local.set $src_reg (local.get $op))
-        (local.set $addr (call $read_thread_word))
+        (local.set $addr (call $read_addr))
         (local.set $dst_val (i32.and (call $gl16 (local.get $addr)) (i32.const 0xFFFF)))
         (local.set $sum (i32.and (i32.add (local.get $dst_val) (i32.and (call $get_reg (local.get $src_reg)) (i32.const 0xFFFF))) (i32.const 0xFFFF)))
         (call $set_flags_add (local.get $dst_val) (i32.and (call $get_reg (local.get $src_reg)) (i32.const 0xFFFF)) (local.get $sum))
@@ -1343,7 +1343,7 @@
       (else
         ;; Memory mode: op = src_reg, next word = addr
         (local.set $src_reg (local.get $op))
-        (local.set $addr (call $read_thread_word))
+        (local.set $addr (call $read_addr))
         (local.set $dst_val (call $gl8 (local.get $addr)))
         (if (i32.eq (local.get $al) (local.get $dst_val))
           (then
@@ -1716,7 +1716,7 @@
       (else
         ;; Memory mode: op=src_reg, next word=addr
         (local.set $src_reg (local.get $op))
-        (local.set $addr (call $read_thread_word))
+        (local.set $addr (call $read_addr))
         (local.set $dst_val (call $gl32 (local.get $addr)))
         (if (i32.eq (global.get $eax) (local.get $dst_val))
           (then
@@ -1740,7 +1740,7 @@
         (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $sum)))
       (else
         (local.set $src_reg (local.get $op))
-        (local.set $addr (call $read_thread_word))
+        (local.set $addr (call $read_addr))
         (local.set $dst_val (call $gl32 (local.get $addr)))
         (local.set $sum (i32.add (local.get $dst_val) (call $get_reg (local.get $src_reg))))
         (call $set_flags_add (local.get $dst_val) (call $get_reg (local.get $src_reg)) (local.get $sum))
@@ -1833,14 +1833,14 @@
     (global.set $flag_res (i32.const 0)))
   (func $th_bt_m_i8 (param $op i32)
     (local $addr i32) (local $bit i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $bit (call $read_thread_word))
     (local.set $val (call $gl32 (local.get $addr)))
     (call $set_cf_bit (local.get $val) (local.get $bit))
     (return_call $next))
   (func $th_bts_m_i8 (param $op i32)
     (local $addr i32) (local $bit i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $bit (call $read_thread_word))
     (local.set $val (call $gl32 (local.get $addr)))
     (call $set_cf_bit (local.get $val) (local.get $bit))
@@ -1848,7 +1848,7 @@
     (return_call $next))
   (func $th_btr_m_i8 (param $op i32)
     (local $addr i32) (local $bit i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $bit (call $read_thread_word))
     (local.set $val (call $gl32 (local.get $addr)))
     (call $set_cf_bit (local.get $val) (local.get $bit))
@@ -1856,7 +1856,7 @@
     (return_call $next))
   (func $th_btc_m_i8 (param $op i32)
     (local $addr i32) (local $bit i32) (local $val i32)
-    (local.set $addr (call $read_thread_word))
+    (local.set $addr (call $read_addr))
     (local.set $bit (call $read_thread_word))
     (local.set $val (call $gl32 (local.get $addr)))
     (call $set_cf_bit (local.get $val) (local.get $bit))
