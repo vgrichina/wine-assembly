@@ -364,6 +364,35 @@ async function main() {
     // Check API breakpoints
     if (breakApis.length && breakApis.some(name => t.includes(name))) {
       apiBreakHit = t;
+      // Dump entry-time stack + EBP chain BEFORE handler runs, so we see
+      // the real return address and caller chain (not post-handler state).
+      try {
+        const e = instance.exports;
+        const esp = e.get_esp();
+        const imageBase = e.get_image_base();
+        const dv = new DataView(memory.buffer);
+        const g2w = addr => addr - imageBase + 0x12000;
+        const ret = dv.getUint32(g2w(esp), true);
+        const stackVals = [];
+        for (let i = 0; i < 8; i++) {
+          stackVals.push(hex(dv.getUint32(g2w(esp + i * 4), true)));
+        }
+        let ebp = e.get_ebp();
+        const chain = [];
+        for (let depth = 0; depth < 12 && ebp; depth++) {
+          try {
+            const callerRet = dv.getUint32(g2w(ebp + 4), true);
+            const prevEbp = dv.getUint32(g2w(ebp), true);
+            chain.push(hex(callerRet));
+            if (prevEbp <= ebp) break;
+            ebp = prevEbp;
+          } catch (_) { break; }
+        }
+        console.log(`\n*** API BREAK ENTRY for ${t}:`);
+        console.log(`  esp=${hex(esp)}  ret=${hex(ret)}`);
+        console.log(`  stack: ${stackVals.join(' ')}`);
+        console.log(`  ebp chain: ${chain.join(' -> ')}`);
+      } catch (_) {}
     }
 
     if (TRACE_API) {

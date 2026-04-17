@@ -44,6 +44,25 @@ Trace summary (after the cache-guard fix shipped in 0004f79):
 - PostQuitMessage(0) = graceful exit. Something in our environment convinces the game to take the exit branch before it ever runs a real frame.
 - Likely suspects: a) WM_ACTIVATEAPP delivered with wParam=FALSE, b) a COM call returning a failure HRESULT that RCT treats as "DirectDraw unavailable, abort", c) GetSystemPaletteEntries returning zeros, making palette detection fail (rct.md prior note mentioned this), d) a malformed surface desc for the offscreen surface causing the image-blit step to set a fatal flag.
 
+**Call chain into PostQuitMessage** (dumped via new `API BREAK ENTRY` stack walk in `test/run.js`):
+
+```
+ret=0x004045bb     ; AppExit wrapper at 0x004045ad — just "push 0; call [PostQuitMessage]"
+└ called from 0x00555b7a — quit helper at 0x00555b75:
+    call 0x00452345   ;; checks [0x5a93d4], runs 5 shutdown calls, sets flag
+    call 0x004045ad   ;; -> PostQuitMessage(0)
+    ret
+└ called from 0x00555aea inside a longjmp-style trampoline at 0x00555ae0:
+    mov dword [0x560194], 1          ;; fatal-exit flag
+    call 0x00555b75                  ;; run shutdown + PostQuitMessage
+    mov esp, [0x008d8fac]            ;; *** longjmp: restore saved ESP ***
+    pop ebp ; ret
+```
+
+So RCT is taking a `longjmp`-based **fatal-exit** path — the `mov esp,[0x8d8fac]` at `0x00555aef` is the giveaway. The game registered a `setjmp` target early in startup (the saved ESP+EBP live at `[0x8d8fac]`/`[0x8d8fa8]`-ish); somewhere in the DDraw/logo-blit sequence it decides something is unrecoverable, raises the fatal flag at `[0x560194]`, and longjmps out. The 95-byte GAME.CFG write happens inside `0x00452345`'s shutdown chain, not as cause of exit.
+
+**To find *why* the longjmp fires:** watch on `[0x008d8fac]` to find the **setjmp** point (should be reached exactly once during init, likely right after WinMain's main-try entry), then watch on `[0x560194]` (currently 0 → becomes 1) to find the **raise** site. The latter is the real culprit branch.
+
 **API sequence right before quit** (from `--break-api=PostQuitMessage --trace-api`):
 ```
 #6188 GetSystemPaletteEntries(hdc, 0,   10, buf)
