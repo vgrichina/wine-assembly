@@ -1,8 +1,73 @@
 # MSPaint Debugging Notes
 
-## Current Status (2026-04-16)
+## Current Status (2026-04-16, late evening)
 
 ### Symptom
+
+Frame window now renders at (20,20) 275×400 with full title bar ("Paint"
+caption, blue gradient, min/max/close buttons, 3D edge) and a gray client
+area. Fixed the 5-px title bar stub by correcting `_getDrawTarget` in
+`lib/host-imports.js` — the view child's `GetWindowDC` was being resolved
+with ox=oy=0, routing its NCPAINT fill/draw_edge to (0,0) on the frame's
+back-canvas and overpainting the title bar. Now GetWindowDC on a child
+offsets by (parent client origin + child position). Still missing: menu
+bar, toolbar, status bar, color palette — only the frame window + view
+exist.
+
+### Fix this sub-session
+
+**`_getDrawTarget` GetWindowDC on child windows** (lib/host-imports.js:284).
+Previously `_isWholeWindowDC(hdc)` returned with ox=oy=0 unconditionally —
+correct for top-level windows (which have their own back-canvas) but wrong
+for child windows (which share the parent's back-canvas). A child's
+"window (0,0)" sits at (parent.clientRect − parent.pos + child.pos) on
+the shared canvas. The view 0x10002's WM_NCPAINT fill_rect(0,0,269,373)
+was painting over the frame's title bar. Guarded the no-offset path on
+`h === topHwnd` and added the parent-chrome+child-pos offset otherwise.
+
+### Three fixes this sub-session
+
+1. **AdjustWindowRect[Ex]** previously added chrome unconditionally — even for
+   borderless WS_CHILD views. The MFC view (style 0x52000000, no
+   WS_BORDER/CAPTION) was being shrunk to (-4,-24, w+8, h+28) in
+   CFrameWnd::RecalcLayout, putting it outside the parent client. Fixed to
+   only inflate when WS_BORDER/WS_DLGFRAME/WS_THICKFRAME (1px) and adding
+   20px caption only when WS_CAPTION (== DLGFRAME|BORDER) is present.
+   `src/09a-handlers.wat:6761`, `src/09a7-handlers-dispatch.wat:233`.
+
+2. **host_move_window** treated CW_USEDEFAULT (0x80000000) as a literal x/y,
+   overwriting the cascade-default position the renderer set during
+   createWindow. MFC's restored WINDOWPLACEMENT echoes those CW_USEDEFAULTs
+   back. Fixed to skip per-axis when value is CW_USEDEFAULT.
+   `lib/host-imports.js:1060`.
+
+3. **Run-loop EIP-in-thunk** (the big one). When DispatchMessageA jumps EIP
+   to a thunk-address WndProc (e.g. view's wndproc = DefWindowProcA thunk)
+   and the handler pops args + ret addr from ESP without setting EIP, the
+   run loop saw EIP still in thunk zone, re-dispatched, and looped forever
+   — that's the source of the "DefWindowProcA(0,0,0,0)" spin and of the
+   garbage-arg DefWindowProcA calls that followed each WM_CREATE. Fixed in
+   `src/13-exports.wat`: capture ESP[0] as ret_addr before dispatch; if EIP
+   is still in thunk zone afterwards, set EIP = ret_addr. Mirrors the
+   existing logic in `th_call_ind` and `th_jmp_ind`.
+
+After these three, MFC actually delivers WM_NCPAINT/WM_ERASEBKGND/WM_NCCALCSIZE
+to DefWindowProc, the back-canvas materialises, and the frame becomes visible
+on the desktop.
+
+### Next step
+
+CMainFrame::OnCreate still doesn't run (only the base CFrameWnd::OnCreate path
+fires — view created, but no toolbar/status bar/palette). The vtable-not-installed
+diagnosis from the 2026-04-03 session is still the active blocker for the rest
+of MSPaint's UI. Confirmed by setting `--break=0x1002064,0x1006174,0x10065a4,
+0x100666c,0x1006cdc` — NONE of the 5 vtable-write sites in the EXE's
+CMainFrame constructor are hit during init. Need to trace the CMainFrame
+constructor call chain from AfxWinMain to find where execution diverges.
+
+### Historical (kept for context)
+
+#### Earlier symptom (pre-this-session)
 
 Runs crash-free into MFC message loop (~1390 API calls during init, then spins
 `DefWindowProcA(0,0,0,0)` ~860/batch on WM_NULL). PNG render: solid teal —
