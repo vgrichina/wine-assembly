@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 270 funcref)
+  (table $handlers 280 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -322,5 +322,15 @@
     $th_push_m16           ;; 267: PUSH [addr] 16-bit (addr next word)
     $th_pop_m16            ;; 268: POP [addr] 16-bit (addr next word)
     $th_push_m16_ro        ;; 269: PUSH [base+disp] 16-bit (op=base, disp next word)
+    $th_xchg_m16_r         ;; 270: xchg [addr], r16 (op=reg, addr in next word)
+    $th_xchg_m16_r_ro      ;; 271: xchg [base+disp], r16 (op=reg<<4|base, disp in word)
+    $th_xchg_r16_r16       ;; 272: xchg r16, r16 (op=r1<<4|r2, preserves upper 16)
+    $th_test_m16_r         ;; 273: test [addr], r16 (op=reg, addr in next word)
+    $th_test_m16_r_ro      ;; 274: test [base+disp], r16 (op=reg<<4|base, disp in word)
+    $th_test_m16_i         ;; 275: test [addr], imm16 (addr+imm in next words)
+    $th_test_m16_i_ro      ;; 276: test [base+disp], imm16 (op=base, disp+imm in words)
+    $th_cmpxchg16          ;; 277: cmpxchg r/m16, r16 (same encoding as th_cmpxchg)
+    $th_xadd16             ;; 278: xadd r/m16, r16 (same encoding as th_xadd)
+    $th_test_r16_i16       ;; 279: test r16, imm16 (op=reg, imm in next word)
   )
 
