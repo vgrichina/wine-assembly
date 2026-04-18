@@ -402,3 +402,49 @@ Run: `node test/run.js --exe=.../MCM.EXE --max-batches=500 --esp-delta > /tmp/mc
 ## Prior notes
 
 - `apps/aoe.md` 2026-04-18 entry notes two DDraw fixes (SetEntries memcpy, 8bpp COLORFILL) that "visually unlock MCM" — those are likely what got MCM past the splash freeze.
+
+## 2026-04-18 session 7 — root cause found: LoadStringA ignores hInstance, lang.dll strings invisible
+
+**TL;DR:** MCM ships with **no RT_STRING resources in the EXE**. All UI/error strings live in `lang.dll` (loaded at `0x011cd000`, API #270). `$handle_LoadStringA` in `src/09a-handlers.wat:1605` discards the `hInstance` arg; `$string_load_a` in `src/10-helpers.wat:806` only walks `global.get $image_base` (the main EXE). So **every** `LoadStringA` returns 0 for MCM. Cascade:
+
+1. `LoadStringA(hLangDll, 0x13d8, buf, 0x200)` → 0. At `0x004652b8` the `test eax,eax; jz 0x4652f0` skips the user-confirm `DialogBoxParamA` entirely — the dialog (where the user would accept 3D) is never shown.
+2. Control jumps to `call 0x468130` (registry subkey-wipe — see correction below) → `call [eax+0x5c]` (game-class method 23, the real 3D-init entry) → returns 0 (likely because subsequent internal `LoadString`s for sub-init also return 0).
+3. `LoadStringA(hLangDll, 0xbba, …)` → 0 → empty error buffer.
+4. App falls into its "something failed, quit" path: `DestroyWindow` → `ShowCursor(1)` → `PostQuitMessage(0)`.
+5. `[this+8]` stays at its constructor-zeroed value since the initializer (vtable slot 7 at `0x00466260`) is only called from `0x0046610e`, which is downstream of the `[eax+0x5c]` chain. Message pump runs tick fn one more time → null deref at `0x00466791`.
+
+**All previous "null vtable / `[this+8]` uninit / 3D caps rejected" notes describe downstream symptoms of this one root cause.**
+
+### Verification
+
+- `node tools/parse-rsrc.js test/binaries/shareware/mcm/mcm_ex/MCM.EXE` → `Strings: 0, Menus: 0, Dialogs: 0, Icons: 1, Accelerators: 0`. Raw `.rsrc` dir at VA `0x527000` has 3 ID entries only: RT_ICON (3), RT_GROUP_ICON (14), RT_VERSION (16).
+- `grep LoadLibrary /tmp/mcm-api.log` → `[LoadLibrary] lang.dll loaded at 0x11cd000, dllMain=0x11ce170`, and MCM stashes that HMODULE in `[esi+0x46c]` (passed as `hInstance` to every `LoadStringA`).
+- `--trace-at=0x004652b8` → `EAX=0x00000000` after `LoadStringA(0x13d8)`.
+- `--trace-at=0x00465339` → `EAX=0x00000000` after `LoadStringA(0xbba)`.
+
+### Correction to session 3 note (line 110)
+
+`0x00468130` calls via IAT slots `[0x525524]`/`[0x525520]`/`[0x52552c]`. Previously mis-identified. USER32 IAT for ADVAPI32 is at base `0x525510`:
+- `0x525524` = **RegOpenKeyExA** ✓
+- `0x525520` = **RegEnumKeyA** (not RegQueryValueExA)
+- `0x52552c` = **RegDeleteKeyA** (matches `mov ebp, [0x52552c]` at `0x004681dd`)
+
+So `0x00468130` really is an "enumerate-and-delete subkeys" routine (registry cleanup). Still not 3D init.
+
+### Fix direction (not yet committed — needs user scope approval)
+
+`$string_load_a` (and by extension LoadStringA / FindResource / LoadResource / LoadAcceleratorsA / LoadMenuA / LoadBitmapA / etc.) needs **per-module resource lookup**. Currently hardwired to `global.get $image_base`. Plan:
+
+1. DLL loader (`src/08b-dll-loader.wat` + `lib/dll-loader.js`) registers each loaded DLL's `.rsrc` base + size in a small table keyed by HMODULE.
+2. `$find_resource` / `$string_load_a` take an optional `hInstance` arg; when non-zero AND matches a loaded DLL, walk that DLL's `.rsrc`; else fall back to main EXE.
+3. LoadStringA plumbs `arg0` (hInstance) through. Same for other Load* APIs that take hInstance.
+
+Files likely touched: `src/09a-handlers.wat` (LoadStringA, LoadAcceleratorsA, LoadMenuA, LoadBitmapA, LoadIconA, LoadCursorA, FindResourceA, LoadResource, SizeofResource), `src/10-helpers.wat` ($string_load_a, $find_resource, $rsrc_find_data_wa), `src/08b-dll-loader.wat` (HMODULE→rsrc registration), `lib/dll-loader.js` (pass rsrc info to WAT at load time).
+
+**Scope consideration:** this also unblocks any other app that localizes UI strings into a satellite DLL. If we choose to defer, a minimal hack is to have LoadStringA fall through a list of all loaded DLLs' `.rsrc` bases — ugly but small.
+
+### Supersedes (in this file)
+
+- Sessions 4-6 hypotheses about "null vtable[10]", "3D caps rejected", "vtable slot 7 never runs" — all correct observations but downstream of this single root cause.
+- "MCM-1" open task (ESP leak) — pre-existing fix already landed; not related to current blocker.
+- The line 110 note about `0x468130` calling RegQueryValueExA — wrong, it's RegEnumKeyA.
