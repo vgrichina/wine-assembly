@@ -73,6 +73,10 @@ const comInterfaces = [
   { prefix: 'IDirect3DMaterial3',   global: 'DX_VTBL_D3DMAT3' },
 ];
 
+// Append Direct3D Immediate Mode interfaces from shared spec.
+const { vtableGlobals: d3dimVtables } = require('./d3dim-methods');
+for (const v of d3dimVtables) comInterfaces.push(v);
+
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
 const ifaceInfo = new Map();

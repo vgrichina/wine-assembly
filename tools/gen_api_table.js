@@ -416,6 +416,20 @@ for (const api of extra) {
   }
 }
 
+// Pull Direct3D Immediate Mode methods from shared spec (used by gen_d3dim_stubs.js too)
+const { interfaces: d3dimIfaces } = require('./d3dim-methods');
+for (const iface of d3dimIfaces) {
+  for (const m of iface.methods) {
+    const fullName = iface.prefix + '_' + m.name;
+    if (!seen.has(fullName)) {
+      // Use 5 here to match the existing IDirect3D{,3,Device3,Viewport3,...}
+      // convention — handlers are wired with 5-arg + name_ptr signature.
+      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      seen.add(fullName);
+    }
+  }
+}
+
 // Reassign IDs and recompute hashes
 const table = existing.map((api, id) => ({
   id,

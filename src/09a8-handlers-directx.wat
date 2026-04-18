@@ -38,6 +38,21 @@
   (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
+  ;; Direct3D Immediate Mode vtables (Phase 0+ — populated by $init_dx_com_thunks)
+  (global $DX_VTBL_D3D2      (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3D7      (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DDEV1   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DDEV2   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DDEV7   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DVP1    (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DVP2    (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DMAT1   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DMAT2   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DEXEC   (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DVB     (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DVB7    (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DTEX    (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DTEX2   (mut i32) (i32.const 0))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -875,17 +890,23 @@
             (local.set $sx (i32.const 0))
             (loop $fill_col
               (if (i32.lt_u (local.get $sx) (local.get $dw)) (then
-                (if (i32.eq (local.get $bps) (i32.const 2))
+                (if (i32.eq (local.get $bps) (i32.const 1))
                   (then
-                    (i32.store16 (i32.add (local.get $dst_dib)
+                    (i32.store8 (i32.add (local.get $dst_dib)
                       (i32.add (i32.mul (i32.add (local.get $dy) (local.get $sy)) (local.get $dst_pitch))
-                               (i32.mul (i32.add (local.get $dx) (local.get $sx)) (i32.const 2))))
+                               (i32.add (local.get $dx) (local.get $sx))))
                       (local.get $row)))
-                  (else
-                    (i32.store (i32.add (local.get $dst_dib)
-                      (i32.add (i32.mul (i32.add (local.get $dy) (local.get $sy)) (local.get $dst_pitch))
-                               (i32.mul (i32.add (local.get $dx) (local.get $sx)) (i32.const 4))))
-                      (local.get $row))))
+                  (else (if (i32.eq (local.get $bps) (i32.const 2))
+                    (then
+                      (i32.store16 (i32.add (local.get $dst_dib)
+                        (i32.add (i32.mul (i32.add (local.get $dy) (local.get $sy)) (local.get $dst_pitch))
+                                 (i32.mul (i32.add (local.get $dx) (local.get $sx)) (i32.const 2))))
+                        (local.get $row)))
+                    (else
+                      (i32.store (i32.add (local.get $dst_dib)
+                        (i32.add (i32.mul (i32.add (local.get $dy) (local.get $sy)) (local.get $dst_pitch))
+                                 (i32.mul (i32.add (local.get $dx) (local.get $sx)) (i32.const 4))))
+                        (local.get $row))))))
                 (local.set $sx (i32.add (local.get $sx) (i32.const 1)))
                 (br $fill_col))))
             (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
@@ -916,6 +937,13 @@
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
         (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
         (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
+    ;; Trace rect parameters before blit
+    (call $host_dx_trace (i32.const 7) (call $dx_slot_of (local.get $dst_entry))
+      (i32.or (i32.shl (local.get $dx) (i32.const 16)) (i32.and (local.get $dy) (i32.const 0xFFFF)))
+      (i32.or (i32.shl (local.get $dw) (i32.const 16)) (i32.and (local.get $dh) (i32.const 0xFFFF)))
+      (i32.or (i32.shl (local.get $sw) (i32.const 16)) (i32.and (local.get $sh) (i32.const 0xFFFF))))
+    (call $host_dx_trace (i32.const 8) (local.get $dst_dib) (local.get $src_dib)
+      (local.get $dst_pitch) (local.get $src_pitch))
     ;; Row-copy (no stretch, no color key for now — simple case)
     (local.set $row (i32.const 0))
     (block $blit_done (loop $blit_row
@@ -2106,9 +2134,9 @@
   ;; ════════════════════════════════════════════════════════════
 
   ;; IDirect3D::QueryInterface(this, riid, ppvObj) — 3 args
+  ;; Routes upgrades to v2/v3/v7 vtables on the same DX_OBJECTS slot.
   (func $handle_IDirect3D_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg2) (i32.const 0))
-    (global.set $eax (i32.const 0x80004002))
+    (global.set $eax (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D::AddRef(this) — 1 arg
@@ -2132,34 +2160,56 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
+  ;; IDirect3D::CreateLight — mirrors the IDirect3D3 pattern (DX type 24, vtbl D3DLIGHT)
   (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
+    (if (i32.eqz (local.get $obj)) (then
+      (global.set $eax (i32.const 0x80004005))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::CreateMaterial(this, lplpDirect3DMaterial, pUnkOuter) — 3 args
+  ;; IDirect3D::CreateMaterial — DX type 25, vtbl D3DMAT3 (v1 caller upgrades on QI)
   (func $handle_IDirect3D_CreateMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 25) (global.get $DX_VTBL_D3DMAT3)))
+    (if (i32.eqz (local.get $obj)) (then
+      (global.set $eax (i32.const 0x80004005))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::CreateViewport(this, lplpDirect3DViewport, pUnkOuter) — 3 args
+  ;; IDirect3D::CreateViewport — DX type 23, vtbl D3DVP3
   (func $handle_IDirect3D_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
+    (if (i32.eqz (local.get $obj)) (then
+      (global.set $eax (i32.const 0x80004005))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args
+  ;; IDirect3D::FindDevice — succeed without populating result; the v1 caller
+  ;; reads dwSize / GUIDs from the result struct, but our Phase-0 emulation
+  ;; treats it as advisory and lets CreateDevice return a working object.
   (func $handle_IDirect3D_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirect3D3 stub methods (10 methods)
   ;; ════════════════════════════════════════════════════════════
 
-  ;; IDirect3D3::QueryInterface(this, riid, ppvObj) — 3 args
+  ;; IDirect3D3::QueryInterface — routes upgrades across D3D family (v1/v2/v3/v7).
   (func $handle_IDirect3D3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg2) (i32.const 0))
-    (global.set $eax (i32.const 0x80004002))
+    (global.set $eax (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D3::AddRef(this) — 1 arg
@@ -2414,13 +2464,9 @@
   ;; ════════════════════════════════════════════════════════════
 
   ;; ── IDirect3DDevice3 ─────────────────────────────────────────
+  ;; IDirect3DDevice3::QueryInterface — routes upgrades across Device family (v1/v2/v3/v7).
   (func $handle_IDirect3DDevice3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (i32.store (i32.add (local.get $entry) (i32.const 4))
-      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_qi (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DDevice3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2450,6 +2496,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vp_entry i32)
+    (if (local.get $arg1) (then
+      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
+      (if (local.get $vp_entry)
+        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -2478,7 +2529,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_SetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $vp_entry i32)
+    (if (local.get $arg1) (then
+      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
+      (if (local.get $vp_entry)
+        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
+    (call $d3dim_set_current_viewport (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_GetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2713,7 +2769,9 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; Clear(this, dwCount, lpRects, dwFlags) — 4 args. No color/z (uses background).
   (func $handle_IDirect3DViewport3_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3) (i32.const 0) (f32.const 1.0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -2745,7 +2803,16 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; Clear2(this, dwCount, lpRects, dwFlags, dwColor, dvZ, dwStencil) — 6 args + this.
+  ;; arg3=dwFlags, arg4=dwColor; dvZ and dwStencil are deeper on the stack.
   (func $handle_IDirect3DViewport3_Clear2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dvZ_bits i32)
+    ;; dvZ sits 1 dword past arg4 on the caller stack: [retaddr][a0][a1][a2][a3][a4=dwColor][dvZ][stencil]
+    ;; esp currently still points at retaddr (we haven't popped yet).
+    (local.set $dvZ_bits (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (call $d3dim_viewport_clear_full
+      (local.get $arg0) (local.get $arg3) (local.get $arg4)
+      (f32.reinterpret_i32 (local.get $dvZ_bits)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
