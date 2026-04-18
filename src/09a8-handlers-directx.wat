@@ -583,7 +583,7 @@
     (call $enum_modes_dispatch))
 
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
-  ;; Mode table: idx 0=640×480×8, 1=640×480×16, 2=800×600×8, 3=800×600×16
+  ;; Mode table: 640x480 and 800x600 in 8/16/32 bpp.
   (func $enum_modes_dispatch
     (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
     (local $pitch i32) (local $idx i32)
@@ -594,11 +594,15 @@
     (if (i32.eq (local.get $idx) (i32.const 1))
       (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 16))))
     (if (i32.eq (local.get $idx) (i32.const 2))
-      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 8))))
+      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 32))))
     (if (i32.eq (local.get $idx) (i32.const 3))
+      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 8))))
+    (if (i32.eq (local.get $idx) (i32.const 4))
       (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 16))))
+    (if (i32.eq (local.get $idx) (i32.const 5))
+      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 32))))
     ;; If past end of table, done — return DD_OK to caller
-    (if (i32.ge_u (local.get $idx) (i32.const 4))
+    (if (i32.ge_u (local.get $idx) (i32.const 6))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK
@@ -606,7 +610,9 @@
     ;; Compute pitch: align (w * bytes_per_pixel) to 4 bytes
     (if (i32.eq (local.get $bpp) (i32.const 8))
       (then (local.set $pitch (i32.and (i32.add (local.get $w) (i32.const 3)) (i32.const 0xFFFFFFFC))))
-      (else (local.set $pitch (i32.and (i32.add (i32.mul (local.get $w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))))
+      (else (if (i32.eq (local.get $bpp) (i32.const 16))
+        (then (local.set $pitch (i32.and (i32.add (i32.mul (local.get $w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC))))
+        (else (local.set $pitch (i32.mul (local.get $w) (i32.const 4)))))))
     ;; Fill DDSURFACEDESC
     (local.set $ddsd_wa (call $g2w (global.get $enum_modes_ddsd)))
     (call $zero_memory (local.get $ddsd_wa) (i32.const 108))
@@ -623,13 +629,21 @@
         ;; 8bpp palettized: DDPF_RGB | DDPF_PALETTEINDEXED8
         (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x60))
         (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 8)))
-      (else
-        ;; 16bpp RGB565
-        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x40))  ;; DDPF_RGB
-        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 16))    ;; dwRGBBitCount
-        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0xF800)) ;; R
-        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x07E0)) ;; G
-        (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x001F)))) ;; B
+      (else (if (i32.eq (local.get $bpp) (i32.const 16))
+        (then
+          ;; 16bpp RGB565
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x40))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 16))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0xF800))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x07E0))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x001F)))
+        (else
+          ;; 32bpp XRGB8888
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 76)) (i32.const 0x40))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 84)) (i32.const 32))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0x00FF0000))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x0000FF00))
+          (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x000000FF))))))
     ;; Push saved caller return addr (popped on enum complete)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $enum_modes_ret))
@@ -649,6 +663,9 @@
   (func $enum_modes_continue
     ;; The callback is __stdcall(2 args), so it already popped lpDDSD + lpContext (8 bytes).
     ;; Stack now has [saved_caller_ret] at ESP.
+    (call $host_log_i32 (i32.or (i32.const 0xED00000)
+      (i32.or (i32.shl (global.get $enum_modes_idx) (i32.const 8))
+              (i32.and (global.get $eax) (i32.const 0xFF)))))
     ;; Pop the saved caller return addr
     (global.set $enum_modes_ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -662,6 +679,114 @@
     (global.set $enum_modes_idx (i32.add (global.get $enum_modes_idx) (i32.const 1)))
     ;; Dispatch next mode (or finish if past end)
     (call $enum_modes_dispatch))
+
+  ;; ── IDirect3D{1,2,3}::EnumDevices — single-HAL callback ────────────
+  ;; Caller has captured the saved return addr and already popped stdcall args.
+  ;; Invokes guest callback once with a HAL device, reusing the CACA0007 thunk
+  ;; (pops saved ret + sets EAX=DD_OK when the callback returns).
+  (func $d3d_enum_devices_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+    (local $guid i32) (local $desc i32) (local $name i32)
+    (local $hw i32) (local $hel i32) (local $wa i32)
+    ;; HAL GUID {84E63DE0-46AA-11CF-816F-0000C020156E}
+    (local.set $guid (call $heap_alloc (i32.const 16)))
+    (local.set $wa (call $g2w (local.get $guid)))
+    (i32.store (local.get $wa)                       (i32.const 0x84E63DE0))
+    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11CF46AA))
+    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x00006F81))
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6E1520C0))
+    ;; Description: "Direct3D HAL\0"
+    (local.set $desc (call $heap_alloc (i32.const 16)))
+    (local.set $wa (call $g2w (local.get $desc)))
+    (i32.store (local.get $wa)                       (i32.const 0x65726944))
+    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x44337463))
+    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x4C414820))
+    (i32.store8 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0))
+    ;; Name: "halz\0"
+    (local.set $name (call $heap_alloc (i32.const 8)))
+    (i32.store (call $g2w (local.get $name)) (i32.const 0x7A6C6168))
+    (i32.store8 (i32.add (call $g2w (local.get $name)) (i32.const 4)) (i32.const 0))
+    ;; HW and HEL D3DDEVICEDESC (252 bytes each)
+    (local.set $hw  (call $heap_alloc (i32.const 252)))
+    (call $fill_d3d_device_desc (local.get $hw)  (i32.const 1))
+    (local.set $hel (call $heap_alloc (i32.const 252)))
+    (call $fill_d3d_device_desc (local.get $hel) (i32.const 0))
+    ;; Push saved caller ret (highest on stack — popped by CACA0007)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push callback args right-to-left: ctx, helDesc, hwDesc, name, desc, guid
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ctx))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $hel))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $hw))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $guid))
+    ;; Push callback return addr = CACA0007 (reused)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $cb))
+    (global.set $steps (i32.const 0)))
+
+  ;; Fill D3DDEVICEDESC (DX5-style 252-byte layout).
+  ;; is_hal=1 sets HWRASTERIZATION + vidmem caps; is_hal=0 is HEL (software).
+  (func $fill_d3d_device_desc (param $p i32) (param $is_hal i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $p)))
+    (call $zero_memory (local.get $wa) (i32.const 252))
+    (i32.store (local.get $wa)                         (i32.const 252))       ;; dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x7FF))     ;; dwFlags: all v3 fields valid
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 2))         ;; dcmColorModel = RGB
+    ;; dwDevCaps
+    (if (local.get $is_hal)
+      (then (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x8AEA0))) ;; HWRAST|DP2EX|DP2|DPTLV|TEXVID|EXECVID|TLVERTEXVID
+      (else (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x02A50))))  ;; DP2|DPTLV|TEXSYS|EXECSYS|TLVERTEXSYS
+    ;; dtcTransformCaps (8 bytes) at +16
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 8))
+    (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))        ;; D3DTRANSFORMCAPS_CLIP
+    ;; bClipping at +24
+    (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 1))
+    ;; dlcLightingCaps (16) at +28
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 16))
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 7))        ;; POINT|SPOT|DIRECTIONAL
+    (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))        ;; RGB lighting
+    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 8))        ;; num lights
+    ;; dpcLineCaps (56) at +44
+    (call $fill_primcaps (i32.add (local.get $p) (i32.const 44)))
+    ;; dpcTriCaps (56) at +100
+    (call $fill_primcaps (i32.add (local.get $p) (i32.const 100)))
+    ;; Tail fields at +156
+    (i32.store (i32.add (local.get $wa) (i32.const 156)) (i32.const 0x700))   ;; DeviceRenderBitDepth = DDBD_8|16|32
+    (i32.store (i32.add (local.get $wa) (i32.const 160)) (i32.const 0x500))   ;; DeviceZBufferBitDepth = DDBD_16|32
+    (i32.store (i32.add (local.get $wa) (i32.const 164)) (i32.const 0))       ;; dwMaxBufferSize
+    (i32.store (i32.add (local.get $wa) (i32.const 168)) (i32.const 0xFFFF))  ;; dwMaxVertexCount
+    ;; DX5 extensions (+172..)
+    (i32.store (i32.add (local.get $wa) (i32.const 172)) (i32.const 1))       ;; dwMinTextureWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 176)) (i32.const 1))       ;; dwMinTextureHeight
+    (i32.store (i32.add (local.get $wa) (i32.const 180)) (i32.const 2048))    ;; dwMaxTextureWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 184)) (i32.const 2048)))   ;; dwMaxTextureHeight
+
+  (func $fill_primcaps (param $p i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $p)))
+    (i32.store (local.get $wa)                         (i32.const 56))        ;; dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x3F))      ;; dwMiscCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x07FF))    ;; dwRasterCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0xFF))     ;; dwZCmpCaps (all 8)
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x1FFF))   ;; dwSrcBlendCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x1FFF))   ;; dwDestBlendCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0xFF))     ;; dwAlphaCmpCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 0x1FFFF))  ;; dwShadeCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 0xFFFF))   ;; dwTextureCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 0xFF))     ;; dwTextureFilterCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 0xFFFF))   ;; dwTextureBlendCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 44)) (i32.const 0xFF))     ;; dwTextureAddressCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 48)) (i32.const 1))        ;; dwStippleWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 52)) (i32.const 1)))       ;; dwStippleHeight
 
   ;; EnumSurfaces — stub
   (func $handle_IDirectDraw_EnumSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -937,13 +1062,6 @@
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
         (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
         (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
-    ;; Trace rect parameters before blit
-    (call $host_dx_trace (i32.const 7) (call $dx_slot_of (local.get $dst_entry))
-      (i32.or (i32.shl (local.get $dx) (i32.const 16)) (i32.and (local.get $dy) (i32.const 0xFFFF)))
-      (i32.or (i32.shl (local.get $dw) (i32.const 16)) (i32.and (local.get $dh) (i32.const 0xFFFF)))
-      (i32.or (i32.shl (local.get $sw) (i32.const 16)) (i32.and (local.get $sh) (i32.const 0xFFFF))))
-    (call $host_dx_trace (i32.const 8) (local.get $dst_dib) (local.get $src_dib)
-      (local.get $dst_pitch) (local.get $src_pitch))
     ;; Row-copy (no stretch, no color key for now — simple case)
     (local.set $row (i32.const 0))
     (block $blit_done (loop $blit_row
@@ -2155,10 +2273,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3D::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
-  ;; Don't call callback — reports 0 devices
+  ;; Invokes the callback once with a HAL device descriptor (shared with v2/v3).
   (func $handle_IDirect3D_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0x80070057))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3D::CreateLight — mirrors the IDirect3D3 pattern (DX type 24, vtbl D3DLIGHT)
   (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2224,8 +2348,14 @@
 
   ;; IDirect3D3::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
   (func $handle_IDirect3D3_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0x80070057))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3D3::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
