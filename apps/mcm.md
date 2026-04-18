@@ -7,13 +7,18 @@
 
 ## Status (2026-04-18)
 
-Advances through splash → DirectDraw setup → 12 Flip-loop frames → secondary crash at EIP=0 during D3D device setup.
+Advances through splash → DirectDraw setup → 12 Flip-loop frames → new crash at EIP=0 from `dbg_prev_eip=0x00466791` (next function up from the fixed leak).
 
 **Progressed past (this session):**
 - Error 3002 "Could not find any 3-D acceleration hardware" — was a no-op `IDirect3D3_EnumDevices` stub. Fixed by implementing a real HAL callback in `src/09a8-handlers-directx.wat` that fills D3DDEVICEDESC (HW + HEL, 252 bytes) and D3DPRIMCAPS (56 bytes), invokes callback via CACA0007 continuation. Commit `45a6952`.
-- MCM now calls: `IDirectDraw::QI(IID_IDirectDraw2)` → `IDirectDraw::QI(IID_IDirect3D3)` → `IDirect3D3::EnumDevices` → `IDirectDraw::CreateSurface` → `IDirectDrawSurface::QI(DA044E00-69B2-...)` → `Flip×12` → `GetPixelFormat` → crash.
+- **MCM-1 fixed (commit `905f012`):** 8-byte ESP leak at `0x00491d7e → 0x00491d90` was `IDirectDraw2::SetDisplayMode` (method 21) popping as IDirectDraw v1 (4 args, 20 bytes) when MCM calls it through the v2 vtable (6 args, 28 bytes). Handler now disambiguates by reading `[arg0]` and comparing to `DX_VTBL_DDRAW2`. Localized in one iteration via `--trace-esp=0x491a00-0x491f2e` (commit `d092389`).
+- MCM now calls: `IDirectDraw::QI(IID_IDirectDraw2)` → `IDirectDraw::QI(IID_IDirect3D3)` → `IDirect3D3::EnumDevices` → `IDirectDraw::CreateSurface` → `IDirectDrawSurface::QI(DA044E00-69B2-...)` → `Flip×12` → `GetPixelFormat` → `SetDisplayMode` → continues into `0x00466791` caller chain.
 
-## Current blocker — 8-byte ESP leak in function 0x00491a00
+## Current blocker — EIP=0 from `0x00466791`
+
+Re-use `--trace-esp=LO-HI` on the new crash site's enclosing function (find via `node tools/find_fn.js test/binaries/shareware/mcm/mcm_ex/MCM.EXE 0x00466791`). The per-block ESP tracer + COM-handler-vtable-disambiguation pattern is now a reusable playbook for similar DX handler arg-count bugs.
+
+## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
 Crash: `EIP=0x00000000`, `ESP=0x03fff8a4`, `dbg_prev_eip=0x00491f24` after `ret 0xc` at `0x491f2e`.
 
