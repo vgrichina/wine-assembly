@@ -275,11 +275,40 @@ Every downstream symptom follows:
 - tick fn at `0x00466ac0` runs anyway because `[this+0x444]=0` (would have been set by the error path of the missing init) ✓
 - crash fn at `0x00466610` reads `[[this+8]+0xc]` → null deref ✓
 
+### Session 2026-04-18 update 6 — caller of `[vtable+0x1c]` found at `0x0046610e`; MCM actually hits shutdown before crash
+
+Byte-scanned for `ff 50 1c`, `ff 51 1c`, etc. The one relevant hit on MCM main class is at **`0x00466112`** (`mov eax,[esi]; mov ecx,esi; call [eax+0x1c]`). The guard just before it:
+
+```
+004660e1  [sets up mode args: [this+0x2f8/0x2fc/0x300] = width/height/bpp]
+00466100  call 0x490a50              ; main mode-set helper on [this+4]
+00466105  test eax, eax
+00466107  jnz 0x46610e               ; if success → call [vtable+0x1c] (the initializer)
+00466109  xor eax, eax; pop; ret     ; else → bail without initializing [this+8]
+```
+
+So `[vtable+0x1c]` is gated on `0x00490a50` returning non-zero. That function is a helper on `[this+4]` (some DX wrapper), invoked with the full (w,h,bpp) mode triplet.
+
+**But:** `--trace-at=0x00466100,0x00466105,0x0046610e,0x00466260` → **zero hits across the board**. We never even reach the guard. The `call [eax+0x5c]` at `0x004652fb` that should invoke `0x00466070` (which is `0x00466070`'s chain leading here) also never fires in trace — despite API trace showing plenty of activity afterward. Likely cause: `call 0x468130` (registry enum) doesn't return in a way the block decoder continues from `0x004652f7`. Need to verify with a targeted trace of 0x468130's RET.
+
+**Surprise finding from API trace:** MCM runs LoadStringA(**0x13d8**) = the SUCCESS string "Using 3D hardware: %s" BEFORE LoadStringA(0xbba) = the failure string. So MCM *does* announce it found 3D hardware, then does a bunch of registry/window/mode-set work, then ends up loading the error string anyway and calling DestroyWindow → PostQuitMessage. The crash at `0x00466791` fires later still, during post-quit message-pump where the tick function runs one more time with `[this+8]=0`.
+
+So the chain is actually:
+1. Preflight says "3D OK" → shows confirmation MessageBox
+2. Deeper init succeeds partially (SetDisplayMode gets called on both 640x480 and 800x600)
+3. Some final step fails → LoadString(0xbba) error UI
+4. MCM calls DestroyWindow + PostQuitMessage
+5. Message pump continues, invokes tick fn once more
+6. Tick fn derefs null `[this+8]` → crash
+7. Emulator sees EIP=0 and halts
+
+The `[this+8]` initializer never ran because step 2 or 3 failed before reaching `0x0046610e`. Root cause is earlier than the code path I'd been analyzing.
+
 ### Next session
 
-1. **Find who calls `[vtable+0x1c]`** on MCM's main class. Scan .text for the two-instruction pattern `mov eax, [ecx]` / `call [eax+0x1c]` (bytes `8b 01 ff 50 1c`) and its `esi`/`ebx`/`edi` variants. Cross-reference with the functions we already know run (e.g. inside `0x0046528b call 0x4655e0` or the early-boot chain from WinMain).
-2. Once the caller is located, find what guard/branch skipped the call. That guard is reading some MCM state whose value we're setting incorrectly — that's the *original* divergence.
-3. Plausible pattern: `if ([this+0x5f4] != 0) call [vtable+0x1c]` — except our preflight sets `[this+0x5f4]` non-zero *and* we still skip. So the guard is likely a different field, one we're NOT setting. Suspect fields: `[this+0x10]`, `[this+0xbc]`, `[this+0x444]`, or `[this+0x460]` (all set by constructor but none by our DX chain).
+1. **Locate the earlier failure point.** Between `LoadString(0x13d8)` (API #1680) and `LoadString(0xbba)` (API #1716) in `/tmp/mcm-api.log`, the APIs are: RegOpen×4, ordinal call `<ord>(0x083e0000, ...)`, window-style manipulation (GetWindowLong, SetWindowLong, SetRect, AdjustWindowRectEx, SetWindowPos×3, SystemParametersInfoA, GetWindowRect, ShowWindow), Reg ops, ordinals at 0x280×0x1e0 and 0x320×0x258 (SetDisplayMode-like). The `<ord>` imports need decoding — figure out which DLL ordinal they are (check `tools/pe-imports.js --all MCM.EXE` for ordinal slots). One of these returns wrong and MCM takes the error path.
+2. **Decode `<ord>` at 0x083e0000**: that's a thunk address. Check `pe-imports.js --all` and match the import slot. Based on args (hwnd, flags) it looks like DirectDrawCreate or a D3D interface method via ordinal.
+3. **Verify call chain from 0x4652f0 forward.** Add `--trace-at=0x00468130` to confirm the registry-enum fn is entered, and `--trace-at=0x00468130+N` at its `ret` sites to confirm it returns. If it doesn't return, investigate why (SEH? longjmp? stack smash?).
 
 ### Artifacts worth keeping between sessions
 
