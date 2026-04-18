@@ -31,6 +31,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace` | Every decoded block's EIP |
 | `--trace-seh` | SEH chain operations |
 | `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
+| `--trace-at=0xADDR` (`--trace-at-dump=0xADDR:LEN[,...]`) | Log regs + optional hexdump of given regions each time EIP hits addr (no stop) |
 | `--watch=0xADDR` (`--watch-value=0xVAL`) | Break when memory dword changes / equals value |
 | `--skip=0xADDR[,...]` | Simulate `ret` when EIP hits — step past a fn |
 | `--dump=0xADDR:LEN`, `--dump-seh`, `--dump-backcanvas` | Post-run memory hexdump / SEH dump / per-window back-canvas PNGs |

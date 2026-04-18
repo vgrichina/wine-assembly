@@ -47,6 +47,7 @@ const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operatio
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
+const TRACE_AT_DUMP = getArg('trace-at-dump', null); // --trace-at-dump=0xADDR:LEN[,0xADDR:LEN,...]: hexdump these regions on each --trace-at hit
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
@@ -71,6 +72,10 @@ const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
 const traceAtAddr = TRACE_AT ? parseInt(TRACE_AT, 16) : 0; // set_bp supports only one addr
 let traceAtHits = 0;
+const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
+  const [a, l] = s.split(':');
+  return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 64 };
+}) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 const countAddrs = COUNT_SPEC ? COUNT_SPEC.split(',').map(s => parseInt(s, 16)) : [];
@@ -1706,6 +1711,7 @@ async function main() {
         let stk = '';
         for (let i = 0; i < 6; i++) stk += hex(mem32[(wEsp >> 2) + i]) + ' ';
         console.log(`[TRACE-AT #${traceAtHits}] ${regs()} [esp..]=${stk}`);
+        for (const d of traceAtDumps) hexdump(d.addr, d.len);
         if (e.set_bp) e.set_bp(traceAtAddr);
       }
     }

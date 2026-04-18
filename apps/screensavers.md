@@ -89,7 +89,10 @@ This smells like emulator state drift: something accumulates in our CPU/memory s
 - One of the CRT helpers called inside filter (`0x74468d60` format-print, CString ctor/dtor at `0x7440dc90`/`0x7440a6a0`/`0x7440aca0`) returns different values after N calls.
 
 **Next steps:**
-- Dump vector `0x74e12798` + DeviceInfo `0x74a0ea10:0xC0` at every filter entry (need a per-call automated dump — `--trace-at` currently only dumps regs). Add a `--trace-at-dump=ADDR:LEN` or inline hexdump into the trace-at block.
+- ~~Dump vector + DeviceInfo at every filter entry~~ — DONE 2026-04-18. `--trace-at-dump=ADDR:LEN[,...]` now lives in `test/run.js`. Ran `ARCHITEC.SCR --trace-at=0x74414a30 --trace-at-dump=0x74e12798:80,0x74e1269c:64`.
+- **Diagnosis revised:** it is NOT mode-vector drift. The emulator hits `0x74414a30` 12 times, but 11 of those 12 hits are a STUCK loop (`STUCK at EIP=0x74414a30 after 11 batches`, `dbg_prev_eip=0x74415751`). Memory and regs are bitwise identical across all stuck-period hits. The caller inside function starting near `0x74415751` is re-calling the filter without advancing its iterator — an **outer-loop non-advance**, not emu state drift inside the filter.
+- New next step: disasm the caller at `0x74415751` (function entry is upstream — run `tools/find_fn.js ARCHITEC.SCR 0x74415751`). Identify the loop variable (iterator or counter) that should advance after the filter call, and compare its expected vs actual delta. The filter's return value in EAX likely drives the outer loop; if we're returning a wrong value, outer loop stays pinned.
+- Also: the device-caps region at `[ebp+0xC0]` (`0x74e1269c`) is all zeros at every hit. That may be unrelated (ebp may not be `this`), but worth ruling out.
 - Compare batch 118 vs 143 at `0x74414c18` (the AND): does `[ebx+0xC0]` still equal `0xD00`? Is EAX the expected DDBD_N per mode?
 - Break at `0x74414d83` and inspect the 3 throwInfo-push instructions before it to narrow where the count=0 decision was made.
 
