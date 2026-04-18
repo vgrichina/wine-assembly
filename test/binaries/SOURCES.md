@@ -138,6 +138,7 @@ Downloaded to profile DirectDraw and Direct3D surfaces. Each SFX/installer extra
 | `rct/English/RCT.exe` (RollerCoaster Tycoon demo) | `https://archive.org/details/RollercoasterTycoonDemo` | **no DDRAW**, DSOUND, DINPUT | Chris Sawyer hand-assembly engine — pure GDI SetDIBitsToDevice path. |
 | `mw3/ex/Program_Files/mech3demo.exe` (MechWarrior 3 demo) | `https://archive.org/details/Mechwarrior3Demo` | DDRAW, DSOUND, DINPUT, DPLAYX, MFC42, AVIFIL32 | DX6 IM via QI on DDraw (no d3dim.dll or d3drm link). |
 | `shareware/J2swc123.exe` (Jazz Jackrabbit 2 demo) | `https://archive.org/details/JazzJackrabbit2Demo` | — | InstallShield SFX; 7z cannot unpack. Not extracted yet. |
+| `dx-sdk/bin/*.exe` + `dx-sdk/foxbear/` (DirectX 5 SDK prebuilt samples) | `https://archive.org/download/ms-dx5-sdk/DirectX5SDK.iso` | DDRAW, D3DIM, DSOUND, DINPUT | Mount ISO (`hdiutil attach`) and copy `/sdk/bin/*.exe` + `/foxbear/`. D3DIM verify gate: tunnel, twist, boids, globe, bellhop, viewer, flip3dtl, wormhole. DDraw-only: ddex1-5, flip2d, palette, stretch, donut, donuts, foxbear. |
 
 MW3 extracted via `unshield x data1.cab`. Other SFX archives extracted with `7z`.
 
