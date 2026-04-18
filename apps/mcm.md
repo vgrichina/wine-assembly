@@ -54,6 +54,57 @@ node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE \
 # then look up ESI among global.get $DX_VTBL_* to identify interface
 ```
 
+## 2026-04-18 follow-up: the real root cause is upstream
+
+Confirmed by dumping `[ebx+0x8]` at the crash block (via `--trace-at=0x00466791` + `--dump=0x00505cb0:16`): `[ebx+0x8] = 0x00000000`. The m_gfx member is **null**. So `mov eax, [eax+0xc]` reads from guest address `0xc`, `mov esi, [eax]` reads junk, `call [esi+0x28]` lands on 0 — not a vtable slot bug at all. m_gfx is null because 3D init failed and the game tried to continue (still hitting the render path during the message-pump-after-PostQuitMessage).
+
+### Why does 3D init fail?
+
+Located the LoadString(0xbba) call site by temporarily instrumenting `test/run.js` trace-api with a caller-ret dump (reverted). Only hit: `ret=0x00465339` (so the `call LoadStringA` at `0x00465333`, error 3002 push at `0x00465327`).
+
+Function containing that push starts at `0x00465276`. Disasm of the relevant tail (`0x004652f0` onward):
+
+```
+004652f0  mov ecx, esi
+004652f2  call 0x468130          ; "continue 3D init" path
+004652f7  mov ecx, esi
+004652f9  mov eax, [esi]         ; vtbl of game-class esi
+004652fb  call [eax+0x5c]        ; GAME-CLASS method #23: "is 3D ready?"
+004652fe  mov edi, eax
+...
+00465309  mov ecx, esi
+0046530b  mov eax, [esi]
+0046530d  call [eax+0x5c]        ; same method, alt path (when [esi+0x5f4] was 0)
+00465310  mov edi, eax
+00465312  test edi, edi
+00465314  jnz 0x46533e           ; success: skip error
+00465316  mov eax, [ebp+0x14]
+00465319  test eax, eax
+0046531b  jz 0x4651a8
+00465321  push 0x100
+00465326  push eax               ; user-provided error-detail buffer
+00465327  push 0xbba             ; IDS_ERR_NO_3D_HW
+0046532c  push [esi+0x46c]       ; hInstance
+00465333  call LoadStringA       ; <-- the crash's proximate trigger
+00465339  jmp 0x4651a8
+```
+
+**So `call [esi+0x5c]` returns 0** — that's method #23 on MCM's own game class (not a DX COM vtable; offset 0x5c on a DX interface would be out-of-range on IDirect3D3). It checks some boolean set during DX setup. Something in our DX-init-sequence leaves this state unset, **despite all the DDraw/D3D calls succeeding at the COM layer**.
+
+### Likely offenders (educated guess, not verified)
+
+Possible culprits (rank by likelihood for an MCM-shaped D3D init flow):
+
+1. **`IDirect3D3::CreateDevice` not returning a valid `IDirect3DDevice3` wrapper.** We added a HAL desc in EnumDevices, but do we actually create the device for the GUID MCM picks? Check `09a8-handlers-directx.wat` / `09ab-handlers-d3dim-core.wat` for `CreateDevice` and whether it's filling the out-pointer with a DX_VTBL_D3DDEV3 COM wrapper.
+2. **`IDirectDrawSurface::GetAttachedSurface` not returning the Z-buffer.** A classic DX5-era init flow: create primary w/ backbuffer, create zbuf, attach zbuf, `GetAttachedSurface(DDSCAPS_ZBUFFER)` → bind to device. If we stub GetAttachedSurface, MCM sees no Z and bails.
+3. **`IDirect3DDevice3::SetRenderTarget` / `GetCaps`** quietly failing/stubbing to 0.
+
+Next session: grep `09a8*.wat` + `09ab*.wat` for `CreateDevice`, `GetAttachedSurface`, `SetRenderTarget`, `QueryInterface` on D3D-device IIDs — check each for "creates a real COM wrapper / returns S_OK" vs "stubs 0 and esp += N". Also: put a `--trace-at=0x00468130` to see how far into "continue init" we get before returning to method 23's null-state-check.
+
+### Takeaway
+
+The 0x00466791 crash is a **symptom**, not the root cause. The two "stacked bugs" are actually one bug: 3D init silently fails → game flags m_3d_ready = 0 → error 3002 → PostQuitMessage → message pump still fires render path → m_gfx is null → call [0]. Fixing the DX init chain eliminates both.
+
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
 Crash: `EIP=0x00000000`, `ESP=0x03fff8a4`, `dbg_prev_eip=0x00491f24` after `ret 0xc` at `0x491f2e`.
