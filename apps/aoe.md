@@ -5,7 +5,11 @@
 **Entry point:** 0x0051CD60
 **Data files:** `test/binaries/shareware/aoe/aoe_ex/data/` — sounds.drs, graphics.drs, Terrain.drs, Border.drs, Interfac.drs
 **Window:** 640×480 (or 800×600), title "Age of Empires"
-**Status (2026-04-16):** CLI now reaches 1195 API calls after fix to `inc byte [esp+0x13]` decoder bug (see below). Next failure is EIP=0 after a long bounce-loop between `0x49d9d1` ↔ `0x49dd56` (~2500 iterations) returns through a multi-level epilogue cascade. At block entry to `0x49dd56` the stack shows `[esp]=0` (saved edi=0), with return address `0x43d0c0` just above — so the null gets popped as EIP from a higher frame after several `ret`s. Fn containing `0x49dd56` starts at `0x49dd20` (thiscall, 3 stack args + `ecx=this`). Stack layout at crash entry: ESP=0x3ffd678, frame=[0, 0x7a8b30, 0x258, 0x258, 0x43d0c0, 0, ...]. Need to walk further up — likely a caller didn't push a real ret addr, or the unit-grid loop corrupted its own frame. Didn't pursue further this session.
+**Status (2026-04-18):** Splash screen now renders correctly on offscreen surface after two DirectDraw fixes this session:
+1. `IDirectDrawPalette::SetEntries` memcpy args were swapped (copying from pal_wa to caller, same code as GetEntries) — parallel agent fixed.
+2. `IDirectDrawSurface::Blt` COLORFILL path was missing 8bpp case — else-branch used `i32.store` (4 bytes, `* 4` stride) producing stripey fills on all 8bpp surfaces. Added `bps==1` branch using `i32.store8`. This was polluting offscreens and primary with stripe patterns — fixed unlocks the full splash render (confirmed via `--dump-ddraw-surfaces`). Same fix also visually unlocks MARBLES and Abe.
+
+**Prior status (2026-04-16):** CLI now reaches 1195 API calls after fix to `inc byte [esp+0x13]` decoder bug (see below). Next failure is EIP=0 after a long bounce-loop between `0x49d9d1` ↔ `0x49dd56` (~2500 iterations) returns through a multi-level epilogue cascade. At block entry to `0x49dd56` the stack shows `[esp]=0` (saved edi=0), with return address `0x43d0c0` just above — so the null gets popped as EIP from a higher frame after several `ret`s. Fn containing `0x49dd56` starts at `0x49dd20` (thiscall, 3 stack args + `ecx=this`). Stack layout at crash entry: ESP=0x3ffd678, frame=[0, 0x7a8b30, 0x258, 0x258, 0x43d0c0, 0, ...]. Need to walk further up — likely a caller didn't push a real ret addr, or the unit-grid loop corrupted its own frame. Didn't pursue further this session.
 
 ## vsprintf loop — FIXED (decoder bug)
 
