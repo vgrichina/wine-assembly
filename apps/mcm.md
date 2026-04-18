@@ -195,11 +195,60 @@ So `[this+0x2f0]=1` is set by the *constructor-time* initializer. It is NOT a "D
 
 MCM's real `0x4655e0` path includes a step that assigns a DX wrapper to `[this+8]` (plausibly the `IDirectDraw2` it creates, or a wrapping object for the D3D device). One of our COM handlers in that chain returns success without writing the output pointer the guest expected. The caller then ignores the "null out-pointer" and presses on, so `[this+0x2f0]` is set, `[this+0x5f4]` is set, but `[this+8]` stays zero from the constructor.
 
+### Session 2026-04-18 update 3 — `0x4655e0` is not the DX factory; crash is vtable slot 9
+
+Disassembled `0x4655e0`: it's a **driver-database lookup loop** doing repeated `sprintf` (`0x4bd200`) + registry-string comparisons against entries in table `[0x523070]` at offsets `+0xcb8`/`+0x6b8`/`+0x8b8`. It does not create any DX interface. The matching outer loop `0x466030` does the same per-device walk via `0x467e40`. So `[this+0x5f4]` is a **selected-device-index** from MCM's own driver DB, not a DX object pointer. The DX API calls we see (Enum/SetDisplayMode/etc.) must be driven from a different code path — probably reached *after* `call 0x466030` via one of the virtual calls at `0x4652fb`/later.
+
+Also pinned down vtable layout at `0x4d602c`:
+
+| slot | fn | role |
+|---|---|---|
+| +0x00 | 0x00464f00 | (dtor?) |
+| +0x14 | 0x00466200 | |
+| +0x18 | 0x00466250 | |
+| +0x24 | **0x00466610** | **crash fn (slot 9)** |
+| +0x5c | 0x00466070 | called at `0x4652fb`; wraps API `[0x525828]`, uses `[this+4]`/`[this+0x18]` — NOT the caller of crash fn |
+
+So crash is not on the `[eax+0x5c]` path. The crash fn is reached via some `call [vtable+0x24]` elsewhere in the flow after `0x4652f0`. Entry point is still unidentified.
+
+### Session 2026-04-18 update 4 — caller identified: main game-tick at `0x00466ac0`
+
+`--trace-at=0x00466610` fired once with ret-addr `0x00466b4b` on the stack. Caller is **`0x00466ac0`**, a frame-tick/render routine. Relevant tail:
+
+```
+00466ac5  mov eax, [ecx+0x468]       ; last-tick timestamp
+...                                  ; reads GetTickCount via [0x525878] or fn 0x466b70
+00466b00  fmul [0x4d5c40]            ; scale delta by dt constant (frame time)
+00466b16  mov eax, [esi+0x444]
+00466b1c  test eax, eax
+00466b1e  jnz 0x466b58               ; *** SKIP tick body if [this+0x444] != 0 ***
+...                                  ; else: per-frame work
+00466b44  mov edi, [esi]             ; edi = this->vtable
+00466b48  call [edi+0x24]            ; → 0x00466610 (crash fn, slot 9)
+00466b4d  call [edi+0x2c]
+00466b50  mov ecx, [esi+0x8]         ; *** also derefs [this+8]! ***
+00466b53  call 0x4930b0
+```
+
+So the crash is inside MCM's normal **per-frame tick**. MCM reached the main loop with its DX/D3D chain half-initialized: `[this+0x2f0]` and `[this+0x5f4]` are set, but `[this+8]` (some DX/scene object) is still zero from the constructor, and `[this+0x444]` (the "pause rendering" flag) is also zero — so the tick doesn't short-circuit and just dives in. The crash method at slot 9 then does `mov esi,[[this+8]+0xc]; call [esi+0x28]` on a null chain.
+
+`[this+0x444]` is set to 1 at `0x00464c72` (init, value `0x40000000` - wait, that's `[this+0x458]`) — let me re-check. Init writes `[ebx+0x458]=0x40000000`, not `[ebx+0x444]`. So `[this+0x444]` starts at zero and *something later* should set it to 1 to mean "render paused / not ready." That something must be an error-handler in the real DX init path. On our run, that error-handler never fires (we return S_OK from everything), so MCM thinks it's OK to render, enters the tick, and blows up.
+
+### New hypothesis — this is actually a "fail-open" bug chain
+
+We may be returning success from a COM call that should fail. MCM's normal flow is:
+
+1. Try full DX init.
+2. If any step fails → set `[this+0x444]=1` (render paused) → error UI.
+3. Otherwise populate `[this+8]` with the frame/scene object and begin rendering.
+
+We're landing in a fourth state MCM doesn't handle: "all init calls reported success, but `[this+8]` is still zero." That's a contract we violated — probably by returning a valid interface pointer from some COM method but with its internal state (pointed to by +0xc) uninitialized.
+
 ### Next session
 
-1. **Diff what `0x4655e0` does vs what it would do on Windows.** Run with `--trace-api` and compare the sequence of DX COM calls to a Win98 DX5 reference. The first missing/wrong return value that the guest *silently* drops is the bug.
-2. **Watch `[this+8]` during the preflight with more granularity.** Our `--watch` fires on writes via normal x86 stores, but if an API handler writes guest memory directly (via the host `writeI32` path), the watch still sees it — zero hits means no handler wrote there either. So focus on candidate *output pointers* the guest passes to COM methods inside `0x4655e0`.
-3. **Check if MCM expects `[this+8]` = the `IDirectDraw2` interface.** That's the most likely identity — `DirectDrawCreate` → `QueryInterface(IID_IDirectDraw2, [this+8])`. Verify by disassembling the caller of `QueryInterface` inside `0x4655e0` and checking the `ppv` destination.
+1. **Find what should write `[this+8]`.** Bytes `89 46 08` (= `mov [esi+8], eax`) or `89 43 08` (= `mov [ebx+8], eax`) near the DX-init call chain. Focus on code reached from the `0x4652fb call [eax+0x5c]` branch — i.e. functions `0x00466070`, its callee `0x00490850`, and any siblings. One of them does `[this+8] = <result of COM call>` and that COM call is silently returning zero in our handler.
+2. **Alternative fast path**: force `[this+0x444]=1` at startup via a test hack (runtime memory poke right after `0x00464c72`) and see if MCM proceeds past the crash into its "render paused" error UI. If it does, we've confirmed the contract, and the fix is to find the missing assignment. If it still crashes somewhere else, `[this+0x444]` is not the right escape hatch.
+3. **Compare assignee of the call at `0x00466b41` (`call [ebx+0x2c]`)**: this call takes an ecx that was loaded from `[esi+0x430]`, reads `[ecx]` as vtable, and calls offset 0x2c. Whatever this returns may be related to the same scene object. If it's `[this+0x430]` = a parent scene manager, `[this+8]` might be `scene_manager->current_frame` or similar — set during `[ebx+0x2c]`. Worth tracing.
 
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
