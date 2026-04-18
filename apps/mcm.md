@@ -145,11 +145,37 @@ Checked `$handle_IDirectDraw_GetDisplayMode` at `src/09a8-handlers-directx.wat:9
 2. **`IDirectDraw2::EnumDisplayModes` callback contract.** Trace shows it runs (HeapAllocs per mode) and MCM then calls `SetDisplayMode(800,600,16)` — probably the selected mode. If the callback has to return `DDENUMRET_OK` (=1) to continue, our dispatch may be mis-popping stack or returning `DDENUMRET_CANCEL`, truncating the mode list.
 3. **`IDirectDraw::GetCaps`** — MCM may filter caps bits (DDCAPS_3D, DDCAPS2_NO2DDURING3DSCENE, vidmem size). We fill some, not all.
 
+### Session 2026-04-18 update — preflight picks a 3D device, crashes later
+
+Ran `--trace-at=0x004652f0,0x004652fb,0x00465309,0x00465312`. Only `0x004652f0` fires (once, ESI=0x00505ca8 = MCM `this`). This means:
+
+- `[esi+0x5f4]` **was non-zero** — `call 0x4655e0` successfully picked a 3D device. EnumDevices / display-mode probe is NOT the blocker.
+- Flow enters the success branch at `0x4652f0`: `call 0x468130` (registry enum, runs fine), then `call [eax+0x5c]`, then `call 0x466030`.
+- None of `0x4652fb / 0x465309 / 0x465312` are ever reached, so **control never returns** from the sequence — the crash happens inside one of those three calls.
+
+`prev_eip=0x00466791` pins the crash site. `find_fn` says this is inside function **`0x00466610`** (xrefs only from data vtables at `0x004d5c78` and `0x004d6050` — it's a virtual method). Disasm at `0x00466783`:
+
+```
+00466783  mov eax, [ebx+0x2f0]     ; ebx = this (MCM class, was ecx on entry)
+00466789  test eax, eax
+0046678b  jz 0x4668af              ; guard passes (some object is set up)
+00466791  mov eax, [ebx+0x8]       ; [this+8] — likely a DX wrapper MCM holds
+00466794  mov eax, [eax+0xc]       ; [[this+8]+0xc] — another wrapper
+00466797  push eax
+00466798  mov esi, [eax]           ; vtable — **NULL**
+0046679a  call [esi+0x28]          ; → EIP=0
+```
+
+Classic null-vtable call. `[this+8]` is a DX-related holder object whose `+0xc` field points at something whose vtable hasn't been populated. The method being called is at vtable offset **`0x28`** (index 10 — matches historical "null vtable[10]" note).
+
+Note 0x00466610 is NOT called directly from `0x465302 call 0x466030` — `0x466030` is a tiny loop over `[0x523070]` that calls `0x467e40` per slot. So 0x466610 is reached deeper, via one of the vtable-dispatched methods fired from within that loop (or from `call [eax+0x5c]` at `0x4652fb`).
+
 ### Next session
 
-1. Dump the DDCAPS blob our `IDirectDraw_GetCaps` hands back. Compare to a known-working Win98 DX5 HAL caps (any reference in `test/binaries/dx-sdk`?). Focus on `dwCaps` and `dwCaps2`.
-2. Verify the EnumDevices callback return-value handling — does our CACA0007 continuation read EAX from the guest after callback and use it to decide continue/stop? If not, MCM may be telling us "this device is fine, stop enumerating" but we keep looping.
-3. Add `--trace-at=0x00465298` to confirm which branch of `test eax; jz 0x465309` we take — that immediately says whether `[esi+0x5f4]` was 0 or non-zero, pinning whether the preflight picked a 3D device at all.
+1. **Identify `[this+8]`.** At `0x465302`, ecx=esi=`0x00505ca8` (MCM `this`). Read guest memory at `[0x00505ca8+8]` right before entering `0x466030` — use `--watch=0x00505cb0` or `--trace-at=0x00465302 --trace-at-dump=0x00505ca8:0x400`. That tells us which COM object is supposed to be there.
+2. **Identify `[[this+8]+0xc]`.** Once we know `[this+8]`, dump `+0xc` from it. This is the object whose vtable is null — likely a D3D device or Z-buffer/render-target surface we never created because MCM took a path that skipped CreateSurface yet still expects the field populated.
+3. **Trace forward from `0x4652fb` call `[eax+0x5c]`.** Where `eax=[esi]` is MCM's own vtable. This method likely allocates/initializes the DX chain that 0x466610 later reads. If it silently fails, `[this+8]` gets half-populated.
+4. If step 3 is the culprit: bisect which COM call inside it returns wrong data — likely `CreateSurface` for the back-buffer or `QueryInterface` for a D3D interface off the primary surface.
 
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
