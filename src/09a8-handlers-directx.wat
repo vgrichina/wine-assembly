@@ -969,12 +969,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; SetDisplayMode(this, dwWidth, dwHeight, dwBPP, [dwRefreshRate, dwFlags])
-  ;; IDirectDraw v1 has 4 args (this+3), IDirectDraw2+ has 6 args (this+5).
-  ;; Pop 4 args (v1) — over-popping by 8 bytes shifts caller's ESP and later
-  ;; calls (e.g. GetCaps) write their buffers to the wrong location, clobbering
-  ;; the caller's return address. When a v2+ caller appears, we'll need to track
-  ;; the interface version per-object (set on QI) and pop accordingly.
+  ;; IDirectDraw v1: 4 args (this+3). IDirectDraw2+: 6 args (this+5).
+  ;; Method 21 is shared between both vtables, so we disambiguate at call
+  ;; time by reading the object's vtable pointer [arg0]. Mispopping 8 bytes
+  ;; corrupts ESP and the caller's return chain (see apps/mcm.md MCM-1).
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vtbl i32)
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
@@ -983,7 +983,10 @@
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 1))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; this + 3 args (IDirectDraw v1)
+    (local.set $vtbl (call $gl32 (local.get $arg0)))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; v2: this + 5 args
+      (else (global.set $esp (i32.add (global.get $esp) (i32.const 20)))))) ;; v1: this + 3 args
 
   ;; WaitForVerticalBlank — no-op
   (func $handle_IDirectDraw_WaitForVerticalBlank (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
