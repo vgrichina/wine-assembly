@@ -210,6 +210,10 @@
   (import "host" "gdi_stretch_dib_bits" (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_stretch_dib_bits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bitsWA, bmiWA, usage, rop)
 
+  ;; DirectX tracing hook — WAT calls this from Lock/Unlock/Blt/Flip/SetEntries/dx_present
+  ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
+  (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0

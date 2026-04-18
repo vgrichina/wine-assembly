@@ -100,6 +100,10 @@
     (local.set $slot (i32.load (i32.add (local.get $wa) (i32.const 4))))
     (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
 
+  ;; Compute slot index from a DX_OBJECTS entry WASM address.
+  (func $dx_slot_of (param $entry_wa i32) (result i32)
+    (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
+
   ;; Create a guest COM object using fixed COM_WRAPPERS area (not guest heap).
   ;; vtbl_guest is the guest address of the vtable (from DX_VTBL_* globals)
   ;; Returns guest address of the object
@@ -834,6 +838,12 @@
     (local $bpp i32) (local $bps i32) (local $row i32)
     (local $drblt_flags i32)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
+    (call $host_dx_trace (i32.const 3) (call $dx_slot_of (local.get $dst_entry))
+      (if (result i32) (local.get $arg2)
+        (then (call $dx_slot_of (call $dx_from_this (local.get $arg2))))
+        (else (i32.const -1)))
+      (i32.load (i32.add (local.get $dst_entry) (i32.const 20)))
+      (local.get $arg4))
     (local.set $dst_dib (i32.load (i32.add (local.get $dst_entry) (i32.const 20))))
     (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
     (local.set $dst_h (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 14))))
@@ -1055,6 +1065,10 @@
         (i32.store (i32.add (local.get $entry) (i32.const 20))
           (i32.load (i32.add (local.get $back_entry) (i32.const 20))))
         (i32.store (i32.add (local.get $back_entry) (i32.const 20)) (local.get $tmp_dib))
+        (call $host_dx_trace (i32.const 6) (call $dx_slot_of (local.get $entry))
+          (call $dx_slot_of (local.get $back_entry))
+          (i32.load (i32.add (local.get $entry) (i32.const 20)))
+          (local.get $tmp_dib))
         ;; Present front buffer
         (call $dx_present (local.get $entry))))
     (global.set $eax (i32.const 0))
@@ -1194,6 +1208,10 @@
   (func $handle_IDirectDrawSurface_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $wa i32) (local $dib_guest i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (call $host_dx_trace (i32.const 1) (call $dx_slot_of (local.get $entry))
+      (i32.load (i32.add (local.get $entry) (i32.const 28)))
+      (i32.load (i32.add (local.get $entry) (i32.const 20)))
+      (i32.const 0))
     (local.set $wa (call $g2w (local.get $arg2)))
     ;; Fill DDSURFACEDESC
     (call $zero_memory (local.get $wa) (i32.const 108))
@@ -1271,6 +1289,10 @@
   (func $handle_IDirectDrawSurface_Unlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (call $host_dx_trace (i32.const 2) (call $dx_slot_of (local.get $entry))
+      (i32.load (i32.add (local.get $entry) (i32.const 28)))
+      (i32.load (i32.add (local.get $entry) (i32.const 20)))
+      (i32.const 0))
     ;; If primary, present on unlock
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then (call $dx_present (local.get $entry))))
@@ -1299,6 +1321,8 @@
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
     (local.set $pitch (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 18))))
     (local.set $dib_wa (i32.load (i32.add (local.get $entry_wa) (i32.const 20))))
+    (call $host_dx_trace (i32.const 5) (call $dx_slot_of (local.get $entry_wa))
+      (local.get $bpp) (local.get $dib_wa) (global.get $dx_primary_pal_wa))
     ;; Build BITMAPINFO at scratch area 0xAD40 (40-byte header + optional palette)
     ;; Space available: 0xAD40 to 0x12000 = plenty for header + 256-entry palette
     (local.set $bmi_wa (i32.const 0x0000AD40))
@@ -1400,6 +1424,8 @@
       (call $memcpy (i32.add (local.get $pal_wa) (i32.mul (local.get $arg2) (i32.const 4)))
         (call $g2w (local.get $arg4))
         (i32.mul (local.get $arg3) (i32.const 4)))))
+    (call $host_dx_trace (i32.const 4) (call $dx_slot_of (local.get $entry))
+      (local.get $arg2) (local.get $arg3) (local.get $pal_wa))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 

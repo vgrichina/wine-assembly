@@ -31,6 +31,7 @@ const hasFlag = name => args.includes(`--${name}`);
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
+const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
@@ -320,6 +321,7 @@ async function main() {
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
   if (TRACE_DC) traceCategories.add('dc');
+  if (TRACE_DX) traceCategories.add('dx');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
@@ -1906,6 +1908,85 @@ if (VERBOSE) {
       count++;
     }
     console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
+  }
+
+  // Dump all DirectDraw surfaces' current DIB contents as PNGs. The DX_OBJECTS
+  // table lives at WASM 0x07FF0000; each 32-byte slot is a surface entry when
+  // flags (+28) is non-zero. Layout: +12 w(u16), +14 h(u16), +16 bpp(u16),
+  // +18 pitch(u16), +20 DIB ptr (WASM addr), +28 flags (1=primary 2=backbuf 4=offscr).
+  // For 8bpp surfaces we need the palette; $dx_primary_pal_wa holds the current
+  // primary palette's 256-entry data (PALETTEENTRY format: R,G,B,flags).
+  if (DUMP_DDRAW && createCanvas) {
+    fs.mkdirSync(DUMP_DDRAW, { recursive: true });
+    const mem = new Uint8Array(memory.buffer);
+    const dv = new DataView(memory.buffer);
+    const DX_BASE = 0x07FF0000;
+    // Read the primary palette WASM addr from the WAT global by probing memory
+    // near the first primary surface; we can't read globals from JS without an
+    // export, so for 8bpp we scan surfaces and reuse whichever palette_wa we
+    // find on a palette-type entry. Palette entries aren't differentiated in
+    // flags, but their DIB ptr (+20) points at 1024 bytes of palette data.
+    let paletteWa = 0;
+    // First pass: find primary surface → it knows the palette indirectly.
+    // Simpler: search the SetPalette-side state by trawling DX_OBJECTS for a
+    // slot whose flags==0 (palette slots don't set surface-type flags) but
+    // whose +20 is a valid pointer. Good enough for diagnostic dumps.
+    for (let slot = 0; slot < 256; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const flags = dv.getUint32(entry + 28, true);
+      const ptr = dv.getUint32(entry + 20, true);
+      const w = dv.getUint16(entry + 12, true);
+      if (!flags && ptr && !w) { paletteWa = ptr; break; }
+    }
+    let count = 0;
+    for (let slot = 0; slot < 256; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const flags = dv.getUint32(entry + 28, true);
+      if (!flags) continue;
+      const w = dv.getUint16(entry + 12, true);
+      const h = dv.getUint16(entry + 14, true);
+      const bpp = dv.getUint16(entry + 16, true);
+      const pitch = dv.getUint16(entry + 18, true) || Math.ceil(w * bpp / 32) * 4;
+      const dib = dv.getUint32(entry + 20, true);
+      if (!w || !h || !dib) continue;
+      const rgba = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        const srcRow = dib + y * pitch;
+        for (let x = 0; x < w; x++) {
+          const di = (y * w + x) * 4;
+          let r = 0, g = 0, b = 0;
+          if (bpp === 8) {
+            if (paletteWa) {
+              const pi = mem[srcRow + x];
+              // PALETTEENTRY: R, G, B, flags
+              r = mem[paletteWa + pi * 4];
+              g = mem[paletteWa + pi * 4 + 1];
+              b = mem[paletteWa + pi * 4 + 2];
+            } else {
+              r = g = b = mem[srcRow + x];
+            }
+          } else if (bpp === 16) {
+            const px = mem[srcRow + x * 2] | (mem[srcRow + x * 2 + 1] << 8);
+            r = (px >> 11) << 3; g = ((px >> 5) & 0x3F) << 2; b = (px & 0x1F) << 3;
+          } else if (bpp === 24) {
+            b = mem[srcRow + x * 3]; g = mem[srcRow + x * 3 + 1]; r = mem[srcRow + x * 3 + 2];
+          } else if (bpp === 32) {
+            b = mem[srcRow + x * 4]; g = mem[srcRow + x * 4 + 1]; r = mem[srcRow + x * 4 + 2];
+          }
+          rgba[di] = r; rgba[di + 1] = g; rgba[di + 2] = b; rgba[di + 3] = 255;
+        }
+      }
+      const c = createCanvas(w, h);
+      const cctx = c.getContext('2d');
+      const img = cctx.createImageData(w, h);
+      img.data.set(rgba);
+      cctx.putImageData(img, 0, 0);
+      const kind = (flags & 1) ? 'primary' : (flags & 2) ? 'backbuf' : (flags & 4) ? 'offscreen' : 'other';
+      const outFile = path.join(DUMP_DDRAW, `dx_${slot.toString().padStart(2, '0')}_${kind}_${w}x${h}_${bpp}bpp.png`);
+      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      count++;
+    }
+    console.log(`Dumped ${count} DirectDraw surfaces to ${DUMP_DDRAW}/ (paletteWA=0x${(paletteWa>>>0).toString(16)})`);
   }
 
   // Dump StretchDIBits source DIBs and per-call log
