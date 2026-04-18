@@ -780,10 +780,19 @@
     (return_call $next))
   ;; imul dst, src, imm
   (func $th_imul_r_r_i (param $op i32)
-    (local $imm i32)
+    (local $imm i32) (local $full i64) (local $low i32)
     (local.set $imm (call $read_thread_word))
-    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
-      (i32.mul (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (local.get $imm)))
+    (local.set $full (i64.mul
+      (i64.extend_i32_s (call $get_reg (i32.and (local.get $op) (i32.const 0xF))))
+      (i64.extend_i32_s (local.get $imm))))
+    (local.set $low (i32.wrap_i64 (local.get $full)))
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $low))
+    ;; CF=OF=1 iff signed result doesn't fit in 32 bits
+    (global.set $flag_op (i32.const 6))
+    (global.set $flag_sign_shift (i32.const 31))
+    (global.set $flag_b (i64.ne (local.get $full)
+      (i64.extend_i32_s (local.get $low))))
+    (global.set $flag_res (local.get $low))
     (return_call $next))
   ;; mul/imul/div/idiv [addr]
   (func $th_mul_m32 (param $op i32)
@@ -1315,10 +1324,18 @@
 
   ;; 251: IMUL r16, r16, imm16 (op=dst<<4|src, imm next word)
   (func $th_imul_r16_r16_i (param $op i32)
-    (local $imm i32) (local $result i32)
+    (local $imm i32) (local $src_s i32) (local $imm_s i32) (local $full i32) (local $low i32)
     (local.set $imm (call $read_thread_word))
-    (local.set $result (i32.and (i32.mul (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF)) (local.get $imm)) (i32.const 0xFFFF)))
-    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $result))
+    (local.set $src_s (call $sign_ext16 (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))))
+    (local.set $imm_s (call $sign_ext16 (i32.and (local.get $imm) (i32.const 0xFFFF))))
+    (local.set $full (i32.mul (local.get $src_s) (local.get $imm_s)))
+    (local.set $low (i32.and (local.get $full) (i32.const 0xFFFF)))
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $low))
+    ;; CF=OF=1 iff signed 16x16 product doesn't fit in signed 16
+    (global.set $flag_op (i32.const 6))
+    (global.set $flag_sign_shift (i32.const 15))
+    (global.set $flag_b (i32.ne (local.get $full) (call $sign_ext16 (local.get $low))))
+    (global.set $flag_res (local.get $low))
     (return_call $next))
 
   ;; 252: CMPXCHG r/m8, r8 (same flag encoding as th_cmpxchg but 8-bit)
