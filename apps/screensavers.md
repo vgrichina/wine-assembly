@@ -47,17 +47,20 @@ Mask inversion issue — sprites render as white silhouettes instead of colored 
 
 These screensavers use CreateDIBSection to create bitmaps with direct pixel access, then StretchDIBits to blit them. StretchDIBits is implemented but may have issues. CreateDIBSection needs a working `ppvBits` return (pointer to pixel data in guest memory).
 
-### 5. D3D screensavers: "No valid modes found for this device" — RESOLVED
+### 5. D3D screensavers: "No valid modes found for this device"
 
-**Status:** All 7 D3DIM savers (ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI) now pass the mode filter. The throw at `0x74414d83` no longer fires. Verified with `--trace-at=0x74414a30`: filter fires 12× per run (4 devices × 3 bpp), every call succeeds, and the app advances past D3D init.
+**Status (2026-04-18):** `MessageBox("Couldn't find any scene definitions…")` was hiding a real emulator bug. With `.SCN`/`.X`/`.GIF` assets staged in `test/binaries/screensavers/` (see `SOURCES.md`), the saver's `FindFirstFileA(".\\*.scn")` now succeeds and D3D init runs further — but the `CA::DXException("No valid modes found for this device")` throw at `0x74414d83` fires after all DDraw/D3D setup completes (verified: batch 120, `prev_eip=0x74414d6b`, throw payload has string at obj+4).
 
-New uniform blocker for all 7: `MessageBox("Couldn't find any scene definitions in location \"\" - reinstall?")`. `FindFirstFileA(".\\*.scn")` returns no matches because the Plus! 98 scenery asset files aren't in our VFS / beside the .SCR binaries. Not an emulator bug; need to source the asset files.
+**Corrected filter-call count:** the filter function at `0x74414a30` is called **2 times per run**, not 12. The earlier "12 hits" reading from `--trace-at` was a breakpoint re-arm artifact; `--count=0x74414a30` reports 2, with `0x74414db4` (skip-throw label) hit 1×. So: one call succeeds, one fails. Both calls have bitwise-identical entry state (same ECX=`0x74e125dc`, same EAX=`0x74e127ac`, same ESP=`0x77fff5bc`, same stack contents, same `dbg_prev_eip=0x74415751`) — yet one returns a non-empty filtered mode vector and the other returns empty. This is deterministic emulator state drift between two otherwise-indistinguishable calls.
 
-Likely fix was landed by prior commits: `220a1b5` (IMUL CF/OF flags for 2/3-op variants) + `fd84222` (EnumDevices iterates Ramp/RGB/HAL/MMX).
+**Next investigation step:** dump the input mode vector (at `0x74e12798`) + device caps struct (`[ebx+0xC0]` = `[0x74e125dc+0xC0]`) at entry of each of the 2 filter calls. Something mutates between them. Candidates:
+- Heap allocator state (a `new` between calls returns different bytes)
+- A global/static touched by code between the two calls
+- Stale block-cache entry whose behavior depends on state set by a prior call
 
----
+Suggest instrumenting `--trace-at` with an optional memory-dump attachment (`--trace-at-dump=0xADDR:LEN`) so per-hit state snapshots are comparable.
 
-Prior notes (kept for historical context):
+**Prior notes (kept for historical context):**
 **Priority: HIGH** — Blocks 7 d3dim-based savers (ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI)
 **Files:** `src/09a8-handlers-directx.wat`, `src/09aa-handlers-d3dim.wat`, `src/01-header.wat`, `src/08-pe-loader.wat`, `src/09b-dispatch.wat`
 

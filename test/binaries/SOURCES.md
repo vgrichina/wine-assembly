@@ -82,6 +82,15 @@ File: `PLUS98.ISO` (298 MB). Everything ships inside `plus98/PLUS98.CAB` — ext
 
 Plus! 98 also ships MFC42.DLL (954 KB, 1998-05-01) and MSVCRT.DLL (280 KB) inside the CAB. EDISK.SCR and PB.SCR are text config files, not PE binaries — skipped.
 
+**D3DIM saver assets:** ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI each look for scene files via `FindFirstFileA(".\\*.scn")` at startup. Without matching .SCN + mesh (.X) + backdrop (.GIF/.BMP) files in the VFS they `MessageBox` "Couldn't find any scene definitions in location \"\" - reinstall?". Extract from the same CAB alongside the .SCR files:
+
+```bash
+cd test/binaries/screensavers
+cabextract -F '*.SCN' -F '*.X' -F '*.PAL' -F '*.GIF' -F '*.BMP' /path/to/plus98/PLUS98.CAB
+```
+
+(Full extraction is ~13 MB — all gitignored by `binaries/*.exe` / `*.bmp` / etc.) Even with assets present all 7 D3DIM savers currently throw `CA::DXException("No valid modes found for this device")` at `0x74414d83`; see `apps/screensavers.md`.
+
 Same abandonware posture as the rest of `test/binaries/` — not officially redistributable but widely mirrored; consistent with the existing pinball-plus95 precedent.
 
 ## Win98 Apps
