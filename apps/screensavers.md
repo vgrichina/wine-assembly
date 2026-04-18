@@ -90,11 +90,14 @@ This smells like emulator state drift: something accumulates in our CPU/memory s
 
 **Next steps:**
 - ~~Dump vector + DeviceInfo at every filter entry~~ — DONE 2026-04-18. `--trace-at-dump=ADDR:LEN[,...]` now lives in `test/run.js`. Ran `ARCHITEC.SCR --trace-at=0x74414a30 --trace-at-dump=0x74e12798:80,0x74e1269c:64`.
-- **Diagnosis revised:** it is NOT mode-vector drift. The emulator hits `0x74414a30` 12 times, but 11 of those 12 hits are a STUCK loop (`STUCK at EIP=0x74414a30 after 11 batches`, `dbg_prev_eip=0x74415751`). Memory and regs are bitwise identical across all stuck-period hits. The caller inside function starting near `0x74415751` is re-calling the filter without advancing its iterator — an **outer-loop non-advance**, not emu state drift inside the filter.
-- New next step: disasm the caller at `0x74415751` (function entry is upstream — run `tools/find_fn.js ARCHITEC.SCR 0x74415751`). Identify the loop variable (iterator or counter) that should advance after the filter call, and compare its expected vs actual delta. The filter's return value in EAX likely drives the outer loop; if we're returning a wrong value, outer loop stays pinned.
-- Also: the device-caps region at `[ebp+0xC0]` (`0x74e1269c`) is all zeros at every hit. That may be unrelated (ebp may not be `this`), but worth ruling out.
-- Compare batch 118 vs 143 at `0x74414c18` (the AND): does `[ebx+0xC0]` still equal `0xD00`? Is EAX the expected DDBD_N per mode?
-- Break at `0x74414d83` and inspect the 3 throwInfo-push instructions before it to narrow where the count=0 decision was made.
+- **Diagnosis revised twice, now settled:**
+  - First revision (bogus): "outer-loop non-advance" — came from misreading 12 `--trace-at` hits as 12 filter calls.
+  - Root cause of the miscount: a bug in `$run`'s bp mechanism. When the WAT bp at `$eip == $bp_addr` fired, `br $halt` returned without dispatching that block. JS's `--trace-at` re-arm path set the bp again and called `run` — which halted immediately at the same EIP without advancing. Result: 1 real hit + N spurious re-halts per bp-hit. Fixed by adding `$bp_skip_once` (src/01-header.wat + src/13-exports.wat): on halt, set the flag; on next loop entry, if flag is set and `$eip == $bp_addr`, clear the flag and dispatch the block once before re-arming the check. All prior `--trace-at` hit counts in this doc are suspect (use `--count=` for authoritative counts; `--trace-at` is now safe too).
+  - Second revision (correct): filter is called exactly 2 times — matches `--count=0x74414a30`. Entry regs and mode-vector differ between the two:
+    - **Hit #1:** `EDX=0x7451216c EBX=0 ESI=0x74e12840 EDI=0`. Mode vector `[0x74e12798+4..+12] = 0x00000000 0x00000000 0x00000000` (begin=end=capEnd=NULL — fresh vector).
+    - **Hit #2:** `EDX=0x74a13db0 EBX=0x10 ESI=0x8876017c EDI=0x74a0e841`. Mode vector `[0x74e12798+4..+12] = 0x74a13db0 0x74a13db0 0x74a13e00` (begin==end — **allocated but empty**, capacity=0x50 ahead).
+  - So the fn is *supposed to* populate the vector in hit #1, producing `end-begin=0x50` (4 entries). On hit #2 the vector is empty → filter iterates nothing → count=0 → `0x74414d83` throws `CA::DXException("No valid modes found for this device")` → `RaiseException` → EIP=0 exit (no SEH catches).
+- New next step: the filter body populates the vector via `call 0x74415140` (at `0x74414a9b`) which looks like a mode-enumeration helper. Trace that sub-call on hit #1 vs hit #2: either (a) hit #1's enum succeeds but the produced vector is *destroyed* before hit #2 entry (dtor / `operator=` / clear), (b) hit #1 itself fails to populate but we fall through without noticing, or (c) caller re-uses the same vector object and calls filter twice expecting reuse. Set `--trace-at=0x74414a9b` and `--trace-at=0x74414aa0` (after the sub-call), dump `[0x74e12798:16]` — compare the post-enum vector states on each call.
 
 #### Gemini review of emulator WATs — candidate emu bugs
 

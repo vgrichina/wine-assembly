@@ -26,9 +26,14 @@
         (then
           (global.set $yield_flag (i32.const 0))
           (br $halt)))
-      ;; EIP breakpoint
+      ;; EIP breakpoint. On halt we set $bp_skip_once so re-entry (same $eip)
+      ;; dispatches the block once before the bp can fire again — without this,
+      ;; JS-driven re-arm (e.g. --trace-at) spins halting at the same address.
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
-        (then (br $halt)))
+        (then
+          (if (global.get $bp_skip_once)
+            (then (global.set $bp_skip_once (i32.const 0)))
+            (else (global.set $bp_skip_once (i32.const 1)) (br $halt)))))
       ;; EIP hit counters (passive): increment count for any slot whose addr==eip.
       ;; Early-out via $hit_count_n (0 when no --count= flags active).
       (if (global.get $hit_count_n)

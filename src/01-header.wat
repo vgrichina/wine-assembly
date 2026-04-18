@@ -860,8 +860,12 @@
   ;; Win98 = 0xC0000A04, NT 4.0 = 0x05650004, Win2000 = 0x08930005
   (global $winver (mut i32) (i32.const 0xC0000A04))
 
-  ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled)
+  ;; EIP breakpoint: break when $eip == $bp_addr (0=disabled).
+  ;; $bp_skip_once is set to 1 when the bp fires, so the next run() call
+  ;; (which re-enters with $eip still == $bp_addr) dispatches that block
+  ;; instead of halting again without making progress.
   (global $bp_addr (mut i32) (i32.const 0))
+  (global $bp_skip_once (mut i32) (i32.const 0))
 
   ;; --trace-esp: when flag=1, the run loop calls $host_log_block(eip, esp)
   ;; at each block boundary whose EIP falls inside [lo, hi]. hi=0 means
