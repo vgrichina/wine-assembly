@@ -170,12 +170,36 @@ Classic null-vtable call. `[this+8]` is a DX-related holder object whose `+0xc` 
 
 Note 0x00466610 is NOT called directly from `0x465302 call 0x466030` — `0x466030` is a tiny loop over `[0x523070]` that calls `0x467e40` per slot. So 0x466610 is reached deeper, via one of the vtable-dispatched methods fired from within that loop (or from `call [eax+0x5c]` at `0x4652fb`).
 
+### Session 2026-04-18 update 2 — `[this+8]` is never written
+
+Dumped `[0x00505ca8:0x600]` post-run: `[this+8] = 0`. Set `--watch=0x00505cb0` across the full run — **zero hits**. The field stays null throughout execution.
+
+Tracked where the guard `[this+0x2f0]` gets set. Watch on `0x00505f98` fires once, `prev_eip=0x00464cf4`. That block is inside function **`0x00464c06`** (the MCM instance-init routine). Key facts about this function (ebx = `this`):
+
+| EIP | instruction | effect |
+|---|---|---|
+| `0x00464c1d` | `mov dword [ecx], 0x4d5c54` | sets an early vtable (later replaced by `0x4d602c`) |
+| `0x00464c35` | **`mov [ebx+0x8], edi` (edi=0)** | **explicitly zeroes `[this+8]`** |
+| `0x00464c38` | `mov [ebx+0xc], edi` | zeroes `[this+0xc]` |
+| `0x00464c3b` | `mov [ebx+0x5f4], edi` | zeroes the "3D device" slot too |
+| `0x00464c9c` | `mov [ebx+0x2f8], 0x280` | sets display width default = 640 |
+| `0x00464ca6` | `mov [ebx+0x2fc], 0x1e0` | sets display height default = 480 |
+| `0x00464d00` | `mov [ebx+0x2f0], esi` (esi=1) | **sets the guard flag to 1** |
+| `0x00464d24` | `mov [ebx+0x314], esi` | sets another "init-done"-style flag |
+
+So `[this+0x2f0]=1` is set by the *constructor-time* initializer. It is NOT a "DX init succeeded" flag — it's an "instance created" flag. The crash fn `0x00466610` (a virtual method) mis-uses it as a "you may read `[this+8]`" gate.
+
+`[this+8]` is supposed to be populated much later by a separate init path (presumably the one driven by `call 0x4655e0` which also sets `[this+0x5f4]`). That path runs our full DX preflight (EnumDevices, EnumDisplayModes, 3× SetDisplayMode, GetAvailableVidMem). `[this+0x5f4]` *does* end up non-zero (trace-at at `0x004652f0` fires) — so *some* state is populated — but `[this+8]` is not among them.
+
+### Remaining hypothesis
+
+MCM's real `0x4655e0` path includes a step that assigns a DX wrapper to `[this+8]` (plausibly the `IDirectDraw2` it creates, or a wrapping object for the D3D device). One of our COM handlers in that chain returns success without writing the output pointer the guest expected. The caller then ignores the "null out-pointer" and presses on, so `[this+0x2f0]` is set, `[this+0x5f4]` is set, but `[this+8]` stays zero from the constructor.
+
 ### Next session
 
-1. **Identify `[this+8]`.** At `0x465302`, ecx=esi=`0x00505ca8` (MCM `this`). Read guest memory at `[0x00505ca8+8]` right before entering `0x466030` — use `--watch=0x00505cb0` or `--trace-at=0x00465302 --trace-at-dump=0x00505ca8:0x400`. That tells us which COM object is supposed to be there.
-2. **Identify `[[this+8]+0xc]`.** Once we know `[this+8]`, dump `+0xc` from it. This is the object whose vtable is null — likely a D3D device or Z-buffer/render-target surface we never created because MCM took a path that skipped CreateSurface yet still expects the field populated.
-3. **Trace forward from `0x4652fb` call `[eax+0x5c]`.** Where `eax=[esi]` is MCM's own vtable. This method likely allocates/initializes the DX chain that 0x466610 later reads. If it silently fails, `[this+8]` gets half-populated.
-4. If step 3 is the culprit: bisect which COM call inside it returns wrong data — likely `CreateSurface` for the back-buffer or `QueryInterface` for a D3D interface off the primary surface.
+1. **Diff what `0x4655e0` does vs what it would do on Windows.** Run with `--trace-api` and compare the sequence of DX COM calls to a Win98 DX5 reference. The first missing/wrong return value that the guest *silently* drops is the bug.
+2. **Watch `[this+8]` during the preflight with more granularity.** Our `--watch` fires on writes via normal x86 stores, but if an API handler writes guest memory directly (via the host `writeI32` path), the watch still sees it — zero hits means no handler wrote there either. So focus on candidate *output pointers* the guest passes to COM methods inside `0x4655e0`.
+3. **Check if MCM expects `[this+8]` = the `IDirectDraw2` interface.** That's the most likely identity — `DirectDrawCreate` → `QueryInterface(IID_IDirectDraw2, [this+8])`. Verify by disassembling the caller of `QueryInterface` inside `0x4655e0` and checking the `ppv` destination.
 
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
