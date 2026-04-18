@@ -62,6 +62,14 @@
           (call $host_log_i32 (global.get $eax))
           (call $host_log_i32 (call $gl32 (i32.add (global.get $edi) (i32.const 8))))))
       (global.set $dbg_prev_eip (global.get $eip))
+      ;; --trace-esp: emit (eip, esp) at block entry for in-range EIPs.
+      (if (global.get $trace_esp_flag)
+        (then
+          (if (i32.and
+                (i32.ge_u (global.get $eip) (global.get $trace_esp_lo))
+                (i32.or (i32.eqz (global.get $trace_esp_hi))
+                        (i32.le_u (global.get $eip) (global.get $trace_esp_hi))))
+            (then (call $host_log_block (global.get $eip) (global.get $esp))))))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -221,6 +229,13 @@
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+
+  ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
+  ;; upper bound; pass flag=0 to turn off tracing.
+  (func (export "set_trace_esp") (param $flag i32) (param $lo i32) (param $hi i32)
+    (global.set $trace_esp_flag (local.get $flag))
+    (global.set $trace_esp_lo (local.get $lo))
+    (global.set $trace_esp_hi (local.get $hi)))
 
   ;; Hit counters: set_count writes addr into slot N and zeros its count,
   ;; bumping $hit_count_n so the run loop includes this slot. Caller passes

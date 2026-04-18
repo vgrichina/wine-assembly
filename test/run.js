@@ -39,6 +39,7 @@ const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
+const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
@@ -74,6 +75,17 @@ const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 const countAddrs = COUNT_SPEC ? COUNT_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 if (countAddrs.length > 16) { console.error('--count supports max 16 addresses'); process.exit(1); }
+
+// --trace-esp=LO[-HI]: parse hex range. Empty string ("--trace-esp") = whole address space.
+let traceEspLo = 0, traceEspHi = 0, traceEspOn = false;
+if (TRACE_ESP !== null) {
+  traceEspOn = true;
+  if (TRACE_ESP) {
+    const parts = TRACE_ESP.split('-');
+    traceEspLo = parseInt(parts[0], 16) >>> 0;
+    traceEspHi = parts[1] ? (parseInt(parts[1], 16) >>> 0) : 0;
+  }
+}
 
 async function main() {
   let wasmBytes;
@@ -575,6 +587,20 @@ async function main() {
       logs.push('[i32] ' + hex(val));
     }
   };
+
+  let prevBlockEsp = null, prevBlockEip = 0, traceEspCount = 0;
+  if (traceEspOn) {
+    h.log_block = (eip, esp) => {
+      const delta = prevBlockEsp === null ? 0 : ((esp - prevBlockEsp) | 0);
+      const tag = prevBlockEsp === null
+        ? '(start)'
+        : `Δ=${delta >= 0 ? '+' : ''}${delta} from ${hex(prevBlockEip)}`;
+      logs.push(`[ESP-BLK] eip=${hex(eip >>> 0)} esp=${hex(esp >>> 0)} ${tag}`);
+      prevBlockEsp = esp;
+      prevBlockEip = eip;
+      traceEspCount++;
+    };
+  }
 
   if (ESP_DELTA) {
     h.log_api_exit = () => {
@@ -1572,6 +1598,10 @@ async function main() {
     // --trace-at: arm set_bp once (mutually exclusive with --break; --break wins)
     if (traceAtAddr && !breakAddrs.length && batch === 0 && instance.exports.set_bp) {
       instance.exports.set_bp(traceAtAddr);
+    }
+    // --trace-esp: arm range once
+    if (traceEspOn && batch === 0 && instance.exports.set_trace_esp) {
+      instance.exports.set_trace_esp(1, traceEspLo, traceEspHi);
     }
     // Hit counters: register once
     if (countAddrs.length && batch === 0 && instance.exports.set_count) {
