@@ -14,9 +14,45 @@ Advances through splash → DirectDraw setup → 12 Flip-loop frames → new cra
 - **MCM-1 fixed (commit `905f012`):** 8-byte ESP leak at `0x00491d7e → 0x00491d90` was `IDirectDraw2::SetDisplayMode` (method 21) popping as IDirectDraw v1 (4 args, 20 bytes) when MCM calls it through the v2 vtable (6 args, 28 bytes). Handler now disambiguates by reading `[arg0]` and comparing to `DX_VTBL_DDRAW2`. Localized in one iteration via `--trace-esp=0x491a00-0x491f2e` (commit `d092389`).
 - MCM now calls: `IDirectDraw::QI(IID_IDirectDraw2)` → `IDirectDraw::QI(IID_IDirect3D3)` → `IDirect3D3::EnumDevices` → `IDirectDraw::CreateSurface` → `IDirectDrawSurface::QI(DA044E00-69B2-...)` → `Flip×12` → `GetPixelFormat` → `SetDisplayMode` → continues into `0x00466791` caller chain.
 
-## Current blocker — EIP=0 from `0x00466791`
+## Current blocker — EIP=0 from `0x00466791` (vtable[10] == 0)
 
-Re-use `--trace-esp=LO-HI` on the new crash site's enclosing function (find via `node tools/find_fn.js test/binaries/shareware/mcm/mcm_ex/MCM.EXE 0x00466791`). The per-block ESP tracer + COM-handler-vtable-disambiguation pattern is now a reusable playbook for similar DX handler arg-count bugs.
+Enclosing function: `0x00466610` (found via `tools/find_fn.js`). Clean disasm from the jmp target `0x00466783`:
+
+```
+00466783  mov eax, [ebx+0x2f0]        ; ebx = C++ this (m_game)
+00466789  test eax, eax
+0046678b  jz   0x4668af
+00466791  mov eax, [ebx+0x8]          ; eax = m_gfx member
+00466794  mov eax, [eax+0xc]          ; eax = COM interface ptr inside m_gfx
+00466797  push eax                    ; this (only arg — no other args)
+00466798  mov esi, [eax]              ; vtable
+0046679a  call [esi+0x28]             ; method index 10
+```
+
+The crash is **not** an ESP leak — it's `[esi+0x28] == 0`, so `call` jumps to address 0. Confirmation: stack at crash still has `0x0046679d` on top (the ret slot the `call` pushed), meaning the callee never ran — the call target was null.
+
+**Context at crash (from `--trace-api`):**
+- App has ALREADY called `LoadStringA(0xbba)` = string 3002 = *"Could not find any 3-D acceleration hardware"* → `DestroyWindow` → `ShowCursor(1)` → `PostQuitMessage(0)`. It's in shutdown.
+- Then enters a `PeekMessage/TranslateMessage/DispatchMessageA/DefWindowProcA` loop (WM_SHOWWINDOW 0x18, WM_PAINT 0x0f) — WM_QUIT never delivered, so the pump keeps invoking the wndproc → render function → 0x00466610 → the null vtable slot.
+- **So MCM is STILL failing the 3D-HW check even though `EnumDevices` now returns a full HAL D3DDEVICEDESC.** The error path happens before the crash, so the "12 Flip frames" line in the status above is misleading — those flips happen during the error UI, not gameplay.
+
+**Two independent bugs here:**
+
+1. **Pre-crash: MCM rejects our HAL caps.** Some flag in our D3DDEVICEDESC (dwFlags / dpcTriCaps / dwDeviceRenderBitDepth / dwMinTextureWidth / etc.) fails MCM's check. Need to diff a real DX5/DX6 HAL desc against what we fill in `$handle_IDirect3D3_EnumDevices` (`src/09a8-handlers-directx.wat`).
+2. **Crash itself: method 10 of some COM interface is null in the vtable.** Which interface? `eax = [m_game+0x8]`; `interface = [eax+0xc]`. The last COM created before the crash was during error-path shutdown — likely a `CreateSurface` or `GetAttachedSurface` result. Plan:
+   - Instrument: `--break=0x0046679a` + `r`/`d` to dump `esi` and look it up in DX_OBJECTS.
+   - Or add a one-line log in `init_com_vtable` / `extend_com_vtable` to print vtable base + size, then grep which one method 10 is zero for.
+   - Most likely candidate: a vtable initialized with fewer than 11 slots (e.g. `init_com_vtable(_, 10)`). Check `09b2-dispatch-table.generated.wat` for any `init_com_vtable` with count ≤ 10 — those are the suspects (`DDPAL=7`, `DDCLIP=9`, `DINPUT=8`).
+
+**Most likely culprit:** `DDPAL` (7 methods) or `DINPUT` (8 methods) — but neither makes sense at this call site. More likely we're calling method 10 on `DDCLIP` (9 methods) via `IDirectDrawSurface::GetClipper`. Investigate `IDirectDrawClipper` methods 0-10; method 10 does not exist (interface has 9 methods 0-8). If MCM expects a larger clipper-v2 interface, we need to extend it.
+
+**Starting point next session:**
+```bash
+node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE \
+  --max-batches=20000 --break=0x0046679a
+# then `r` to read ESI; dword at [ESI+0x28] should be 0
+# then look up ESI among global.get $DX_VTBL_* to identify interface
+```
 
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
