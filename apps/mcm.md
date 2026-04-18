@@ -244,11 +244,50 @@ We may be returning success from a COM call that should fail. MCM's normal flow 
 
 We're landing in a fourth state MCM doesn't handle: "all init calls reported success, but `[this+8]` is still zero." That's a contract we violated — probably by returning a valid interface pointer from some COM method but with its internal state (pointed to by +0xc) uninitialized.
 
+### Session 2026-04-18 update 5 — `[this+8]` initializer identified: vtable slot 7 (fn `0x00466260`), never called
+
+Byte-scanned for `89 46 08` (`mov [esi+8], eax`) across `MCM.EXE`. Hit at `0x004662ef`, enclosing function entry **`0x00466260`** (SEH-prologue fn starting with `64 a1 00 00 00 00 / push ebp`). Body:
+
+```
+00466260  [SEH prologue + this = esi]
+00466283  mov ecx, [ecx+0x8]
+00466286  test ecx, ecx
+00466288  jnz 0x46633f               ; early-out if [this+8] already set
+...
+004662aa  push 0x8c4                 ; malloc size = 2244 bytes
+004662af  call 0x4bd170              ; operator new
+004662c7  call 0x492b80              ; ctor on new obj
+...
+004662e7  mov ecx, eax               ; this = new obj
+004662e9  push ebx                   ; ebx = [main_this+0x4]
+004662ea  call 0x492bf0              ; Initialize(new_obj, [main_this+4])
+004662ef  mov [esi+0x8], eax         ; *** [this+8] = Initialize return value ***
+004662f2  test eax, eax
+004662f4  jnz 0x4662fa               ; fail = leave [this+8] null & return 0
+```
+
+This function is **vtable slot 7** of main MCM class (offset `0x1c`, `vtable[0x4d602c + 0x1c] = 0x00466260`).
+
+Ran `--trace-at=0x00466260,0x004662ef,0x004663a0` → **zero hits**. The method is never invoked at all. That's the real regression: MCM's startup chain should call `[vtable+0x1c]` somewhere (probably after DX init succeeds), but we're diverging earlier and skipping past it.
+
+Every downstream symptom follows:
+- `[this+8]` = 0 (never written) ✓ confirmed
+- tick fn at `0x00466ac0` runs anyway because `[this+0x444]=0` (would have been set by the error path of the missing init) ✓
+- crash fn at `0x00466610` reads `[[this+8]+0xc]` → null deref ✓
+
 ### Next session
 
-1. **Find what should write `[this+8]`.** Bytes `89 46 08` (= `mov [esi+8], eax`) or `89 43 08` (= `mov [ebx+8], eax`) near the DX-init call chain. Focus on code reached from the `0x4652fb call [eax+0x5c]` branch — i.e. functions `0x00466070`, its callee `0x00490850`, and any siblings. One of them does `[this+8] = <result of COM call>` and that COM call is silently returning zero in our handler.
-2. **Alternative fast path**: force `[this+0x444]=1` at startup via a test hack (runtime memory poke right after `0x00464c72`) and see if MCM proceeds past the crash into its "render paused" error UI. If it does, we've confirmed the contract, and the fix is to find the missing assignment. If it still crashes somewhere else, `[this+0x444]` is not the right escape hatch.
-3. **Compare assignee of the call at `0x00466b41` (`call [ebx+0x2c]`)**: this call takes an ecx that was loaded from `[esi+0x430]`, reads `[ecx]` as vtable, and calls offset 0x2c. Whatever this returns may be related to the same scene object. If it's `[this+0x430]` = a parent scene manager, `[this+8]` might be `scene_manager->current_frame` or similar — set during `[ebx+0x2c]`. Worth tracing.
+1. **Find who calls `[vtable+0x1c]`** on MCM's main class. Scan .text for the two-instruction pattern `mov eax, [ecx]` / `call [eax+0x1c]` (bytes `8b 01 ff 50 1c`) and its `esi`/`ebx`/`edi` variants. Cross-reference with the functions we already know run (e.g. inside `0x0046528b call 0x4655e0` or the early-boot chain from WinMain).
+2. Once the caller is located, find what guard/branch skipped the call. That guard is reading some MCM state whose value we're setting incorrectly — that's the *original* divergence.
+3. Plausible pattern: `if ([this+0x5f4] != 0) call [vtable+0x1c]` — except our preflight sets `[this+0x5f4]` non-zero *and* we still skip. So the guard is likely a different field, one we're NOT setting. Suspect fields: `[this+0x10]`, `[this+0xbc]`, `[this+0x444]`, or `[this+0x460]` (all set by constructor but none by our DX chain).
+
+### Artifacts worth keeping between sessions
+
+- `0x00466260` = `vtable[0x1c]` = allocator for `[this+8]` scene object. First thing to check is always whether this method runs.
+- `0x00466610` = `vtable[0x24]` = per-frame method that crashes when `[this+8]` is null.
+- `0x00466ac0` = main tick, guarded by `[this+0x444]`.
+- `0x00472576` = main ctor (vtable `0x4d602c`).
+- `0x00464c06` = instance-init routine (zeroes `[this+8]`, sets `[this+0x2f0]=1`).
 
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
