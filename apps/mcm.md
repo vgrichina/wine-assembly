@@ -105,6 +105,52 @@ Next session: grep `09a8*.wat` + `09ab*.wat` for `CreateDevice`, `GetAttachedSur
 
 The 0x00466791 crash is a **symptom**, not the root cause. The two "stacked bugs" are actually one bug: 3D init silently fails → game flags m_3d_ready = 0 → error 3002 → PostQuitMessage → message pump still fires render path → m_gfx is null → call [0]. Fixing the DX init chain eliminates both.
 
+## 2026-04-18 correction: 0x468130 is NOT 3D init, and MCM never reaches CreateSurface
+
+Previous session guessed that `call 0x468130` at `0x004652f2` was the "continue 3D init" path. **Wrong.** Disasm of 0x468130 shows a registry-enumeration helper (calls `[0x525524]` = RegOpenKeyExA, `[0x525520]` = RegQueryValueExA, `[0x525514]` = RegDeleteKeyA, `[0x52552c]` = RegEnumKeyExA via ebp). No DirectDraw / Direct3D calls inside it. It's probably "scrub stale display settings out of the registry" after a failed enumeration.
+
+### What the trace actually shows MCM doing before error 3002
+
+Full DX call sequence from `--trace-api` (lines 945..1790 of /tmp/mcm-trace.log, ordered):
+
+1. `DirectDrawCreate` (twice — first for a preflight enum, second for real init)
+2. `IDirectDraw::QueryInterface(IID_IDirectDraw2)` → `IDirectDraw2::GetCaps`
+3. `IDirectDraw2::EnumDisplayModes` (inside callback: `HeapAlloc` for each mode)
+4. `IDirectDraw::GetDisplayMode`
+5. `IDirectDraw::QueryInterface(IID_IDirect3D3)` → `IDirect3D3::EnumDevices` (our HAL callback fires)
+6. `IDirectDraw::SetCooperativeLevel` (cooperative=0x8 / normal)
+7. `GetDC` / `GetDeviceCaps` / `ReleaseDC` / window-style manipulation / `SetWindowPos` / `ShowWindow`
+8. `IDirectDraw::GetDisplayMode` (again)
+9. `IDirectDraw::SetCooperativeLevel` (cooperative=0x13 / fullscreen exclusive)
+10. `IDirectDraw2::GetAvailableVidMem`
+11. `IDirectDraw::SetDisplayMode` **×3** — probes (640,480,16), (640,480,16), (800,600,16)
+12. A pile of `RegCreateKeyExA` / `RegSetValueExA` — writing discovered video settings to registry
+13. **`LoadStringA(0xbba)` — error 3002 fires here.**
+
+**MCM never calls `CreateSurface`, `CreateDevice`, `GetAttachedSurface`, `SetRenderTarget`, `Direct3D::CreateDevice`, or any Z-buffer/device creation.** It bails during preflight.
+
+### Where the bailout decision lives
+
+The `call [esi+0x5c]` in function 0x465276 (where `esi` is MCM's main game-class `this`) reads an internal flag set during preflight. It returns 0 → error 3002. That flag is written somewhere inside `call 0x4655e0` at `0x0046528b` (the first call in the function, whose result goes to `[esi+0x5f4]`).
+
+0x4655e0 is a large function (162+ bytes before tail, contains repeated "build registry path via sprintf-like helper at 0x4bd200, call virtual method 0x467680 on self" blocks). Its children are what produce the DX calls we see — including EnumDisplayModes and the 3 SetDisplayMode probes. So the "does MCM have a usable 3D mode" check is probably:
+
+> For each desired (w,h,bpp), call `SetDisplayMode` and see if it succeeds. Our handler returns 0 (S_OK) unconditionally, but MCM may also verify the result by calling `GetDisplayMode` and checking that width/height/bpp match.
+
+Checked `$handle_IDirectDraw_GetDisplayMode` at `src/09a8-handlers-directx.wat:903` — it already reports the last `SetDisplayMode` values via `$dx_display_w/h/bpp` globals, with proper DDPIXELFORMAT (size=32, DDPF_RGB, 16bpp 565 masks). So a naive "set then get" probe would match. Not this.
+
+### Remaining suspects (ranked)
+
+1. **`IDirect3D3::EnumDevices` HAL desc is rejected by MCM's device selector.** Our callback was added but MCM may set `[esi+0x5f4]` to the chosen device GUID only if the callback returns a specific "I want this one" code, or only if dwDeviceRenderBitDepth includes 16bpp (`DDBD_16`). `[esi+0x5f4]` being non-zero here *should* mean "3D device found" since the non-zero branch leads into LoadString(0x13d8) with string "Using 3D hardware: %s" or similar.
+2. **`IDirectDraw2::EnumDisplayModes` callback contract.** Trace shows it runs (HeapAllocs per mode) and MCM then calls `SetDisplayMode(800,600,16)` — probably the selected mode. If the callback has to return `DDENUMRET_OK` (=1) to continue, our dispatch may be mis-popping stack or returning `DDENUMRET_CANCEL`, truncating the mode list.
+3. **`IDirectDraw::GetCaps`** — MCM may filter caps bits (DDCAPS_3D, DDCAPS2_NO2DDURING3DSCENE, vidmem size). We fill some, not all.
+
+### Next session
+
+1. Dump the DDCAPS blob our `IDirectDraw_GetCaps` hands back. Compare to a known-working Win98 DX5 HAL caps (any reference in `test/binaries/dx-sdk`?). Focus on `dwCaps` and `dwCaps2`.
+2. Verify the EnumDevices callback return-value handling — does our CACA0007 continuation read EAX from the guest after callback and use it to decide continue/stop? If not, MCM may be telling us "this device is fine, stop enumerating" but we keep looping.
+3. Add `--trace-at=0x00465298` to confirm which branch of `test eax; jz 0x465309` we take — that immediately says whether `[esi+0x5f4]` was 0 or non-zero, pinning whether the preflight picked a 3D device at all.
+
 ## Historical blocker — 8-byte ESP leak in function 0x00491a00 (RESOLVED)
 
 Crash: `EIP=0x00000000`, `ESP=0x03fff8a4`, `dbg_prev_eip=0x00491f24` after `ret 0xc` at `0x491f2e`.
