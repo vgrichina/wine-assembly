@@ -352,6 +352,12 @@
         (call $enum_modes_continue)
         (return)))
 
+    ;; D3D EnumDevices continuation — callback returned, try next device
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000B))
+      (then
+        (call $d3d_enum_devices_continue)
+        (return)))
+
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then
@@ -404,4 +410,7 @@
 
     ;; Delegate to generated br_table
     (call $dispatch_api_table (local.get $api_id) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+
+    ;; Post-handler ESP hook for --esp-delta audit
+    (call $host_log_api_exit)
   )

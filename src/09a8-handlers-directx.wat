@@ -680,42 +680,103 @@
     ;; Dispatch next mode (or finish if past end)
     (call $enum_modes_dispatch))
 
-  ;; ── IDirect3D{1,2,3}::EnumDevices — single-HAL callback ────────────
+  ;; ── IDirect3D{1,2,3}::EnumDevices — enumerates Ramp/HAL/MMX/TnLHal ──
   ;; Caller has captured the saved return addr and already popped stdcall args.
-  ;; Invokes guest callback once with a HAL device, reusing the CACA0007 thunk
-  ;; (pops saved ret + sets EAX=DD_OK when the callback returns).
+  ;; Dispatches callback N times via CACA000B continuation thunk.
   (func $d3d_enum_devices_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
-    (local $guid i32) (local $desc i32) (local $name i32)
-    (local $hw i32) (local $hel i32) (local $wa i32)
-    ;; HAL GUID {84E63DE0-46AA-11CF-816F-0000C020156E}
-    (local.set $guid (call $heap_alloc (i32.const 16)))
-    (local.set $wa (call $g2w (local.get $guid)))
-    (i32.store (local.get $wa)                       (i32.const 0x84E63DE0))
-    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11CF46AA))
-    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x00006F81))
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6E1520C0))
-    ;; Description: "Direct3D HAL\0"
-    (local.set $desc (call $heap_alloc (i32.const 16)))
-    (local.set $wa (call $g2w (local.get $desc)))
-    (i32.store (local.get $wa)                       (i32.const 0x65726944))
-    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x44337463))
-    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x4C414820))
-    (i32.store8 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0))
-    ;; Name: "halz\0"
-    (local.set $name (call $heap_alloc (i32.const 8)))
-    (i32.store (call $g2w (local.get $name)) (i32.const 0x7A6C6168))
-    (i32.store8 (i32.add (call $g2w (local.get $name)) (i32.const 4)) (i32.const 0))
-    ;; HW and HEL D3DDEVICEDESC (252 bytes each)
-    (local.set $hw  (call $heap_alloc (i32.const 252)))
-    (call $fill_d3d_device_desc (local.get $hw)  (i32.const 1))
-    (local.set $hel (call $heap_alloc (i32.const 252)))
-    (call $fill_d3d_device_desc (local.get $hel) (i32.const 0))
-    ;; Push saved caller ret (highest on stack — popped by CACA0007)
+    ;; Push saved caller ret once (stays on stack across all iterations).
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $d3d_enum_dev_cb  (local.get $cb))
+    (global.set $d3d_enum_dev_ctx (local.get $ctx))
+    (global.set $d3d_enum_dev_ret (local.get $ret_addr))
+    (global.set $d3d_enum_dev_idx (i32.const 0))
+    (call $d3d_enum_devices_dispatch))
+
+  ;; Fills per-device GUID/desc/name and invokes the guest callback.
+  ;; If idx past end, pops saved ret + sets EAX=DD_OK and returns to caller.
+  (func $d3d_enum_devices_dispatch
+    (local $idx i32) (local $guid i32) (local $desc i32) (local $name i32)
+    (local $hw i32) (local $hel i32) (local $wa i32) (local $is_hal i32)
+    (local.set $idx (global.get $d3d_enum_dev_idx))
+    ;; 4 devices: 0=Ramp, 1=RGB, 2=HAL, 3=MMX. (Framework-preferred order.)
+    (if (i32.ge_u (local.get $idx) (i32.const 4))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; pop saved ret
+        (global.set $eip (global.get $d3d_enum_dev_ret))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $guid (call $heap_alloc (i32.const 16)))
+    (local.set $wa (call $g2w (local.get $guid)))
+    (local.set $desc (call $heap_alloc (i32.const 32)))
+    (local.set $name (call $heap_alloc (i32.const 16)))
+    (local.set $is_hal (i32.const 0))
+    (if (i32.eq (local.get $idx) (i32.const 0))
+      (then
+        ;; IID_IDirect3DRampDevice {F2086B20-259F-11CF-A31A-00AA00B93356}
+        (i32.store (local.get $wa)                      (i32.const 0xF2086B20))
+        (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11CF259F))
+        (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xAA001AA3))
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x5633B900))
+        ;; "Ramp Emulation\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x706D6152))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6D452061))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x74616C75))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x006E6F69))
+        ;; "ramp\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x706D6172))
+        (i32.store8 (i32.add (call $g2w (local.get $name)) (i32.const 4)) (i32.const 0))))
+    (if (i32.eq (local.get $idx) (i32.const 1))
+      (then
+        ;; IID_IDirect3DRGBDevice {A4665C60-2673-11CF-A31A-00AA00B93356}
+        (i32.store (local.get $wa)                      (i32.const 0xA4665C60))
+        (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11CF2673))
+        (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xAA001AA3))
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x5633B900))
+        ;; "RGB Emulation\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20424752))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
+        ;; "rgb\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x00626772))))
+    (if (i32.eq (local.get $idx) (i32.const 2))
+      (then
+        ;; IID_IDirect3DHALDevice {84E63DE0-46AA-11CF-816F-0000C020156E}
+        (i32.store (local.get $wa)                      (i32.const 0x84E63DE0))
+        (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11CF46AA))
+        (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x00006F81))
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6E1520C0))
+        ;; "Direct3D HAL\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x65726944))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x44337463))
+        (i32.store (i32.add (call $g2w (local.get $desc)) (i32.const 8))   (i32.const 0x4C414820))
+        (i32.store8 (i32.add (call $g2w (local.get $desc)) (i32.const 12)) (i32.const 0))
+        ;; "hal\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x0000006C61681))
+        (local.set $is_hal (i32.const 1))))
+    (if (i32.eq (local.get $idx) (i32.const 3))
+      (then
+        ;; IID_IDirect3DMMXDevice {881949A1-D6F3-11D0-89AB-00A0C9054129}
+        (i32.store (local.get $wa)                      (i32.const 0x881949A1))
+        (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11D0D6F3))
+        (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xA000AB89))
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x294105C9))
+        ;; "MMX Emulation\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20584D4D))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
+        ;; "mmx\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x00786D6D))))
+    ;; HW + HEL descs
+    (local.set $hw  (call $heap_alloc (i32.const 252)))
+    (call $fill_d3d_device_desc (local.get $hw)  (local.get $is_hal))
+    (local.set $hel (call $heap_alloc (i32.const 252)))
+    (call $fill_d3d_device_desc (local.get $hel) (i32.const 0))
     ;; Push callback args right-to-left: ctx, helDesc, hwDesc, name, desc, guid
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $ctx))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_dev_ctx))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $hel))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -726,11 +787,23 @@
     (call $gs32 (global.get $esp) (local.get $desc))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $guid))
-    ;; Push callback return addr = CACA0007 (reused)
+    ;; Push callback return = CACA000B
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
-    (global.set $eip (local.get $cb))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_dev_thunk))
+    (global.set $eip (global.get $d3d_enum_dev_cb))
     (global.set $steps (i32.const 0)))
+
+  ;; CACA000B: callback returned; callback popped its 6 args via `ret 0x18`.
+  ;; If callback returned DDENUMRET_CANCEL (0), stop; else advance idx.
+  (func $d3d_enum_devices_continue
+    (if (i32.eqz (global.get $eax))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; pop saved ret
+        (global.set $eip (global.get $d3d_enum_dev_ret))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (global.set $d3d_enum_dev_idx (i32.add (global.get $d3d_enum_dev_idx) (i32.const 1)))
+    (call $d3d_enum_devices_dispatch))
 
   ;; Fill D3DDEVICEDESC (DX5-style 252-byte layout).
   ;; is_hal=1 sets HWRASTERIZATION + vidmem caps; is_hal=0 is HEL (software).
@@ -760,7 +833,7 @@
     ;; dpcTriCaps (56) at +100
     (call $fill_primcaps (i32.add (local.get $p) (i32.const 100)))
     ;; Tail fields at +156
-    (i32.store (i32.add (local.get $wa) (i32.const 156)) (i32.const 0x700))   ;; DeviceRenderBitDepth = DDBD_8|16|32
+    (i32.store (i32.add (local.get $wa) (i32.const 156)) (i32.const 0xD00))   ;; DeviceRenderBitDepth = DDBD_8|16|32 (0x800|0x400|0x100)
     (i32.store (i32.add (local.get $wa) (i32.const 160)) (i32.const 0x500))   ;; DeviceZBufferBitDepth = DDBD_16|32
     (i32.store (i32.add (local.get $wa) (i32.const 164)) (i32.const 0))       ;; dwMaxBufferSize
     (i32.store (i32.add (local.get $wa) (i32.const 168)) (i32.const 0xFFFF))  ;; dwMaxVertexCount

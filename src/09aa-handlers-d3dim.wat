@@ -30,10 +30,17 @@
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; IDirect3D2_EnumDevices — 3 args (incl. this)
+  ;; IDirect3D2_EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
+  ;; Delegates to shared HAL-device enumerator (same callback contract as v1/v3).
   (func $handle_IDirect3D2_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0x80070057))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3D2_CreateLight — 3 args (incl. this)
   (func $handle_IDirect3D2_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

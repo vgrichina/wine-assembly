@@ -38,6 +38,7 @@ const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
+const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
@@ -88,6 +89,7 @@ async function main() {
   let stopped = false;
   let apiCount = 0;
   let lastApiName = null;  // track last API name for return value correlation
+  let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let inputEvent = null;   // pending input event to inject via check_input
   let inputQueue = null;   // button ID sequence to inject
   let crossThreadMsgs = []; // messages from worker threads to deliver via check_input
@@ -397,6 +399,11 @@ async function main() {
       } catch (_) {}
     }
 
+    if (ESP_DELTA) {
+      lastApiName = t;
+      lastApiEsp = instance.exports.get_esp();
+    }
+
     if (TRACE_API) {
       const e = instance.exports;
       const esp = e.get_esp();
@@ -509,12 +516,51 @@ async function main() {
           logs.push(`  [SEH] fs:[0]=${hex(sehHead)} EBP=${hex(e.get_ebp())}`);
         } catch (_) {}
       }
+
+      // Decode MSVC C++ throw payload on RaiseException(0xE06D7363)
+      if (t === 'RaiseException' || t === '_CxxThrowException') {
+        try {
+          const code = dv.getUint32(g2w(esp + 4), true);
+          const nArgs = dv.getUint32(g2w(esp + 12), true);
+          const argsPtr = dv.getUint32(g2w(esp + 16), true);
+          if (code === 0xe06d7363 && nArgs >= 3 && argsPtr) {
+            const magic = dv.getUint32(g2w(argsPtr), true);
+            const objPtr = dv.getUint32(g2w(argsPtr + 4), true);
+            const throwInfo = dv.getUint32(g2w(argsPtr + 8), true);
+            const pCTA = dv.getUint32(g2w(throwInfo + 12), true);
+            const nCT = dv.getUint32(g2w(pCTA), true);
+            const names = [];
+            for (let i = 0; i < nCT && i < 4; i++) {
+              const pCT = dv.getUint32(g2w(pCTA + 4 + i * 4), true);
+              const pType = dv.getUint32(g2w(pCT + 4), true);
+              const name = readStr(g2w(pType + 8), 80);
+              names.push(name);
+            }
+            logs.push(`  [C++ throw] magic=${hex(magic)} obj=${hex(objPtr)} throwInfo=${hex(throwInfo)} types=[${names.join(', ')}]`);
+            try {
+              const words = [];
+              for (let k = 0; k < 8; k++) words.push(hex(dv.getUint32(g2w(objPtr + k * 4), true)));
+              logs.push(`  [C++ throw] obj bytes: ${words.join(' ')}`);
+              const maybeStr = readStr(g2w(dv.getUint32(g2w(objPtr + 4), true)), 100);
+              if (maybeStr) logs.push(`  [C++ throw] obj+4 as str: "${maybeStr}"`);
+            } catch (_) {}
+          }
+        } catch (ex) { logs.push(`  [C++ throw] decode error: ${ex.message}`); }
+      }
     } else {
       logs.push('[API] ' + t);
     }
   };
 
   h.log_i32 = val => {
+    if (ESP_DELTA && lastApiName) {
+      const isComMarker = ((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>';
+      if (!isComMarker) {
+        const espAfter = instance.exports.get_esp();
+        const delta = (espAfter - lastApiEsp) | 0;
+        logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
+      }
+    }
     if (TRACE_API && lastApiName) {
       // COM method api_id marker: 0xC0DE0000 | api_id
       if (((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>') {
@@ -529,6 +575,16 @@ async function main() {
       logs.push('[i32] ' + hex(val));
     }
   };
+
+  if (ESP_DELTA) {
+    h.log_api_exit = () => {
+      if (!lastApiName) return;
+      const espAfter = instance.exports.get_esp();
+      const delta = (espAfter - lastApiEsp) | 0;
+      logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
+      lastApiName = null;
+    };
+  }
 
   // --- Override exit to also log ---
   h.exit = code => { logs.push('[Exit] code=' + code); stopped = true; };

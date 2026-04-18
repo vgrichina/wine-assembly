@@ -7,6 +7,7 @@
   ;; ---- Host imports ----
   (import "host" "log" (func $host_log (param i32 i32)))
   (import "host" "log_i32" (func $host_log_i32 (param i32)))
+  (import "host" "log_api_exit" (func $host_log_api_exit))
   (import "host" "crash_unimplemented" (func $host_crash_unimplemented (param i32 i32 i32 i32)))
   (import "host" "message_box" (func $host_message_box (param i32 i32 i32 i32) (result i32)))
   (import "host" "exit" (func $host_exit (param i32)))
@@ -811,6 +812,12 @@
   (global $modal_esp_adjust (mut i32) (i32.const 0)) ;; bytes to add to ESP on return
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
   (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
+  ;; D3D EnumDevices multi-device iteration state (CACA000B)
+  (global $d3d_enum_dev_thunk (mut i32) (i32.const 0))
+  (global $d3d_enum_dev_idx   (mut i32) (i32.const 0))
+  (global $d3d_enum_dev_cb    (mut i32) (i32.const 0))
+  (global $d3d_enum_dev_ctx   (mut i32) (i32.const 0))
+  (global $d3d_enum_dev_ret   (mut i32) (i32.const 0))
 
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir
