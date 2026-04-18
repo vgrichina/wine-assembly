@@ -47,7 +47,17 @@ Mask inversion issue — sprites render as white silhouettes instead of colored 
 
 These screensavers use CreateDIBSection to create bitmaps with direct pixel access, then StretchDIBits to blit them. StretchDIBits is implemented but may have issues. CreateDIBSection needs a working `ppvBits` return (pointer to pixel data in guest memory).
 
-### 5. D3D screensavers: "No valid modes found for this device"
+### 5. D3D screensavers: "No valid modes found for this device" — RESOLVED
+
+**Status:** All 7 D3DIM savers (ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI) now pass the mode filter. The throw at `0x74414d83` no longer fires. Verified with `--trace-at=0x74414a30`: filter fires 12× per run (4 devices × 3 bpp), every call succeeds, and the app advances past D3D init.
+
+New uniform blocker for all 7: `MessageBox("Couldn't find any scene definitions in location \"\" - reinstall?")`. `FindFirstFileA(".\\*.scn")` returns no matches because the Plus! 98 scenery asset files aren't in our VFS / beside the .SCR binaries. Not an emulator bug; need to source the asset files.
+
+Likely fix was landed by prior commits: `220a1b5` (IMUL CF/OF flags for 2/3-op variants) + `fd84222` (EnumDevices iterates Ramp/RGB/HAL/MMX).
+
+---
+
+Prior notes (kept for historical context):
 **Priority: HIGH** — Blocks 7 d3dim-based savers (ARCHITEC/FALLINGL/GEOMETRY/JAZZ/OASAVER/ROCKROLL/SCIFI)
 **Files:** `src/09a8-handlers-directx.wat`, `src/09aa-handlers-d3dim.wat`, `src/01-header.wat`, `src/08-pe-loader.wat`, `src/09b-dispatch.wat`
 
