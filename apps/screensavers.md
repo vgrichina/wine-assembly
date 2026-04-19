@@ -241,6 +241,12 @@ The disconnect is that d3drm's compiled code expects slot 16 to return a COM obj
 |------|--------|
 | `src/09a8-handlers-directx.wat:1443-1452` | `GetPalette` returns a fresh `IDirectDrawPalette` wrapper instead of `DDERR_NOPALETTEATTACHED` |
 
+**Scope note for Execute path.** Turning the render loop into actual pixels requires a D3D1 execute-buffer interpreter + a minimal software rasterizer — multi-session work, not a quick change. Current infra state:
+- `$viewport_fill_rect` (`09ab-handlers-d3dim-core.wat:478`) already writes 8/16/32bpp pixels into the RT DIB — reuse for flat triangle spans.
+- `$d3dim_ensure_zbuffer` / `$zbuffer_fill` exist for depth.
+- ExecuteBuffer handlers (`$handle_IDirect3DExecuteBuffer_{Lock,Unlock,SetExecuteData,Initialize}` in `09aa-handlers-d3dim.wat:1038-1065`) are all no-op stubs — no buffer allocated, no `lpData` returned. First step: track per-ExecuteBuffer state (alloc `dwBufferSize` bytes, store guest ptr + size in COM entry, return ptr from Lock, remember `D3DEXECUTEDATA` from SetExecuteData).
+- `$handle_IDirect3DDevice_Execute` (`09aa:198`) currently ignores its execute-buffer arg. Plan: walk `D3DINSTRUCTION` stream from `dwInstructionOffset`; dispatch on `bOpcode`. Minimum opcodes ARCHITEC almost certainly uses: `D3DOP_MATRIXLOAD`/`MULT` (4/5), `D3DOP_STATERENDER` (8), `D3DOP_STATELIGHT` (7), `D3DOP_PROCESSVERTICES` (9) — transforms verts into HVERTEX, `D3DOP_TRIANGLE` (3) — raster, `D3DOP_EXIT` (11). Add per-opcode trace first and run ARCHITEC once to confirm the actual opcode set before writing the rasterizer.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
