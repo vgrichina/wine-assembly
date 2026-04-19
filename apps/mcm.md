@@ -5,6 +5,38 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19, evening) — method 23 exonerated; real bail is [dev+0x2c] bit 0
+
+Traced method 23 (`0x00465830`) to completion with `--trace-at=0x00465c26` + mode-table dump. **Method 23 returns 1** — mode 2 (640x480x16) survives the full filter chain with `[mode+0x10]=1`:
+
+```
+0x011ec0c4  80 02 00 00 e0 01 00 00 08 00 00 00 ...   mode0 640x480x8    [+10]=0 [+14]=0
+0x011ec0e0  20 03 00 00 58 02 00 00 08 00 00 00 ...   mode1 800x600x8    [+10]=0 [+14]=0
+0x011ec0fc  80 02 00 00 e0 01 00 00 10 00 00 00 ...   mode2 640x480x16   [+10]=1 [+14]=1  ← survivor
+0x011ec118  20 03 00 00 58 02 00 00 10 00 00 00 ...   mode3 800x600x16   [+10]=0 [+14]=1
+0x011ec134  80 02 00 00 e0 01 00 00 20 00 00 00 ...   mode4 640x480x32   [+10]=0 [+14]=0
+0x011ec150  20 03 00 00 58 02 00 00 20 00 00 00 ...   mode5 800x600x32   [+10]=0 [+14]=0
+```
+
+Pass-3 (0x465bd9–0x465c24) finds mode 2's `[+0x10]=1`, does NOT decrement survivors; ebx stays 1; `sbb/inc` → eax=1.
+
+**Real bail path:** caller `0x00465120` at `0x00465431`:
+```
+00465431  mov eax, [esi+0x14]     ; 0 for single-device path
+00465434  test eax, eax
+00465436  jnz 0x46546b            ; not taken
+00465438  mov eax, [esi+0x4]      ; selected device = [0x523070] = 0x011ec42c
+0046543b  mov ecx, [eax+0x2c]     ; [dev+0x2c]
+0046543e  test cl, 0x1
+00465441  jnz 0x46546b            ; NOT TAKEN → falls into LoadString 0xbba + MessageBox
+```
+
+`[dev+0x2c]` observed value = `0x0000016c`. **Bit 0 is clear** → bail.
+
+So the missing piece is whoever sets bit 0 of `[dev+0x2c]` during enumeration/registration. Bit 0 marks "device is acceptable." Previously-noted `EnumDevices` callback `0x00492810` allocates the per-device record and copies D3DDEVICEDESC; the acceptability flag is presumably OR'd in there based on a caps test. Known `[dev+0x2c]` state at method 23 entry already has bits 2,3,5,6,8 set (= 0x16c) but not bit 0 — so whatever sets other bits runs, but the bit-0 predicate fails for our HAL stub.
+
+**Next step:** `tools/xrefs.js` for stores to `[*+0x2c]` in the range `0x00492000–0x00493000` (D3D device-wrapper methods) and around `0x00465600`. Look for `or [reg+0x2c], 1` (`83 48 2C 01` etc.) or `mov [reg+0x2c], N` where `N & 1 == 1`. Likely gated on a D3DDEVICEDESC.dpcTriCaps / dwFlags / dwDevCaps check against HAL fields we're leaving zero in our EnumDevices descriptor.
+
 ## Status (2026-04-19, later)
 
 **MCM-2 progress — texture video-memory test passes** (pending commit): MCM measures texture allocation cost by delta-ing `IDirectDraw2::GetAvailableVidMem` across `CreateSurface`/`Release`. Fixed by: (1) track a running `$dx_vidmem_used` counter incremented in `CreateSurface` (surface + backbuffer + mipmap chain ≈ `dib_size × 4/3` when `DDSCAPS_MIPMAP` is set) and decremented in `IDirectDrawSurface::Release` (exact bytes stashed at entry+24); (2) `GetAvailableVidMem` returns `8MB - used` for lpdwFree, constant 8MB for lpdwTotal; (3) in `CreateSurface`, fall back to `$dx_display_bpp` when ddpfPixelFormat.dwRGBBitCount is 0 — MCM builds texture DDSDs from our stub `EnumTextureFormats` which leaves the format zeroed.
