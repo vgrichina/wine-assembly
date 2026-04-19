@@ -436,6 +436,7 @@
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FF0000  8KB     DX_OBJECTS     (256 entries × 32 bytes, ends 0x07FF2000)
   ;; 0x07FF2000  2KB     COM_WRAPPERS   (256 entries × 8 bytes, ends 0x07FF2800)
+  ;; 0x07FF2800 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FF6800)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;; 0x03C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x03D12000  1MB     Guest heap

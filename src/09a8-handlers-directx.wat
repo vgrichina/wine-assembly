@@ -18,6 +18,13 @@
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
   ;; COM wrapper stubs: 256 × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF2000))
+  ;; Auxiliary wrappers for QueryInterface results that need a different vtable
+  ;; than the primary wrapper. Each entry is [vtbl, slot], same shape as the
+  ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
+  ;; by (slot, vtbl) via linear scan.
+  (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FF2800))
+  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
+  (global $com_aux_next (mut i32) (i32.const 0))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -118,6 +125,47 @@
   ;; Compute slot index from a DX_OBJECTS entry WASM address.
   (func $dx_slot_of (param $entry_wa i32) (result i32)
     (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
+
+  ;; Return a guest pointer to a COM wrapper that reports the given vtbl and
+  ;; points to the given DX_OBJECTS slot. If slot's primary wrapper already
+  ;; has that vtbl, return it; otherwise find/alloc an aux wrapper with it.
+  ;; Never mutates the primary wrapper's vtbl (callers may hold cached copies
+  ;; of the primary wrapper pointer and expect its vtbl to be stable).
+  (func $dx_get_wrapper_for_vtbl (param $slot i32) (param $vtbl_guest i32) (result i32)
+    (local $primary_wa i32) (local $aux_wa i32) (local $i i32) (local $n i32)
+    (local.set $primary_wa (i32.add (global.get $COM_WRAPPERS)
+      (i32.mul (local.get $slot) (i32.const 8))))
+    ;; Primary hit?
+    (if (i32.eq (i32.load (local.get $primary_wa)) (local.get $vtbl_guest)) (then
+      (return (i32.add (i32.sub (local.get $primary_wa) (global.get $GUEST_BASE))
+                       (global.get $image_base)))))
+    ;; Scan aux pool for (vtbl, slot) match.
+    (local.set $n (global.get $com_aux_next))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $aux_wa (i32.add (global.get $COM_WRAPPERS_AUX)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $aux_wa)) (local.get $vtbl_guest))
+            (i32.eq (i32.load (i32.add (local.get $aux_wa) (i32.const 4))) (local.get $slot)))
+        (then (return (i32.add (i32.sub (local.get $aux_wa) (global.get $GUEST_BASE))
+                               (global.get $image_base)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    ;; Miss — bump allocate.
+    (if (i32.ge_u (local.get $n) (global.get $COM_WRAPPERS_AUX_MAX)) (then
+      ;; Pool exhausted; fall back to primary and mutate (legacy behavior).
+      (i32.store (local.get $primary_wa) (local.get $vtbl_guest))
+      (return (i32.add (i32.sub (local.get $primary_wa) (global.get $GUEST_BASE))
+                       (global.get $image_base)))))
+    (local.set $aux_wa (i32.add (global.get $COM_WRAPPERS_AUX)
+      (i32.mul (local.get $n) (i32.const 8))))
+    (i32.store (local.get $aux_wa) (local.get $vtbl_guest))
+    (i32.store (i32.add (local.get $aux_wa) (i32.const 4)) (local.get $slot))
+    (global.set $com_aux_next (i32.add (local.get $n) (i32.const 1)))
+    (i32.add (i32.sub (local.get $aux_wa) (global.get $GUEST_BASE))
+             (global.get $image_base)))
 
   ;; Create a guest COM object using fixed COM_WRAPPERS area (not guest heap).
   ;; vtbl_guest is the guest address of the vtable (from DX_VTBL_* globals)
@@ -324,6 +372,20 @@
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
+  ;; DirectDrawCreateClipper(dwFlags, lplpDDClipper, pUnkOuter) → HRESULT
+  ;; Standalone clipper factory — equivalent to IDirectDraw_CreateClipper.
+  (func $handle_DirectDrawCreateClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDCLIP)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004005))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; DirectSoundCreate(lpGUID, lplpDS, pUnkOuter) → HRESULT
   (func $handle_DirectSoundCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj_guest i32)
@@ -395,8 +457,19 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    ;; IDirect3D2 {6AAE1EC1-...} or IDirect3D3 {6AAE1EC1-...} — both use D3D3 vtable
+    ;; IDirect3D2 {6AAE1EC1-29BD-11D0-8B4E-00A0C905AB10} — uses D3D2 vtable (9 slots,
+    ;; CreateDevice takes 3 COM args, not 4). Previously we returned D3D3 vtable here,
+    ;; which mislabeled CreateDevice thunks and caused a 4-byte stack drift when the
+    ;; caller pushed only IDirect3D2 args (observed in Borland-compiled screensavers).
     (if (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
+      (then
+        (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D2)))
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; IDirect3D3 {BB223240-E72B-11D0-A9B4-00AA00C0993E}
+    (if (i32.eq (local.get $iid_dword) (i32.const 0xBB223240))
       (then
         (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D3)))
         (call $gs32 (local.get $arg2) (local.get $obj))
@@ -1366,9 +1439,14 @@
     (global.set $eax (i32.const 0x80004001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; GetPalette — return error (no palette set)
+  ;; GetPalette — return a fresh palette COM wrapper (d3drm dereferences the pointer, so null isn't safe;
+  ;; and DDERR_NOPALETTEATTACHED propagates up as a fatal DXException in d3drm-based screensavers).
   (func $handle_IDirectDrawSurface_GetPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x887601FF))
+    (local $obj_guest i32)
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 3) (global.get $DX_VTBL_DDPAL)))
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (local.get $obj_guest))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetPixelFormat(this, lpDDPixelFormat)
@@ -1409,10 +1487,12 @@
         (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
         (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
         (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))))
-    ;; Caps
+    ;; Caps — DDSCAPS_PRIMARYSURFACE for primary; else DDSCAPS_VIDEOMEMORY|DDSCAPS_OFFSCREENPLAIN.
+    ;; Apps gate z-buffer / render-target acceptance on DDSCAPS_VIDEOMEMORY when a hardware
+    ;; device is selected — returning SYSTEMMEMORY would cause CreateZBuffer to reject.
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x200)))
-      (else (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x840))))
+      (else (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x4040))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

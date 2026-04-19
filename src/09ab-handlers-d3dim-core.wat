@@ -44,6 +44,7 @@
   ;; on miss (and writes NULL to ppvObj).
   (func $d3dim_qi (param $family i32) (param $this i32) (param $riid i32) (param $ppvObj i32) (result i32)
     (local $iid0 i32) (local $entry i32) (local $vtbl i32) (local $obj_wa i32)
+    (local $i i32) (local $ptr i32) (local $ddraw_guest i32)
     ;; Sanity: NULL ppvObj ⇒ E_POINTER
     (if (i32.eqz (local.get $ppvObj)) (then (return (i32.const 0x80004003))))
     ;; Read first DWORD of the IID for fast classification.
@@ -55,12 +56,57 @@
     (if (i32.eqz (local.get $iid0)) (then
       (local.set $obj_wa (call $g2w (local.get $this)))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
+    ;; D3D family → IID_IDirectDraw (0x6C14DB80): return the parent DDraw.
+    ;; Since we don't track the D3D→DDraw back-reference, scan DX_OBJECTS for
+    ;; the first type=1 (DDraw) entry. d3drm.dll uses this to get the DDraw
+    ;; back from a D3D interface; failing it causes a NULL-vtable Release crash.
+    (if (i32.and (i32.eq (local.get $family) (i32.const 1))
+                 (i32.eq (local.get $iid0) (i32.const 0x6C14DB80))) (then
+      (local.set $i (i32.const 0))
+      (block $done (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+        (local.set $ptr (i32.add (global.get $DX_OBJECTS)
+          (i32.mul (local.get $i) (i32.const 32))))
+        (if (i32.eq (i32.load (local.get $ptr)) (i32.const 1)) (then
+          ;; AddRef the DDraw entry and return its wrapper guest ptr.
+          (i32.store (i32.add (local.get $ptr) (i32.const 4))
+            (i32.add (i32.load (i32.add (local.get $ptr) (i32.const 4))) (i32.const 1)))
+          (local.set $ddraw_guest (i32.add
+            (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $i) (i32.const 8)))
+                     (global.get $GUEST_BASE))
+            (global.get $image_base)))
+          (call $gs32 (local.get $ppvObj) (local.get $ddraw_guest))
+          (return (i32.const 0))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      ;; No DDraw found — fall through to E_NOINTERFACE below.
+    ))
     (if (i32.eq (local.get $family) (i32.const 1)) (then
       ;; D3D family
       (if (i32.eq (local.get $iid0) (i32.const 0x3BBA0080)) (then (local.set $vtbl (global.get $DX_VTBL_D3D))))
       (if (i32.eq (local.get $iid0) (i32.const 0x6AAE1EC1)) (then (local.set $vtbl (global.get $DX_VTBL_D3D2))))
       (if (i32.eq (local.get $iid0) (i32.const 0xBB223240)) (then (local.set $vtbl (global.get $DX_VTBL_D3D3))))
       (if (i32.eq (local.get $iid0) (i32.const 0xF5049E77)) (then (local.set $vtbl (global.get $DX_VTBL_D3D7))))))
+    ;; Device family → IID_IDirectDrawSurface (0x6C14DB81): return the render
+    ;; target surface that was bound at CreateDevice time. d3drm.dll asks for
+    ;; this to introspect the back buffer; failing it causes a NULL-vtable
+    ;; Release crash in the caller's cleanup path.
+    (if (i32.and (i32.eq (local.get $family) (i32.const 2))
+                 (i32.eq (local.get $iid0) (i32.const 0x6C14DB81))) (then
+      (local.set $entry (call $dx_from_this (local.get $this)))
+      (local.set $i (i32.load (i32.add (local.get $entry) (i32.const 8)))) ;; rt_slot
+      (if (i32.ne (local.get $i) (i32.const 0)) (then
+        (local.set $ptr (i32.add (global.get $DX_OBJECTS)
+          (i32.mul (local.get $i) (i32.const 32))))
+        (if (i32.ne (i32.load (local.get $ptr)) (i32.const 0)) (then
+          (i32.store (i32.add (local.get $ptr) (i32.const 4))
+            (i32.add (i32.load (i32.add (local.get $ptr) (i32.const 4))) (i32.const 1)))
+          (local.set $ddraw_guest (i32.add
+            (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $i) (i32.const 8)))
+                     (global.get $GUEST_BASE))
+            (global.get $image_base)))
+          (call $gs32 (local.get $ppvObj) (local.get $ddraw_guest))
+          (return (i32.const 0))))))))
     (if (i32.eq (local.get $family) (i32.const 2)) (then
       ;; Device family
       (if (i32.eq (local.get $iid0) (i32.const 0x64108800)) (then (local.set $vtbl (global.get $DX_VTBL_D3DDEV1))))
@@ -84,16 +130,17 @@
     (if (i32.eqz (local.get $vtbl)) (then
       (call $gs32 (local.get $ppvObj) (i32.const 0))
       (return (i32.const 0x80004002))))
-    ;; Hit → re-emit the same `this` (same DX slot, same wrapper) but the caller
-    ;; will see the requested vtable when they read *(*this+0). To support
-    ;; multiple vtables on one slot we'd need separate COM_WRAPPERS entries;
-    ;; for our use, overwriting the wrapper's lpVtbl in place is acceptable
-    ;; since the same guest pointer keeps working with the new vtable.
-    (local.set $obj_wa (call $g2w (local.get $this)))
-    (i32.store (local.get $obj_wa) (local.get $vtbl))
-    (call $gs32 (local.get $ppvObj) (local.get $this))
-    ;; AddRef
+    ;; Hit → return a wrapper (aux or primary) that reports the requested vtbl
+    ;; backed by the same DX_OBJECTS slot. Must NOT mutate the primary wrapper's
+    ;; vtbl in place: callers keep the original `this` register alive and
+    ;; continue to invoke methods on the original vtbl (observed in d3rm.dll
+    ;; Device2::QI→Device1 sequences where [esi] must still resolve to Device2).
     (local.set $entry (call $dx_from_this (local.get $this)))
+    (call $gs32 (local.get $ppvObj)
+      (call $dx_get_wrapper_for_vtbl
+        (call $dx_slot_of (local.get $entry))
+        (local.get $vtbl)))
+    ;; AddRef the backing slot.
     (i32.store (i32.add (local.get $entry) (i32.const 4))
       (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.const 0))
@@ -103,9 +150,9 @@
   ;; 4KB state block on guest heap). For D3D2/D3D7 we use the same
   ;; underlying type — the only externally-visible difference is the vtable
   ;; the caller sees on the returned object, and QI handles upgrades.
-  (func $d3dim_create_device (param $this i32) (param $rt_surf i32) (param $ppDev i32)
+  (func $d3dim_create_device (param $this i32) (param $rt_surf i32) (param $ppDev i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV3)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 20) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj)) (then
       (global.set $eax (i32.const 0x80004005))
       (return)))

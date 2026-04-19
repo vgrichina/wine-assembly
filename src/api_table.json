@@ -10377,5 +10377,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 702875750
+  },
+  {
+    "id": 1483,
+    "name": "DirectDrawCreateClipper",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4283039011
   }
 ]
