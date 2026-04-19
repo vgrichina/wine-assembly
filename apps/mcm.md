@@ -18,18 +18,17 @@ Effect — OutputDebugString now matches expected for every level:
 ...
 ```
 
-**Still blocked:** MCM still bails with "Could not find any 3-D acceleration hardware." Narrowed path (trace-at confirms via EAX return values):
+**Still blocked:** MCM still bails with "Could not find any 3-D acceleration hardware." Re-narrowed (previous "0x4655e0 doesn't return" claim was wrong — `--trace-at` only takes one address; chained values in the same flag silently parse as one):
 
-| Site | EIP | EAX on exit | Notes |
-|------|-----|------------|-------|
-| 0x004651a2 `call [ebx]` | method[0] on `[0x4e2fdc]` | 1 (ok) | proceeds |
-| 0x004651c6 `call [ebx+0x30]` | method[12] (per-mode test) | 1 (ok) | jumps to 0x4651ee |
-| 0x00465230 `call 0x490140` | post-test validation | 1 (ok) | continues |
-| 0x00465289 `call 0x4655e0` | device-registration finalizer | never returns within 5000 batches — **MessageBox "Could not find 3D" fires from inside it** |
+Path inside `0x00465120`:
+- `0x004652f0 call 0x468130` — DriverInfo registry validator. **Returns 1 (failure).** Calls `RegOpenKeyExA(HKLM, "SOFTWARE\Microsoft\Microsoft Games\Motocross Madness Trial\1.0\DriverInfo\{00000000-0000-0000-0000-000000000000}", KEY_ALL_ACCESS)` at `0x004681ae`. Our DDraw driver GUID is all-zeros and the subkey doesn't exist → `ERROR_FILE_NOT_FOUND` → MCM treats validator as failed.
+- Return value of 0x468130 is then **discarded** (`mov eax, [esi]` at 0x4652f7).
+- `0x004652fb call [eax+0x5c]` — vtable method[23] = `0x00473820` → wraps `0x00465830`. **Returns 0 → "Could not find" MessageBox.**
+- `0x00465830` walks the registered-device list at `[0x523070]` (count `[0x4e6668]`), invalidates entries via per-device method[12] (`call [edi+0x30]` at 0x465877) and table sweeps at offsets 0x300/0x310, then returns `(survivors >= 1) ? 1 : 0`. Survivors must have at least one valid entry left after pruning.
 
-So the bail is inside `0x4655e0`. The function iterates over the registered-device list at `[0x4e6668]`, calls `0x4bd200` (sprintf?) + `0x467680` (config builder?) three times per device, then fails. Error MessageBox is at API #1941 in the trace, with retaddr `0x00433227` — i.e., it unwinds out of 0x4655e0 without returning normally.
-
-**Next step:** trace-at 0x004655e0 + step through to find where it branches into the error path. Likely needs `[esi+0x46c]` (handle to a registry key or config blob) to be non-zero, or one of the sub-calls is returning unexpected values. The first `call 0x467680` at 0x00465658 (args include `[esi+...+0xcb8]` and `0x4e4de8`, `0x4e4ddc`) looks like a "build reg path / read reg value" helper.
+**Next step:** instrument the per-device pruning loop (0x465887–0x465902) to see why every device's mode/format table at `[dev+0x310]` ends up entirely invalidated. Two angles:
+1. Check what `[dev+0x310]` looks like after the initial enumeration vs. after method[12] wipes entries (offsets 0x10 and 0x14 get zeroed when `[entry+0x8] in {0x18,0x20}` and other size/dim mismatches).
+2. Pre-populate the `DriverInfo\{00000000-0000-0000-0000-000000000000}` registry key + its expected schema so 0x468130 succeeds; that's the "happy path" MCM was designed for after a successful first-run vidmem test. Schema is set via the parallel `RegSetValueExA`/`RegCreateKeyExA` calls inside the test routine — easier to just let it run and capture writes.
 
 ## Status (2026-04-19)
 
