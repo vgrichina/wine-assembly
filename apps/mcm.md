@@ -7,6 +7,10 @@
 
 ## Status (2026-04-18)
 
+**MCM-8 fixed** (commit `7b1ad89` + this change): registry install-check now passes. Two bugs: (1) `_regHandles` used signed/unsigned mismatch between store and lookup, causing all RegQueryValueEx reads to fail. (2) Seeded `InstallType='Trial'` caused `fn 0x429770` to set `[this+0x82c]=1` (not-CD-installed); MCM expects value `2` which requires string == "Full". Changed seed to `Full`. MCM now advances past the CD-insert loop into the 3D-hardware test (known MCM-2 blocker).
+
+
+
 Advances through splash → DirectDraw setup → 12 Flip-loop frames → new crash at EIP=0 from `dbg_prev_eip=0x00466791` (next function up from the fixed leak).
 
 **Progressed past (this session):**
