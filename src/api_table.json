@@ -10384,5 +10384,40 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4283039011
+  },
+  {
+    "id": 1484,
+    "name": "auxGetNumDevs",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3284888601
+  },
+  {
+    "id": 1485,
+    "name": "auxGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 553405166
+  },
+  {
+    "id": 1486,
+    "name": "auxGetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 979332293
+  },
+  {
+    "id": 1487,
+    "name": "auxSetVolume",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4274665385
+  },
+  {
+    "id": 1488,
+    "name": "auxOutMessage",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2159409594
   }
 ]

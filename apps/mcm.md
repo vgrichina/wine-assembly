@@ -5,6 +5,14 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19, night-3) — winmm aux* stubbed; MCM reaches steady-state main loop
+
+Added minimal stubs for `auxGetNumDevs`, `auxGetDevCapsA`, `auxGetVolume`, `auxSetVolume`, `auxOutMessage` in `src/09a3-handlers-audio.wat`. NumDevs=0, GetDevCaps=BADDEVICEID(2), GetVolume writes 0 and returns NOERROR (MCM probes device 0 even after NumDevs=0; silent success keeps it moving), Set/OutMessage return NOERROR.
+
+**Result:** MCM no longer crashes. `--max-batches=8000` runs to completion with **15,929 API calls** and no unimplemented-API trap. Last visible activity is a steady stream of `EnterCriticalSection` / `LeaveCriticalSection` / `<ord>` (lang.dll ordinal) calls — a stable main-loop pattern rather than a crash. Need to verify rendering and input work end-to-end.
+
+**Next step:** run MCM with `--png=` at increasing batch budgets to see if it's drawing the title screen / menu, and with `--trace-dc` to check that the back-canvas is receiving its DDraw blits. If nothing is drawn, likely the next blocker is in the DDraw primary-surface flip path or a missing d3dim method that silently stalls. If it *is* rendering, wire up a `--input=` sequence to click through to gameplay.
+
 ## Status (2026-04-19, night-2) — DDCAPS_3D + DI-QI AddRef; new blocker is winmm aux*
 
 Two fixes cascaded MCM deep into init:
