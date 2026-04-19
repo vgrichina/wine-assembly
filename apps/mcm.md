@@ -18,7 +18,18 @@ Effect — OutputDebugString now matches expected for every level:
 ...
 ```
 
-**Still blocked:** after all texture checks pass for both candidate modes (640x480x16 and 800x600x16) and a final setup pass runs for the chosen mode (incl. CreateDevice / EnumTextureFormats / CreateMaterial / GetHandle / SetMaterial), MCM still bails with "Could not find any 3-D acceleration hardware." The bail is at `0x004331db` (`test eax,eax; jnz 0x43322f`) where `call 0x465120` returns 0. Inside 0x465120, the failure pivot is `call [ebx]` at `0x004651a2` (virtual method[0] of the MCM inner object `[0x4e2fdc]`, with 1 arg = `[ebp+0x10]`). Needs deeper RE of that vtable dispatch.
+**Still blocked:** MCM still bails with "Could not find any 3-D acceleration hardware." Narrowed path (trace-at confirms via EAX return values):
+
+| Site | EIP | EAX on exit | Notes |
+|------|-----|------------|-------|
+| 0x004651a2 `call [ebx]` | method[0] on `[0x4e2fdc]` | 1 (ok) | proceeds |
+| 0x004651c6 `call [ebx+0x30]` | method[12] (per-mode test) | 1 (ok) | jumps to 0x4651ee |
+| 0x00465230 `call 0x490140` | post-test validation | 1 (ok) | continues |
+| 0x00465289 `call 0x4655e0` | device-registration finalizer | never returns within 5000 batches — **MessageBox "Could not find 3D" fires from inside it** |
+
+So the bail is inside `0x4655e0`. The function iterates over the registered-device list at `[0x4e6668]`, calls `0x4bd200` (sprintf?) + `0x467680` (config builder?) three times per device, then fails. Error MessageBox is at API #1941 in the trace, with retaddr `0x00433227` — i.e., it unwinds out of 0x4655e0 without returning normally.
+
+**Next step:** trace-at 0x004655e0 + step through to find where it branches into the error path. Likely needs `[esi+0x46c]` (handle to a registry key or config blob) to be non-zero, or one of the sub-calls is returning unexpected values. The first `call 0x467680` at 0x00465658 (args include `[esi+...+0xcb8]` and `0x4e4de8`, `0x4e4ddc`) looks like a "build reg path / read reg value" helper.
 
 ## Status (2026-04-19)
 
