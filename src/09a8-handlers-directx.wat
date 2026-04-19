@@ -959,7 +959,15 @@
       (call $zero_memory (local.get $wa) (local.get $sz))
       (i32.store (local.get $wa) (local.get $sz)) ;; preserve dwSize
       ;; dwCaps = DDCAPS_BLT | DDCAPS_BLTCOLORFILL | DDCAPS_COLORKEY
-      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))))
+      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))
+      ;; dwZBufferBitDepths = DDBD_16 (0x400) — MCM checks
+      (if (i32.gt_u (local.get $sz) (i32.const 0x38))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))
+      ;; dwVidMemTotal / dwVidMemFree — MCM caches [caps+0x3c] as budget
+      (if (i32.gt_u (local.get $sz) (i32.const 0x3c))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x3c)) (i32.const 0x00800000))))
+      (if (i32.gt_u (local.get $sz) (i32.const 0x40))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x40)) (i32.const 0x00800000))))))
     ;; Same for HEL caps
     (if (local.get $arg2) (then
       (local.set $wa (call $g2w (local.get $arg2)))
@@ -969,7 +977,13 @@
         (then (local.set $sz (i32.const 380))))
       (call $zero_memory (local.get $wa) (local.get $sz))
       (i32.store (local.get $wa) (local.get $sz))
-      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))))
+      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))
+      (if (i32.gt_u (local.get $sz) (i32.const 0x38))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))
+      (if (i32.gt_u (local.get $sz) (i32.const 0x3c))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x3c)) (i32.const 0x00800000))))
+      (if (i32.gt_u (local.get $sz) (i32.const 0x40))
+        (then (i32.store (i32.add (local.get $wa) (i32.const 0x40)) (i32.const 0x00800000))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
