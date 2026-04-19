@@ -5,6 +5,14 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19)
+
+**MCM-2 partial fix** (commit `15b81d3`): GetCaps now fills `dwVidMemTotal`/`dwVidMemFree` (offset 0x3C/0x40 = 8MB) and `dwZBufferBitDepths` (0x38 = DDBD_16). MCM caches driver caps into its per-device wrapper and uses `DDCAPS.dwVidMemTotal` as the surface-budget in the per-mode video-memory check inside method-23 sub-function `0x00491400`. With 8MB reported, modes pass that gate and MCM now progresses through the full per-mode test path: SetDisplayMode → CreateSurface → Blt/Flip loop (video-memory testing) → GetPixelFormat → CreateDevice → EnumTextureFormats → CreateMaterial → GetHandle → SetMaterial → Release chain, for each of the two candidate 16bpp modes (640x480, 800x600).
+
+**Still blocked:** after all that, method 23 still returns 0 → "Could not find any 3-D acceleration hardware". Rejection now lives downstream in the post-mode-test finalization — likely `call 0x492bf0` at `0x465e3e` inside `0x00465c40`'s final loop (`0x465da7`), which is called for the first surviving mode. If 0x492bf0 returns 0 or `[mode+0x10]` gets zeroed by the final device-level check, count stays at 0.
+
+**Next investigation step:** disasm 0x492bf0 (Direct3D-device-creation wrapper that MCM uses during the mode-acceptance path). Determine which D3D/DDraw query it dispatches and which field we're returning wrong. Candidates: D3DDevice::EnumTextureFormats enumeration match, CreateSurface with DDSCAPS_ZBUFFER (we may need to accept that), CreateDevice wglQuery for a particular GUID, or a `[surface+0x??]` field on a back-buffer/z-buffer we didn't set. Another lead: our `GetAvailableVidMem` returns a constant 8MB regardless of allocations — some drivers' test logic expects it to decrease after CreateSurface proves vidmem is real. Trace shows multiple `GetAvailableVidMem` calls interleaved with CreateSurface/Release.
+
 ## Status (2026-04-18)
 
 **MCM-8 fixed** (commit `7b1ad89` + `3673bed`): registry install-check now passes. Two bugs: (1) `_regHandles` used signed/unsigned mismatch between store and lookup, causing all RegQueryValueEx reads to fail. (2) Seeded `InstallType='Trial'` caused `fn 0x429770` to set `[this+0x82c]=1` (not-CD-installed); MCM expects value `2` which requires string == "Full". Changed seed to `Full`.
