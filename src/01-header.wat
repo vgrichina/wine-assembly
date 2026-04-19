@@ -219,6 +219,12 @@
   ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
   (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
 
+  ;; Surface DC ↔ canvas sync hooks. Called at GetDC/ReleaseDC time so the
+  ;; per-slot offscreen canvas used by GDI (_getDrawTarget) round-trips with
+  ;; the surface's native-bpp DIB. dir=0: DIB→canvas (make canvas fresh at
+  ;; GetDC). dir=1: canvas→DIB (commit GDI output on ReleaseDC).
+  (import "host" "dx_surface_sync" (func $host_dx_surface_sync (param i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0

@@ -1441,6 +1441,8 @@
       (i32.const 32)))
     ;; Write *lphDC = 0x200000 + slot
     (call $gs32 (local.get $arg1) (i32.add (i32.const 0x200000) (local.get $slot)))
+    ;; Fresh DIB → canvas snapshot so GDI draws see current pixels.
+    (call $host_dx_surface_sync (local.get $slot) (i32.const 0))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -1557,8 +1559,13 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))) ;; 5 args
 
-  ;; ReleaseDC — no-op
+  ;; ReleaseDC — commit GDI output (canvas) back to the surface's native DIB
+  ;; so subsequent Blt/Flip/Present reads the drawn pixels.
   (func $handle_IDirectDrawSurface_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $slot i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (call $host_dx_surface_sync (local.get $slot) (i32.const 1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
