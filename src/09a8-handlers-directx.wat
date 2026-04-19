@@ -125,6 +125,12 @@
     (local $wa i32) (local $slot i32)
     (local.set $wa (call $g2w (local.get $this_guest)))
     (local.set $slot (i32.load (i32.add (local.get $wa) (i32.const 4))))
+    ;; Sanity: if slot is wild, log this+slot and clamp to 0 to avoid OOB trap.
+    (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then
+      (call $host_log_i32 (i32.const 0xDEADC0DE))
+      (call $host_log_i32 (local.get $this_guest))
+      (call $host_log_i32 (local.get $slot))
+      (local.set $slot (i32.const 0))))
     (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
 
   ;; Compute slot index from a DX_OBJECTS entry WASM address.
