@@ -262,6 +262,18 @@ The disconnect is that d3drm's compiled code expects slot 16 to return a COM obj
 - Lighting / material path exits early on missing resources.
   Trace `FindFirstFileA("*.scn")` + file-read APIs around `ReadFile` to confirm scene assets land. If they do, set a breakpoint after `SetRenderState` storm to see where the flow bails out before the geometry Execute call.
 
+**Update (2026-04-19) — .SCN reads now work, but app still crashes before emitting geometry.**
+
+Root cause for empty scenes was the INI backend: `lib/storage.js:ini_get_string` read only from `localStorage` (`ini:<filename>`) and never fell back to the actual file on disk. ARCHITEC's `.SCN` format *is* an INI file, so every `GetPrivateProfileStringA("Description", "Name", …, "architec.scn")` returned the default. Added `_parseIniText` + `_iniResolve(vfs, fileName)` that parses the VFS file when no localStorage entry exists — `ini_get_string`/`ini_get_int` now route through it.
+
+Verification with `--trace-ini` (new flag): `[Description] Name="Architecture"`, `Inform0="ar_mesh"`, `Texture0="ar_textu"`, plus full per-material parameter set (Colour*, MaterialSpecular*, MeshDeform*, etc.) resolve correctly for every `.scn`.
+
+**New blocker — batch ~240 crash:** `mov [edx], 0x4c` at `0x745e0403` with `edx=0x7c3e0030` (way past heap end `0x74fd7ee8`). `esi=0x74a16970` (framework data). Some COM call returns a garbage out-pointer that the app writes through. `[edx]=0x4c` looks like a structure `dwSize` init, so it's likely an output DDSURFACEDESC2 or similar that our handler should have supplied. New tasks #5/#6 track this.
+
+**Still unexplained:** no `CreateFileA("ar_mesh.*")` is observed even with INI working. The mesh-loader path fires after the `Inform0` read but never hits file I/O — likely a catch earlier in the chain. Expect the OOB crash and missing mesh load to be the same bug.
+
+**New trace flags in `test/run.js`:** `--trace-fs` (CreateFile hit/miss), `--trace-ini` (section/key/value resolution). Both gated on `traceCategories.has('fs'|'ini')`.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):

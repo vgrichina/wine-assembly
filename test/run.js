@@ -43,6 +43,8 @@ const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (ei
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
+const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
@@ -341,6 +343,8 @@ async function main() {
   if (TRACE_GDI) traceCategories.add('gdi');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_DX) traceCategories.add('dx');
+  if (TRACE_FS) traceCategories.add('fs');
+  if (TRACE_INI) traceCategories.add('ini');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
