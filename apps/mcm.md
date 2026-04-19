@@ -7,7 +7,24 @@
 
 ## Status (2026-04-18)
 
-**MCM-8 fixed** (commit `7b1ad89` + this change): registry install-check now passes. Two bugs: (1) `_regHandles` used signed/unsigned mismatch between store and lookup, causing all RegQueryValueEx reads to fail. (2) Seeded `InstallType='Trial'` caused `fn 0x429770` to set `[this+0x82c]=1` (not-CD-installed); MCM expects value `2` which requires string == "Full". Changed seed to `Full`. MCM now advances past the CD-insert loop into the 3D-hardware test (known MCM-2 blocker).
+**MCM-8 fixed** (commit `7b1ad89` + `3673bed`): registry install-check now passes. Two bugs: (1) `_regHandles` used signed/unsigned mismatch between store and lookup, causing all RegQueryValueEx reads to fail. (2) Seeded `InstallType='Trial'` caused `fn 0x429770` to set `[this+0x82c]=1` (not-CD-installed); MCM expects value `2` which requires string == "Full". Changed seed to `Full`.
+
+### MCM-2 re-examined (2026-04-18)
+
+MCM actually calls `IDirect3D2_EnumDevices` (not D3D3 as originally assumed). Control flow after enum:
+
+1. Callback `0x00492780` delegates to `0x00492810`, which allocates a 0x2b4-byte device record, copies hw+hel descs (204 bytes each, via `rep movsd 0x33`) and description/name strings into it, then conditionally appends to a dynamic array at `[ctx+0x338]`. Capacity at `[ctx+0x334]` grows via realloc on overflow. Callback always returns 1 (DDENUMRET_OK).
+2. **Watchpoint data:** `[0x004e6668]` (global device count, set later by `0x4655e0` registration helper) goes 0→1 after enumeration. So MCM registers **only 1 device out of the 4 we enumerate (Ramp/RGB/HAL/MMX)**. Expected ≥1; the 1 is likely the HAL.
+3. Caller `0x004331d6 call 0x465120` is the 3D-available gate. Inside `0x00465120`:
+   - At `0x0046528b`, `call 0x4655e0` → writes count-1 to `[0x004e6668]` and returns device-index-plus-one in eax → saved to `[esi+0x5f4]`.
+   - If nonzero, shows "testing video memory" MsgBox (LoadString 0x13d8 — **currently reached**, visible in trace as API #1687).
+   - Then `call [esi_vtbl+0x5c]` (method 23, fn `0x00465830`) to finalize. Result → edi.
+   - At `0x00465312 test edi, edi; jz 0x4651a8 → LoadString 0xbba ("no 3D hardware")`.
+4. **Method 23 (`0x00465830`):** iterates `[0x004e6668]` (=1) entries in a device-list struct at `[0x523070]` (=pointer to an allocated manager). For each, inspects fields at `[eax+0x300]`, `[eax+0x310]`, and reads hw/hel desc fields via the 204-byte copy at `[device+0x114..0x1e0..]`. Some per-device filter within 0x00465830 is setting edi=0 → "no 3D".
+
+**Next investigation step:** disasm the loop body of `0x00465830` past `0x004658a1` to identify which D3DDEVICEDESC/D3DPRIMCAPS field fails its acceptance check. Suspect: dwDeviceRenderBitDepth mask (we set 0xD00 = DDBD_8|16|32; MCM may require DDBD_16 only, or stricter dtcTransformCaps / dpcTriCaps.dwTextureCaps bits). Another lead: the 204-byte `rep movsd 0x33` copies only the first 204 bytes of our 252-byte desc — MCM reads through offset 0x33*4=0xcc = 204 — so only offsets 0..204 matter.
+
+**NOTE:** Below block (referencing EIP=0 from 0x00466791) is from an earlier session and still-correct for the post-MsgBox behavior: after PostQuitMessage, MCM dispatches a few WM_ messages and hits `call [esi+0x28]` on a null vtable slot. That's downstream of the 3D decision — fix method 23, and this chain won't trigger.
 
 
 
