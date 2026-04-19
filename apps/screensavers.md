@@ -247,6 +247,21 @@ The disconnect is that d3drm's compiled code expects slot 16 to return a COM obj
 - ExecuteBuffer handlers (`$handle_IDirect3DExecuteBuffer_{Lock,Unlock,SetExecuteData,Initialize}` in `09aa-handlers-d3dim.wat:1038-1065`) are all no-op stubs — no buffer allocated, no `lpData` returned. First step: track per-ExecuteBuffer state (alloc `dwBufferSize` bytes, store guest ptr + size in COM entry, return ptr from Lock, remember `D3DEXECUTEDATA` from SetExecuteData).
 - `$handle_IDirect3DDevice_Execute` (`09aa:198`) currently ignores its execute-buffer arg. Plan: walk `D3DINSTRUCTION` stream from `dwInstructionOffset`; dispatch on `bOpcode`. Minimum opcodes ARCHITEC almost certainly uses: `D3DOP_MATRIXLOAD`/`MULT` (4/5), `D3DOP_STATERENDER` (8), `D3DOP_STATELIGHT` (7), `D3DOP_PROCESSVERTICES` (9) — transforms verts into HVERTEX, `D3DOP_TRIANGLE` (3) — raster, `D3DOP_EXIT` (11). Add per-opcode trace first and run ARCHITEC once to confirm the actual opcode set before writing the rasterizer.
 
+**Update (2026-04-19): Execute-buffer state + opcode trace wired.**
+- `CreateExecuteBuffer` now allocates `dwBufferSize` via `heap_alloc`, stores `{bufPtr,size,vertOff,vertCount,instrOff,instrLen}` in DX_OBJECTS entry (`+8..+31`). `Lock` writes `bufPtr`+`size` into caller's desc; `SetExecuteData` captures offsets.
+- `Execute` walks the `D3DINSTRUCTION` stream and calls `host_dx_trace(kind=7, op, size, count, off)` per opcode + `kind=8` at entry. `lib/host-imports.js` prints `[dx] Exec ...` / `[dx] ExecIn ...` when `--trace-dx` is on.
+
+**Surprising finding — Step 1 result (`apps/screensavers-architec-opcodes.log`, 600 batches):**
+- Exactly 1 `CreateExecuteBuffer`, 1 buffer reused every frame (Lock→Unlock→SetExecuteData→Execute cycle, 2× per BeginScene/EndScene).
+- Every `Execute` call has `instrLen=32` and the stream is a **single** `STATETRANSFORM size=8 count=3` instruction (28 bytes) — nothing else. No `MATRIXLOAD/MULT`, no `STATERENDER`, no `PROCESSVERTICES`, no `TRIANGLE`, no `EXIT`.
+- So ARCHITEC's render loop uploads 3 transform matrices per frame and never submits geometry. A rasterizer at this point has nothing to rasterize.
+
+**Next investigation (before writing any rasterizer):** find why ARCHITEC never emits `PROCESSVERTICES/TRIANGLE`. Candidates:
+- `.SCN` scene file load fails silently → scene list empty → draw loop skipped.
+- Mesh loader (`AR_MESH.X`) fails → no vertex buffers populated.
+- Lighting / material path exits early on missing resources.
+  Trace `FindFirstFileA("*.scn")` + file-read APIs around `ReadFile` to confirm scene assets land. If they do, set a breakpoint after `SetRenderState` storm to see where the flow bails out before the geometry Execute call.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):

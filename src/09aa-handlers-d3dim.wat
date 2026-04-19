@@ -180,11 +180,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice_CreateExecuteBuffer — 4 args (incl. this)
+  ;; args: this, lpDesc (D3DEXECUTEBUFFERDESC*), lplpBuffer (out), pUnkOuter
+  ;; DX_OBJECTS entry layout for ExecuteBuffer (type=21):
+  ;;   +8  bufPtr (guest)   +12 bufSize
+  ;;   +16 vertOff          +20 vertCount
+  ;;   +24 instrOff         +28 instrLen
   (func $handle_IDirect3DDevice_CreateExecuteBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
+    (local $obj i32) (local $entry i32) (local $sz i32) (local $buf i32)
     (local.set $obj (call $dx_create_com_obj (i32.const 21) (global.get $DX_VTBL_D3DEXEC)))
     (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Read dwBufferSize from desc (offset +12)
+    (local.set $sz (i32.const 0))
+    (if (local.get $arg1) (then
+      (local.set $sz (call $gl32 (i32.add (local.get $arg1) (i32.const 12))))))
+    ;; Clamp to sane range (drop zero/huge to a reasonable default)
+    (if (i32.or (i32.eqz (local.get $sz)) (i32.gt_u (local.get $sz) (i32.const 0x100000)))
+      (then (local.set $sz (i32.const 0x4000))))
+    (local.set $buf (call $heap_alloc (local.get $sz)))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (i32.store (i32.add (local.get $entry) (i32.const 8))  (local.get $buf))
+    (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $sz))
     (call $gs32 (local.get $arg2) (local.get $obj))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
@@ -195,7 +211,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice_Execute — 4 args (incl. this)
+  ;; args: this, lpDirect3DExecuteBuffer, lpDirect3DViewport, dwFlags
+  ;; Walk D3DINSTRUCTION stream and emit a trace event per opcode.
+  ;; D3DINSTRUCTION: {u8 bOpcode; u8 bSize; u16 wCount;} = 4 bytes, then wCount*bSize operand bytes.
   (func $handle_IDirect3DDevice_Execute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
+    (local $wa i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
+    (if (local.get $arg1) (then
+      (local.set $eb_entry (call $dx_from_this (local.get $arg1)))
+      (local.set $buf       (i32.load (i32.add (local.get $eb_entry) (i32.const 8))))
+      (local.set $instr_off (i32.load (i32.add (local.get $eb_entry) (i32.const 24))))
+      (local.set $instr_len (i32.load (i32.add (local.get $eb_entry) (i32.const 28))))
+      ;; kind=8: Execute-entry: slot=bufPtr, a=instr_off, b=instr_len, c=0
+      (call $host_dx_trace (i32.const 8) (local.get $buf) (local.get $instr_off)
+        (local.get $instr_len) (i32.const 0))
+      (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.ne (local.get $instr_len) (i32.const 0))) (then
+        (local.set $wa (call $g2w (i32.add (local.get $buf) (local.get $instr_off))))
+        (local.set $end (i32.add (local.get $wa) (local.get $instr_len)))
+        (block $done (loop $lp
+          (br_if $done (i32.ge_u (i32.add (local.get $wa) (i32.const 4)) (local.get $end)))
+          (local.set $op  (i32.load8_u (local.get $wa)))
+          (local.set $sz  (i32.load8_u (i32.add (local.get $wa) (i32.const 1))))
+          (local.set $cnt (i32.load16_u (i32.add (local.get $wa) (i32.const 2))))
+          ;; kind=7 → Execute instruction trace
+          (call $host_dx_trace (i32.const 7) (local.get $op) (local.get $sz) (local.get $cnt)
+            (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
+          ;; D3DOP_EXIT (11): stop walking
+          (br_if $done (i32.eq (local.get $op) (i32.const 11)))
+          (local.set $step (i32.add (i32.const 4) (i32.mul (local.get $sz) (local.get $cnt))))
+          ;; Guard against zero/huge step to avoid infinite loops.
+          (br_if $done (i32.eqz (local.get $step)))
+          (local.set $wa (i32.add (local.get $wa) (local.get $step)))
+          (br $lp)))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -1041,7 +1088,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DExecuteBuffer_Lock — 2 args (incl. this)
+  ;; arg1 = D3DEXECUTEBUFFERDESC*. Fill dwBufferSize+lpData from our DX entry.
   (func $handle_IDirect3DExecuteBuffer_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (if (local.get $arg1) (then
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
+        (i32.load (i32.add (local.get $entry) (i32.const 12))))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 16))
+        (i32.load (i32.add (local.get $entry) (i32.const 8))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -1051,7 +1106,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DExecuteBuffer_SetExecuteData — 2 args (incl. this)
+  ;; arg1 = D3DEXECUTEDATA*. Capture vertex/instruction offsets + lengths.
   (func $handle_IDirect3DExecuteBuffer_SetExecuteData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (if (local.get $arg1) (then
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      ;; dwVertexOffset @+4 → entry+16
+      (i32.store (i32.add (local.get $entry) (i32.const 16))
+        (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
+      ;; dwVertexCount @+8 → entry+20
+      (i32.store (i32.add (local.get $entry) (i32.const 20))
+        (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
+      ;; dwInstructionOffset @+12 → entry+24
+      (i32.store (i32.add (local.get $entry) (i32.const 24))
+        (call $gl32 (i32.add (local.get $arg1) (i32.const 12))))
+      ;; dwInstructionLength @+16 → entry+28
+      (i32.store (i32.add (local.get $entry) (i32.const 28))
+        (call $gl32 (i32.add (local.get $arg1) (i32.const 16))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

@@ -66,6 +66,11 @@
   (global $dx_display_h (mut i32) (i32.const 480))
   (global $dx_display_bpp (mut i32) (i32.const 16))
 
+  ;; Running tally of bytes allocated to DirectDraw surfaces. MCM measures
+  ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
+  ;; footprint; must move in response to allocations.
+  (global $dx_vidmem_used (mut i32) (i32.const 0))
+
   ;; DirectInput mouse tracking (for relative dx/dy)
   (global $di_mouse_last_x (mut i32) (i32.const 0))
   (global $di_mouse_last_y (mut i32) (i32.const 0))
@@ -543,7 +548,7 @@
     (local $ddsd_wa i32) (local $caps i32) (local $w i32) (local $h i32) (local $bpp i32)
     (local $pitch i32) (local $dib_size i32) (local $dib_guest i32)
     (local $obj i32) (local $entry i32) (local $flags i32)
-    (local $back_obj i32) (local $back_entry i32)
+    (local $back_obj i32) (local $back_entry i32) (local $vidmem_bytes i32)
     (local.set $ddsd_wa (call $g2w (local.get $arg1)))
     ;; DDSURFACEDESC:
     ;;   +0  dwSize (4)
@@ -585,6 +590,9 @@
             (local.set $bpp (i32.load (i32.add (local.get $ddsd_wa) (i32.const 84)))))
           (else
             (local.set $bpp (global.get $dx_display_bpp))))
+        ;; Fallback: textures built from our (stub) EnumTextureFormats have ddpf
+        ;; populated with zeros, so dwRGBBitCount=0. Use display bpp.
+        (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (global.get $dx_display_bpp))))
         (local.set $flags (i32.const 4)))) ;; flag=offscreen
     ;; Compute pitch (bytes per row, DWORD-aligned)
     (local.set $pitch (i32.and
@@ -594,6 +602,14 @@
     (local.set $dib_size (i32.mul (local.get $pitch) (local.get $h)))
     (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
     (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
+    ;; Mipmap: the pyramid adds ~1/3 of level-0 bytes. DDSCAPS_MIPMAP=0x400000.
+    ;; Only level 0 is allocated in RAM; extra pyramid bytes are accounted in
+    ;; vidmem only so MCM's GetAvailableVidMem-delta footprint check matches.
+    (local.set $vidmem_bytes (local.get $dib_size))
+    (if (i32.and (local.get $caps) (i32.const 0x400000))
+      (then (local.set $vidmem_bytes
+        (i32.div_u (i32.mul (local.get $dib_size) (i32.const 4)) (i32.const 3)))))
+    (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $vidmem_bytes)))
     ;; Create COM object
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF)))
     (if (i32.eqz (local.get $obj))
@@ -608,6 +624,7 @@
     (i32.store16 (i32.add (local.get $entry) (i32.const 16)) (local.get $bpp))
     (i32.store16 (i32.add (local.get $entry) (i32.const 18)) (local.get $pitch))
     (i32.store (i32.add (local.get $entry) (i32.const 20)) (call $g2w (local.get $dib_guest)))
+    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $vidmem_bytes))
     (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $flags))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
@@ -626,7 +643,9 @@
           ;; Allocate separate DIB for back buffer
           (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
           (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
+          (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $dib_size)))
           (i32.store (i32.add (local.get $back_entry) (i32.const 20)) (call $g2w (local.get $dib_guest)))
+          (i32.store (i32.add (local.get $back_entry) (i32.const 24)) (local.get $dib_size))
           (i32.store (i32.add (local.get $back_entry) (i32.const 28)) (i32.const 2)) ;; flag=backbuf
           ;; Store back buffer guest ptr in primary's misc0 field for GetAttachedSurface
           (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $back_obj))))))
@@ -1081,9 +1100,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetAvailableVidMem(this, lpDDSCaps, lpdwTotal, lpdwFree) — IDirectDraw2+ only
+  ;; Total = 8 MB (matches GetCaps dwVidMemTotal). Free = Total - $dx_vidmem_used;
+  ;; MCM uses the delta across CreateSurface/Release to measure texture bytes.
   (func $handle_IDirectDraw2_GetAvailableVidMem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $free i32)
+    (local.set $free (i32.sub (i32.const 0x00800000) (global.get $dx_vidmem_used)))
+    (if (i32.lt_s (local.get $free) (i32.const 0)) (then (local.set $free (i32.const 0))))
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0x00800000))))
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0x00800000))))
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $free))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -1111,12 +1135,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
+    (local $entry i32) (local $rc i32) (local $surf_bytes i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
+      (then
+        (local.set $surf_bytes (i32.load (i32.add (local.get $entry) (i32.const 24))))
+        (global.set $dx_vidmem_used (i32.sub (global.get $dx_vidmem_used) (local.get $surf_bytes)))
+        (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 

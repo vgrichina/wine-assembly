@@ -123,6 +123,7 @@
   (func (export "get_heap_base") (result i32) (global.get $heap_base))
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
+  (func (export "get_dx_primary_pal_wa") (result i32) (global.get $dx_primary_pal_wa))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
