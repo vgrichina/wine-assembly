@@ -5,6 +5,23 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19, night-2) — DDCAPS_3D + DI-QI AddRef; new blocker is winmm aux*
+
+Two fixes cascaded MCM deep into init:
+
+1. **`IDirectDraw::GetCaps` — add `DDCAPS_3D` (0x1) to dwCaps.** Made MCM pass the 3D-acceleration gate at `0x00465441`.
+2. **`IDirectInputDevice::QueryInterface` — AddRef the returned `this`.** Without it, MCM's `CreateDevice → QI → Release(original)` pattern was freeing the DX_OBJECTS slot while MCM still held the QI pointer, crashing at `0x00450f4e` on a dangling vtable deref. Fix mirrors the existing rule from `feedback_com_qi_addref.md`.
+
+**New blocker:** MCM now reaches the audio-init path:
+```
+FindFirstFileA × many (content scan)
+DirectSoundCreate
+auxGetNumDevs     ← crash_unimplemented
+```
+MCM calls `auxGetNumDevs` (from `WINMM.DLL`) to count aux audio devices. We have no aux* handlers.
+
+**Next step:** add minimal winmm aux handlers: `auxGetNumDevs` (return 0 = no aux devices), plus likely `auxGetDevCapsA` if MCM iterates the count. These are low-risk stubs since MCM just probes for volume-control devices. Real implementations later.
+
 ## Status (2026-04-19, night) — FIXED: DDCAPS_3D was missing from GetCaps
 
 Root cause of the whole "Could not find any 3-D acceleration hardware" bail: our `IDirectDraw::GetCaps` handler filled `DDCAPS.dwCaps = 0x24040` (BLT | BLTCOLORFILL | COLORKEY) but forgot `DDCAPS_3D = 0x1`.

@@ -2313,7 +2313,14 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectInputDevice_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
     (call $gs32 (local.get $arg2) (local.get $arg0))
+    ;; QI must AddRef even when returning the same 'this' — otherwise a paired
+    ;; Release on the original frees the DX_OBJECTS slot while the caller still
+    ;; holds the QI'd pointer (MCM triggers exactly this pattern).
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -2687,8 +2694,15 @@
 
   ;; Helper: given device "this", return guest addr of its state block (or 0).
   (func $d3ddev_state (param $this_guest i32) (result i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $this_guest)))
+    (local $entry i32) (local $wa i32) (local $slot i32)
+    (local.set $wa (call $g2w (local.get $this_guest)))
+    (local.set $slot (i32.load (i32.add (local.get $wa) (i32.const 4))))
+    (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then
+      (call $host_log_i32 (i32.const 0xD3DDBAD0))
+      (call $host_log_i32 (local.get $this_guest))
+      (call $host_log_i32 (local.get $slot))
+      (return (i32.const 0))))
+    (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
     (i32.load (i32.add (local.get $entry) (i32.const 16))))
 
   ;; IDirect3D3::CreateVertexBuffer(this, lpVBDesc, lplpD3DVertexBuffer, dwFlags, pUnkOuter) — 5 args
