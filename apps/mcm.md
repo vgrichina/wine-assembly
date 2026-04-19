@@ -13,6 +13,29 @@ Added minimal stubs for `auxGetNumDevs`, `auxGetDevCapsA`, `auxGetVolume`, `auxS
 
 **Next step:** run MCM with `--png=` at increasing batch budgets to see if it's drawing the title screen / menu, and with `--trace-dc` to check that the back-canvas is receiving its DDraw blits. If nothing is drawn, likely the next blocker is in the DDraw primary-surface flip path or a missing d3dim method that silently stalls. If it *is* rendering, wire up a `--input=` sequence to click through to gameplay.
 
+## Status (2026-04-19, night-4) — rendering plumbing fires but back-canvas is tiny
+
+With audio stubs in place, MCM reaches DDraw presentation:
+- Creates `CreateWindowExA` hwnd=0x10001 title="Microsoft Motocross Madness" style=0x80080000 (WS_POPUP|WS_SYSMENU) **size=640x480**.
+- Does 314 DDraw/surface COM calls: CreateSurface (primary + backbuffer flip chain), Blt, Flip in a steady loop.
+- `$dx_present` fires 57× per 8k batches, calling `gdi_set_dib_to_device(hdc=0x50001, w=0x280, h=0x1e0 = 640×480)` on the main hwnd.
+
+**But the PNG is blank teal.** `--trace-dc` shows the reason:
+```
+[CreateWindow] hwnd=0x10001 ... size=640x480
+[ShowWindow] hwnd=0x10001 cmd=1
+[ShowWindow] hwnd=0x10001 cmd=0   ← HIDE
+[dc] hdc=0x50001 hwnd_in=0x0 → hwnd=0x10001 top=0x10001 ox=0 oy=0 canvas=8x47
+```
+Every present blits 640×480 into an **8×47 back-canvas**. Data is clipped to near-nothing. Sequence of `ShowWindow` cmds is `1 → 0 → 5 → 5` (SHOWNORMAL → HIDE → SHOW → SHOW); the back-canvas was allocated at default dims and never got resized to match the 640×480 CreateWindow size (or got truncated by the SW_HIDE pass).
+
+**Next step:** trace `renderer.getWindowCanvas` allocation vs. the WM_SIZE path for hwnd=0x10001. Likely one of:
+1. The CreateWindow size isn't being propagated to the window record (check `wnd_set_rect` / `wnd_set_state_ptr` sequence during CreateWindowExA for WS_POPUP style).
+2. `ShowWindow(SW_HIDE)` is clobbering the stored size before it was ever read, so when the final SW_SHOW goes through the renderer falls back to its minimum default.
+3. The back-canvas is allocated off stale hwnd client-rect dims before CreateWindow has finished populating them.
+
+Check with `--trace-host=wnd_set_state_ptr,renderer_get_window_canvas` and compare window-record dims at each ShowWindow boundary. Fix goes in `src/09a5-handlers-window.wat` (CreateWindowExA / ShowWindow handlers) and/or `lib/renderer.js` (getWindowCanvas).
+
 ## Status (2026-04-19, night-2) — DDCAPS_3D + DI-QI AddRef; new blocker is winmm aux*
 
 Two fixes cascaded MCM deep into init:
