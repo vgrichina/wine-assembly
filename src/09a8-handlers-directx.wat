@@ -1593,6 +1593,11 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $slot (call $dx_slot_of (local.get $entry)))
     (call $host_dx_surface_sync (local.get $slot) (i32.const 1))
+    ;; If primary, present on ReleaseDC (mirrors Unlock). Apps like ddex2
+    ;; draw via GetDC/StretchBlt/ReleaseDC without ever calling Lock/Unlock,
+    ;; so without this the DIB update never reaches the screen.
+    (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
+      (then (call $dx_present (local.get $entry))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
