@@ -248,6 +248,11 @@
 
   ;; IDirect3DDevice_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vp_entry i32)
+    (if (local.get $arg1) (then
+      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
+      (if (local.get $vp_entry)
+        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -354,6 +359,11 @@
 
   ;; IDirect3DDevice2_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vp_entry i32)
+    (if (local.get $arg1) (then
+      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
+      (if (local.get $vp_entry)
+        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

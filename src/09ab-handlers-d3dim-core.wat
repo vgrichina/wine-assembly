@@ -243,11 +243,15 @@
 
   ;; ── Current viewport binding ──────────────────────────────────
   (func $d3dim_set_current_viewport (param $this i32) (param $lpVp i32)
-    (local $state i32) (local $slot i32)
+    (local $state i32) (local $slot i32) (local $vp_entry i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.eqz (local.get $state)) (then (global.set $eax (i32.const 0)) (return)))
     (if (local.get $lpVp)
-      (then (local.set $slot (call $dx_slot_of (call $dx_from_this (local.get $lpVp)))))
+      (then
+        (local.set $vp_entry (call $dx_from_this (local.get $lpVp)))
+        (local.set $slot (call $dx_slot_of (local.get $vp_entry)))
+        (if (local.get $vp_entry)
+          (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $this)))))
       (else (local.set $slot (i32.const 0))))
     (call $gs32 (i32.add (local.get $state) (global.get $D3DIM_OFF_CUR_VP)) (local.get $slot))
     (global.set $eax (i32.const 0)))
