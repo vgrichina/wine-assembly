@@ -983,8 +983,10 @@
         (then (local.set $sz (i32.const 380))))
       (call $zero_memory (local.get $wa) (local.get $sz))
       (i32.store (local.get $wa) (local.get $sz)) ;; preserve dwSize
-      ;; dwCaps = DDCAPS_BLT | DDCAPS_BLTCOLORFILL | DDCAPS_COLORKEY
-      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))
+      ;; dwCaps = DDCAPS_3D | DDCAPS_BLT | DDCAPS_BLTCOLORFILL | DDCAPS_COLORKEY.
+      ;; DDCAPS_3D (bit 0) is required — MCM's acceptability gate at 0x00465441
+      ;; tests `[DDCAPS.dwCaps] & 1` to decide whether the driver offers 3D.
+      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24041))
       ;; dwZBufferBitDepths = DDBD_16 (0x400) — MCM checks
       (if (i32.gt_u (local.get $sz) (i32.const 0x38))
         (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))
@@ -1002,7 +1004,7 @@
         (then (local.set $sz (i32.const 380))))
       (call $zero_memory (local.get $wa) (local.get $sz))
       (i32.store (local.get $wa) (local.get $sz))
-      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24040))
+      (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x24041))
       (if (i32.gt_u (local.get $sz) (i32.const 0x38))
         (then (i32.store (i32.add (local.get $wa) (i32.const 0x38)) (i32.const 0x400))))
       (if (i32.gt_u (local.get $sz) (i32.const 0x3c))

@@ -5,6 +5,22 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19, night) — FIXED: DDCAPS_3D was missing from GetCaps
+
+Root cause of the whole "Could not find any 3-D acceleration hardware" bail: our `IDirectDraw::GetCaps` handler filled `DDCAPS.dwCaps = 0x24040` (BLT | BLTCOLORFILL | COLORKEY) but forgot `DDCAPS_3D = 0x1`.
+
+MCM's device wrapper stores the DDCAPS struct at `[wrapper+0x28..]`, so `[wrapper+0x2c]` IS `DDCAPS.dwCaps`. The acceptability gate at `0x00465441` (`test cl, 0x1; jnz skip_error`) is literally `DDCAPS.dwCaps & DDCAPS_3D`. Without that bit, every driver is marked as "no 3D" regardless of how many modes/formats we enumerate downstream.
+
+Fix (`src/09a8-handlers-directx.wat:987,1005`): `dwCaps = 0x24041` for both HW and HEL caps.
+
+**Result:** MCM now passes the 3D gate and proceeds into the real init path:
+- LoadString / MessageBox "testing video memory" (as before)
+- Registry DriverInfo writes (new)
+- DirectInput init — `CreateDevice` → `QueryInterface` → `Release` cycle (new — API #0x436, 0x43b, 0x43d)
+- Crashes further down at `dbg_prev_eip=0x00450f4e` with EIP=0, arg `0xffc1202c` — entirely new code region; prior bail location 0x00465xxx is long past.
+
+Next session: narrow the new crash at 0x00450f4e. The suspicious args `0xbada1100 / 0x0000002c / 0xffc1202c` suggest a bogus function-pointer argument (the `ffc1202c` looks like heap-garbage cast to a pointer), probably an unimplemented COM method slot still returning 0 that MCM then dereferences.
+
 ## Status (2026-04-19, evening) — method 23 exonerated; real bail is [dev+0x2c] bit 0
 
 Traced method 23 (`0x00465830`) to completion with `--trace-at=0x00465c26` + mode-table dump. **Method 23 returns 1** — mode 2 (640x480x16) survives the full filter chain with `[mode+0x10]=1`:
