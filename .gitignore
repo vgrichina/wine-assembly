@@ -4,6 +4,8 @@ node_modules/
 .DS_Store
 .claude/
 scratch/
+*-opcodes.log
+apps/*.log
 binaries
 *.exe
 *.png
