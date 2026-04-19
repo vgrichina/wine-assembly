@@ -5,6 +5,21 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-04-19, later)
+
+**MCM-2 progress — texture video-memory test passes** (pending commit): MCM measures texture allocation cost by delta-ing `IDirectDraw2::GetAvailableVidMem` across `CreateSurface`/`Release`. Fixed by: (1) track a running `$dx_vidmem_used` counter incremented in `CreateSurface` (surface + backbuffer + mipmap chain ≈ `dib_size × 4/3` when `DDSCAPS_MIPMAP` is set) and decremented in `IDirectDrawSurface::Release` (exact bytes stashed at entry+24); (2) `GetAvailableVidMem` returns `8MB - used` for lpdwFree, constant 8MB for lpdwTotal; (3) in `CreateSurface`, fall back to `$dx_display_bpp` when ddpfPixelFormat.dwRGBBitCount is 0 — MCM builds texture DDSDs from our stub `EnumTextureFormats` which leaves the format zeroed.
+
+Effect — OutputDebugString now matches expected for every level:
+```
+16 bit 256x256 texture requires 131072 bytes (expected 131072)
+16 bit 256x256 mipmap  requires 174762 bytes (expected 174762)
+16 bit 128x128 texture requires  32768 bytes (expected  32768)
+16 bit 128x128 mipmap  requires  43690 bytes (expected  43690)
+...
+```
+
+**Still blocked:** after all texture checks pass for both candidate modes (640x480x16 and 800x600x16) and a final setup pass runs for the chosen mode (incl. CreateDevice / EnumTextureFormats / CreateMaterial / GetHandle / SetMaterial), MCM still bails with "Could not find any 3-D acceleration hardware." The bail is at `0x004331db` (`test eax,eax; jnz 0x43322f`) where `call 0x465120` returns 0. Inside 0x465120, the failure pivot is `call [ebx]` at `0x004651a2` (virtual method[0] of the MCM inner object `[0x4e2fdc]`, with 1 arg = `[ebp+0x10]`). Needs deeper RE of that vtable dispatch.
+
 ## Status (2026-04-19)
 
 **MCM-2 partial fix** (commit `15b81d3`): GetCaps now fills `dwVidMemTotal`/`dwVidMemFree` (offset 0x3C/0x40 = 8MB) and `dwZBufferBitDepths` (0x38 = DDBD_16). MCM caches driver caps into its per-device wrapper and uses `DDCAPS.dwVidMemTotal` as the surface-budget in the per-mode video-memory check inside method-23 sub-function `0x00491400`. With 8MB reported, modes pass that gate and MCM now progresses through the full per-mode test path: SetDisplayMode → CreateSurface → Blt/Flip loop (video-memory testing) → GetPixelFormat → CreateDevice → EnumTextureFormats → CreateMaterial → GetHandle → SetMaterial → Release chain, for each of the two candidate 16bpp modes (640x480, 800x600).
