@@ -270,6 +270,17 @@ Verification with `--trace-ini` (new flag): `[Description] Name="Architecture"`,
 
 **New blocker — batch ~240 crash:** `mov [edx], 0x4c` at `0x745e0403` with `edx=0x7c3e0030` (way past heap end `0x74fd7ee8`). `esi=0x74a16970` (framework data). Some COM call returns a garbage out-pointer that the app writes through. `[edx]=0x4c` looks like a structure `dwSize` init, so it's likely an output DDSURFACEDESC2 or similar that our handler should have supplied. New tasks #5/#6 track this.
 
+**Update (2026-04-19, cont.) — crash located in d3drm.dll, size 0x4c = D3DLIGHT.**
+
+- `0x745e0403` = `d3drm.dll + 0x45403` (d3drm loaded at 0x7459b000). File imageBase=0x64780000, so the crashing function is at `0x647c5376..0x647c54c1` in the shipped DLL.
+- The 0x4c-byte struct is **D3DLIGHT**: dwSize(4) + dwLightType(4) + D3DCOLORVALUE(16) + dvPosition(12) + dvDirection(12) + dvRange(4) + dvFalloff(4) + dvAttenuation0/1/2(12) + dvTheta(4) + dvPhi(4) = 76 bytes. The tail `mov dword [edx+0x4c], 0x1` is `dwFlags` being set to 1 (i.e. the caller-side "has light" flag).
+- Caller in ARCHITEC at `0x74469b49` is `call [ecx+0x34]` — **IDirect3DDevice2 method 13 = SetCurrentViewport**, matching the preceding `[COM api_id=1324]` trace. So the trap fires *inside* the SetCurrentViewport implementation in d3drm.
+- `edx=0x7c3e0030` is our COM_WRAPPERS slot-6 guest address (the viewport wrapper). d3drm's internal light-pool enumerator is treating the viewport wrapper as a D3DLIGHT pool entry and scribbling over it. WASM memory is fine (`g2w(0x7c3e0030)=0x07ff2030`, well under 128 MB) — the OOB actually fires later on a d3drm-internal pointer derived from the corrupted wrapper contents, not on the first `mov` itself. The sanity-clamp in `$dx_slot_wa` never fires, so the viewport slot stays sane.
+- **Smoking gun** (violates the fail-fast-stubs memory): `$handle_IDirect3DLight_{Initialize,SetLight,GetLight}` at `src/09a8-handlers-directx.wat:3194-3204` are silent `eax=0` stubs that neither populate the caller's D3DLIGHT* nor update any DX_OBJECTS state. When d3drm's IM-backed RM pipeline later enumerates viewport lights via our `IDirect3DViewport3_AddLight`/`NextLight`, it gets our COM wrappers back and stores them where it expects private light records, leading to the eventual scribble.
+- `$handle_IDirect3DViewport3_AddLight`/`NextLight` at lines 3125/3133 likely need review too — haven't inspected yet.
+
+**Next session: start here.** Implement real D3DLight state (dwSize/dwLightType/color/position/attenuation) in DX_OBJECTS, make SetLight/GetLight copy to/from the caller's D3DLIGHT*, and make Viewport::AddLight/NextLight track a per-viewport list of light slot indices. That should keep d3drm's internal pool from adopting our wrappers as light records.
+
 **Still unexplained:** no `CreateFileA("ar_mesh.*")` is observed even with INI working. The mesh-loader path fires after the `Inform0` read but never hits file I/O — likely a catch earlier in the chain. Expect the OOB crash and missing mesh load to be the same bug.
 
 **New trace flags in `test/run.js`:** `--trace-fs` (CreateFile hit/miss), `--trace-ini` (section/key/value resolution). Both gated on `traceCategories.has('fs'|'ini')`.
