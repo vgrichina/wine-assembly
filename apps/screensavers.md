@@ -317,6 +317,20 @@ Fix (`src/09a8-handlers-directx.wat`):
 
 Dangling guest ptrs now continue to dispatch to valid handlers (QI/Release/etc. stay addressable); the worst case is a stale Release that decrements a zero refcount, which is harmless with the `<= 0 ⇒ leak` branch. 256 slots is plenty for a screensaver run.
 
+**Update (2026-04-19, cont.5) — black-frame blocker identified: DrawPrimitive family is stubbed.**
+
+With the d3dim state-ptr fix in, ARCHITEC now runs 800 batches / 27488 API calls clean, no traps — but back-canvas stays solid black. MCM: same story (400 batches / 7330 API calls, black 640×480 canvas).
+
+Root cause is straightforward inspection of `src/09a8-handlers-directx.wat` lines 3024–3054: every D3D draw call is a silent return-zero stub that only pops ESP — `DrawPrimitive`, `DrawIndexedPrimitive`, `DrawPrimitive{Strided,VB}`, `DrawIndexedPrimitive{Strided,VB}`. Same for `IDirect3DDevice_Execute` (the execute-buffer path used by MCM's older d3dim). Clear/BeginScene/EndScene, SetRenderState, SetMatrix, viewport/light state are all real now — but nothing rasterizes primitives into the back buffer, so every `$dx_present` flips an empty surface.
+
+**Next session.** Implementing a software rasterizer is a multi-session project. Minimum viable path:
+1. Decode execute-buffer opcodes (`D3DOP_TRIANGLELIST`, `D3DOP_STATERENDER`, `D3DOP_PROCESSVERTICES`, etc.) from the guest-supplied buffer, then call the same draw primitives as the DrawPrimitive path.
+2. Triangle rasterizer into the current render-target surface (span-based, no Z-buffer for Phase 1; add ZBUFFER once lit shading looks right).
+3. Transform pipeline: concat World × View × Proj, apply to incoming vertices, divide-by-w, viewport scale.
+4. Color fill first (diffuse only), then add Gouraud interpolation, then textures.
+
+Even a flat-shaded no-texture rasterizer would show that MCM/ARCHITEC are live and producing geometry. That alone is a good milestone worth chasing.
+
 Verified: ARCHITEC.SCR `/s` runs clean through 2000 batches; MARBLES.EXE unaffected (800-batch smoke).
 
 **Next blocker:** geometry still missing. Per earlier trace each `Execute` is a lone `STATETRANSFORM size=8 count=3` with no `PROCESSVERTICES` / `TRIANGLE` — the mesh-load path still never emits `CreateFileA("ar_mesh.x")`, so the pipeline is rendering nothing. That's the remaining work.
