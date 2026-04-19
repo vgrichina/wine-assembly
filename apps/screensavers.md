@@ -293,6 +293,34 @@ Next step would be `--watch` on `[esi+0x34]` and a backward walk from the crash 
 
 **New trace flags in `test/run.js`:** `--trace-fs` (CreateFile hit/miss), `--trace-ini` (section/key/value resolution). Both gated on `traceCategories.has('fs'|'ini')`.
 
+**Update (2026-04-19, cont.3) — FIXED: batch-240 OOB was guest-vs-WASM pointer confusion in d3dim-core state helpers.**
+
+`$d3ddev_state` returns a **guest** pointer (from `$heap_alloc`, which per `feedback_heap_alloc_guest_ptr` yields guest addresses). Three spots in `src/09ab-handlers-d3dim-core.wat` applied raw `i32.store` / `i32.load` to `state + offset` without `g2w`, treating it as a WASM address:
+
+- `$d3dim_set_texture` — `state + D3DIM_OFF_TEX_STAGE` store
+- `$d3dim_set_current_viewport` — `state + D3DIM_OFF_CUR_VP` store
+- `$d3dim_get_current_viewport` — `state + D3DIM_OFF_CUR_VP` load
+
+At batch ~240, `$heap_ptr` had grown enough that the state pointer's raw WASM-reinterpretation fell past 128 MB → OOB trap. The earlier "d3rm light-pool scribble" / "`[esi+0x34]` garbage" hypotheses were misdirections — the faulting store was ours, not d3rm's.
+
+Fixed by routing all three through `$gs32`/`$gl32` (which apply `g2w`). ARCHITEC.SCR now runs 800 batches without a trap. Screen is still black: after `~9572` API calls the last COM calls are `SetRenderState(ZFUNC, LESSEQUAL)`, then the guest spins in a tight loop calling `$g2w` with out-of-range guest addresses (the `0xBADA1100` sentinel fires repeatedly on a `ga≈0x003fea90` → `wa≈0x8c010a90` overflow). So one blocker is cleared, next blocker is already visible.
+
+**Update (2026-04-19, cont.4) — FIXED: dx_free was zeroing live COM wrappers, causing NULL-vtable EIP=0 in d3drm.**
+
+After the g2w fixes, a second crash surfaced with `/s` (screensaver mode, which the previous runs didn't exercise): at batch 263 the guest got STUCK at `EIP=0x00000000`, `prev_eip=0x745dd1ec` (d3drm + 0x421ec, an install-surfaces-and-viewport helper). Stack return addr `0x745dd261` points at the instruction right after `call [ecx+0x14]` — IDirect3DViewport3 slot 5 = `SetViewport` — on `this=0x7c3e0030`.
+
+Instrumenting that function entry with `--trace-at=0x745dd1ec --trace-at-dump=0x7c3e0028:16` across 7 calls showed all 6 prior entries had the wrapper populated (`vtbl=0x745124d4 slot=6`), but the 7th had the wrapper zeroed. A `--watch=0x7c3e0030 --watch-value=0x0` confirmed the zeroing was ours: `dx_free` ran `i64.store` on `COM_WRAPPERS + slot*8`. The owning app had called a `Release` that dropped refcount to 0, but d3drm still held an untracked reference (our `SetCurrentViewport` / `AddLight` / etc. stubs don't AddRef the viewport), so its next method call dereferenced a zero vtable.
+
+Fix (`src/09a8-handlers-directx.wat`):
+- `$dx_free` no longer touches the COM wrapper — only zeros the DX_OBJECTS entry type.
+- `$dx_alloc` skips any slot whose wrapper is non-zero, even when the entry itself is "free" — slots with a guest-visible wrapper are now permanently retired to avoid ABA bugs.
+
+Dangling guest ptrs now continue to dispatch to valid handlers (QI/Release/etc. stay addressable); the worst case is a stale Release that decrements a zero refcount, which is harmless with the `<= 0 ⇒ leak` branch. 256 slots is plenty for a screensaver run.
+
+Verified: ARCHITEC.SCR `/s` runs clean through 2000 batches; MARBLES.EXE unaffected (800-batch smoke).
+
+**Next blocker:** geometry still missing. Per earlier trace each `Execute` is a lone `STATETRANSFORM size=8 count=3` with no `PROCESSVERTICES` / `TRIANGLE` — the mesh-load path still never emits `CreateFileA("ar_mesh.x")`, so the pipeline is rendering nothing. That's the remaining work.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):

@@ -90,13 +90,19 @@
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
   (func $dx_alloc (param $type i32) (result i32)
-    (local $i i32) (local $ptr i32)
+    (local $i i32) (local $ptr i32) (local $wrapper_wa i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
       (local.set $ptr (i32.add (global.get $DX_OBJECTS)
         (i32.mul (local.get $i) (i32.const 32))))
-      (if (i32.eqz (i32.load (local.get $ptr)))
+      ;; Slot must be free (type==0) AND have no live COM wrapper (we never
+      ;; reuse a slot whose wrapper was ever handed to the guest, to avoid
+      ;; ABA bugs — some DX APIs AddRef refs we don't track, so dangling
+      ;; guest pointers can outlive our refcount).
+      (local.set $wrapper_wa (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.and (i32.eqz (i32.load (local.get $ptr)))
+                   (i32.eqz (i32.load (local.get $wrapper_wa))))
         (then
           (call $zero_memory (local.get $ptr) (i32.const 32))
           (i32.store (local.get $ptr) (local.get $type))
@@ -199,14 +205,13 @@
     ;; Return guest address: WASM_addr - GUEST_BASE + image_base
     (i32.add (i32.sub (local.get $obj_wa) (global.get $GUEST_BASE)) (global.get $image_base)))
 
-  ;; Free a DX object (zero the type field and COM wrapper)
+  ;; Free a DX object. Keeps the COM wrapper (vtbl+slot) intact so dangling
+  ;; guest ptrs still dispatch to valid handlers — some DX apps hold refs we
+  ;; don't track (AddRef not propagated by every handler yet). The slot is
+  ;; permanently retired: $dx_alloc skips slots with a live wrapper, even
+  ;; when the DX_OBJECTS entry type is 0.
   (func $dx_free (param $entry_wa i32)
-    (local $slot i32) (local $wrapper_wa i32)
-    ;; Zero COM wrapper
-    (local.set $slot (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
-    (local.set $wrapper_wa (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8))))
-    (i64.store (local.get $wrapper_wa) (i64.const 0))
-    ;; Zero the DX_OBJECTS entry type
+    ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
     (i32.store (local.get $entry_wa) (i32.const 0)))
 
   ;; ── Init COM vtables ─────────────────────────────────────────
