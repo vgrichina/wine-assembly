@@ -393,8 +393,11 @@
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE to each
     ;; control, stashes header state in WND_DLG_RECORDS[slot]. Handles
     ;; both integer template IDs and guest string pointers (named
-    ;; entries) via $find_resource.
+    ;; entries) via $find_resource. Route lookup through hInstance so
+    ;; templates in a satellite DLL resolve.
+    (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     ;; Tell the renderer the dialog has been loaded; it builds its JS
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.

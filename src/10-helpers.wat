@@ -159,6 +159,53 @@
     (call $heap_free (local.get $old_ptr))
     (local.get $new_ptr))
 
+  ;; Active resource-lookup base/RVA. During a Load*/FindResource* handler call
+  ;; targeting a DLL, $push_rsrc_ctx sets these to the DLL's load_addr + rsrc_rva.
+  ;; Otherwise, they fall back to the main EXE's $image_base / $rsrc_rva.
+  (func $r_base (result i32)
+    (if (result i32) (global.get $rsrc_ctx_base)
+      (then (global.get $rsrc_ctx_base))
+      (else (global.get $image_base))))
+  (func $r_rva (result i32)
+    (if (result i32) (global.get $rsrc_ctx_base)
+      (then (global.get $rsrc_ctx_rva))
+      (else (global.get $rsrc_rva))))
+
+  ;; Locate a loaded DLL by its HMODULE (load_addr). Returns dll_idx or -1.
+  (func $find_dll_by_base (param $ha i32) (result i32)
+    (local $i i32)
+    (block $notfound (loop $l
+      (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (if (i32.eq
+            (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+            (local.get $ha))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (i32.const -1))
+
+  ;; Switch the resource-lookup context to the given hInstance (HMODULE).
+  ;; 0 or the main EXE's image_base → main EXE (ctx cleared, fallback applies).
+  ;; A DLL's load_addr → that DLL's rsrc dir. Unknown hInstance → main EXE.
+  ;; Not reentrant; Load*/FindResource* handlers must pair with $pop_rsrc_ctx.
+  (func $push_rsrc_ctx (param $hInstance i32)
+    (local $idx i32) (local $rva i32)
+    (global.set $rsrc_ctx_base (i32.const 0))
+    (global.set $rsrc_ctx_rva  (i32.const 0))
+    (if (i32.eqz (local.get $hInstance)) (then (return)))
+    (if (i32.eq (local.get $hInstance) (global.get $image_base)) (then (return)))
+    (local.set $idx (call $find_dll_by_base (local.get $hInstance)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return)))
+    (local.set $rva (i32.load (i32.add (global.get $DLL_RSRC_TABLE)
+      (i32.mul (local.get $idx) (i32.const 8)))))
+    (if (i32.eqz (local.get $rva)) (then (return)))
+    (global.set $rsrc_ctx_base (local.get $hInstance))
+    (global.set $rsrc_ctx_rva  (local.get $rva)))
+
+  (func $pop_rsrc_ctx
+    (global.set $rsrc_ctx_base (i32.const 0))
+    (global.set $rsrc_ctx_rva  (i32.const 0)))
+
   ;; Find resource entry in PE resource directory
   ;; Returns offset of data entry (relative to image_base) or 0
   ;; Compare ASCII string at guest $str_ptr with Unicode resource name at rsrc offset $name_off
@@ -167,8 +214,8 @@
     (local $str_wa i32) (local $name_wa i32) (local $len i32) (local $j i32)
     (local $ch_a i32) (local $ch_r i32)
     (local.set $str_wa (call $g2w (local.get $str_ptr)))
-    (local.set $name_wa (call $g2w (i32.add (global.get $image_base)
-      (i32.add (global.get $rsrc_rva) (local.get $name_off)))))
+    (local.set $name_wa (call $g2w (i32.add (call $r_base)
+      (i32.add (call $r_rva) (local.get $name_off)))))
     (local.set $len (i32.load16_u (local.get $name_wa)))
     (local.set $j (i32.const 0))
     (block $done (loop $cmp
@@ -201,17 +248,17 @@
     (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
     ;; dir_off = offset from image_base to resource directory
     ;; Read number of named + id entries
-    (local.set $named (i32.load16_u (call $g2w (i32.add (global.get $image_base)
+    (local.set $named (i32.load16_u (call $g2w (i32.add (call $r_base)
       (i32.add (local.get $dir_off) (i32.const 12))))))
-    (local.set $ids (i32.load16_u (call $g2w (i32.add (global.get $image_base)
+    (local.set $ids (i32.load16_u (call $g2w (i32.add (call $r_base)
       (i32.add (local.get $dir_off) (i32.const 14))))))
     (local.set $total (i32.add (local.get $named) (local.get $ids)))
     (local.set $e (i32.add (local.get $dir_off) (i32.const 16)))
     (local.set $i (i32.const 0))
     (block $done (loop $loop
       (br_if $done (i32.ge_u (local.get $i) (local.get $total)))
-      (local.set $eid (call $gl32 (i32.add (global.get $image_base) (local.get $e))))
-      (local.set $doff (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $e) (i32.const 4)))))
+      (local.set $eid (call $gl32 (i32.add (call $r_base) (local.get $e))))
+      (local.set $doff (call $gl32 (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))
       ;; If id is a string pointer (>= 0x10000) and entry is named (high bit set), compare strings
       (if (i32.and (i32.ge_u (local.get $id) (i32.const 0x10000))
                    (i32.ne (i32.and (local.get $eid) (i32.const 0x80000000)) (i32.const 0)))
@@ -249,25 +296,28 @@
   ;; FindResourceA: walk type→name→lang, return data entry offset
   (func $find_resource (param $type_id i32) (param $name_id i32) (result i32)
     (local $d i32) (local $lang_off i32) (local $n i32)
+    ;; Bail cleanly when the active module has no resource directory (e.g. a DLL
+    ;; with no .rsrc section, or an hInstance that didn't match any DLL).
+    (if (i32.eqz (call $r_rva)) (then (return (i32.const 0))))
     ;; Level 1: find type
-    (local.set $d (call $rsrc_find_entry (global.get $rsrc_rva) (local.get $type_id)))
+    (local.set $d (call $rsrc_find_entry (call $r_rva) (local.get $type_id)))
     (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
     ;; Level 2: find name (d has high bit set if subdirectory)
     (local.set $d (call $rsrc_find_entry
-      (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF)))
+      (i32.add (call $r_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF)))
       (local.get $name_id)))
     (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
     ;; Level 3: take first language entry
-    (local.set $lang_off (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
+    (local.set $lang_off (i32.add (call $r_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
     (local.set $n (i32.add
-      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 12)))))
-      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 12)))))
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
     (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
     ;; Return the data offset from first entry (skip directory header 16 bytes, read second dword)
-    (local.set $d (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 20)))))
+    (local.set $d (call $gl32 (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 20)))))
     ;; d is now the offset of the data entry (RVA, size, codepage, reserved) relative to rsrc start
     ;; Return as offset from image_base (rsrc_rva + d)
-    (i32.add (global.get $rsrc_rva) (local.get $d)))
+    (i32.add (call $r_rva) (local.get $d)))
 
   ;; Find a WAVE resource by name ID. Walks L1 looking for named type "WAVE",
   ;; then L2 by integer name_id, then takes first lang entry.
@@ -277,23 +327,24 @@
     (local $eid i32) (local $doff i32) (local $str_wa i32) (local $str_len i32)
     (local $type_subdir i32) (local $d i32) (local $lang_off i32) (local $n i32)
     ;; L1: scan entries for named type "WAVE"
-    (local.set $base_wa (call $g2w (i32.add (global.get $image_base) (global.get $rsrc_rva))))
+    (if (i32.eqz (call $r_rva)) (then (return (i32.const 0))))
+    (local.set $base_wa (call $g2w (i32.add (call $r_base) (call $r_rva))))
     (local.set $total (i32.add
       (i32.load16_u (i32.add (local.get $base_wa) (i32.const 12)))
       (i32.load16_u (i32.add (local.get $base_wa) (i32.const 14)))))
-    (local.set $e (i32.add (global.get $rsrc_rva) (i32.const 16)))
+    (local.set $e (i32.add (call $r_rva) (i32.const 16)))
     (block $found_type
     (block $not_found
     (loop $l1
       (br_if $not_found (i32.ge_u (local.get $i) (local.get $total)))
-      (local.set $eid (call $gl32 (i32.add (global.get $image_base) (local.get $e))))
-      (local.set $doff (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $e) (i32.const 4)))))
+      (local.set $eid (call $gl32 (i32.add (call $r_base) (local.get $e))))
+      (local.set $doff (call $gl32 (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))
       ;; Check if named entry (high bit set)
       (if (i32.and (local.get $eid) (i32.const 0x80000000))
         (then
           ;; String offset from rsrc start
-          (local.set $str_wa (call $g2w (i32.add (global.get $image_base)
-            (i32.add (global.get $rsrc_rva) (i32.and (local.get $eid) (i32.const 0x7FFFFFFF))))))
+          (local.set $str_wa (call $g2w (i32.add (call $r_base)
+            (i32.add (call $r_rva) (i32.and (local.get $eid) (i32.const 0x7FFFFFFF))))))
           (local.set $str_len (i32.load16_u (local.get $str_wa)))
           ;; Check if "WAVE" (4 chars: W=0x57, A=0x41, V=0x56, E=0x45)
           (if (i32.and
@@ -316,17 +367,17 @@
     ) ;; $found_type
     ;; L2: find name by integer ID in the type subdirectory
     (local.set $d (call $rsrc_find_entry
-      (i32.add (global.get $rsrc_rva) (i32.and (local.get $type_subdir) (i32.const 0x7FFFFFFF)))
+      (i32.add (call $r_rva) (i32.and (local.get $type_subdir) (i32.const 0x7FFFFFFF)))
       (local.get $name_id)))
     (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
     ;; L3: take first language entry
-    (local.set $lang_off (i32.add (global.get $rsrc_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
+    (local.set $lang_off (i32.add (call $r_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
     (local.set $n (i32.add
-      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 12)))))
-      (i32.load16_u (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 12)))))
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
     (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
-    (local.set $d (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $lang_off) (i32.const 20)))))
-    (i32.add (global.get $rsrc_rva) (local.get $d)))
+    (local.set $d (call $gl32 (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 20)))))
+    (i32.add (call $r_rva) (local.get $d)))
 
   ;; Optional extra args appended after the exe name. JS sets these via
   ;; (export "set_extra_cmdline") before the first GetCommandLineA call.
@@ -787,11 +838,11 @@
     (global.set $rsrc_last_size (i32.const 0))
     (local.set $data_entry (call $find_resource (local.get $type_id) (local.get $name_id)))
     (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
-    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
+    (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
     (global.set $rsrc_last_size
-      (call $gl32 (i32.add (global.get $image_base)
+      (call $gl32 (i32.add (call $r_base)
         (i32.add (local.get $data_entry) (i32.const 4)))))
-    (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+    (call $g2w (i32.add (call $r_base) (local.get $rva))))
 
   ;; LoadStringA / LoadStringW backing — walks RT_STRING directly in WAT.
   ;; Win32 packs string resources into 16-entry bundles; string id N lives
@@ -812,8 +863,8 @@
     (local.set $idx (i32.and (local.get $id) (i32.const 0xF)))
     (local.set $data_entry (call $find_resource (i32.const 6) (local.get $bundle_id)))
     (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
-    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
-    (local.set $wa (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+    (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
+    (local.set $wa (call $g2w (i32.add (call $r_base) (local.get $rva))))
     ;; Skip entries 0..idx-1
     (block $at_entry (loop $skip
       (br_if $at_entry (i32.ge_u (local.get $i) (local.get $idx)))
@@ -969,8 +1020,8 @@
     (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
     (local.set $dlg_key (global.get $rsrc_matched_eid))
     ;; Read RVA from data entry → WASM linear address of template
-    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $data_entry))))
-    (local.set $wa (call $g2w (i32.add (global.get $image_base) (local.get $rva))))
+    (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
+    (local.set $wa (call $g2w (i32.add (call $r_base) (local.get $rva))))
     (local.set $p (local.get $wa))
     ;; Detect DIALOGEX: sig=1 at +0, ver=0xFFFF at +2
     (local.set $is_ex (i32.and

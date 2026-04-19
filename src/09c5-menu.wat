@@ -897,9 +897,9 @@
     (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
     (if (i32.eqz (local.get $entry)) (then (return)))
     ;; data entry: i32 RVA, i32 size
-    (local.set $bytes_g (i32.add (global.get $image_base)
-                          (i32.load (call $g2w (i32.add (global.get $image_base) (local.get $entry))))))
-    (local.set $size (i32.load (call $g2w (i32.add (global.get $image_base)
+    (local.set $bytes_g (i32.add (call $r_base)
+                          (i32.load (call $g2w (i32.add (call $r_base) (local.get $entry))))))
+    (local.set $size (i32.load (call $g2w (i32.add (call $r_base)
                                                     (i32.add (local.get $entry) (i32.const 4))))))
     (if (i32.lt_u (local.get $size) (i32.const 8)) (then (return)))
     (local.set $bytes_w (call $g2w (local.get $bytes_g)))

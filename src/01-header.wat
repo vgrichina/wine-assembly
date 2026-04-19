@@ -444,7 +444,8 @@
   ;; 0x04252000  64KB    Block cache index (4096 slots × 16 bytes)
   ;; 0x04262000  2MB     PE staging area (supports PEs up to 2MB)
   ;; 0x04462000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x04462200  ...     File mapping zone (MapViewOfFile allocations)
+  ;; 0x04462200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x04462400  ...     File mapping zone (MapViewOfFile allocations)
   ;; Total: 2048 pages = 128MB
 
   ;; Memory region bases
@@ -677,6 +678,13 @@
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
   (global $DLL_TABLE i32 (i32.const 0x04462000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
+  (global $DLL_RSRC_TABLE i32 (i32.const 0x04462200))
+  ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
+  ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
+  ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.
+  (global $rsrc_ctx_base (mut i32) (i32.const 0))
+  (global $rsrc_ctx_rva  (mut i32) (i32.const 0))
   (global $exe_size_of_image (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))

@@ -23,6 +23,7 @@
     (local $entry_rva i32) (local $characteristics i32)
     (local $dll_idx i32) (local $tbl_ptr i32)
     (local $src i32) (local $dst i32)
+    (local $rsrc_rva_d i32) (local $rsrc_size_d i32) (local $rsrc_ptr i32)
 
     ;; Validate MZ
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D))
@@ -45,6 +46,9 @@
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
     (local.set $reloc_rva (i32.load (i32.add (local.get $pe_off) (i32.const 160))))
     (local.set $reloc_size (i32.load (i32.add (local.get $pe_off) (i32.const 164))))
+    ;; Resource data directory = entry #2 (offset 136 in optional header)
+    (local.set $rsrc_rva_d  (i32.load (i32.add (local.get $pe_off) (i32.const 136))))
+    (local.set $rsrc_size_d (i32.load (i32.add (local.get $pe_off) (i32.const 140))))
 
     ;; Map sections
     (local.set $section_off (i32.add (local.get $pe_off) (i32.add (i32.const 24) (local.get $opt_hdr_size))))
@@ -82,6 +86,11 @@
     (i32.store (local.get $tbl_ptr) (local.get $load_addr))
     (i32.store (i32.add (local.get $tbl_ptr) (i32.const 4))
       (i32.load (i32.add (local.get $pe_off) (i32.const 80)))) ;; SizeOfImage
+
+    ;; Store resource directory info in DLL_RSRC_TABLE (parallel to DLL_TABLE).
+    (local.set $rsrc_ptr (i32.add (global.get $DLL_RSRC_TABLE) (i32.mul (local.get $dll_idx) (i32.const 8))))
+    (i32.store (local.get $rsrc_ptr)                         (local.get $rsrc_rva_d))
+    (i32.store (i32.add (local.get $rsrc_ptr) (i32.const 4)) (local.get $rsrc_size_d))
 
     ;; Parse export directory
     (if (i32.ne (local.get $export_rva) (i32.const 0))

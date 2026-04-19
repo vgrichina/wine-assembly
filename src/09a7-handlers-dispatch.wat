@@ -1438,7 +1438,9 @@
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $dlg_hwnd (local.get $hwnd))
     (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
     (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
@@ -1472,11 +1474,10 @@
   ;; 818: FindResourceExA(hModule, lpType, lpName, wLanguage) → HRSRC
   ;; Same as FindResourceA but with explicit language (we use first lang match)
   (func $handle_FindResourceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (global.get $rsrc_rva))
-      (then (global.set $eax (i32.const 0))
-             (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; FindResourceExA: arg1=type, arg2=name (reversed from FindResourceA)
+    (call $push_rsrc_ctx (local.get $arg0))
     (global.set $eax (call $find_resource (local.get $arg1) (local.get $arg2)))
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 819: StrChrA(lpStart, wMatch) → pointer to first occurrence or NULL

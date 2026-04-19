@@ -933,10 +933,9 @@
     ;; FindResourceA(hModule, lpName, lpType) → HRSRC (RVA of data entry)
     ;; arg0=hModule, arg1=lpName (MAKEINTRESOURCE or string), arg2=lpType
     ;; Walk resource directory: type(arg2) → name(arg1) → first lang → data entry RVA
-    (if (i32.eqz (global.get $rsrc_rva))
-    (then (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (call $push_rsrc_ctx (local.get $arg0))
     (global.set $eax (call $find_resource (local.get $arg2) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
@@ -1604,10 +1603,14 @@
   ;; 110: LoadStringA
   (func $handle_LoadStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; RT_STRING walker lives in WAT — see $string_load_a in 10-helpers.wat.
+    ;; arg0 = hInstance — may be a satellite DLL (e.g. MCM's lang.dll). Route
+    ;; the resource lookup to that module for the duration of the call.
+    (call $push_rsrc_ctx (local.get $arg0))
     (global.set $eax (call $string_load_a
       (local.get $arg1)                ;; string ID
       (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
       (local.get $arg3)))              ;; max chars
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
@@ -1617,7 +1620,9 @@
   ;; arg1 = lpTableName (MAKEINTRESOURCE int or guest string ptr).
   (func $handle_LoadAcceleratorsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)
+    (call $push_rsrc_ctx (local.get $arg0))
     (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     (global.set $haccel_data (local.get $data))
     (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
     (global.set $haccel (i32.const 0x60001))
@@ -1913,8 +1918,11 @@
     ;; Parse the RT_DIALOG template fully in WAT — allocates child hwnds,
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE, stores header
     ;; state in WND_DLG_RECORDS[slot]. Handles int IDs and guest string
-    ;; pointers (named entries) via $find_resource.
+    ;; pointers (named entries) via $find_resource. Route resource lookup
+    ;; through hInstance so templates in a satellite DLL resolve.
+    (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
@@ -5926,10 +5934,9 @@
 
   ;; 529: FindResourceW — same as FindResourceA (resource IDs are integer MAKEINTRESOURCE values)
   (func $handle_FindResourceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (global.get $rsrc_rva))
-    (then (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (call $push_rsrc_ctx (local.get $arg0))
     (global.set $eax (call $find_resource (local.get $arg2) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -7026,7 +7033,9 @@
   ;; through as miss — freecell/solitaire use ASCII-compatible names).
   (func $handle_LoadAcceleratorsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)
+    (call $push_rsrc_ctx (local.get $arg0))
     (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
+    (call $pop_rsrc_ctx)
     (global.set $haccel_data (local.get $data))
     (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
     (global.set $haccel (i32.const 0x60001))
@@ -7696,10 +7705,12 @@
 
   ;; 695: LoadStringW — load string resource (writes ASCII into buffer for now)
   (func $handle_LoadStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $push_rsrc_ctx (local.get $arg0))
     (global.set $eax (call $string_load_a
       (local.get $arg1)                ;; string ID
       (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
       (local.get $arg3)))              ;; max chars
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

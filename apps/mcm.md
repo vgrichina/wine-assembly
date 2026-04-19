@@ -447,4 +447,25 @@ Files likely touched: `src/09a-handlers.wat` (LoadStringA, LoadAcceleratorsA, Lo
 
 - Sessions 4-6 hypotheses about "null vtable[10]", "3D caps rejected", "vtable slot 7 never runs" — all correct observations but downstream of this single root cause.
 - "MCM-1" open task (ESP leak) — pre-existing fix already landed; not related to current blocker.
+
+## 2026-04-18 session 8 — MCM-7 fixed: per-module resource lookup
+
+Implemented per-module `.rsrc` routing end-to-end:
+
+- `src/08b-dll-loader.wat` now records each DLL's resource-dir RVA+size in a new parallel `DLL_RSRC_TABLE` (0x04462200, 16×8B).
+- `src/10-helpers.wat` adds `$r_base` / `$r_rva` helpers plus `$push_rsrc_ctx(hInstance)` / `$pop_rsrc_ctx`. `$find_resource`, `$find_resource_named_type`, `$rsrc_find_data_wa`, `$string_load_a`, `$dlg_load` all route through the helpers so they follow the active module.
+- Handlers that take an `hInstance` now push/pop context: `LoadStringA`/`W`, `FindResourceA`/`W`, `FindResourceExA`, `LoadAcceleratorsA`/`W`, `DialogBoxParamA`, `CreateDialogParamA`/`W`.
+- `lib/filesystem.js` MapViewOfFile base shifted 0x04462200 → 0x04462400 to make room for the new table.
+
+**Outcome:** `LoadStringA(hLangDll, 0x13b3, ...)` now returns real strings. MCM no longer crashes on the "Could not find 3-D acceleration hardware" path; it advances ~1079 API calls further to a registry-based installation check that posts MessageBox *"Installation error. Please reinstall Microsoft Motocross Madness."* and exits cleanly. Different, unrelated blocker — open as MCM-8.
+
+### MCM-8 (new)
+
+Installation check at `RegOpenKeyExA(HKLM, 0x03fffb00, ...)` (API #927) fails (returns nonzero; our stub returns 0x100010) and the app takes its "reinstall" branch. Need to inspect the subkey path at `0x03fffb00`, decide whether to fake a "MCM is installed at path X" registry entry, or synthesize it via `test/run.js` pre-seeded registry. No WAT changes expected.
+
+### Not yet covered by per-module context
+
+- `LoadMenuA`/`W`, `LoadBitmapA`/`W`, `LoadIconA`/`W`, `LoadCursorA`/`W`: these return fake handles and resolve lazily; not wired through `$push_rsrc_ctx` yet. Fix if any app ships menus/bitmaps/cursors in a satellite DLL (none known today).
+- `LockResource`: HRSRC is just a data-entry offset; caller loses track of which module owns it. Fine as long as `FindResource` → `LoadResource` → `LockResource` chains stay within the main EXE, which is the only path exercised today.
+- `GetFileVersionInfoSizeA`/`A`: always read from main EXE (`lpFilename` ignored). Matches current semantics.
 - The line 110 note about `0x468130` calling RegQueryValueExA — wrong, it's RegEnumKeyA.
