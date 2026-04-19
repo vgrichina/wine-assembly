@@ -291,6 +291,8 @@
   (import "host" "fs_get_current_directory" (func $host_fs_get_current_directory (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_current_directory" (func $host_fs_set_current_directory (param i32 i32) (result i32)))
   (import "host" "fs_get_full_path_name" (func $host_fs_get_full_path_name (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_search_path" (func $host_fs_search_path (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; fs_search_path(pathWA, fileNameWA, extWA, bufLen, bufGA, filePartPtrGA, isWide) → len or 0
   (import "host" "fs_get_short_path_name" (func $host_fs_get_short_path_name (param i32 i32 i32 i32) (result i32)))
   (import "host" "fs_create_file_mapping" (func $host_fs_create_file_mapping (param i32 i32 i32 i32) (result i32)))
   ;; fs_create_file_mapping(hFile, protect, sizeHi, sizeLo) → mapping handle

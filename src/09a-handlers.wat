@@ -2104,9 +2104,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 915: SearchPathA(lpPath, lpFileName, lpExtension, nBufLen, lpBuffer, lpFilePart) — return 0 (not found)
+  ;; 915: SearchPathA(lpPath, lpFileName, lpExtension, nBufLen, lpBuffer, lpFilePart) — 6 args stdcall
   (func $handle_SearchPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; 0 = not found
+    (local $wa_esp i32) (local $arg5 i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    ;; 6th arg (lpFilePart) lives at esp+20 (skip ret addr + 5 visible args)
+    (local.set $arg5 (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_fs_search_path
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)        ;; bufLen
+      (local.get $arg4)        ;; bufGA (guest addr, host g2w's)
+      (local.get $arg5)        ;; filePartPtrGA
+      (i32.const 0)))          ;; isWide=0
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 

@@ -238,11 +238,47 @@
             (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
           ;; D3DOP_EXIT (11): stop walking
           (br_if $done (i32.eq (local.get $op) (i32.const 11)))
+          ;; ── Opcode dispatch ──────────────────────────────────────
+          ;; 3 = D3DOP_TRIANGLE    (8-byte records)
+          (if (i32.eq (local.get $op) (i32.const 3)) (then
+            (call $d3dim_exec_triangles (local.get $arg0) (local.get $buf)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+          ;; 7 = D3DOP_STATELIGHT   (8-byte D3DSTATE records)
+          (if (i32.eq (local.get $op) (i32.const 7)) (then
+            (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 7)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+          ;; 8 = D3DOP_STATERENDER  (8-byte D3DSTATE records)
+          (if (i32.eq (local.get $op) (i32.const 8)) (then
+            (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 8)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+          ;; 6 = D3DOP_STATETRANSFORM  (same {type,value} layout as STATE*)
+          (if (i32.eq (local.get $op) (i32.const 6)) (then
+            (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 6)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+          ;; Any opcode outside {3,6,7,8,11} is unhandled. Crash with the name
+          ;; + opcode in the log so we know exactly what to implement next.
+          ;; Known-but-unimplemented: 1=POINT 2=LINE 4=MATRIXLOAD 5=MATRIXMULT
+          ;; 9=PROCESSVERTICES 10=TEXTURELOAD 12=BRANCH 13=SPAN 14=SETSTATUS.
+          (if (i32.and
+                 (i32.ne (local.get $op) (i32.const 3))
+                 (i32.and
+                   (i32.ne (local.get $op) (i32.const 6))
+                   (i32.and
+                     (i32.ne (local.get $op) (i32.const 7))
+                     (i32.ne (local.get $op) (i32.const 8)))))
+            (then
+              ;; kind=9 unimpl-opcode: op, size, count, ins_offset
+              (call $host_dx_trace (i32.const 9) (local.get $op) (local.get $sz)
+                (local.get $cnt) (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
+              (call $crash_unimplemented (global.get $D3DIM_UNIMPL_EXEC_OP))))
           (local.set $step (i32.add (i32.const 4) (i32.mul (local.get $sz) (local.get $cnt))))
           ;; Guard against zero/huge step to avoid infinite loops.
           (br_if $done (i32.eqz (local.get $step)))
           (local.set $wa (i32.add (local.get $wa) (local.get $step)))
-          (br $lp)))))))
+          (br $lp)))))
+      ;; After Execute returns, apps expect the back buffer to be updated.
+      ;; Present immediately if the RT is the primary (same rule as EndScene).
+      (call $d3dim_end_scene (local.get $arg0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -506,25 +542,13 @@
   ;; Untransformed (D3DVT_VERTEX/LVERTEX) is ignored for now — rasterizer will
   ;; handle those once the WVP pipeline and triangle fill land.
   (func $handle_IDirect3DDevice2_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dwVertexCount i32) (local $rt i32) (local $v_wa i32) (local $i i32)
-    (local $sx i32) (local $sy i32) (local $col i32)
+    (local $dwVertexCount i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
-    (if (i32.and (i32.eq (local.get $arg2) (i32.const 3))
-                 (i32.ne (local.get $arg3) (i32.const 0))) (then
-      (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
-      (if (local.get $rt) (then
-        (local.set $v_wa (call $g2w (local.get $arg3)))
-        (local.set $i (i32.const 0))
-        (block $done (loop $lp
-          (br_if $done (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
-          (local.set $sx (i32.trunc_f32_s (f32.load (local.get $v_wa))))
-          (local.set $sy (i32.trunc_f32_s (f32.load (i32.add (local.get $v_wa) (i32.const 4)))))
-          (local.set $col (i32.load (i32.add (local.get $v_wa) (i32.const 16))))
-          (call $viewport_fill_rect (local.get $rt) (local.get $sx) (local.get $sy)
-            (i32.const 2) (i32.const 2) (local.get $col))
-          (local.set $v_wa (i32.add (local.get $v_wa) (i32.const 32)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $lp)))))))
+    ;; kind=10 DP2: primType, vtxType, vtxCount, lpvVertices
+    (call $host_dx_trace (i32.const 10) (local.get $arg1) (local.get $arg2)
+      (local.get $dwVertexCount) (local.get $arg3))
+    (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $dwVertexCount))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
@@ -669,8 +693,19 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DDevice7_DrawPrimitive — 5 args (incl. this)
+  ;; IDirect3DDevice7::DrawPrimitive(primType, fvf, lpvVerts, dwVtxCount, dwFlags)
+  ;; DX7 replaces the explicit vtxType enum with an FVF bitfield. For the
+  ;; subset we rasterize (XYZRHW-bearing "TL" layout), the FVF is 0x104 =
+  ;; D3DFVF_XYZRHW|D3DFVF_DIFFUSE (16 bytes, no tex coords) or 0x1C4 with 2D
+  ;; tex coords. We detect XYZRHW and treat as TLVERTEX; other FVFs are skipped.
   (func $handle_IDirect3DDevice7_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dwVertexCount i32) (local $vtxType i32)
+    (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    ;; D3DFVF_XYZRHW = 0x0004 — presence ⇒ treat as TLVERTEX for Phase 2.
+    (local.set $vtxType (i32.const 0))
+    (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
+    (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+      (local.get $arg3) (local.get $dwVertexCount))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 

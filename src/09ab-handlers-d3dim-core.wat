@@ -33,6 +33,13 @@
   (global $D3DIM_OFF_VP_SCALE  i32 (i32.const 3104))
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
 
+  ;; Crash-name strings for unimplemented D3DIM paths. 01-header.wat uses
+  ;; 0x100..0x2FB; 0x300..0x4000 is unused before the API hash table.
+  (data (i32.const 0x340) "D3DIM:Execute opcode\00")
+  (data (i32.const 0x360) "D3DIM:DrawPrimitive vtx/prim\00")
+  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x340))
+  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x360))
+
   ;; ── QueryInterface upgrade routing ────────────────────────────
   ;; Recognizes versioned IIDs by their first DWORD and writes the matching
   ;; vtable to *ppvObj. AddRef the same DX_OBJECTS slot.
@@ -597,3 +604,250 @@
       (local.set $rtw (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
       (local.set $rth (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))
       (call $zbuffer_fill (local.get $zbuf) (local.get $rtw) (local.get $rth) (local.get $zval)))))
+
+  ;; ============================================================
+  ;; PHASE 2 — Flat-shaded triangle rasterizer (TLVERTEX fast path)
+  ;; ============================================================
+  ;; Rasterize a single triangle with a uniform color. Integer screen coords.
+  ;; Uses the "split at middle vertex" scheme: sort y0≤y1≤y2, then for every
+  ;; scanline y in [y0..y2] compute left/right x on the two active edges and
+  ;; emit one 1-tall fill_rect. Degenerate (zero-area) triangles are skipped.
+  (func $rasterize_triangle_flat
+    (param $rt_entry i32)
+    (param $x0 i32) (param $y0 i32)
+    (param $x1 i32) (param $y1 i32)
+    (param $x2 i32) (param $y2 i32)
+    (param $color i32)
+    (local $tx i32) (local $ty i32)
+    (local $y i32) (local $xa i32) (local $xb i32) (local $xl i32) (local $xr i32)
+    (local $dy_tot i32) (local $dy_upper i32) (local $dy_lower i32)
+    ;; Sort by y (bubble).
+    (if (i32.gt_s (local.get $y0) (local.get $y1)) (then
+      (local.set $tx (local.get $x0)) (local.set $ty (local.get $y0))
+      (local.set $x0 (local.get $x1)) (local.set $y0 (local.get $y1))
+      (local.set $x1 (local.get $tx)) (local.set $y1 (local.get $ty))))
+    (if (i32.gt_s (local.get $y1) (local.get $y2)) (then
+      (local.set $tx (local.get $x1)) (local.set $ty (local.get $y1))
+      (local.set $x1 (local.get $x2)) (local.set $y1 (local.get $y2))
+      (local.set $x2 (local.get $tx)) (local.set $y2 (local.get $ty))))
+    (if (i32.gt_s (local.get $y0) (local.get $y1)) (then
+      (local.set $tx (local.get $x0)) (local.set $ty (local.get $y0))
+      (local.set $x0 (local.get $x1)) (local.set $y0 (local.get $y1))
+      (local.set $x1 (local.get $tx)) (local.set $y1 (local.get $ty))))
+    (local.set $dy_tot   (i32.sub (local.get $y2) (local.get $y0)))
+    (local.set $dy_upper (i32.sub (local.get $y1) (local.get $y0)))
+    (local.set $dy_lower (i32.sub (local.get $y2) (local.get $y1)))
+    (if (i32.le_s (local.get $dy_tot) (i32.const 0)) (then
+      ;; Fully-flat triangle: emit a thin horizontal bar on y0 from min(x) to max(x)
+      (local.set $xl (local.get $x0))
+      (if (i32.lt_s (local.get $x1) (local.get $xl)) (then (local.set $xl (local.get $x1))))
+      (if (i32.lt_s (local.get $x2) (local.get $xl)) (then (local.set $xl (local.get $x2))))
+      (local.set $xr (local.get $x0))
+      (if (i32.gt_s (local.get $x1) (local.get $xr)) (then (local.set $xr (local.get $x1))))
+      (if (i32.gt_s (local.get $x2) (local.get $xr)) (then (local.set $xr (local.get $x2))))
+      (call $viewport_fill_rect (local.get $rt_entry)
+        (local.get $xl) (local.get $y0)
+        (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+        (i32.const 1) (local.get $color))
+      (return)))
+    (local.set $y (local.get $y0))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_s (local.get $y) (local.get $y2)))
+      ;; Long edge: x0→x2 parameterized by dy_tot.
+      (local.set $xb (i32.add (local.get $x0)
+        (i32.div_s (i32.mul (i32.sub (local.get $x2) (local.get $x0))
+                            (i32.sub (local.get $y)  (local.get $y0)))
+                   (local.get $dy_tot))))
+      (if (i32.lt_s (local.get $y) (local.get $y1))
+        (then
+          (if (i32.gt_s (local.get $dy_upper) (i32.const 0))
+            (then (local.set $xa (i32.add (local.get $x0)
+              (i32.div_s (i32.mul (i32.sub (local.get $x1) (local.get $x0))
+                                  (i32.sub (local.get $y)  (local.get $y0)))
+                         (local.get $dy_upper)))))
+            (else (local.set $xa (local.get $x0)))))
+        (else
+          (if (i32.gt_s (local.get $dy_lower) (i32.const 0))
+            (then (local.set $xa (i32.add (local.get $x1)
+              (i32.div_s (i32.mul (i32.sub (local.get $x2) (local.get $x1))
+                                  (i32.sub (local.get $y)  (local.get $y1)))
+                         (local.get $dy_lower)))))
+            (else (local.set $xa (local.get $x1))))))
+      (local.set $xl (local.get $xa))
+      (local.set $xr (local.get $xb))
+      (if (i32.gt_s (local.get $xl) (local.get $xr)) (then
+        (local.set $xl (local.get $xb))
+        (local.set $xr (local.get $xa))))
+      (call $viewport_fill_rect (local.get $rt_entry)
+        (local.get $xl) (local.get $y)
+        (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+        (i32.const 1) (local.get $color))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $lp))))
+
+  ;; ── DrawPrimitive core (TLVERTEX) ──────────────────────────────
+  ;; TLVERTEX layout (32 bytes): +0 sx f32, +4 sy f32, +8 sz f32, +12 rhw f32,
+  ;;                             +16 color 0xAARRGGBB, +20 spec, +24 tu, +28 tv.
+  ;; primType: 1=POINTLIST, 2=LINELIST, 3=LINESTRIP, 4=TRIANGLELIST,
+  ;;           5=TRIANGLESTRIP, 6=TRIANGLEFAN.
+  ;; vtxType:  1=VERTEX, 2=LVERTEX, 3=TLVERTEX.
+  ;; Phase 2 supports only vtxType=TLVERTEX. Points still plot as 2×2 dots.
+  (func $d3dim_draw_primitive
+    (param $this i32) (param $primType i32) (param $vtxType i32)
+    (param $lpvVertices i32) (param $dwVertexCount i32)
+    (local $rt i32) (local $v_wa i32) (local $i i32) (local $n i32)
+    (local $v0 i32) (local $v1 i32) (local $v2 i32)
+    (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
+    (local $col i32)
+    (if (i32.or (i32.eqz (local.get $lpvVertices)) (i32.eqz (local.get $dwVertexCount)))
+      (then (return)))
+    ;; Fail-fast on non-TLVERTEX — until the WVP pipeline is wired into
+    ;; DrawPrimitive, untransformed vertices would render as noise. The
+    ;; crash_unimplemented log names which app hit it and at what EIP.
+    (if (i32.ne (local.get $vtxType) (i32.const 3))
+      (then (call $crash_unimplemented (global.get $D3DIM_UNIMPL_DRAW))))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $this)))
+    (if (i32.eqz (local.get $rt)) (then (return)))
+    (local.set $v_wa (call $g2w (local.get $lpvVertices)))
+    (if (i32.eq (local.get $primType) (i32.const 1)) (then
+      ;; POINTLIST — keep prior dot-plot behavior
+      (local.set $i (i32.const 0))
+      (block $pdone (loop $plp
+        (br_if $pdone (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
+        (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))))
+        (call $viewport_fill_rect (local.get $rt)
+          (i32.trunc_f32_s (f32.load (local.get $v0)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (i32.const 2) (i32.const 2)
+          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $plp)))
+      (return)))
+    (if (i32.eq (local.get $primType) (i32.const 4)) (then
+      ;; TRIANGLELIST
+      (local.set $n (i32.div_u (local.get $dwVertexCount) (i32.const 3)))
+      (local.set $i (i32.const 0))
+      (block $tdone (loop $tlp
+        (br_if $tdone (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (i32.mul (local.get $i) (i32.const 3)) (i32.const 32))))
+        (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
+        (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
+        (local.set $x0 (i32.trunc_f32_s (f32.load (local.get $v0))))
+        (local.set $y0 (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4)))))
+        (local.set $x1 (i32.trunc_f32_s (f32.load (local.get $v1))))
+        (local.set $y1 (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4)))))
+        (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
+        (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
+        (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (call $rasterize_triangle_flat (local.get $rt)
+          (local.get $x0) (local.get $y0)
+          (local.get $x1) (local.get $y1)
+          (local.get $x2) (local.get $y2)
+          (local.get $col))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $tlp)))
+      (return)))
+    (if (i32.eq (local.get $primType) (i32.const 5)) (then
+      ;; TRIANGLESTRIP: indices (0,1,2),(1,2,3)…  (alternating winding ignored — flat fill)
+      (if (i32.lt_u (local.get $dwVertexCount) (i32.const 3)) (then (return)))
+      (local.set $n (i32.sub (local.get $dwVertexCount) (i32.const 2)))
+      (local.set $i (i32.const 0))
+      (block $sdone (loop $slp
+        (br_if $sdone (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))))
+        (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
+        (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
+        (call $rasterize_triangle_flat (local.get $rt)
+          (i32.trunc_f32_s (f32.load (local.get $v0)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v1)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v2)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $slp)))
+      (return)))
+    (if (i32.and
+           (i32.ne (local.get $primType) (i32.const 6))
+           (i32.and
+             (i32.ne (local.get $primType) (i32.const 5))
+             (i32.ne (local.get $primType) (i32.const 4))))
+      (then
+        (if (i32.ne (local.get $primType) (i32.const 1))
+          (then (call $crash_unimplemented (global.get $D3DIM_UNIMPL_DRAW))))))
+    (if (i32.eq (local.get $primType) (i32.const 6)) (then
+      ;; TRIANGLEFAN: (0,1,2),(0,2,3)…
+      (if (i32.lt_u (local.get $dwVertexCount) (i32.const 3)) (then (return)))
+      (local.set $n (i32.sub (local.get $dwVertexCount) (i32.const 2)))
+      (local.set $i (i32.const 0))
+      (local.set $v0 (local.get $v_wa))
+      (block $fdone (loop $flp
+        (br_if $fdone (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $v1 (i32.add (local.get $v_wa) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
+        (local.set $v2 (i32.add (local.get $v1) (i32.const 32)))
+        (call $rasterize_triangle_flat (local.get $rt)
+          (i32.trunc_f32_s (f32.load (local.get $v0)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v1)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v2)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $flp))))) )
+
+  ;; ── Execute-buffer triangle rasterizer ─────────────────────────
+  ;; Walks wCount D3DTRIANGLE records (8 bytes each: u16 v1,v2,v3,flags) and
+  ;; rasterizes each one by indexing into the vertex area of the exec buffer.
+  ;; Treats vertices as D3DTLVERTEX (32 bytes) laid out from buf+0. Non-TL
+  ;; vertices render with whatever bytes happen to occupy the x/y/color slots —
+  ;; acceptable MVP, will be fixed by a proper PROCESSVERTICES cache later.
+  (func $d3dim_exec_triangles
+    (param $dev_this i32) (param $buf_guest i32) (param $rec_wa i32) (param $wCount i32)
+    (local $rt i32) (local $vbase i32) (local $i i32)
+    (local $iv0 i32) (local $iv1 i32) (local $iv2 i32)
+    (local $v0 i32) (local $v1 i32) (local $v2 i32)
+    (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
+    (if (i32.eqz (local.get $rt)) (then (return)))
+    (local.set $vbase (call $g2w (local.get $buf_guest)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
+      (local.set $iv0 (i32.load16_u (local.get $rec_wa)))
+      (local.set $iv1 (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 2))))
+      (local.set $iv2 (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 4))))
+      (local.set $v0 (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))))
+      (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
+      (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
+      (call $rasterize_triangle_flat (local.get $rt)
+        (i32.trunc_f32_s (f32.load (local.get $v0)))
+        (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+        (i32.trunc_f32_s (f32.load (local.get $v1)))
+        (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+        (i32.trunc_f32_s (f32.load (local.get $v2)))
+        (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+        (i32.load (i32.add (local.get $v0) (i32.const 16))))
+      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  ;; ── D3DSTATE walker ────────────────────────────────────────────
+  ;; Apply `wCount` consecutive 8-byte D3DSTATE records (dwArg, dwValue) through
+  ;; the supplied per-state forwarder. kind: 7=render, 8=light, 6=transform.
+  (func $d3dim_exec_state_walk
+    (param $dev_this i32) (param $kind i32) (param $rec_wa i32) (param $wCount i32)
+    (local $i i32) (local $a i32) (local $v i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
+      (local.set $a (i32.load (local.get $rec_wa)))
+      (local.set $v (i32.load (i32.add (local.get $rec_wa) (i32.const 4))))
+      (if (i32.eq (local.get $kind) (i32.const 8))
+        (then (call $d3dim_set_render_state (local.get $dev_this) (local.get $a) (local.get $v))))
+      (if (i32.eq (local.get $kind) (i32.const 7))
+        (then (call $d3dim_set_light_state  (local.get $dev_this) (local.get $a) (local.get $v))))
+      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
