@@ -172,6 +172,15 @@
   (func $d3dim_begin_scene (param $this i32)
     (global.set $eax (i32.const 0)))
   (func $d3dim_end_scene (param $this i32)
+    (local $rt i32)
+    ;; If the RT is the primary surface, present it now. d3drm-based apps
+    ;; (ARCHITEC, others) never call Flip/Unlock — they rely on EndScene
+    ;; to make the frame visible. Non-primary RTs are left untouched; the
+    ;; app's own Flip or Blt-to-primary will handle those.
+    (local.set $rt (call $d3ddev_rt_entry (local.get $this)))
+    (if (local.get $rt) (then
+      (if (i32.and (i32.load (i32.add (local.get $rt) (i32.const 28))) (i32.const 1))
+        (then (call $dx_present (local.get $rt))))))
     (global.set $eax (i32.const 0)))
 
   ;; ── State-block forwarders ────────────────────────────────────

@@ -496,7 +496,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_DrawPrimitive — 6 args (incl. this)
+  ;; args: this, d3dptPrimitiveType, d3dvtVertexType, lpvVertices, dwVertexCount, dwFlags
+  ;; Phase 1: for D3DVT_TLVERTEX (pre-transformed+lit) vertices, plot each vertex
+  ;; as a 2x2 dot in its own color into the device's render target. Not a real
+  ;; triangle rasterizer yet — the goal is to validate the transform and
+  ;; presentation pipelines end-to-end. TLVERTEX layout (32 bytes):
+  ;;   +0 sx, +4 sy, +8 sz, +12 rhw, +16 color (D3DCOLOR 0xAARRGGBB),
+  ;;   +20 specular, +24 tu, +28 tv
+  ;; Untransformed (D3DVT_VERTEX/LVERTEX) is ignored for now — rasterizer will
+  ;; handle those once the WVP pipeline and triangle fill land.
   (func $handle_IDirect3DDevice2_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dwVertexCount i32) (local $rt i32) (local $v_wa i32) (local $i i32)
+    (local $sx i32) (local $sy i32) (local $col i32)
+    (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (if (i32.and (i32.eq (local.get $arg2) (i32.const 3))
+                 (i32.ne (local.get $arg3) (i32.const 0))) (then
+      (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
+      (if (local.get $rt) (then
+        (local.set $v_wa (call $g2w (local.get $arg3)))
+        (local.set $i (i32.const 0))
+        (block $done (loop $lp
+          (br_if $done (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
+          (local.set $sx (i32.trunc_f32_s (f32.load (local.get $v_wa))))
+          (local.set $sy (i32.trunc_f32_s (f32.load (i32.add (local.get $v_wa) (i32.const 4)))))
+          (local.set $col (i32.load (i32.add (local.get $v_wa) (i32.const 16))))
+          (call $viewport_fill_rect (local.get $rt) (local.get $sx) (local.get $sy)
+            (i32.const 2) (i32.const 2) (local.get $col))
+          (local.set $v_wa (i32.add (local.get $v_wa) (i32.const 32)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $lp)))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
