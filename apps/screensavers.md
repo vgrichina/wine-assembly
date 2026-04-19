@@ -99,6 +99,148 @@ This smells like emulator state drift: something accumulates in our CPU/memory s
   - So the fn is *supposed to* populate the vector in hit #1, producing `end-begin=0x50` (4 entries). On hit #2 the vector is empty → filter iterates nothing → count=0 → `0x74414d83` throws `CA::DXException("No valid modes found for this device")` → `RaiseException` → EIP=0 exit (no SEH catches).
 - New next step: the filter body populates the vector via `call 0x74415140` (at `0x74414a9b`) which looks like a mode-enumeration helper. Trace that sub-call on hit #1 vs hit #2: either (a) hit #1's enum succeeds but the produced vector is *destroyed* before hit #2 entry (dtor / `operator=` / clear), (b) hit #1 itself fails to populate but we fall through without noticing, or (c) caller re-uses the same vector object and calls filter twice expecting reuse. Set `--trace-at=0x74414a9b` and `--trace-at=0x74414aa0` (after the sub-call), dump `[0x74e12798:16]` — compare the post-enum vector states on each call.
 
+##### Session 2026-04-18 (b): 0x8876017c is a D3D HRESULT — traced to vtable[0x58] call
+
+Further traced the origin of the `ESI=0x8876017c` seen at filter Hit #2 entry. `0x8876017c` is a DirectX HRESULT (facility `0x876` = D3D/DD, code `0x17c` = 380).
+
+- Outer loop-body fn near `0x74414945` writes mode_entry[i].field_0x10 at **`0x744149ba`**: `mov [eax+ebp+0x10], ecx` where `ecx = [esp+0x40]`. The mode-filter test at `0x74414c5f` (`mov eax, [esp+0x20]; jge insert_path`) reads that same `+0x10` field — so whatever lands there controls ACCEPT/SKIP.
+- Watchpoint `--watch=0x77fff5c0 --watch-value=0x8876017c` (= `[esp+0x40]` at `ESP=0x77fff580`) fires at `prev_eip=0x744158c7` (`push esi`), inside fn `0x7441572b`. `esi` there is the HRESULT loaded at `0x744158b5` from `call 0x744168a0` at `0x744158b0`.
+- Fn `0x744168a0` (prologue at entry, `sub esp, 0x1cc`; stores `mov ebp, ecx` → this) makes a COM call: `call [ecx+0x58]` at **`0x74416914`** on the interface pointer stored at `[this+0x204]`. Vtable offset `0x58` = slot 22. The HRESULT `esi = return` is then either logged (via `call 0x74422f80` = hr→string) and propagated.
+- Caveat: the watchpoint sampled at batch boundary. `push esi` transiently stores `0x8876017c` at `[0x77fff5c0]`, but a following `push eax` (string ptr) overwrites it. After `add esp, 0x10` post-log, the slot's residual value is whatever was last pushed there (the string ptr, not the HRESULT). So `[esp+0x40]` seen by fn `~0x74414945`'s write is **not** this transient — the watchpoint hit is coincidental timing, not the real value source.
+- **Correction needed:** `--trace-at=0x744149b2` with `--trace-at-dump=0x77fff5c0:4` returned **0 hits** this run. That means the mode-populator at `0x744149ba` **never actually executes in this run**. So `mode_entry[i].field_0x10` must be set somewhere else entirely. The `0x8876017c` observed at filter-fn entry as **`ESI`** (register) is from the filter fn's caller, not from the mode vector memory.
+
+**Revised understanding:** `ESI=0x8876017c` at Hit #2 entry is a register carry-over from the caller — likely the HRESULT of a failed DX call made between Hit #1 and Hit #2. The "mode vector allocated but empty" at Hit #2 means the caller failed its enum between the two filter invocations. Need to trace what the caller does between the two filter calls: set a breakpoint at `0x74415760` (filter's return address per earlier doc) and log EIP + last-DX-return after Hit #1's return until Hit #2's call.
+
+##### Session 2026-04-18 (c): retry-loop found, HRESULT source is a thunked vtable call
+
+- **Enclosing fn** of the filter caller is at **`0x74415720`** (SEH prologue, `mov ebp, ecx`). Called once via xref from `0x74416fd4`. Find_fn's earlier "0x7441572b" was a mid-instruction misalignment.
+- **Retry loop:** `0x74415720` body has a backward `jl 0x74415743` at **`0x7441590c`** (`test esi, esi; jl`). When a DX call returns HRESULT<0, the fn loops back to `0x74415743`, re-tests `[ebp+0x1a0]`, and re-invokes filter at `0x7441575b`. That's why filter is called 2×.
+- **The failing call between the two filter invocations:** `call 0x744168a0` at **`0x744158b0`** — a wrapper whose body makes a vtable-22 COM call: `call [ecx+0x58]` at `0x74416914` on the object at `[this+0x204]`.
+- **Iface ptr at `[this+0x204]` (= `[0x74e127e0]`) = `0x7c3e0010`.** That memory is NOT in our guest-code region — it's in our **emulator-internal high-memory range** (matches neither `GUEST_BASE`, stack, heap). Its header: `[0x7c3e0010] = { vtable=0x745121d4, refcount?=2, ... }`. The "vtable" at `0x745121d4` contains entries in the **`0x78200xxx` range**, which is our **API thunk zone** (`thunk_base: 0x78200000 thunk_end: 0x782024f0 num_thunks: 1182` from dll-loader at build time). So slot 22 (`[vtable+0x58] = 0x78200970`) is an **API thunk**, and our dispatcher returns `0x8876017c` as the stub response.
+- **Key question:** which d3drm/ddraw API does thunk index 302 (`(0x78200970-0x78200000)/8 = 302`) correspond to? That tells us which handler to implement/fix. A d3drm-interface vtable synthesized out of API thunks (rather than real COM object-model pointers) suggests our DLL loader or d3drm stub builds a fake vtable whose slot 22 is wrong or unimplemented.
+
+**Next step:** dump `0x78200000` thunk table and match the thunk at `+0x970` to a d3drm export name. Grep handler for that API in `src/09aa-handlers-d3dim.wat` / `src/09a8-handlers-directx.wat` and check return value. If it's a `crash_unimplemented`, the emulator has been fail-fast-correctly, but something upstream (DLL loader) is installing a thunk that shouldn't be — fix either the handler or the vtable source.
+
+##### Session 2026-04-18 (d): thunk 0x78200970 resolved — vtable is IDirectDrawSurface, but GetSurfaceDesc is NOT the culprit
+
+- Thunk at `0x78200970` has header `[+0] = 0xCACA0010` and `[+4] = 0x3FE` (api_id = **1022 = `IDirectDrawSurface_GetSurfaceDesc`**).
+- The vtable at `0x745121d4` is contiguous thunks `0x782008c0 + N*8` for N=0..26+, meaning **slot 0 = thunk #280 (`0x8c0/8`)**. Slot ordering matches the IDirectDrawSurface vtable layout: 0=QI, 1=AddRef, 2=Release, ..., 22=GetSurfaceDesc.
+- Our handler `$handle_IDirectDrawSurface_GetSurfaceDesc` at `src/09a8-handlers-directx.wat:1388` returns `eax = 0` (success) unconditionally. So `call [ecx+0x58]` does **not** return `0x8876017c`.
+- **Confirmed via `--trace-at=0x744158b5`**: `call 0x744168a0` at `0x744158b0` returns `EAX=0x8876017c`. So fn `0x744168a0` itself returns the HRESULT — not the GetSurfaceDesc call inside it.
+- Fn `0x744168a0` exits via `mov eax, edi` at `0x74416f41` (return value = edi). So one of the multiple DX sub-calls inside `0x744168a0` sets `edi = 0x8876017c`.
+
+**Concrete next step (session e):** instrument every vtable call inside fn `0x744168a0` (0x74416914, 0x7441696?, ...) with `--trace-at` + log eax post-return, to identify which specific call returns `0x8876017c`. Once known, search `0x8876017c` in our WAT handlers or treat `0x8876_017c` as `DDERR_INVALIDCAPS` / similar and match the DDRAW HRESULT definition. Candidates by value `0x8876017c` decimal-tail `380`: check DirectX DDERR enum in `ddraw.h` / wine — likely `DDERR_NOTFOUND` (380) or `DDERR_NOHARDWARE` range.
+
+##### Session 2026-04-18 (e): FIXED — fn 0x744168a0 is CreateZBuffer, fails VRAM check
+
+**Root cause identified by reading strings.** Fn `0x744168a0` is **`CreateZBuffer`** (not a mode-filter helper). The string constants pushed in its logging calls give it away:
+- `0x744c58b8` = `"%s: Creating z-buffer"` (entry log, `push` at `0x744168ce`)
+- `0x744c5898` = `"%s: CreateZBuffer() failed (%s)"` (GetSurfaceDesc-fail path)
+- `0x744c57c4` = `"%s: CreateZBuffer AddAttachedSurface() failed (%s)"`
+- `0x744c5748` = `"%s: Created z-buffer"` (success)
+- `0x744c5760` = `"%s: CreateZBuffer() surface not in VRAM for hardware device."`
+
+**The actual error site** is at `0x74416ec7`: `mov eax, 0x8876017c; jmp epilogue` — a **hardcoded HRESULT constant** in the binary. It's reached via `test bl, bl; jnz` at `0x74416e54` (branch falls through to the error block). `bl` is the "hardware device + surface not in VRAM" flag, set earlier by checking the Z-buffer's reported `DDSCAPS_VIDEOMEMORY` (0x4000).
+
+**Our bug:** `$handle_IDirectDrawSurface_GetSurfaceDesc` in `src/09a8-handlers-directx.wat:1412-1415` reported `ddsCaps = 0x840` (`DDSCAPS_SYSTEMMEMORY | DDSCAPS_OFFSCREENPLAIN`) for all non-primary surfaces — so the Z-buffer appeared to live in system memory, tripping the hardware-device VRAM check.
+
+**Fix:** change the non-primary caps from `0x840` → `0x4040` (`DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN`). We claim hardware acceleration so every surface should logically live in VRAM. Patched `src/09a8-handlers-directx.wat:1412-1417`.
+
+**Verification:** after rebuild, ARCHITEC.SCR no longer hits the "No valid modes found" throw. The trace now shows `DirectDrawCreate → EnumDisplayModes → QI D3D → EnumDevices` completing, and CreateZBuffer is no longer rejected. Progress advances to a later failure: `MessageBoxA "Error": "Failed to create configuration property sheet"` — a PropertySheet / CreatePropertySheetPage API gap in the config dialog path. Different issue, will tackle next session.
+
+##### Session 2026-04-18 (f): FIXED — IDirect3D2 QI returned D3D3 vtable
+
+**Test path.** Switched test to `--args="/s"` (fullscreen screensaver mode, skipping the Config property-sheet UI). In that path, ARCHITEC.SCR got past EnumDevices and into `IDirect3D2_EnumDevices → CreateDevice` but then stalled at EIP=0 with `prev_eip=0x7441895c` (inside a vtable-slot-8 `call [ecx+0x20]` sequence).
+
+**Bug in QI.** The IDirectDraw_QueryInterface handler at `src/09a8-handlers-directx.wat:398` treated IID `{6AAE1EC1-…}` (IDirect3D2) and IID `{BB223240-…}` (IDirect3D3) as the same interface and returned a `DX_VTBL_D3D3` vtable for both. That's wrong because the two interfaces have different slot-8 method signatures:
+
+| Iface | CreateDevice args | Stack pushes |
+|---|---|---|
+| IDirect3D2 | `REFCLSID, lpDDS, lplpDev`          | 4 (with `this`) |
+| IDirect3D3 | `REFCLSID, lpDDS, lplpDev, pUnkOuter` | 5 (with `this`) |
+
+The Borland-compiled screensaver correctly pushed 4 args (IDirect3D2 convention) into a vtable whose slot-8 thunk our emulator built with `api_id=1132 (IDirect3D3_CreateDevice)`, causing `$handle_IDirect3D3_CreateDevice` to pop 5 dwords — 4 bytes of stack drift that nuked EIP on the following Release sequence.
+
+**Fix.** In the QI handler:
+- `0x6AAE1EC1` (IDirect3D2) now returns `DX_VTBL_D3D2` (9 slots, api_ids 1272-1280 — thunks already built by `$init_dx_com_thunks`, with `$handle_IDirect3D2_CreateDevice` already popping the correct 4 args).
+- Added a new branch for `0xBB223240` (IDirect3D3) returning `DX_VTBL_D3D3`.
+
+**Verification.** After rebuild, ARCHITEC.SCR trace now shows the full DX → D3D pipeline firing: `IDirect3D2_EnumDevices → IDirect3D2_CreateDevice → IDirect3DDevice3_AddRef → IDirect3DDevice_SetMatrix → IDirect3DDevice2_Release → IDirect3D_QueryInterface`. Real per-frame `IDirectDrawSurface_Blt` calls also appear (back-buffer flipping). The next stall is later, at `EIP=0`, `prev_eip=0x745a9353` inside `d3drm.dll` after a QueryInterface that returns `E_NOINTERFACE` (ESI=0x80004002) — a different bug in either our QI IID coverage or a subsequent null-vtable Release. Natural next step.
+
+##### Session 2026-04-18 (g): partial — two more QI cases added; ARCHITEC still stalls at same prev_eip
+
+**What was fixed.** The d3rm function at `0x6478e2c1` (preferred `d3drm.dll` base) calls QI chains that Phase-0 stubs didn't cover. Added two new QI branches in `src/09ab-handlers-d3dim-core.wat::$d3dim_qi`:
+
+1. **D3D family → IID_IDirectDraw (`0x6C14DB80`)**: scans `DX_OBJECTS` for the first slot with `type==1` (DDraw), AddRefs it, writes its wrapper guest ptr. Rationale: d3drm gets a `IDirect3D` via `IDirectDraw::QI` but later needs the DDraw back; since we don't track the D3D→DDraw parent, scan. In practice only one DDraw exists.
+2. **Device family → IID_IDirectDrawSurface (`0x6C14DB81`)**: returns the render-target surface stashed in `entry+8` at `$d3dim_create_device` time. AddRefs the surface slot before handing it out.
+
+Also extended `$handle_IDirect3DDevice2_GetRenderTarget` (`src/09aa-handlers-d3dim.wat:358`) from a pure no-op `eax=0` stub into a real implementation that writes the bound rt surface guest ptr into `*arg1` and AddRefs — earlier stub left caller's out-local uninitialized → null-vtable `Release` crash.
+
+**Status.** These three fixes together let the emulator advance through several more API calls (`IDirectDraw_GetCaps`, `IDirectDraw_GetDisplayMode`, a second Device2→Surface QI, `IDirectDrawSurface_GetPalette` which returns `DDERR_NOPALETTEATTACHED` — the normal error for 16-bpp modes). Stall is still at `EIP=0`, `prev_eip=0x745a9353`, but now ESI=`0x887601ff` (was `0x80004002`) — different error code propagating to the same cleanup site. Same crash pattern: `call [ecx+0x8]` where `ecx=[eax]=[ebp-0x8]=0`, so the object at `[ebp-0x8]` is still null.
+
+**Unresolved.** The outer function at `0x6478e2c1` expects `[ebp-0x8]` to be populated by the call at `0x6478e319 call [eax+0x40]` — but after the QI at `0x6478e30a` (IID_IDirect3DDevice v1), `[esi]` points to `DX_VTBL_D3DDEV1` and slot 16 there is `SetMatrix` (3-arg, not 2-arg, and it doesn't return a COM object). The trace confirms `IDirect3DDevice_SetMatrix` is what actually runs at that call site. The next helper at `0x6478e34e call 0x6478df70` then consumes the uninitialized `[ebp-0x8]=0` and the cleanup path Releases it → crash.
+
+The disconnect is that d3drm's compiled code expects slot 16 to return a COM object (Device2-style `GetRenderTarget`), yet queries with IID_IDirect3DDevice v1 (whose slot 16 is `SetMatrix`). Either the IID data in `d3drm.dll` at `0x647813d0` is not what standard `d3d.h` declares (confirmed it IS IID_IDirect3DDevice v1 by bytes), or d3rm links against a differently-shaped v1 vtable where slot 16 *is* GetRenderTarget-like. Left for next session — needs either a controlled disassembly of `0x6478df70` to see what it does with the uninitialized local, or a different mapping from IID `0x64108800` to a vtable whose slot 16 yields a COM object.
+
+##### Session 2026-04-18 (h): COM-wrapper vtable mutation replaced with aux-wrapper pool; same d3rm stall
+
+**What changed.** `$d3dim_qi` previously mutated the primary COM wrapper's vtbl in place on a QI upgrade (pre-fix `src/09ab-handlers-d3dim-core.wat:139`). That's safe only when the caller uses the returned `*ppvObj` pointer and drops the original — but d3rm keeps the original `this` alive in a register and continues calling methods on its ORIGINAL vtbl after the QI. In-place mutation therefore silently swapped the vtbl out from under d3rm, causing slot-16 dispatches to land on the wrong method (e.g. SetMatrix when GetRenderTarget was expected).
+
+**Fix.** Added a 2048-entry auxiliary wrapper pool at WASM `0x07FF2800` (`COM_WRAPPERS_AUX`, 16KB) plus helper `$dx_get_wrapper_for_vtbl(slot, vtbl) → guest_ptr` in `src/09a8-handlers-directx.wat`. Each aux entry is 8 bytes `[vtbl, slot]`, same shape as primary wrappers, so `$dx_from_this` recovers the backing DX_OBJECTS slot for either form. Dedup'd by `(slot, vtbl)` via linear scan of the used prefix. `$d3dim_qi` now calls this helper instead of overwriting the primary wrapper's vtbl. Memory map updated in `src/01-header.wat`.
+
+**Verification of fix correctness.** After rebuild, the trace shows distinct aux wrappers (`0x7c3e0808`/`0x7c3e0810`/`0x7c3e0818`) for each interface the same slot is viewed as, and QI slot-0 dispatches the correct api_id for each vtbl (e.g. QI on aux `0x7c3e0810` now reports `IDirect3DDevice2_QueryInterface` = api_id 1311 where pre-fix the same guest ptr reported DEV1 QI = 1289 due to the silent mutation).
+
+**Regression check.** WIN98.SCR `/s` reaches the same idle point as before (`STUCK at EIP=0x004012a3`, 507 API calls). The aux-wrapper fix does not regress DDraw-only screensavers.
+
+**Status.** ARCHITEC.SCR `/s` still stalls at `prev_eip=0x745a9353` (d3rm preferred VA `0x6478e353`), `ESI=0x887601ff` (DDERR_NOPALETTEATTACHED propagated from a nested `IDirectDrawSurface::GetPalette`). Crash sequence: `mov eax, [ebp-0x8]; mov ecx, [eax]; call [ecx+0x8]` with `EAX=0 → ECX=0 → EIP=0`. `[ebp-0x8]` remains null.
+
+**Reframe.** The outer function at `0x6478e2c1` makes QI + slot-16 calls on `esi`/`edi` that do NOT appear in our COM trace. That means those pointers are **d3rm-internal** (vtables pointing to d3rm native code), not our DX_OBJECTS-backed wrappers. The slot-16 call at `0x6478e319` runs d3rm-internal code that's supposed to write a valid pointer to `[ebp-0x8]`; instead it returns S_OK but leaves `[ebp-0x8]=0`. The `GetPalette` / surface Release / DDraw Release visible in the trace happen inside the nested `0x6478df70` as an error-cleanup path.
+
+**Lead for next session.** The d3rm-internal slot-16 method likely queries d3rm's cached rendertarget surface — which d3rm populates during its own CreateDevice path. Our stubbed `$d3dim_create_device` writes `rt_surf` to the DX_OBJECTS entry, but d3rm's internal bookkeeping is separate and may not be seeing a non-null surface via the DX APIs we expose. Next step: instrument with `--trace-at=0x745a9319 --trace-at-dump=0x745a9319:32` + dump `[esi]` and `[esi_vtbl+0x40]` to see where the d3rm-internal slot-16 dispatch lands; also walk back from return addr `0x745ab53a` (d3rm VA `0x6478b53a`) to find where `esi` is constructed.
+
+#### Related files (session h additions)
+
+| File | Change |
+|------|--------|
+| `src/09a8-handlers-directx.wat:20-28` | `$COM_WRAPPERS_AUX`, `$COM_WRAPPERS_AUX_MAX`, `$com_aux_next` globals |
+| `src/09a8-handlers-directx.wat` (after `$dx_slot_of`) | New `$dx_get_wrapper_for_vtbl` — returns primary if vtbl matches, else dedup'd aux entry |
+| `src/09ab-handlers-d3dim-core.wat:136-146` | `$d3dim_qi` no longer mutates the primary wrapper; routes hits through the aux helper |
+| `src/01-header.wat:438` | Memory map updated: 16KB `COM_WRAPPERS_AUX` region at `0x07FF2800` |
+
+##### Session 2026-04-19 (i): FIXED — IDirect3D2::CreateDevice returned DEV3 vtable, not DEV2
+
+**Root cause.** `$d3dim_create_device` (helper in `src/09ab-handlers-d3dim-core.wat`) hard-coded `DX_VTBL_D3DDEV3` for the created device, regardless of the caller interface version. `$handle_IDirect3D2_CreateDevice` and `$handle_IDirect3D7_CreateDevice` both routed through this helper, so the object returned from `IDirect3D2::CreateDevice` was an IDirect3DDevice3 wrapper. d3rm.dll, compiled against the real DEV2 vtable, called `call [esi_vtbl+0x40]` (slot 16) expecting `IDirect3DDevice2::GetRenderTarget` — but in the DEV3 layout slot 16 is `Begin`. Begin's stub returned 0 without writing the out-ptr, then the d3rm caller dereferenced `[ebp-0x8]=0` → `call [0]` → EIP=0.
+
+**Fix.** Added a `$vtbl` parameter to `$d3dim_create_device`; V2 path passes `DX_VTBL_D3DDEV2`, V7 path passes `DX_VTBL_D3DDEV7`, V3 continues to use `DX_VTBL_D3DDEV3` (handler in `09a8-handlers-directx.wat` is separate and already correct).
+
+**Verification.** ARCHITEC.SCR `/s` now advances past the `0x745a9353` stall: 6027 API calls vs. 5948 pre-fix. New failure is a `_CxxThrowException` `DXException("\"D3DMgr::GetD3DRM()->CreateDeviceFromD3D(GetD3D(), GetD3DDevice(), &pD3DRMDevice)\" failed")` — the d3rm createDevice chain succeeds internally but the host framework is still seeing `0x887601ff` (`DDERR_NOPALETTEATTACHED`) bubble up. Likely from a nested `IDirectDrawSurface::GetPalette` whose error the d3rm caller shouldn't be propagating, or from an intermediate call. Next lead: instrument `$handle_IDirectDrawSurface_GetPalette` to return `DD_OK` with a stub palette (or return `S_OK` with a null palette output) and see if it advances further.
+
+**Files changed.**
+
+| File | Change |
+|------|--------|
+| `src/09ab-handlers-d3dim-core.wat:153` | `$d3dim_create_device` gains `$vtbl` param; uses it for `dx_create_com_obj` |
+| `src/09aa-handlers-d3dim.wat:82` | `IDirect3D2_CreateDevice` passes `DX_VTBL_D3DDEV2` |
+| `src/09aa-handlers-d3dim.wat:118` | `IDirect3D7_CreateDevice` passes `DX_VTBL_D3DDEV7` |
+
+##### Session 2026-04-19 (j): FIXED — GetPalette error triggered DXException in d3rm CreateDeviceFromD3D
+
+**Root cause.** `$handle_IDirectDrawSurface_GetPalette` returned `DDERR_NOPALETTEATTACHED` (0x887601FF) unconditionally. The ARCHITEC.SCR D3DMgr wrapper (via d3rm's CreateDeviceFromD3D) treated the HRESULT as fatal and threw `DXException("CreateDeviceFromD3D failed")` at EIP=0x74497b47.
+
+**Attempts.**
+1. Return `S_OK` with `*lplpDDPalette = 0` → d3rm then null-derefs the returned pointer at 0x745a90f4, crashing at EIP=0.
+2. Return `S_OK` with a fresh `IDirectDrawPalette` COM wrapper → progresses.
+
+**Fix.** `GetPalette` now allocates a palette wrapper via `dx_create_com_obj(type=3, DX_VTBL_DDPAL)` and writes it to `*lplpDDPalette`. Existing palette handlers (GetCaps / GetEntries / SetEntries / Initialize) already exist as stubs, so Release/QI chains work.
+
+**Verification.** ARCHITEC.SCR `/s` now enters the render loop: 22294 API calls in 600 batches (was 5937). Traffic is dominated by `SetRenderState` (1267), `Execute` (127), `BeginScene`/`EndScene` (64 each), `Flip` (63), `Clear` (63). Scene execution is no-op-rendered (black output), but the app is fully alive — no crash, no EIP=0. WIN98.SCR still runs clean. Remaining work: actual scene pixels — `IDirect3DDevice_Execute` / viewport `Clear` need to write into the DirectDraw surface so Flip can present it.
+
+**Files changed.**
+
+| File | Change |
+|------|--------|
+| `src/09a8-handlers-directx.wat:1443-1452` | `GetPalette` returns a fresh `IDirectDrawPalette` wrapper instead of `DDERR_NOPALETTEATTACHED` |
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
