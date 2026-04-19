@@ -28,6 +28,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace-gdi` | Every wrapped GDI primitive: CreateBitmap, BitBlt, StretchBlt, FillRect, DrawEdge, DrawText, TextOut, Rectangle, Ellipse, Polygon, MoveTo/LineTo, Arc, SetPixel, SetTextColor, SetBkColor, SetBkMode, SelectObject, DeleteObject, DeleteDC, GetClipBox, LoadBitmap, CreateSolidBrush, GetObject, PatBlt |
 | `--trace-dc` | Every `_getDrawTarget` resolution: hdc → resolved hwnd, top-level hwnd, canvas ox/oy, canvas size. Logs NO_CANVAS when resolution fails. Use when a draw call fires but nothing appears — shows which surface each DC lands on. |
 | `--trace-reg` | Every registry op (open/query/create/set/enum/close) with key path, value name, and result ("found"/"not found"/actual data). Use to discover which keys an app probes when storage returns empty. |
+| `--trace-fs` | Every VFS op: CreateFile (with decoded access/creation + handle/FAIL), GetFileAttributes, FindFirstFile, FindNextFile — each with path and hit/miss result. Use to see which files an app looks for but can't find in the VFS. |
 | `--trace-host=fn1,fn2` | Generic wrap of any host import by name — logs raw args + return. Use when no category fits yet. Example: `--trace-host=gdi_draw_edge,wnd_set_state_ptr` |
 | `--trace` | Every decoded block's EIP |
 | `--trace-seh` | SEH chain operations |
