@@ -13,6 +13,21 @@ Added minimal stubs for `auxGetNumDevs`, `auxGetDevCapsA`, `auxGetVolume`, `auxS
 
 **Next step:** run MCM with `--png=` at increasing batch budgets to see if it's drawing the title screen / menu, and with `--trace-dc` to check that the back-canvas is receiving its DDraw blits. If nothing is drawn, likely the next blocker is in the DDraw primary-surface flip path or a missing d3dim method that silently stalls. If it *is* rendering, wire up a `--input=` sequence to click through to gameplay.
 
+## Status (2026-04-19, night-5) — back-canvas now 640×480, but frames still black
+
+Fixed the 8×47 back-canvas. `IDirectDraw::SetDisplayMode` was calling `host_move_window(main_hwnd, 0, 0, W, H, flags=1)` — flags=1 is `SWP_NOSIZE`, which means "ignore size", so the intended resize silently no-op'd. Changed to flags=0 (apply both position and size).
+
+Root-cause chain:
+1. MCM does `AdjustWindowRectEx({0,0,0,0}, WS_CAPTION|..., bMenu=TRUE, 0)` → gets chrome-only delta {-4,-43,4,4}.
+2. Passes that delta directly to `SetWindowPos(hwnd, 0, 0, 0, 8, 47, NOMOVE|NOZORDER|NOACTIVATE)` — the "probe for chrome overhead" dance that normally happens before the real window is sized.
+3. Normally the subsequent DDraw `SetDisplayMode(640,480)` would resize the window to 640×480 via the WAT-side `host_move_window` call — but the flags=1 bug left it stuck at 8×47.
+
+Fix in `src/09a8-handlers-directx.wat:1098` — one-byte change (flags 1 → 0) + comment. Confirmed via `--png` dump: back-canvas is now 640×480.
+
+**Still blocked — now on black-frame presents:** with the canvas fixed, `$dx_present` fires 57× per 8k batches with the right dims, but the PNG is solid black at 8k and still black at 30k batches. MCM is flipping cleared back buffers and not drawing anything to them. Almost certainly waiting on D3D immediate-mode device init (MCM's DX path is DDraw → QI IDirect3D3 → CreateDevice → execute-buffers). Our d3dim handlers may be returning zero or silently stubbed, so the app's render loop runs but never produces pixels.
+
+**Next step:** enable `--trace-host=` on the IDirect3DDevice3/ExecuteBuffer vtable methods and see which D3D calls MCM makes that we've stubbed silently. Priority: `QueryInterface→IDirect3D3`, `CreateDevice`, `BeginScene`/`EndScene`, `Execute` (or DrawPrimitive for d3dim 3+). If MCM never issues a draw call, the blocker is upstream in scene setup (texture upload, viewport, etc.). If it does but we drop them on the floor, implement the software-rasterizer path or at least a "clear+present" visual stub so the title screen bitmap shows.
+
 ## Status (2026-04-19, night-4) — rendering plumbing fires but back-canvas is tiny
 
 With audio stubs in place, MCM reaches DDraw presentation:

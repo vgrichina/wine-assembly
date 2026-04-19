@@ -1092,10 +1092,16 @@
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
+    ;; Resize the main window to match the display mode so the back-canvas
+    ;; matches the primary-surface dims. Without this, fullscreen DDraw apps
+    ;; (MCM) that issued an earlier SetWindowPos to a chrome-only size end up
+    ;; with an 8×47 back-canvas and nothing visible lands on it.
+    ;; flags=0: apply both position (0,0) and size (arg1, arg2) — earlier
+    ;; code passed 1 (SWP_NOSIZE) which actively dropped the size update.
     (if (global.get $main_hwnd) (then
       (call $host_move_window (global.get $main_hwnd)
         (i32.const 0) (i32.const 0)
-        (local.get $arg1) (local.get $arg2) (i32.const 1))))
+        (local.get $arg1) (local.get $arg2) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
