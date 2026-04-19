@@ -281,6 +281,14 @@ Verification with `--trace-ini` (new flag): `[Description] Name="Architecture"`,
 
 **Next session: start here.** Implement real D3DLight state (dwSize/dwLightType/color/position/attenuation) in DX_OBJECTS, make SetLight/GetLight copy to/from the caller's D3DLIGHT*, and make Viewport::AddLight/NextLight track a per-viewport list of light slot indices. That should keep d3drm's internal pool from adopting our wrappers as light records.
 
+**Update (2026-04-19, cont.2) — Light SetLight/GetLight now real; crash persists.**
+
+Populated `$handle_IDirect3DLight_{SetLight,GetLight}` with per-slot heap-allocated 76-byte D3DLIGHT buffers (guest ptr stashed at DX_OBJECTS entry +8, freed on final Release; lazy-allocated on first SetLight). Re-ran ARCHITEC: **identical crash**, same batch ~240, same EIP, same edx=0x7c3e0030. So d3drm is *not* roundtripping light data through our GetLight before the crash — it tracks lights in its own state and only uses our COM wrappers as opaque tokens.
+
+**New hypothesis:** the crash is an OOB from `mov eax, [0x745fc030+eax*4]` at d3drm offset 0x45413 (not the `mov [edx], 0x4c` at +0x40F). With `eax = [esi+0x34]` and `esi=0x74a16970` (an area past the PE image, unexplained provenance), if `[esi+0x34]` holds a large garbage dword ≥ ~31 M, then `0x745fc030 + eax*4` wraps past the 128 MB WASM cap when converted via g2w. So the real question is what `esi` points to and why `[esi+0x34]` holds junk — likely an uninitialized d3drm-internal light record that some earlier method was supposed to populate (via its own return value, not our buffer).
+
+Next step would be `--watch` on `[esi+0x34]` and a backward walk from the crash to find which d3drm method left that field at a garbage value, but that's a sit-down-with-a-debugger session.
+
 **Still unexplained:** no `CreateFileA("ar_mesh.*")` is observed even with INI working. The mesh-loader path fires after the `Inform0` read but never hits file I/O — likely a catch earlier in the chain. Expect the OOB crash and missing mesh load to be the same bug.
 
 **New trace flags in `test/run.js`:** `--trace-fs` (CreateFile hit/miss), `--trace-ini` (section/key/value resolution). Both gated on `traceCategories.has('fs'|'ini')`.

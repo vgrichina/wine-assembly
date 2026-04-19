@@ -3178,6 +3178,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   ;; ── IDirect3DLight ─────────────────────────────────────────
+  ;; Each Light slot owns a 76-byte D3DLIGHT buffer on the guest heap;
+  ;; its guest pointer lives at DX_OBJECTS entry +8 (misc0). Lazy-allocated
+  ;; on first SetLight so CreateLight stays cheap for apps that never
+  ;; configure a light.
+  (func $dx_light_buf (param $entry i32) (result i32)
+    (local $g i32)
+    (local.set $g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.eqz (local.get $g)) (then
+      (local.set $g (call $heap_alloc (i32.const 76)))
+      (if (local.get $g) (then
+        (call $zero_memory (call $g2w (local.get $g)) (i32.const 76))
+        (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $g))))))
+    (local.get $g))
+
   (func $handle_IDirect3DLight_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32)
     (call $gs32 (local.get $arg2) (local.get $arg0))
@@ -3196,24 +3210,65 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DLight_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
+    (local $entry i32) (local $rc i32) (local $buf i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
+      (then
+        (local.set $buf (i32.load (i32.add (local.get $entry) (i32.const 8))))
+        (if (local.get $buf) (then
+          (call $heap_free (local.get $buf))
+          (i32.store (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))))
+        (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; Initialize(this, lpDirect3D) — advisory. Keep S_OK; the v1 glue is vestigial.
   (func $handle_IDirect3DLight_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; SetLight(this, lpLight) — copy caller's D3DLIGHT (first dword is dwSize) into
+  ;; our per-slot buffer. Clamp to 76 (full D3DLIGHT2) to keep older/shorter
+  ;; D3DLIGHT structs safe.
   (func $handle_IDirect3DLight_SetLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $buf i32) (local $dwSize i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $buf (call $dx_light_buf (local.get $entry)))
+    (if (local.get $arg1) (then
+      (if (local.get $buf) (then
+        (local.set $dwSize (call $gl32 (local.get $arg1)))
+        (if (i32.gt_u (local.get $dwSize) (i32.const 76)) (then (local.set $dwSize (i32.const 76))))
+        (if (i32.lt_u (local.get $dwSize) (i32.const 4)) (then (local.set $dwSize (i32.const 76))))
+        (call $memcpy
+          (call $g2w (local.get $buf))
+          (call $g2w (local.get $arg1))
+          (local.get $dwSize))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; GetLight(this, lpLight) — caller provides D3DLIGHT* with dwSize prefilled.
+  ;; Copy back min(dwSize, 76) bytes from our buffer. If no SetLight ever ran,
+  ;; our buffer stays zeroed except the caller-visible dwSize echo.
   (func $handle_IDirect3DLight_GetLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $buf i32) (local $dwSize i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $buf (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (local.get $arg1) (then
+      (local.set $dwSize (call $gl32 (local.get $arg1)))
+      (if (i32.gt_u (local.get $dwSize) (i32.const 76)) (then (local.set $dwSize (i32.const 76))))
+      (if (i32.lt_u (local.get $dwSize) (i32.const 4)) (then (local.set $dwSize (i32.const 76))))
+      (if (local.get $buf)
+        (then
+          (call $memcpy
+            (call $g2w (local.get $arg1))
+            (call $g2w (local.get $buf))
+            (local.get $dwSize)))
+        (else
+          ;; No stored light yet — zero the caller buffer then restore dwSize.
+          (call $zero_memory (call $g2w (local.get $arg1)) (local.get $dwSize))
+          (call $gs32 (local.get $arg1) (local.get $dwSize))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
