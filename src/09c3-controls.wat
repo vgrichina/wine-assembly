@@ -2202,7 +2202,15 @@
                         (then (i32.store offset=20 (local.get $sw)
                                 (i32.add (local.get $top) (i32.const 1)))))
                       (global.set $sb_pressed_hwnd (local.get $hwnd))
-                      (global.set $sb_pressed_part (i32.const 2))))))
+                      (global.set $sb_pressed_part (i32.const 2)))
+                    (else ;; track click — page up/down based on thumb position
+                      (if (i32.gt_s (local.get $max) (i32.const 0))
+                        (then
+                          (call $listbox_page_hit
+                            (local.get $hwnd) (local.get $sw)
+                            (local.get $row_y) (local.get $h)
+                            (local.get $top) (local.get $max)
+                            (local.get $visible))))))))
                 (call $invalidate_hwnd (local.get $hwnd))
                 (return (i32.const 0))))))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
@@ -3858,6 +3866,47 @@
                     (i32.add (local.get $thumb_pos) (local.get $thumb_size))
                     (i32.const 0x05) (i32.const 0x0F))))))) ;; BDR_RAISED, BF_RECT
   )
+
+  ;; Track-click page hit for a WS_VSCROLL listbox strip.
+  ;; Computes the thumb position using the same geometry as
+  ;; $paint_vscrollbar_rect (arrow=16, track = h - 32). If the click y
+  ;; sits above the thumb → page up (top -= visible); below → page down
+  ;; (top += visible). Top is clamped to [0, max]. Mutates ListBoxState.top.
+  (func $listbox_page_hit
+        (param $hwnd i32) (param $sw i32)
+        (param $row_y i32) (param $h i32)
+        (param $top i32) (param $max i32) (param $visible i32)
+    (local $arrow i32) (local $track_y i32) (local $track_h i32)
+    (local $thumb_size i32) (local $thumb_pos i32) (local $new_top i32)
+    (local.set $arrow (i32.const 16))
+    (local.set $track_y (local.get $arrow))
+    (local.set $track_h (i32.sub (local.get $h) (i32.mul (local.get $arrow) (i32.const 2))))
+    (if (i32.le_s (local.get $track_h) (i32.const 0)) (then (return)))
+    (local.set $thumb_size (i32.div_u (local.get $track_h) (i32.add (local.get $max) (i32.const 1))))
+    (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
+      (then (local.set $thumb_size (i32.const 16))))
+    (if (i32.gt_u (local.get $thumb_size) (local.get $track_h))
+      (then (local.set $thumb_size (local.get $track_h))))
+    (local.set $thumb_pos
+      (i32.add (local.get $track_y)
+        (i32.div_u
+          (i32.mul (local.get $top)
+                   (i32.sub (local.get $track_h) (local.get $thumb_size)))
+          (local.get $max))))
+    (if (i32.lt_s (local.get $visible) (i32.const 1))
+      (then (local.set $visible (i32.const 1))))
+    (if (i32.lt_s (local.get $row_y) (local.get $thumb_pos))
+      (then
+        (local.set $new_top (i32.sub (local.get $top) (local.get $visible)))
+        (if (i32.lt_s (local.get $new_top) (i32.const 0))
+          (then (local.set $new_top (i32.const 0))))
+        (i32.store offset=20 (local.get $sw) (local.get $new_top)))
+      (else (if (i32.ge_s (local.get $row_y) (i32.add (local.get $thumb_pos) (local.get $thumb_size)))
+        (then
+          (local.set $new_top (i32.add (local.get $top) (local.get $visible)))
+          (if (i32.gt_s (local.get $new_top) (local.get $max))
+            (then (local.set $new_top (local.get $max))))
+          (i32.store offset=20 (local.get $sw) (local.get $new_top)))))))
 
   ;; ScrollBar control wndproc (class 7).
   ;; Draws a Win98-style scrollbar: arrow button at each end + sunken track + raised thumb.
