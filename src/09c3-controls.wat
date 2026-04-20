@@ -1327,10 +1327,10 @@
             (i32.const 76) (i32.const 8) (i32.const 200) (i32.const 18)
             (i32.const 0x50810000)
             (call $wat_str_to_heap (i32.const 0x213) (i32.const 3))))  ;; "C:\"
-    ;; File listbox (id 0x441)
+    ;; File listbox (id 0x441) — WS_VSCROLL so the scrollbar strip renders.
     (local.set $lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x441)
                      (i32.const 12) (i32.const 32) (i32.const 264) (i32.const 130)
-                     (i32.const 0x50810001) (i32.const 0)))
+                     (i32.const 0x50A10001) (i32.const 0)))
     ;; "File name:" static
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 168) (i32.const 60) (i32.const 16)
@@ -2171,6 +2171,40 @@
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (local.set $count (i32.load offset=12 (local.get $sw)))
+        ;; --- WS_VSCROLL strip hit-test (arrows only) ---
+        ;; If the click lands in the right-edge 16px scrollbar strip, adjust
+        ;; top_index and short-circuit before the row-select path.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+            (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+            (local.set $row (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+            (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
+            (if (i32.ge_s (local.get $row) (i32.sub (local.get $w) (i32.const 16)))
+              (then
+                ;; visible rows based on strip-reduced client
+                (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+                (local.set $top (i32.load offset=20 (local.get $sw)))
+                (local.set $max (i32.sub (local.get $count) (local.get $visible)))
+                (if (i32.lt_s (local.get $max) (i32.const 0))
+                  (then (local.set $max (i32.const 0))))
+                (if (i32.lt_s (local.get $row_y) (i32.const 16))
+                  (then ;; up arrow
+                    (if (i32.gt_s (local.get $top) (i32.const 0))
+                      (then (i32.store offset=20 (local.get $sw)
+                              (i32.sub (local.get $top) (i32.const 1)))))
+                    (global.set $sb_pressed_hwnd (local.get $hwnd))
+                    (global.set $sb_pressed_part (i32.const 1)))
+                  (else (if (i32.ge_s (local.get $row_y) (i32.sub (local.get $h) (i32.const 16)))
+                    (then ;; down arrow
+                      (if (i32.lt_s (local.get $top) (local.get $max))
+                        (then (i32.store offset=20 (local.get $sw)
+                                (i32.add (local.get $top) (i32.const 1)))))
+                      (global.set $sb_pressed_hwnd (local.get $hwnd))
+                      (global.set $sb_pressed_part (i32.const 2))))))
+                (call $invalidate_hwnd (local.get $hwnd))
+                (return (i32.const 0))))))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
         ;; y from hi 16 bits of lParam
         (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
@@ -2195,10 +2229,21 @@
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
+    ;; ---------- WM_LBUTTONUP (0x0202) — release scrollbar press ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0202))
+      (then
+        (if (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+          (then
+            (global.set $sb_pressed_hwnd (i32.const 0))
+            (global.set $sb_pressed_part (i32.const 0))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+
     ;; ---------- WM_PAINT (0x000F) ----------
     ;; Draw inset frame, white interior, and visible item rows. Selected
     ;; item is rendered with the system highlight (blue background +
-    ;; white text). Item height is fixed at 16 px.
+    ;; white text). Item height is fixed at 16 px. If WS_VSCROLL is set,
+    ;; a 16px scrollbar strip is reserved at the right edge.
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
@@ -2207,7 +2252,10 @@
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        ;; White interior + sunken edge
+        ;; Reserve right strip for WS_VSCROLL (0x00200000). Content uses w'=w-16.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))
+        ;; White interior + sunken edge (content rect only).
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30010)))
@@ -2264,6 +2312,18 @@
           (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
           (local.set $row (i32.add (local.get $row) (i32.const 1)))
           (br $rows)))
+        ;; WS_VSCROLL strip. $w here is already reduced; full width is via sz.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $max (i32.sub (local.get $count) (local.get $visible)))
+            (if (i32.lt_s (local.get $max) (i32.const 0))
+              (then (local.set $max (i32.const 0))))
+            (call $paint_vscrollbar_rect (local.get $hdc)
+              (local.get $w) (i32.const 0) (i32.const 16) (local.get $h)
+              (i32.load offset=20 (local.get $sw)) (local.get $max)
+              (select (global.get $sb_pressed_part) (i32.const 0)
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
         (return (i32.const 0))))
 
     ;; Default
@@ -3733,6 +3793,71 @@
                   (i32.const 0x30014)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $next))))
+
+  ;; Paint a vertical scrollbar strip (track + two arrows + thumb) inside
+  ;; (bx, by, bw, bh). Used by WS_VSCROLL-decorated controls (listbox, edit);
+  ;; the standalone SCROLLBAR control does its own inline drawing.
+  ;;
+  ;; pos      — scroll position in [0, range]
+  ;; range    — max scrollable units (0 = no thumb, arrows only)
+  ;; pressed  — 0=none, 1=up arrow held, 2=down arrow held
+  (func $paint_vscrollbar_rect
+        (param $hdc i32) (param $bx i32) (param $by i32)
+        (param $bw i32) (param $bh i32)
+        (param $pos i32) (param $range i32) (param $pressed i32)
+    (local $arrow i32) (local $track_y i32) (local $track_h i32)
+    (local $thumb_size i32) (local $thumb_pos i32)
+    ;; Track background + sunken edge.
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $bx) (local.get $by)
+            (i32.add (local.get $bx) (local.get $bw))
+            (i32.add (local.get $by) (local.get $bh))
+            (i32.const 0x30011))) ;; LTGRAY_BRUSH
+    ;; Arrows: 16px at each end, suppressed if strip too short.
+    (local.set $arrow (i32.const 16))
+    (if (i32.lt_s (local.get $bh) (i32.const 36))
+      (then (local.set $arrow (i32.const 0))))
+    (if (local.get $arrow)
+      (then
+        (call $draw_sb_arrow (local.get $hdc)
+          (local.get $bx) (local.get $by)
+          (local.get $bw) (local.get $arrow)
+          (i32.const 0) ;; up
+          (i32.eq (local.get $pressed) (i32.const 1)))
+        (call $draw_sb_arrow (local.get $hdc)
+          (local.get $bx) (i32.sub (i32.add (local.get $by) (local.get $bh)) (local.get $arrow))
+          (local.get $bw) (local.get $arrow)
+          (i32.const 1) ;; down
+          (i32.eq (local.get $pressed) (i32.const 2)))))
+    ;; Thumb. Skip when range is empty (nothing to scroll).
+    (if (i32.gt_s (local.get $range) (i32.const 0))
+      (then
+        (local.set $track_y (i32.add (local.get $by) (local.get $arrow)))
+        (local.set $track_h (i32.sub (local.get $bh) (i32.mul (local.get $arrow) (i32.const 2))))
+        (if (i32.gt_s (local.get $track_h) (i32.const 0))
+          (then
+            (local.set $thumb_size (i32.div_u (local.get $track_h) (i32.add (local.get $range) (i32.const 1))))
+            (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
+              (then (local.set $thumb_size (i32.const 16))))
+            (if (i32.gt_u (local.get $thumb_size) (local.get $track_h))
+              (then (local.set $thumb_size (local.get $track_h))))
+            (local.set $thumb_pos
+              (i32.add (local.get $track_y)
+                (i32.div_u
+                  (i32.mul (local.get $pos)
+                           (i32.sub (local.get $track_h) (local.get $thumb_size)))
+                  (local.get $range))))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (local.get $bx) (local.get $thumb_pos)
+                    (i32.add (local.get $bx) (local.get $bw))
+                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                    (i32.const 0x30011))) ;; LTGRAY_BRUSH
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (local.get $bx) (local.get $thumb_pos)
+                    (i32.add (local.get $bx) (local.get $bw))
+                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                    (i32.const 0x05) (i32.const 0x0F))))))) ;; BDR_RAISED, BF_RECT
+  )
 
   ;; ScrollBar control wndproc (class 7).
   ;; Draws a Win98-style scrollbar: arrow button at each end + sunken track + raised thumb.
