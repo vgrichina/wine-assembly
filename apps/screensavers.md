@@ -494,6 +494,37 @@ So the question "why is the map empty" has a concrete answer: **textures are loa
 
 **This is a file-extension / naming mismatch, not a missing init pass.** Checking what file extension / search path the texture-loader tries is the direct next step. Break on `0x744a9003` (the fopen wrapper) with an EIP trace to see exactly what filename string is passed in each call, then work backward from there. Also check whether VFS lookup is case-sensitive — since the key is lowercased but files on disk may be uppercase (e.g., `CALogo.GIF`).
 
+**Session 2026-04-20 (g) — "c" is a real 1-char CString, not truncation:**
+
+Raw memory dump at the CreateFileA filename pointer (pathWA=0x628ac1 → guest 0x74a16ac1) at the moment of the call:
+
+```
+-8..-1:  00 00 00 00 00 00 00 01   ← MFC CStringData header: nRefs=0, nDataLength=1
++0..+3:  63 00 00 00                ← "c\0"
+```
+
+So the CString literally contains one character ("c") with a correctly-formed MFC header declaring length=1. **Not an emulator string-truncation bug** — the scene-parsing code is storing "c" on purpose (or as the result of an upstream logic error that is faithful to the app's intent — e.g. reading the first char of some field).
+
+**Call chain** (from `--trace-fs` `frame=[…]` + `disasm_fn` on each return address):
+
+| Level | Return addr | Fn entry | What it does |
+|-------|-------------|----------|--------------|
+| 0 | 0x744a901d | 0x744a9003 | fopen-wrapper inner block — calls `[0x744b212c]` = CreateFileA with args built from caller-passed filename/access/mode |
+| 1 | 0x744995a6 | 0x744994b7 | fopen mode-dispatch ('a'/'r'/'w') — enters 'w' variant at 0x744994b7 |
+| 2 | 0x7448ef14 | 0x7448eefe | `fopen(filename, mode, shflag)` wrapper — pushes 3 args and calls `0x74499490` (fopen mode-parser) |
+| 3 | 0x7448ef41 | 0x7448ef30 | `fopen(filename, mode)` → `fopen_share(filename, mode, 0x40)` — forces share flag 0x40 |
+| 4 | 0x7440e2a3 | 0x7440e260 | **Texture-loading fn** — `mov eax, [edi+4]; if zero use empty-CString sentinel 0x744b24a0; push mode-"rb"-string@0x744c3fe8; push eax; call 0x7448ef30`. Arg `edi` at `[esp+0x440]` (3rd arg). SEH-protected. |
+
+**Fn 0x7440e260's third arg structure** (`edi`):
+- `[edi+0x4]` — CString* pointer (the filename). If null → use empty sentinel; otherwise fopen that CString.
+- Callers at 0x7440fff6 and 0x74410676 pass `(orig_ecx+8)` as this arg. So there's an object where offset +0x08+0x04 = +0x0C holds a CString pointer.
+
+**Mode string** at 0x744c3fe8 = `"rb\0\0couldn't read left/top/width…"` — confirming this path reads assets in binary mode, and the "couldn't read" error is what fires after the failed open.
+
+**Next-session concrete experiment:** watch guest addr `0x74a16ac1` for WRITES (the single-byte 'c' value). Who writes 0x63 there? Likely an MFC `CString::operator=` or `strcpy`-equivalent during scene parsing that's being handed a source pointer to a single char — maybe taking address-of a loop variable that holds the current character instead of the full string. Use `--watch-byte=0x74a16ac1 --watch-log` to get a non-stopping log of every write to that byte with the prev_eip of the writer.
+
+Also useful: `--watch-log` on the parent CString pointer slot (wherever `[edi+4]` resides for this particular struct) to find who assigned the 1-char CString to that object.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
