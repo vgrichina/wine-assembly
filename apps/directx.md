@@ -263,7 +263,7 @@ No separate input host imports — DirectInput state is scraped from the existin
 
 Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFACEDESC.lpSurface` and blts into it. A stub that returns `DD_OK` without writing a valid surface pointer will crash the guest. COM is the kind of API where half-working is not working. Either we implement enough of a surface that its bits can be written and re-presented, or the app is broken. Step 2 above (null backend) is the minimum viable implementation *because* that's where the guest's own code starts accessing the object contents.
 
-## Implementation status (2026-04-16)
+## Implementation status (2026-04-20)
 
 | Feature | Status |
 |---------|--------|
@@ -280,6 +280,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | IDirect3D/IDirect3D3 | Phase 0 stubs only (E_FAIL/D3D_OK) |
 | EnumDisplayModes | Done — multi-mode enumeration (640×480×8/16, 800×600×8/16) with CACA0008 continuation |
 | 8bpp palette rendering | Done — SetPaletteEntries → dx_present → RGBA expansion → SetDIBitsToDevice |
+| Default 8bpp palette | Done (2026-04-20, f0d3835) — SetDisplayMode(≤8bpp) installs 6×6×6 cube + grayscale when app skips CreatePalette. Unblocks ddex1. |
 | 16bpp RGB565 rendering | Done — pitch/format support in CreateSurface/Lock |
 | Color-key transparency | Done — BltFast checks color-key during copy |
 
@@ -294,6 +295,31 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | **AoE2** | Not tested | Likely same issues as AoE1 |
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
 | **MCM / MW3** | Blocked | Need D3D Immediate Mode (see `direct3d-im.md`) |
+
+### DX5 SDK samples (harness, 2026-04-20)
+
+Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which DX5 samples truly render vs. init-but-blank. PNGs land in `scratch/harness-pngs/`.
+
+| Sample | Status | Notes |
+|--------|--------|-------|
+| ddex1 | **PASS** (12 colors) | Default 8bpp palette fix (f0d3835) — app skips CreatePalette |
+| ddex2 / ddex3 / ddex5 | blank | Similar DDraw path to ddex1 but palette fix doesn't cover them |
+| flip2d | **PASS** (65+ colors) | Needed user32 stubs (GetMenuItemCount, EnableScrollBar, {Set,Get}MenuItemInfoA — 8de8043) |
+| palette / stretch | **PASS** (65+ colors) | |
+| flip3dtl | **PASS** (22 colors) | Needed XLAT (0xD7) decoder support — CRT float-classification hung on it (commit 0dfa24f) |
+| Boids | **PASS** (32+ colors) | |
+| Donuts | **PASS** (window created) | |
+| tunnel / twist | blank | Run to completion but hit D3D error path ("D3D Example Message" MessageBox + ExitProcess) — real upstream D3DIM issue |
+| Globe / Bellhop / Viewer / Wormhole | blank | D3DIM Phase-0 stubs (see `direct3d-im.md`) |
+| Donut | blank | DDraw; 20k-API render loop runs but output doesn't composite — similar to ddex2/3/5 |
+| FoxBear | blank | DDraw sprite demo; same composition issue |
+
+### Recent changes (2026-04-20)
+
+- **f0d3835** — Default 8bpp palette at SetDisplayMode when app skips CreatePalette (ddex1 fix)
+- **8de8043** — user32 stubs: GetMenuItemCount, EnableScrollBar, {Set,Get}MenuItemInfoA (flip2d/viewer unblocked)
+- **0dfa24f** — XLAT decoder opcode — flip3dtl hung on CRT FPU-class helper before wndproc ever registered
+- **c484b24 / 1ab922d** — `test-all-exes.js` pixel-diversity gate (two-signal: ≤8 colors AND >95% one-color = blank). Demoted 10 false-PASS apps; PNGs saved for visual review.
 
 ## Open questions
 
