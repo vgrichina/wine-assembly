@@ -335,6 +335,78 @@ Verified: ARCHITEC.SCR `/s` runs clean through 2000 batches; MARBLES.EXE unaffec
 
 **Next blocker:** geometry still missing. Per earlier trace each `Execute` is a lone `STATETRANSFORM size=8 count=3` with no `PROCESSVERTICES` / `TRIANGLE` — the mesh-load path still never emits `CreateFileA("ar_mesh.x")`, so the pipeline is rendering nothing. That's the remaining work.
 
+**Update (2026-04-20) — prior "Bug A: texture-path truncation" rabbit hole retracted; root cause re-localized.**
+
+Earlier sessions chased `GetFileAttributes(".gif")` and `CreateFile("c")` failures from a strrchr-based extension stripper inside fn `0x74451020` (texture loader). Closer look this session shows Bug A is **non-blocking**: `lib/filesystem.js fs_search_path` already strips duplicated `.X.X` extensions (lines 467-470), so when the loader builds `Foo.gif.gif` and falls through from a failed `GetFileAttributes` to `SearchPath`, the texture resolves correctly (`SearchPath("Bwroom.gif.gif") → "C:\bwroom.gif"` in trace). Textures actually load.
+
+Other findings localized this session:
+
+1. **`Direct3DRMCreate` IS called and succeeds** — even though `$handle_Direct3DRMCreate` (`src/09a8-handlers-directx.wat:2476`) returns E_FAIL, d3drm.dll is loaded as real PE code (DllMain runs, 1182 thunks patched). The IAT slot for `Direct3DRMCreate` is patched to point at d3drm's real export, NOT our stub. Verified via `--trace-at=0x7440c240 --trace-at-dump=0x744d6a48:8`: cache var goes 0 → 0x74e1339c (real RM object) between trace-at #1 and #2. Our stub never executes.
+2. **App uses pure D3DIM — no RM COM methods called.** 300k-line trace-api log shows only `IDirect3DDevice*`, `IDirect3DViewport*`, `IDirect3DExecuteBuffer*`, `IDirect3D*`, `IDirectDrawSurface*`. Zero `IDirect3DRM*` methods. So `Direct3DRMCreate` succeeds but RM is unused for mesh/geometry.
+3. **Zero `.X` files opened.** trace-fs CreateFile shows only 4 unique paths total (none `.X`). `Inform0=ar_mesh` is parsed correctly from `.scn` (verified via `--trace-ini`), but the mesh data is never read from disk through any code path.
+4. **The empty `CreateFile("")` from d3drm-internal resolver is unrelated** — d3drm's init does some filesystem probing that fails silently, but no app code ever calls `IDirect3DRMMeshBuilder_Load` (those vtable slots never fire), so it's not the rendering blocker.
+
+**Real status:** something between `Inform0=ar_mesh` (parsed from `.scn`) and any file/API access fails silently. The app SHOULD load `AR_MESH.X` either via its own `.X` parser (would call `CreateFile/ReadFile`) or via `IDirect3DRMMeshBuilder->Load` (RM COM method) — neither happens. Scene-loader bails before reaching the mesh-load step.
+
+**Next session strategy:**
+- `--break-api=GetPrivateProfileStringA` to catch when `Inform0` is queried.
+- Step out, follow the buffer pointer to see who consumes the returned string.
+- Look for a call to mesh-load fn that takes that string — likely in the same scene-init code that calls fn `0x74451020` (texture loader). Caller `0x74450abf` is the prime suspect (3rd xref to texture loader, 303 bytes long entry — looks like the dedicated scene-load fn).
+
+**Tracing upgrades landed this session:** `lib/filesystem.js fs_create_file` (commit `0c4699a`) and `fs_get_file_attributes` (commit `8e69dd2`) now log caller RA when path is short (<3/<6), empty, or starts with `.`. Reduces the need for one-off `console.log` hooks when chasing empty-path bugs. Later extended to also stack-scan up to 256 dwords above ESP and print plausible code pointers (range `0x74400000..0x76000000`) as `stack=[...]` — caveat: results contain stale stack values, so chain entries need cross-checking.
+
+**Session 2026-04-20 (b) — traced the `CreateFile("c")` wrapper chain:**
+
+Repeated calls to `CreateFile("c", access=0x80000000, creation=3) → FAIL ra=0x744a901d` during scene enumeration decode as:
+
+- `0x744a9003` — CreateFileA invocation site (`push 0; push edi; ...; call [0x744b212c]`). Fallthrough from 0x744a8fe1 `jnz`.
+- `0x744a8e50` — `_sopen(path, oflag, shflag, pmode=0x1a4)`. Parses `[esp+0x30]` oflag via jump table at 0x744a91a4.
+- `0x74499490` — fopen-style mode-string parser. Entry switches on first byte of mode string (`'a'`/`'r'`/`'w'`), jumps into per-mode flag table at 0x744995ec.
+- `0x74499660` → `0x7448eef0` → `0x7448ef30` — thin fopen wrapper chain (pushes `0x40` shflag, passes through mode).
+
+Mode strings seen at fopen callers: `"rb"` (at `0x744c3fe8`, from caller `0x7440e29e` inside fn `0x7440e260`) and `"rt"` (at `0x744cfa5c`, from caller `0x74458703`). Neither produces a literal `"c"` path — mode is always 2 chars.
+
+The `"c"` path therefore comes from a DIFFERENT high-level caller, not `0x7440e260`. Confirmed: `--break=0x7440e260` and `--break=0x7440e29e` never fire in 10000 batches, even though the stack-scan pointed at `0x7440e2a3` — that was stale data left on the stack by an earlier unrelated call.
+
+**Hypothesis:** `"c"` is one byte of a longer path that got truncated — classic off-by-one where the loader grabbed `path+1` instead of `path`, leaving only the trailing char after `'C'`. OR the path buffer's leading byte was overwritten with NUL after the first char.
+
+**Approach for next session:** add a conditional probe that only fires when path matches `/^[a-z]$/` — e.g. modify `fs_create_file` to dump a FULL stack-walk (+ saved ebp chain if present) only for that case, or run with `--break-api=CreateFileA` and add a conditional in the handler. Alternatively, xref all 51 callers of `0x7448eef0..0x7448ef50` range (see `tools/xrefs.js test/binaries/screensavers/ARCHITEC.SCR 0x7448eefe --near=0x100`) and narrow by which one is active during scene load.
+
+**Session 2026-04-20 (c) — `"c"` path localized to an MFC CString bug in the app:**
+
+Better stack walker in `lib/filesystem.js` (validates candidate RAs by checking the byte before — `E8 rel32` or `FF /r` indirect call) yielded a clean frame reconstruction:
+
+```
+frame=[+0:0x744a901d*i (CreateFileA wrapper),
+       +44:0x744995a6*R (fopen core),
+       +68:0x7448ef14*R (fopen inner wrapper),
+       +84:0x7448ef41*R (fopen outer wrapper 0x7448ef30),
+       +94:0x7440e2a3*R (real top-level caller = fn 0x7440e260)]
+```
+
+`*R` = preceded by `E8` call, `*i` = preceded by `FF` indirect call. Offsets are ESP-relative. Breakpoint confirmation: `--break=0x7440e260` fires at batch 240 — the function IS called. (Mid-block addresses like `0x7440e29e` don't fire because breakpoints only trigger at block boundaries.)
+
+**Fn `0x7440e260` is a fopen-wrapper with SEH:**
+- Takes a struct pointer as arg1 (read into `edi = [esp+0x440]`).
+- Reads `[edi+4]` = path pointer into `eax`.
+- If `eax == 0`, substitutes default `0x744b24a0` (which at runtime holds all zeros → empty path).
+- Pushes `push 0x744c3fe8 ("rb")` + `push eax`, calls `0x7448ef30` (fopen wrapper).
+
+**`--trace-at=0x7440e298 --trace-at-dump=0x74a16ae1:64` shows the runtime path content:**
+
+```
+0x74a16ad0  63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  c...............
+0x74a16ae0  01 63 00 00 01 72 69 61 00 00 00 00 00 72 30 00  .c...ria.....r0.
+```
+
+`[0x74a16ae0] = 01 63 00 00` decodes as an **MFC CString header**: refcount=1 (byte 0x01), followed by the CString data at `0x74a16ae1` = `"c\0"`. Classic MFC CString layout (`m_pchData` points past a header). So the fopen path IS genuinely "c" — a single-character CString.
+
+The outer-outer caller is fn `0x7440ffa0` (invoked via `ecx = this`; does `mov ebx,[ecx+0x18]; lea ebp,[ecx+0x4]; add ecx,0x8; push ecx; push ebp; push &local; call 0x7440e260`). It's a thiscall method on some class — the CString `"c"` comes from `[this+4]` or `[this+8]` slot. Only 2 xrefs: `0x7440fff6` (this fn) and `0x74410676`.
+
+**Open question:** what SHOULD the CString contain? The nearby bytes `ria` (+4) and `r0` (+13) look like fragments of a longer string that was zeroed in places. Could be "Material0" / "ar_textu" / "Architecture" — any of which would be legitimate scene-asset names that got corrupted to a single char. Watchpoint on `0x74a16ae0` showed only one dword-aligned write (0x74614d00 at batch 170, EIP=0x74402f8c) — subsequent writes are byte-level so don't trigger the dword watch. **Next step: use `--watch` at byte granularity OR add `--watch-byte=0x74a16ae1` to catch where "c" gets stored, then work back from that EIP to find the truncation bug.** Suspect a `strncpy(dst, src, 1)` or an off-by-one in `sscanf`/`CString::Format`.
+
+**Tracing upgrade landed this session (uncommitted):** `lib/filesystem.js fs_create_file` now emits `frame=[...]` with validated RAs (byte-before-RA preceded by `E8` or `FF`) plus ESP-relative offsets. Much more reliable than raw stack-scan for identifying real callers. Commit before next session.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
