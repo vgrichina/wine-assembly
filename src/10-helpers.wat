@@ -1063,6 +1063,17 @@
         (if (local.get $is_ex)
           (then (local.set $p (i32.add (local.get $p) (i32.const 4)))))  ;; weight+italic+charset
         (local.set $p (call $dlg_skip_sz (local.get $p)))))  ;; typeface
+    ;; Propagate dialog style onto the hwnd so $wnd_get_style sees it —
+    ;; needed by $defwndproc_do_ncpaint to recognise WS_CAPTION and draw
+    ;; the title bar + sysbuttons. Without this, modal dialogs open but
+    ;; ncpaint returns early and the back-canvas has no chrome.
+    (drop (call $wnd_set_style (local.get $dlg_hwnd) (local.get $style)))
+    ;; Also publish the title so $defwndproc_do_ncpaint can draw it in the
+    ;; caption bar. $title_ptr is a guest heap pointer from $dlg_read_text.
+    (if (local.get $title_ptr)
+      (then (call $title_table_set (local.get $dlg_hwnd)
+              (call $g2w (local.get $title_ptr))
+              (call $strlen (call $g2w (local.get $title_ptr))))))
     ;; Stash header in WND_DLG_RECORDS[slot]
     (i32.store         (local.get $dlg_rec) (local.get $dlg_key))
     (i32.store offset=4  (local.get $dlg_rec) (local.get $style))
