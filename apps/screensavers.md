@@ -407,6 +407,57 @@ The outer-outer caller is fn `0x7440ffa0` (invoked via `ecx = this`; does `mov e
 
 **Tracing upgrade landed this session (uncommitted):** `lib/filesystem.js fs_create_file` now emits `frame=[...]` with validated RAs (byte-before-RA preceded by `E8` or `FF`) plus ESP-relative offsets. Much more reliable than raw stack-scan for identifying real callers. Commit before next session.
 
+**Session 2026-04-20 (d) — `"c"` is NOT a corruption; it's a legitimate TextureMap lookup miss:**
+
+New `--watch-log` + `--watch-byte` (landed this session) made the mutation timeline on `0x74a16ae0` trivially visible. Full sequence (batches 170→248):
+
+| Batch | Old → New | EIP | Note |
+|---|---|---|---|
+| 170 | `00000000 → 74614d00` | 0x74402f8c | `rep movs` copies "Mat..." into buffer (CString::AssignCopy, fn 0x74402f5b) |
+| 171 | `74614d00 → 74614d01` | 0x74454b5a | refcount bump |
+| 172-210 | buffer bounces through release/alloc cycles | | buffer pool reuse |
+| 239 | `00 → 63 (byte)` | 0x7441a293 | **'c' written** (EIP is the insn AFTER the writing call) |
+| 243-248 | `00006300 → 00006301 → 02 → 03 → 02 → 01` | various | post-write refcount ops |
+
+Backtracking from EIP 0x7441a293 (byte-watch) and prev_eip 0x74402ac6:
+
+- `call at 0x7441a28e → 0x74402a50` (`CString::AssignCopy(src, len)`) is what wrote "c". src came from fn `0x744aac30` (strdup) → fn `0x7448f2c0` (`_strlwr`).
+- So the fn body at `0x7441a220` is: strdup the caller's CString → lowercase in place → copy into a new local CString → lookup in hashmap at `0x7441b630` → log via format string `"%s: Retrieved texture \"%s\" from TextureMap"` at `0x744c6624`.
+- **Format string identifies the subsystem: TextureMap lookup.** The fn is `TextureMap::Get(CString& out, CString key)` or similar.
+
+Caller chain verified with `--trace-at=0x744214a9` (right after the call returns) and struct dump at ebx=0x74a16910:
+
+```
+struct LookupRequest {      // ebx
+  +0x00: vtable 0x744b2904
+  +0x04: TextureMap*       = 0x74e127e4
+  +0x08: 0xFFFFFFFF        (flag)
+  +0x0c..+0x18: CString    { hash?, pData=0x74a16971, len=1, alloc=31 }  → "C"
+  +0x1c..+0x2c: 4 floats   ≈ 0.86, 0.91, 1.00, 0.98  (RGBA / UV?)
+};
+```
+
+Pool layout around `0x74a16940`:
+```
+0x74a16940  00 CALogo.gif\0 ...         ← packed CString slot 1
+0x74a16960  00 notfound\0 ...           ← slot 2
+0x74a16970  00 C\0 ...                  ← slot 3 (what we've been chasing)
+0x74a16990  00 notfound\0 ...           ← slot 4
+```
+
+The CString contains literally "C" — not a truncation of "CALogo.gif". They are independent packed entries in a CString pool (each slot = 0x30 bytes, rc byte + data + null + padding).
+
+**Conclusion:** `"C"` is the legitimate texture key being looked up. The TextureMap doesn't contain it → fn returns null → the app takes a fallback path that ultimately calls `fopen("c")`. This is an **asset/scene-loading problem**, not a memory corruption bug.
+
+**Hypotheses for why TextureMap is empty / doesn't contain "C":**
+1. The scene file (Architecture.scn or similar) was parsed but texture entries were not registered into the map (texture-loader handler missing / returns early).
+2. The map IS populated but with differently-cased keys. Note the code lowercases before lookup — if entries were stored with "c" lowercase that should work. But if stored as "C" uppercase and lookup lowercases, it'd miss.
+3. "C" is a per-triangle color/texture ID that indexes into a separate table we haven't loaded.
+
+**Next investigation:** break on `0x7441b630` (hashmap lookup fn) when it's called with NON-"c" keys to see what valid keys it takes. Also `--break-api=CreateFileA` filtered for *.scn/*.bmp opens to see if the texture-file reader ever successfully reads anything. Additionally: dump the TextureMap at `0x74e127e4` to see its current contents.
+
+**Tracing work landed this session** (items 1-6 from the TL;DR): non-interactive `--watch-log`, `--watch-byte/-word` (new WAT `$watch_size`), `--trace-at-watch` diff dumps, `--show-cstring` pretty-printer, shared `walkStackFrame()` in `lib/mem-utils.js`, `_frameHint` refactor in `lib/filesystem.js`. All committed.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
