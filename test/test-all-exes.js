@@ -5,9 +5,35 @@
 const { execSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { createCanvas, loadImage } = require('canvas');
 
 const ROOT = path.join(__dirname, '..');
 const RUN_JS = path.join(__dirname, 'run.js');
+const PNG_DIR = path.join(ROOT, 'scratch', 'harness-pngs');
+const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in PNG
+
+// Count unique RGB triples in a PNG file. Returns null if load fails.
+async function countUniqueColors(pngPath) {
+  try {
+    const img = await loadImage(pngPath);
+    const w = img.width, h = img.height;
+    if (!w || !h) return 0;
+    const c = createCanvas(w, h);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const seen = new Set();
+    // Sample every 4th pixel for speed on large canvases
+    const step = 4 * 4;
+    for (let i = 0; i < data.length; i += step) {
+      seen.add((data[i] << 16) | (data[i+1] << 8) | data[i+2]);
+      if (seen.size > 64) break;  // early exit — definitely not blank
+    }
+    return seen.size;
+  } catch (_) {
+    return null;
+  }
+}
 
 // All test binaries with their expected behavior
 const TEST_CASES = [
@@ -151,7 +177,7 @@ const TEST_CASES = [
 const MAX_BATCHES = 80;
 const BATCH_SIZE = 1000;
 
-function runExe(testCase) {
+function runExe(testCase, pngPath) {
   const exePath = path.join(ROOT, testCase.exe);
   if (!fs.existsSync(exePath)) {
     return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
@@ -177,6 +203,7 @@ function runExe(testCase) {
     `--batch-size=${BATCH_SIZE}`,
     '--no-build',
     '--verbose',
+    ...(pngPath ? [`--png=${pngPath}`] : []),
     ...(testCase.extraArgs || []),
   ];
 
@@ -274,32 +301,56 @@ console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
 
 const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
 
-const results = [];
-for (const tc of TEST_CASES) {
-  if (filter && !tc.name.toLowerCase().includes(filter.toLowerCase()) && !tc.exe.toLowerCase().includes(filter.toLowerCase())) {
-    continue;
+fs.mkdirSync(PNG_DIR, { recursive: true });
+
+(async () => {
+  const results = [];
+  for (const tc of TEST_CASES) {
+    if (filter && !tc.name.toLowerCase().includes(filter.toLowerCase()) && !tc.exe.toLowerCase().includes(filter.toLowerCase())) {
+      continue;
+    }
+    process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
+    const safeName = tc.name.replace(/[^a-zA-Z0-9]+/g, '_');
+    const pngPath = path.join(PNG_DIR, `${safeName}.png`);
+    try { fs.unlinkSync(pngPath); } catch (_) {}
+    const r = runExe(tc, pngPath);
+
+    // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
+    if (r.status === 'OK' && fs.existsSync(pngPath)) {
+      const colors = await countUniqueColors(pngPath);
+      r.colors = colors;
+      if (colors !== null && colors <= BLANK_COLOR_THRESHOLD) {
+        r.status = 'WARN';
+        r.reason = `${r.reason} — BLANK (${colors} colors in PNG)`;
+      } else if (colors !== null) {
+        r.reason = `${r.reason}, ${colors}+ colors`;
+      }
+    }
+    results.push(r);
+
+    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
+    console.log(`${icon}  ${r.reason}`);
   }
-  process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
-  const r = runExe(tc);
-  results.push(r);
 
-  const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
-  console.log(`${icon}  ${r.reason}`);
-}
+  console.log('\n=== Summary ===');
+  const pass = results.filter(r => r.status === 'OK').length;
+  const fail = results.filter(r => r.status === 'CRASH').length;
+  const warn = results.filter(r => r.status === 'WARN').length;
+  const skip = results.filter(r => r.status === 'SKIP').length;
+  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
 
-// Summary
-console.log('\n=== Summary ===');
-const pass = results.filter(r => r.status === 'OK').length;
-const fail = results.filter(r => r.status === 'CRASH').length;
-const warn = results.filter(r => r.status === 'WARN').length;
-const skip = results.filter(r => r.status === 'SKIP').length;
-console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
-
-if (fail > 0) {
-  console.log('\nCrashed EXEs:');
-  for (const r of results.filter(r => r.status === 'CRASH')) {
-    console.log(`  ${r.name}: ${r.reason}`);
+  if (fail > 0) {
+    console.log('\nCrashed EXEs:');
+    for (const r of results.filter(r => r.status === 'CRASH')) {
+      console.log(`  ${r.name}: ${r.reason}`);
+    }
   }
-}
 
-process.exit(fail > 0 ? 1 : 0);
+  const blanks = results.filter(r => r.status === 'WARN' && /BLANK/.test(r.reason || ''));
+  if (blanks.length > 0) {
+    console.log('\nBlank canvases (demoted from PASS):');
+    for (const r of blanks) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  process.exit(fail > 0 ? 1 : 0);
+})();
