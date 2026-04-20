@@ -488,3 +488,8 @@
   (func $nc_clear_pressed (export "nc_clear_pressed")
     (global.set $nc_pressed_hwnd (i32.const 0))
     (global.set $nc_pressed_hit  (i32.const 0)))
+  ;; Synchronous chrome repaint — JS invokes this right after toggling the
+  ;; sysbutton press state so the back-canvas updates *now* instead of
+  ;; waiting for the next message-pump tick to drain a posted WM_NCPAINT.
+  (func (export "nc_repaint_now") (param $hwnd i32)
+    (call $defwndproc_do_ncpaint (local.get $hwnd)))
