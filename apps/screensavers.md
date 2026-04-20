@@ -479,6 +479,21 @@ Confirmed via `--trace-at=0x7441a220 --trace-at-dump=0x74e12a38:16`: the Texture
 3. **Confirm whether "C" is a glyph-cache key vs. a texture-name char iteration.** Watch `0x74a16910` (the LookupRequest struct) from earlier batches to see who constructs it and with what source.
 4. **Useful tool that's missing:** `--trace-call=0xADDR` — log ARG values on every entry to a given fn. Would immediately answer "what keys get passed to TextureMap::Get?" without the current break-and-dump dance.
 
+**Session 2026-04-20 (f) — fn 0x7441a220 is actually GetOrCreate, not plain Get:**
+
+Second format string `"%s: Adding \"%s\" to TextureMap"` at VA `0x744c65cc` (file offset 0xC55CC in .data) has exactly ONE xref: `0x7441a3c7` — also inside fn 0x7441a220. So this fn is **GetOrCreate(key, flag)**:
+
+- **Hit path**: `0x7441a2ef` logs `"Retrieved texture"` format string at `0x744c6624` → returns `[node+0x1c]`.
+- **Miss path + flag check**: `0x7441a3a7` reads `[esp+0x58]` = arg flag, `test; jz no-insert`.
+- **Miss + insert path**: logs `"Adding ..."` at `0x744c65cc`, calls `0x7441b6d0` (probably `std::map::insert` / allocator), calls `0x7441b480` (probably load texture from file), calls `0x7441ac80` and `0x7441aa90` (node construction + CString ops), writes result to `[esi+0x1c]`.
+- **Miss + no insert**: returns null.
+
+The four wrappers (0x7441a540 / 0x7441a620 / 0x7441a8a0 / 0x7441a980) all pass flag=1 in their observed code paths — so EVERY miss should trigger the insert/load branch. And in our trace it does: miss with "C" → insert path → texture-file load → fopen("c") via CRT (fn 0x744a9003 wrapping import [0x744b212c] = CreateFileA). The file isn't on disk → insert still registers the entry but with a null texture data, OR bails out before inserting.
+
+So the question "why is the map empty" has a concrete answer: **textures are loaded from FILES with their INI name as a lowercased basename (no extension)**. The scene `ca_diagr.scn` wants `Texture0=Granite` → app tries `fopen("granite")` → fails → no entry inserted. Same for "C" (whatever caller is asking for it). The VFS doesn't have these as raw basenames; extensions would be `.gif`/`.bmp`/`.tga`.
+
+**This is a file-extension / naming mismatch, not a missing init pass.** Checking what file extension / search path the texture-loader tries is the direct next step. Break on `0x744a9003` (the fopen wrapper) with an EIP trace to see exactly what filename string is passed in each call, then work backward from there. Also check whether VFS lookup is case-sensitive — since the key is lowercased but files on disk may be uppercase (e.g., `CALogo.GIF`).
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
