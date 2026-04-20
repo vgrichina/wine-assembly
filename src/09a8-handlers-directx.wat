@@ -1092,11 +1092,48 @@
   ;; Method 21 is shared between both vtables, so we disambiguate at call
   ;; time by reading the object's vtable pointer [arg0]. Mispopping 8 bytes
   ;; corrupts ESP and the caller's return chain (see apps/mcm.md MCM-1).
+  ;; Default 8bpp palette: 6×6×6 RGB cube (indexes 0..215) + 40-step grayscale ramp
+  ;; (216..255). Installed when SetDisplayMode selects a ≤8bpp mode and the app
+  ;; hasn't attached its own palette yet — DX samples like ddex1 use GetDC/TextOut
+  ;; without calling CreatePalette and would otherwise render black.
+  (func $install_default_dx_palette
+    (local $pal_guest i32) (local $pal_wa i32) (local $i i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $lum i32)
+    (if (i32.ne (global.get $dx_primary_pal_wa) (i32.const 0)) (then (return)))
+    (local.set $pal_guest (call $heap_alloc (i32.const 1024)))
+    (local.set $pal_wa (call $g2w (local.get $pal_guest)))
+    (call $zero_memory (local.get $pal_wa) (i32.const 1024))
+    ;; Cube: idx = r*36 + g*6 + b, each channel ∈ {0,51,102,153,204,255}
+    (local.set $i (i32.const 0))
+    (block $cd (loop $cl
+      (br_if $cd (i32.ge_u (local.get $i) (i32.const 216)))
+      (local.set $r (i32.mul (i32.div_u (local.get $i) (i32.const 36)) (i32.const 51)))
+      (local.set $g (i32.mul (i32.rem_u (i32.div_u (local.get $i) (i32.const 6)) (i32.const 6)) (i32.const 51)))
+      (local.set $b (i32.mul (i32.rem_u (local.get $i) (i32.const 6)) (i32.const 51)))
+      (i32.store8 (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (local.get $r))
+      (i32.store8 (i32.add (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (i32.const 1)) (local.get $g))
+      (i32.store8 (i32.add (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (i32.const 2)) (local.get $b))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cl)))
+    ;; Grayscale ramp for remaining 40 slots
+    (local.set $i (i32.const 216))
+    (block $gd (loop $gl
+      (br_if $gd (i32.ge_u (local.get $i) (i32.const 256)))
+      (local.set $lum (i32.div_u (i32.mul (i32.sub (local.get $i) (i32.const 216)) (i32.const 255)) (i32.const 39)))
+      (i32.store8 (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (local.get $lum))
+      (i32.store8 (i32.add (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (i32.const 1)) (local.get $lum))
+      (i32.store8 (i32.add (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (i32.const 2)) (local.get $lum))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $gl)))
+    (global.set $dx_primary_pal_wa (local.get $pal_wa)))
+
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $vtbl i32)
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
+    (if (i32.le_u (local.get $arg3) (i32.const 8))
+      (then (call $install_default_dx_palette)))
     ;; Resize the main window to match the display mode so the back-canvas
     ;; matches the primary-surface dims. Without this, fullscreen DDraw apps
     ;; (MCM) that issued an earlier SetWindowPos to a chrome-only size end up
