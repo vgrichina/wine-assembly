@@ -1898,6 +1898,7 @@
   ;; Creates modal dialog, sends WM_INITDIALOG, enters message loop, returns EndDialog result
   (func $handle_DialogBoxParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hwnd i32) (local $init_param i32)
+    (local $dlg_rec i32) (local $ctrl_count i32) (local $i i32) (local $ctrl_hwnd i32)
     ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
     ;; arg3=lpDialogFunc, arg4=dwInitParam (from stack: [esp+24])
     (local.set $init_param (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -1932,6 +1933,24 @@
     ;; FALSE return from WM_PAINT. Without this, the back-canvas stays
     ;; transparent/teal between control bodies.
     (call $dlg_fill_bkgnd (local.get $hwnd))
+    ;; Seed WM_NCPAINT so the modal pump delivers chrome paint to the
+    ;; dialog's wndproc → DefDlgProc/DefWindowProc → back-canvas chrome.
+    ;; Without this, modal dialogs stay chrome-less in the PNG.
+    (call $nc_flags_set (local.get $hwnd) (i32.const 1))
+    ;; Enqueue WM_PAINT for each child control. Mirrors CreateDialogParamA;
+    ;; otherwise buttons/edits/statics never get their first WM_PAINT while
+    ;; the modal pump runs.
+    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (local.get $dlg_rec)
+      (then
+        (local.set $ctrl_count (i32.load offset=28 (local.get $dlg_rec)))
+        (local.set $i (i32.const 0))
+        (block $done (loop $push_loop
+          (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
+          (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
+          (call $paint_queue_push (local.get $ctrl_hwnd))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $push_loop)))))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
     (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
@@ -1949,6 +1968,14 @@
     ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)
     (global.set $eip (local.get $arg3))
     (global.set $steps (i32.const 0))
+  )
+
+  ;; DialogBoxParamW — same as A. Template names, if strings, are UTF-16,
+  ;; but $find_resource only matches integer IDs and ASCII strings, so
+  ;; UTF-16 string templates fall to the int branch either way (like
+  ;; CreateDialogParamW). Winmine's Custom dialog uses int IDs (0x5A).
+  (func $handle_DialogBoxParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_DialogBoxParamA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall

@@ -7,6 +7,7 @@
 
     ;; === O(1) br_table dispatch ===
     (block $fallback
+    (block $api_1489
     (block $api_1488
     (block $api_1487
     (block $api_1486
@@ -1496,7 +1497,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $api_973 $api_974 $api_975 $api_976 $api_977 $api_978 $api_979 $api_980 $api_981 $api_982 $api_983 $api_984 $api_985 $api_986 $api_987 $api_988 $api_989 $api_990 $api_991 $api_992 $api_993 $api_994 $api_995 $api_996 $api_997 $api_998 $api_999 $api_1000 $api_1001 $api_1002 $api_1003 $api_1004 $api_1005 $api_1006 $api_1007 $api_1008 $api_1009 $api_1010 $api_1011 $api_1012 $api_1013 $api_1014 $api_1015 $api_1016 $api_1017 $api_1018 $api_1019 $api_1020 $api_1021 $api_1022 $api_1023 $api_1024 $api_1025 $api_1026 $api_1027 $api_1028 $api_1029 $api_1030 $api_1031 $api_1032 $api_1033 $api_1034 $api_1035 $api_1036 $api_1037 $api_1038 $api_1039 $api_1040 $api_1041 $api_1042 $api_1043 $api_1044 $api_1045 $api_1046 $api_1047 $api_1048 $api_1049 $api_1050 $api_1051 $api_1052 $api_1053 $api_1054 $api_1055 $api_1056 $api_1057 $api_1058 $api_1059 $api_1060 $api_1061 $api_1062 $api_1063 $api_1064 $api_1065 $api_1066 $api_1067 $api_1068 $api_1069 $api_1070 $api_1071 $api_1072 $api_1073 $api_1074 $api_1075 $api_1076 $api_1077 $api_1078 $api_1079 $api_1080 $api_1081 $api_1082 $api_1083 $api_1084 $api_1085 $api_1086 $api_1087 $api_1088 $api_1089 $api_1090 $api_1091 $api_1092 $api_1093 $api_1094 $api_1095 $api_1096 $api_1097 $api_1098 $api_1099 $api_1100 $api_1101 $api_1102 $api_1103 $api_1104 $api_1105 $api_1106 $api_1107 $api_1108 $api_1109 $api_1110 $api_1111 $api_1112 $api_1113 $api_1114 $api_1115 $api_1116 $api_1117 $api_1118 $api_1119 $api_1120 $api_1121 $api_1122 $api_1123 $api_1124 $api_1125 $api_1126 $api_1127 $api_1128 $api_1129 $api_1130 $api_1131 $api_1132 $api_1133 $api_1134 $api_1135 $api_1136 $api_1137 $api_1138 $api_1139 $api_1140 $api_1141 $api_1142 $api_1143 $api_1144 $api_1145 $api_1146 $api_1147 $api_1148 $api_1149 $api_1150 $api_1151 $api_1152 $api_1153 $api_1154 $api_1155 $api_1156 $api_1157 $api_1158 $api_1159 $api_1160 $api_1161 $api_1162 $api_1163 $api_1164 $api_1165 $api_1166 $api_1167 $api_1168 $api_1169 $api_1170 $api_1171 $api_1172 $api_1173 $api_1174 $api_1175 $api_1176 $api_1177 $api_1178 $api_1179 $api_1180 $api_1181 $api_1182 $api_1183 $api_1184 $api_1185 $api_1186 $api_1187 $api_1188 $api_1189 $api_1190 $api_1191 $api_1192 $api_1193 $api_1194 $api_1195 $api_1196 $api_1197 $api_1198 $api_1199 $api_1200 $api_1201 $api_1202 $api_1203 $api_1204 $api_1205 $api_1206 $api_1207 $api_1208 $api_1209 $api_1210 $api_1211 $api_1212 $api_1213 $api_1214 $api_1215 $api_1216 $api_1217 $api_1218 $api_1219 $api_1220 $api_1221 $api_1222 $api_1223 $api_1224 $api_1225 $api_1226 $api_1227 $api_1228 $api_1229 $api_1230 $api_1231 $api_1232 $api_1233 $api_1234 $api_1235 $api_1236 $api_1237 $api_1238 $api_1239 $api_1240 $api_1241 $api_1242 $api_1243 $api_1244 $api_1245 $api_1246 $api_1247 $api_1248 $api_1249 $api_1250 $api_1251 $api_1252 $api_1253 $api_1254 $api_1255 $api_1256 $api_1257 $api_1258 $api_1259 $api_1260 $api_1261 $api_1262 $api_1263 $api_1264 $api_1265 $api_1266 $api_1267 $api_1268 $api_1269 $api_1270 $api_1271 $api_1272 $api_1273 $api_1274 $api_1275 $api_1276 $api_1277 $api_1278 $api_1279 $api_1280 $api_1281 $api_1282 $api_1283 $api_1284 $api_1285 $api_1286 $api_1287 $api_1288 $api_1289 $api_1290 $api_1291 $api_1292 $api_1293 $api_1294 $api_1295 $api_1296 $api_1297 $api_1298 $api_1299 $api_1300 $api_1301 $api_1302 $api_1303 $api_1304 $api_1305 $api_1306 $api_1307 $api_1308 $api_1309 $api_1310 $api_1311 $api_1312 $api_1313 $api_1314 $api_1315 $api_1316 $api_1317 $api_1318 $api_1319 $api_1320 $api_1321 $api_1322 $api_1323 $api_1324 $api_1325 $api_1326 $api_1327 $api_1328 $api_1329 $api_1330 $api_1331 $api_1332 $api_1333 $api_1334 $api_1335 $api_1336 $api_1337 $api_1338 $api_1339 $api_1340 $api_1341 $api_1342 $api_1343 $api_1344 $api_1345 $api_1346 $api_1347 $api_1348 $api_1349 $api_1350 $api_1351 $api_1352 $api_1353 $api_1354 $api_1355 $api_1356 $api_1357 $api_1358 $api_1359 $api_1360 $api_1361 $api_1362 $api_1363 $api_1364 $api_1365 $api_1366 $api_1367 $api_1368 $api_1369 $api_1370 $api_1371 $api_1372 $api_1373 $api_1374 $api_1375 $api_1376 $api_1377 $api_1378 $api_1379 $api_1380 $api_1381 $api_1382 $api_1383 $api_1384 $api_1385 $api_1386 $api_1387 $api_1388 $api_1389 $api_1390 $api_1391 $api_1392 $api_1393 $api_1394 $api_1395 $api_1396 $api_1397 $api_1398 $api_1399 $api_1400 $api_1401 $api_1402 $api_1403 $api_1404 $api_1405 $api_1406 $api_1407 $api_1408 $api_1409 $api_1410 $api_1411 $api_1412 $api_1413 $api_1414 $api_1415 $api_1416 $api_1417 $api_1418 $api_1419 $api_1420 $api_1421 $api_1422 $api_1423 $api_1424 $api_1425 $api_1426 $api_1427 $api_1428 $api_1429 $api_1430 $api_1431 $api_1432 $api_1433 $api_1434 $api_1435 $api_1436 $api_1437 $api_1438 $api_1439 $api_1440 $api_1441 $api_1442 $api_1443 $api_1444 $api_1445 $api_1446 $api_1447 $api_1448 $api_1449 $api_1450 $api_1451 $api_1452 $api_1453 $api_1454 $api_1455 $api_1456 $api_1457 $api_1458 $api_1459 $api_1460 $api_1461 $api_1462 $api_1463 $api_1464 $api_1465 $api_1466 $api_1467 $api_1468 $api_1469 $api_1470 $api_1471 $api_1472 $api_1473 $api_1474 $api_1475 $api_1476 $api_1477 $api_1478 $api_1479 $api_1480 $api_1481 $api_1482 $api_1483 $api_1484 $api_1485 $api_1486 $api_1487 $api_1488 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $api_973 $api_974 $api_975 $api_976 $api_977 $api_978 $api_979 $api_980 $api_981 $api_982 $api_983 $api_984 $api_985 $api_986 $api_987 $api_988 $api_989 $api_990 $api_991 $api_992 $api_993 $api_994 $api_995 $api_996 $api_997 $api_998 $api_999 $api_1000 $api_1001 $api_1002 $api_1003 $api_1004 $api_1005 $api_1006 $api_1007 $api_1008 $api_1009 $api_1010 $api_1011 $api_1012 $api_1013 $api_1014 $api_1015 $api_1016 $api_1017 $api_1018 $api_1019 $api_1020 $api_1021 $api_1022 $api_1023 $api_1024 $api_1025 $api_1026 $api_1027 $api_1028 $api_1029 $api_1030 $api_1031 $api_1032 $api_1033 $api_1034 $api_1035 $api_1036 $api_1037 $api_1038 $api_1039 $api_1040 $api_1041 $api_1042 $api_1043 $api_1044 $api_1045 $api_1046 $api_1047 $api_1048 $api_1049 $api_1050 $api_1051 $api_1052 $api_1053 $api_1054 $api_1055 $api_1056 $api_1057 $api_1058 $api_1059 $api_1060 $api_1061 $api_1062 $api_1063 $api_1064 $api_1065 $api_1066 $api_1067 $api_1068 $api_1069 $api_1070 $api_1071 $api_1072 $api_1073 $api_1074 $api_1075 $api_1076 $api_1077 $api_1078 $api_1079 $api_1080 $api_1081 $api_1082 $api_1083 $api_1084 $api_1085 $api_1086 $api_1087 $api_1088 $api_1089 $api_1090 $api_1091 $api_1092 $api_1093 $api_1094 $api_1095 $api_1096 $api_1097 $api_1098 $api_1099 $api_1100 $api_1101 $api_1102 $api_1103 $api_1104 $api_1105 $api_1106 $api_1107 $api_1108 $api_1109 $api_1110 $api_1111 $api_1112 $api_1113 $api_1114 $api_1115 $api_1116 $api_1117 $api_1118 $api_1119 $api_1120 $api_1121 $api_1122 $api_1123 $api_1124 $api_1125 $api_1126 $api_1127 $api_1128 $api_1129 $api_1130 $api_1131 $api_1132 $api_1133 $api_1134 $api_1135 $api_1136 $api_1137 $api_1138 $api_1139 $api_1140 $api_1141 $api_1142 $api_1143 $api_1144 $api_1145 $api_1146 $api_1147 $api_1148 $api_1149 $api_1150 $api_1151 $api_1152 $api_1153 $api_1154 $api_1155 $api_1156 $api_1157 $api_1158 $api_1159 $api_1160 $api_1161 $api_1162 $api_1163 $api_1164 $api_1165 $api_1166 $api_1167 $api_1168 $api_1169 $api_1170 $api_1171 $api_1172 $api_1173 $api_1174 $api_1175 $api_1176 $api_1177 $api_1178 $api_1179 $api_1180 $api_1181 $api_1182 $api_1183 $api_1184 $api_1185 $api_1186 $api_1187 $api_1188 $api_1189 $api_1190 $api_1191 $api_1192 $api_1193 $api_1194 $api_1195 $api_1196 $api_1197 $api_1198 $api_1199 $api_1200 $api_1201 $api_1202 $api_1203 $api_1204 $api_1205 $api_1206 $api_1207 $api_1208 $api_1209 $api_1210 $api_1211 $api_1212 $api_1213 $api_1214 $api_1215 $api_1216 $api_1217 $api_1218 $api_1219 $api_1220 $api_1221 $api_1222 $api_1223 $api_1224 $api_1225 $api_1226 $api_1227 $api_1228 $api_1229 $api_1230 $api_1231 $api_1232 $api_1233 $api_1234 $api_1235 $api_1236 $api_1237 $api_1238 $api_1239 $api_1240 $api_1241 $api_1242 $api_1243 $api_1244 $api_1245 $api_1246 $api_1247 $api_1248 $api_1249 $api_1250 $api_1251 $api_1252 $api_1253 $api_1254 $api_1255 $api_1256 $api_1257 $api_1258 $api_1259 $api_1260 $api_1261 $api_1262 $api_1263 $api_1264 $api_1265 $api_1266 $api_1267 $api_1268 $api_1269 $api_1270 $api_1271 $api_1272 $api_1273 $api_1274 $api_1275 $api_1276 $api_1277 $api_1278 $api_1279 $api_1280 $api_1281 $api_1282 $api_1283 $api_1284 $api_1285 $api_1286 $api_1287 $api_1288 $api_1289 $api_1290 $api_1291 $api_1292 $api_1293 $api_1294 $api_1295 $api_1296 $api_1297 $api_1298 $api_1299 $api_1300 $api_1301 $api_1302 $api_1303 $api_1304 $api_1305 $api_1306 $api_1307 $api_1308 $api_1309 $api_1310 $api_1311 $api_1312 $api_1313 $api_1314 $api_1315 $api_1316 $api_1317 $api_1318 $api_1319 $api_1320 $api_1321 $api_1322 $api_1323 $api_1324 $api_1325 $api_1326 $api_1327 $api_1328 $api_1329 $api_1330 $api_1331 $api_1332 $api_1333 $api_1334 $api_1335 $api_1336 $api_1337 $api_1338 $api_1339 $api_1340 $api_1341 $api_1342 $api_1343 $api_1344 $api_1345 $api_1346 $api_1347 $api_1348 $api_1349 $api_1350 $api_1351 $api_1352 $api_1353 $api_1354 $api_1355 $api_1356 $api_1357 $api_1358 $api_1359 $api_1360 $api_1361 $api_1362 $api_1363 $api_1364 $api_1365 $api_1366 $api_1367 $api_1368 $api_1369 $api_1370 $api_1371 $api_1372 $api_1373 $api_1374 $api_1375 $api_1376 $api_1377 $api_1378 $api_1379 $api_1380 $api_1381 $api_1382 $api_1383 $api_1384 $api_1385 $api_1386 $api_1387 $api_1388 $api_1389 $api_1390 $api_1391 $api_1392 $api_1393 $api_1394 $api_1395 $api_1396 $api_1397 $api_1398 $api_1399 $api_1400 $api_1401 $api_1402 $api_1403 $api_1404 $api_1405 $api_1406 $api_1407 $api_1408 $api_1409 $api_1410 $api_1411 $api_1412 $api_1413 $api_1414 $api_1415 $api_1416 $api_1417 $api_1418 $api_1419 $api_1420 $api_1421 $api_1422 $api_1423 $api_1424 $api_1425 $api_1426 $api_1427 $api_1428 $api_1429 $api_1430 $api_1431 $api_1432 $api_1433 $api_1434 $api_1435 $api_1436 $api_1437 $api_1438 $api_1439 $api_1440 $api_1441 $api_1442 $api_1443 $api_1444 $api_1445 $api_1446 $api_1447 $api_1448 $api_1449 $api_1450 $api_1451 $api_1452 $api_1453 $api_1454 $api_1455 $api_1456 $api_1457 $api_1458 $api_1459 $api_1460 $api_1461 $api_1462 $api_1463 $api_1464 $api_1465 $api_1466 $api_1467 $api_1468 $api_1469 $api_1470 $api_1471 $api_1472 $api_1473 $api_1474 $api_1475 $api_1476 $api_1477 $api_1478 $api_1479 $api_1480 $api_1481 $api_1482 $api_1483 $api_1484 $api_1485 $api_1486 $api_1487 $api_1488 $api_1489 $fallback (local.get $api_id))
     ) ;; 0: ??1type_info@@UAE@XZ
       (call $handle_??1type_info@@UAE@XZ (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -1836,4132 +1837,4135 @@
     ) ;; 112: DialogBoxParamA
       (call $handle_DialogBoxParamA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 113: DisableThreadLibraryCalls
+    ) ;; 113: DialogBoxParamW
+      (call $handle_DialogBoxParamW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 114: DisableThreadLibraryCalls
       (call $handle_DisableThreadLibraryCalls (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 114: DispatchMessageA
+    ) ;; 115: DispatchMessageA
       (call $handle_DispatchMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 115: DispatchMessageW
+    ) ;; 116: DispatchMessageW
       (call $handle_DispatchMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 116: DragAcceptFiles
+    ) ;; 117: DragAcceptFiles
       (call $handle_DragAcceptFiles (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 117: DragFinish
+    ) ;; 118: DragFinish
       (call $handle_DragFinish (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 118: DragQueryFileA
+    ) ;; 119: DragQueryFileA
       (call $handle_DragQueryFileA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 119: DrawEdge
+    ) ;; 120: DrawEdge
       (call $handle_DrawEdge (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 120: DrawFocusRect
+    ) ;; 121: DrawFocusRect
       (call $handle_DrawFocusRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 121: DrawMenuBar
+    ) ;; 122: DrawMenuBar
       (call $handle_DrawMenuBar (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 122: DrawTextA
+    ) ;; 123: DrawTextA
       (call $handle_DrawTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 123: DrawTextW
+    ) ;; 124: DrawTextW
       (call $handle_DrawTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 124: DuplicateHandle
+    ) ;; 125: DuplicateHandle
       (call $handle_DuplicateHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 125: Ellipse
+    ) ;; 126: Ellipse
       (call $handle_Ellipse (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 126: EnableMenuItem
+    ) ;; 127: EnableMenuItem
       (call $handle_EnableMenuItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 127: EnableScrollBar
+    ) ;; 128: EnableScrollBar
       (call $handle_EnableScrollBar (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 128: EnableWindow
+    ) ;; 129: EnableWindow
       (call $handle_EnableWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 129: EndDeferWindowPos
+    ) ;; 130: EndDeferWindowPos
       (call $handle_EndDeferWindowPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 130: EndDialog
+    ) ;; 131: EndDialog
       (call $handle_EndDialog (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 131: EndDoc
+    ) ;; 132: EndDoc
       (call $handle_EndDoc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 132: EndPage
+    ) ;; 133: EndPage
       (call $handle_EndPage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 133: EndPaint
+    ) ;; 134: EndPaint
       (call $handle_EndPaint (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 134: EnterCriticalSection
+    ) ;; 135: EnterCriticalSection
       (call $handle_EnterCriticalSection (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 135: EnumChildWindows
+    ) ;; 136: EnumChildWindows
       (call $handle_EnumChildWindows (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 136: EnumFontFamiliesExW
+    ) ;; 137: EnumFontFamiliesExW
       (call $handle_EnumFontFamiliesExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 137: EnumFontFamiliesW
+    ) ;; 138: EnumFontFamiliesW
       (call $handle_EnumFontFamiliesW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 138: EnumMetaFile
+    ) ;; 139: EnumMetaFile
       (call $handle_EnumMetaFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 139: EnumSystemLocalesA
+    ) ;; 140: EnumSystemLocalesA
       (call $handle_EnumSystemLocalesA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 140: EqualRect
+    ) ;; 141: EqualRect
       (call $handle_EqualRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 141: Escape
+    ) ;; 142: Escape
       (call $handle_Escape (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 142: ExcludeClipRect
+    ) ;; 143: ExcludeClipRect
       (call $handle_ExcludeClipRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 143: ExitProcess
+    ) ;; 144: ExitProcess
       (call $handle_ExitProcess (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 144: ExitThread
+    ) ;; 145: ExitThread
       (call $handle_ExitThread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 145: ExtCreatePen
+    ) ;; 146: ExtCreatePen
       (call $handle_ExtCreatePen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 146: ExtFloodFill
+    ) ;; 147: ExtFloodFill
       (call $handle_ExtFloodFill (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 147: ExtSelectClipRgn
+    ) ;; 148: ExtSelectClipRgn
       (call $handle_ExtSelectClipRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 148: ExtTextOutW
+    ) ;; 149: ExtTextOutW
       (call $handle_ExtTextOutW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 149: ExtractIconA
+    ) ;; 150: ExtractIconA
       (call $handle_ExtractIconA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 150: ExtractIconW
+    ) ;; 151: ExtractIconW
       (call $handle_ExtractIconW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 151: FileTimeToLocalFileTime
+    ) ;; 152: FileTimeToLocalFileTime
       (call $handle_FileTimeToLocalFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 152: FileTimeToSystemTime
+    ) ;; 153: FileTimeToSystemTime
       (call $handle_FileTimeToSystemTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 153: FillConsoleOutputAttribute
+    ) ;; 154: FillConsoleOutputAttribute
       (call $handle_FillConsoleOutputAttribute (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 154: FillConsoleOutputCharacterW
+    ) ;; 155: FillConsoleOutputCharacterW
       (call $handle_FillConsoleOutputCharacterW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 155: FillRect
+    ) ;; 156: FillRect
       (call $handle_FillRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 156: FillRgn
+    ) ;; 157: FillRgn
       (call $handle_FillRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 157: FindClose
+    ) ;; 158: FindClose
       (call $handle_FindClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 158: FindFirstFileA
+    ) ;; 159: FindFirstFileA
       (call $handle_FindFirstFileA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 159: FindFirstFileW
+    ) ;; 160: FindFirstFileW
       (call $handle_FindFirstFileW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 160: FindNextFileA
+    ) ;; 161: FindNextFileA
       (call $handle_FindNextFileA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 161: FindNextFileW
+    ) ;; 162: FindNextFileW
       (call $handle_FindNextFileW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 162: FindResourceA
+    ) ;; 163: FindResourceA
       (call $handle_FindResourceA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 163: FindResourceExA
+    ) ;; 164: FindResourceExA
       (call $handle_FindResourceExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 164: FindResourceExW
+    ) ;; 165: FindResourceExW
       (call $handle_FindResourceExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 165: FindResourceW
+    ) ;; 166: FindResourceW
       (call $handle_FindResourceW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 166: FindTextA
+    ) ;; 167: FindTextA
       (call $handle_FindTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 167: FindWindowA
+    ) ;; 168: FindWindowA
       (call $handle_FindWindowA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 168: FindWindowW
+    ) ;; 169: FindWindowW
       (call $handle_FindWindowW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 169: FlushFileBuffers
+    ) ;; 170: FlushFileBuffers
       (call $handle_FlushFileBuffers (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 170: FormatMessageA
+    ) ;; 171: FormatMessageA
       (call $handle_FormatMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 171: FormatMessageW
+    ) ;; 172: FormatMessageW
       (call $handle_FormatMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 172: FrameRect
+    ) ;; 173: FrameRect
       (call $handle_FrameRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 173: FreeEnvironmentStringsA
+    ) ;; 174: FreeEnvironmentStringsA
       (call $handle_FreeEnvironmentStringsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 174: FreeEnvironmentStringsW
+    ) ;; 175: FreeEnvironmentStringsW
       (call $handle_FreeEnvironmentStringsW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 175: FreeLibrary
+    ) ;; 176: FreeLibrary
       (call $handle_FreeLibrary (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 176: FreeResource
+    ) ;; 177: FreeResource
       (call $handle_FreeResource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 177: GetACP
+    ) ;; 178: GetACP
       (call $handle_GetACP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 178: GetActiveWindow
+    ) ;; 179: GetActiveWindow
       (call $handle_GetActiveWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 179: GetAsyncKeyState
+    ) ;; 180: GetAsyncKeyState
       (call $handle_GetAsyncKeyState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 180: GetBkColor
+    ) ;; 181: GetBkColor
       (call $handle_GetBkColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 181: GetBkMode
+    ) ;; 182: GetBkMode
       (call $handle_GetBkMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 182: GetCPInfo
+    ) ;; 183: GetCPInfo
       (call $handle_GetCPInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 183: GetCapture
+    ) ;; 184: GetCapture
       (call $handle_GetCapture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 184: GetCaretPos
+    ) ;; 185: GetCaretPos
       (call $handle_GetCaretPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 185: GetCharWidthW
+    ) ;; 186: GetCharWidthW
       (call $handle_GetCharWidthW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 186: GetClassInfoA
+    ) ;; 187: GetClassInfoA
       (call $handle_GetClassInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 187: GetClassInfoW
+    ) ;; 188: GetClassInfoW
       (call $handle_GetClassInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 188: GetClassNameW
+    ) ;; 189: GetClassNameW
       (call $handle_GetClassNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 189: GetClientRect
+    ) ;; 190: GetClientRect
       (call $handle_GetClientRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 190: GetClipBox
+    ) ;; 191: GetClipBox
       (call $handle_GetClipBox (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 191: GetClipRgn
+    ) ;; 192: GetClipRgn
       (call $handle_GetClipRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 192: GetClipboardData
+    ) ;; 193: GetClipboardData
       (call $handle_GetClipboardData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 193: GetCommandLineA
+    ) ;; 194: GetCommandLineA
       (call $handle_GetCommandLineA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 194: GetCommandLineW
+    ) ;; 195: GetCommandLineW
       (call $handle_GetCommandLineW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 195: GetConsoleCP
+    ) ;; 196: GetConsoleCP
       (call $handle_GetConsoleCP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 196: GetConsoleCursorInfo
+    ) ;; 197: GetConsoleCursorInfo
       (call $handle_GetConsoleCursorInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 197: GetConsoleMode
+    ) ;; 198: GetConsoleMode
       (call $handle_GetConsoleMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 198: GetConsoleOutputCP
+    ) ;; 199: GetConsoleOutputCP
       (call $handle_GetConsoleOutputCP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 199: GetConsoleScreenBufferInfo
+    ) ;; 200: GetConsoleScreenBufferInfo
       (call $handle_GetConsoleScreenBufferInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 200: GetCurrentDirectoryA
+    ) ;; 201: GetCurrentDirectoryA
       (call $handle_GetCurrentDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 201: GetCurrentDirectoryW
+    ) ;; 202: GetCurrentDirectoryW
       (call $handle_GetCurrentDirectoryW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 202: GetCurrentPositionEx
+    ) ;; 203: GetCurrentPositionEx
       (call $handle_GetCurrentPositionEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 203: GetCurrentProcess
+    ) ;; 204: GetCurrentProcess
       (call $handle_GetCurrentProcess (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 204: GetCurrentProcessId
+    ) ;; 205: GetCurrentProcessId
       (call $handle_GetCurrentProcessId (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 205: GetCurrentThread
+    ) ;; 206: GetCurrentThread
       (call $handle_GetCurrentThread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 206: GetCurrentThreadId
+    ) ;; 207: GetCurrentThreadId
       (call $handle_GetCurrentThreadId (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 207: GetCursorPos
+    ) ;; 208: GetCursorPos
       (call $handle_GetCursorPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 208: GetDC
+    ) ;; 209: GetDC
       (call $handle_GetDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 209: GetDCEx
+    ) ;; 210: GetDCEx
       (call $handle_GetDCEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 210: GetDCOrgEx
+    ) ;; 211: GetDCOrgEx
       (call $handle_GetDCOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 211: GetDIBColorTable
+    ) ;; 212: GetDIBColorTable
       (call $handle_GetDIBColorTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 212: GetDIBits
+    ) ;; 213: GetDIBits
       (call $handle_GetDIBits (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 213: GetDateFormatA
+    ) ;; 214: GetDateFormatA
       (call $handle_GetDateFormatA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 214: GetDesktopWindow
+    ) ;; 215: GetDesktopWindow
       (call $handle_GetDesktopWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 215: GetDeviceCaps
+    ) ;; 216: GetDeviceCaps
       (call $handle_GetDeviceCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 216: GetDialogBaseUnits
+    ) ;; 217: GetDialogBaseUnits
       (call $handle_GetDialogBaseUnits (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 217: GetDiskFreeSpaceA
+    ) ;; 218: GetDiskFreeSpaceA
       (call $handle_GetDiskFreeSpaceA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 218: GetDiskFreeSpaceW
+    ) ;; 219: GetDiskFreeSpaceW
       (call $handle_GetDiskFreeSpaceW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 219: GetDlgCtrlID
+    ) ;; 220: GetDlgCtrlID
       (call $handle_GetDlgCtrlID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 220: GetDlgItem
+    ) ;; 221: GetDlgItem
       (call $handle_GetDlgItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 221: GetDlgItemInt
+    ) ;; 222: GetDlgItemInt
       (call $handle_GetDlgItemInt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 222: GetDlgItemTextA
+    ) ;; 223: GetDlgItemTextA
       (call $handle_GetDlgItemTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 223: GetDlgItemTextW
+    ) ;; 224: GetDlgItemTextW
       (call $handle_GetDlgItemTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 224: GetDriveTypeA
+    ) ;; 225: GetDriveTypeA
       (call $handle_GetDriveTypeA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 225: GetDriveTypeW
+    ) ;; 226: GetDriveTypeW
       (call $handle_GetDriveTypeW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 226: GetEnvironmentStrings
+    ) ;; 227: GetEnvironmentStrings
       (call $handle_GetEnvironmentStrings (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 227: GetEnvironmentStringsA
+    ) ;; 228: GetEnvironmentStringsA
       (call $handle_GetEnvironmentStringsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 228: GetEnvironmentStringsW
+    ) ;; 229: GetEnvironmentStringsW
       (call $handle_GetEnvironmentStringsW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 229: GetEnvironmentVariableA
+    ) ;; 230: GetEnvironmentVariableA
       (call $handle_GetEnvironmentVariableA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 230: GetExitCodeProcess
+    ) ;; 231: GetExitCodeProcess
       (call $handle_GetExitCodeProcess (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 231: GetExitCodeThread
+    ) ;; 232: GetExitCodeThread
       (call $handle_GetExitCodeThread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 232: GetFileAttributesA
+    ) ;; 233: GetFileAttributesA
       (call $handle_GetFileAttributesA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 233: GetFileAttributesW
+    ) ;; 234: GetFileAttributesW
       (call $handle_GetFileAttributesW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 234: GetFileInformationByHandle
+    ) ;; 235: GetFileInformationByHandle
       (call $handle_GetFileInformationByHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 235: GetFileSize
+    ) ;; 236: GetFileSize
       (call $handle_GetFileSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 236: GetFileTime
+    ) ;; 237: GetFileTime
       (call $handle_GetFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 237: GetFileTitleA
+    ) ;; 238: GetFileTitleA
       (call $handle_GetFileTitleA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 238: GetFileType
+    ) ;; 239: GetFileType
       (call $handle_GetFileType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 239: GetFocus
+    ) ;; 240: GetFocus
       (call $handle_GetFocus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 240: GetForegroundWindow
+    ) ;; 241: GetForegroundWindow
       (call $handle_GetForegroundWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 241: GetFullPathNameA
+    ) ;; 242: GetFullPathNameA
       (call $handle_GetFullPathNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 242: GetFullPathNameW
+    ) ;; 243: GetFullPathNameW
       (call $handle_GetFullPathNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 243: GetKeyNameTextA
+    ) ;; 244: GetKeyNameTextA
       (call $handle_GetKeyNameTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 244: GetKeyState
+    ) ;; 245: GetKeyState
       (call $handle_GetKeyState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 245: GetLargestConsoleWindowSize
+    ) ;; 246: GetLargestConsoleWindowSize
       (call $handle_GetLargestConsoleWindowSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 246: GetLastActivePopup
+    ) ;; 247: GetLastActivePopup
       (call $handle_GetLastActivePopup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 247: GetLastError
+    ) ;; 248: GetLastError
       (call $handle_GetLastError (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 248: GetLayout
+    ) ;; 249: GetLayout
       (call $handle_GetLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 249: GetLocalTime
+    ) ;; 250: GetLocalTime
       (call $handle_GetLocalTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 250: GetLocaleInfoA
+    ) ;; 251: GetLocaleInfoA
       (call $handle_GetLocaleInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 251: GetLocaleInfoW
+    ) ;; 252: GetLocaleInfoW
       (call $handle_GetLocaleInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 252: GetLogicalDrives
+    ) ;; 253: GetLogicalDrives
       (call $handle_GetLogicalDrives (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 253: GetMapMode
+    ) ;; 254: GetMapMode
       (call $handle_GetMapMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 254: GetMenu
+    ) ;; 255: GetMenu
       (call $handle_GetMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 255: GetMenuCheckMarkDimensions
+    ) ;; 256: GetMenuCheckMarkDimensions
       (call $handle_GetMenuCheckMarkDimensions (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 256: GetMenuItemCount
+    ) ;; 257: GetMenuItemCount
       (call $handle_GetMenuItemCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 257: GetMenuItemID
+    ) ;; 258: GetMenuItemID
       (call $handle_GetMenuItemID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 258: GetMenuItemRect
+    ) ;; 259: GetMenuItemRect
       (call $handle_GetMenuItemRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 259: GetMenuState
+    ) ;; 260: GetMenuState
       (call $handle_GetMenuState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 260: GetMenuStringW
+    ) ;; 261: GetMenuStringW
       (call $handle_GetMenuStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 261: GetMessageA
+    ) ;; 262: GetMessageA
       (call $handle_GetMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 262: GetMessagePos
+    ) ;; 263: GetMessagePos
       (call $handle_GetMessagePos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 263: GetMessageTime
+    ) ;; 264: GetMessageTime
       (call $handle_GetMessageTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 264: GetMessageW
+    ) ;; 265: GetMessageW
       (call $handle_GetMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 265: GetModuleFileNameA
+    ) ;; 266: GetModuleFileNameA
       (call $handle_GetModuleFileNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 266: GetModuleFileNameW
+    ) ;; 267: GetModuleFileNameW
       (call $handle_GetModuleFileNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 267: GetModuleHandleA
+    ) ;; 268: GetModuleHandleA
       (call $handle_GetModuleHandleA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 268: GetModuleHandleW
+    ) ;; 269: GetModuleHandleW
       (call $handle_GetModuleHandleW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 269: GetNearestColor
+    ) ;; 270: GetNearestColor
       (call $handle_GetNearestColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 270: GetNearestPaletteIndex
+    ) ;; 271: GetNearestPaletteIndex
       (call $handle_GetNearestPaletteIndex (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 271: GetNextDlgGroupItem
+    ) ;; 272: GetNextDlgGroupItem
       (call $handle_GetNextDlgGroupItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 272: GetNextDlgTabItem
+    ) ;; 273: GetNextDlgTabItem
       (call $handle_GetNextDlgTabItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 273: GetNumberOfConsoleInputEvents
+    ) ;; 274: GetNumberOfConsoleInputEvents
       (call $handle_GetNumberOfConsoleInputEvents (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 274: GetOEMCP
+    ) ;; 275: GetOEMCP
       (call $handle_GetOEMCP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 275: GetObjectA
+    ) ;; 276: GetObjectA
       (call $handle_GetObjectA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 276: GetObjectType
+    ) ;; 277: GetObjectType
       (call $handle_GetObjectType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 277: GetObjectW
+    ) ;; 278: GetObjectW
       (call $handle_GetObjectW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 278: GetOpenFileNameA
+    ) ;; 279: GetOpenFileNameA
       (call $handle_GetOpenFileNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 279: GetPaletteEntries
+    ) ;; 280: GetPaletteEntries
       (call $handle_GetPaletteEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 280: GetParent
+    ) ;; 281: GetParent
       (call $handle_GetParent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 281: GetPixel
+    ) ;; 282: GetPixel
       (call $handle_GetPixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 282: GetPolyFillMode
+    ) ;; 283: GetPolyFillMode
       (call $handle_GetPolyFillMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 283: GetPrivateProfileIntA
+    ) ;; 284: GetPrivateProfileIntA
       (call $handle_GetPrivateProfileIntA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 284: GetPrivateProfileIntW
+    ) ;; 285: GetPrivateProfileIntW
       (call $handle_GetPrivateProfileIntW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 285: GetPrivateProfileStringA
+    ) ;; 286: GetPrivateProfileStringA
       (call $handle_GetPrivateProfileStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 286: GetPrivateProfileStringW
+    ) ;; 287: GetPrivateProfileStringW
       (call $handle_GetPrivateProfileStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 287: GetProcAddress
+    ) ;; 288: GetProcAddress
       (call $handle_GetProcAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 288: GetProcessHeap
+    ) ;; 289: GetProcessHeap
       (call $handle_GetProcessHeap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 289: GetProcessVersion
+    ) ;; 290: GetProcessVersion
       (call $handle_GetProcessVersion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 290: GetProfileIntA
+    ) ;; 291: GetProfileIntA
       (call $handle_GetProfileIntA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 291: GetProfileIntW
+    ) ;; 292: GetProfileIntW
       (call $handle_GetProfileIntW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 292: GetProfileStringA
+    ) ;; 293: GetProfileStringA
       (call $handle_GetProfileStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 293: GetPropA
+    ) ;; 294: GetPropA
       (call $handle_GetPropA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 294: GetPropW
+    ) ;; 295: GetPropW
       (call $handle_GetPropW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 295: GetROP2
+    ) ;; 296: GetROP2
       (call $handle_GetROP2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 296: GetSaveFileNameA
+    ) ;; 297: GetSaveFileNameA
       (call $handle_GetSaveFileNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 297: GetScrollInfo
+    ) ;; 298: GetScrollInfo
       (call $handle_GetScrollInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 298: GetScrollPos
+    ) ;; 299: GetScrollPos
       (call $handle_GetScrollPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 299: GetScrollRange
+    ) ;; 300: GetScrollRange
       (call $handle_GetScrollRange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 300: GetShellWindow
+    ) ;; 301: GetShellWindow
       (call $handle_GetShellWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 301: GetShortPathNameA
+    ) ;; 302: GetShortPathNameA
       (call $handle_GetShortPathNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 302: GetShortPathNameW
+    ) ;; 303: GetShortPathNameW
       (call $handle_GetShortPathNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 303: GetStartupInfoA
+    ) ;; 304: GetStartupInfoA
       (call $handle_GetStartupInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 304: GetStartupInfoW
+    ) ;; 305: GetStartupInfoW
       (call $handle_GetStartupInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 305: GetStdHandle
+    ) ;; 306: GetStdHandle
       (call $handle_GetStdHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 306: GetStockObject
+    ) ;; 307: GetStockObject
       (call $handle_GetStockObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 307: GetStretchBltMode
+    ) ;; 308: GetStretchBltMode
       (call $handle_GetStretchBltMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 308: GetStringTypeA
+    ) ;; 309: GetStringTypeA
       (call $handle_GetStringTypeA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 309: GetStringTypeExW
+    ) ;; 310: GetStringTypeExW
       (call $handle_GetStringTypeExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 310: GetStringTypeW
+    ) ;; 311: GetStringTypeW
       (call $handle_GetStringTypeW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 311: GetSubMenu
+    ) ;; 312: GetSubMenu
       (call $handle_GetSubMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 312: GetSysColor
+    ) ;; 313: GetSysColor
       (call $handle_GetSysColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 313: GetSysColorBrush
+    ) ;; 314: GetSysColorBrush
       (call $handle_GetSysColorBrush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 314: GetSystemDirectoryA
+    ) ;; 315: GetSystemDirectoryA
       (call $handle_GetSystemDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 315: GetSystemMenu
+    ) ;; 316: GetSystemMenu
       (call $handle_GetSystemMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 316: GetSystemMetrics
+    ) ;; 317: GetSystemMetrics
       (call $handle_GetSystemMetrics (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 317: GetSystemPaletteEntries
+    ) ;; 318: GetSystemPaletteEntries
       (call $handle_GetSystemPaletteEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 318: GetSystemTime
+    ) ;; 319: GetSystemTime
       (call $handle_GetSystemTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 319: GetSystemTimeAsFileTime
+    ) ;; 320: GetSystemTimeAsFileTime
       (call $handle_GetSystemTimeAsFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 320: GetTabbedTextExtentA
+    ) ;; 321: GetTabbedTextExtentA
       (call $handle_GetTabbedTextExtentA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 321: GetTabbedTextExtentW
+    ) ;; 322: GetTabbedTextExtentW
       (call $handle_GetTabbedTextExtentW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 322: GetTempFileNameA
+    ) ;; 323: GetTempFileNameA
       (call $handle_GetTempFileNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 323: GetTempFileNameW
+    ) ;; 324: GetTempFileNameW
       (call $handle_GetTempFileNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 324: GetTempPathA
+    ) ;; 325: GetTempPathA
       (call $handle_GetTempPathA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 325: GetTempPathW
+    ) ;; 326: GetTempPathW
       (call $handle_GetTempPathW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 326: GetTextAlign
+    ) ;; 327: GetTextAlign
       (call $handle_GetTextAlign (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 327: GetTextCharset
+    ) ;; 328: GetTextCharset
       (call $handle_GetTextCharset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 328: GetTextColor
+    ) ;; 329: GetTextColor
       (call $handle_GetTextColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 329: GetTextExtentPoint32A
+    ) ;; 330: GetTextExtentPoint32A
       (call $handle_GetTextExtentPoint32A (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 330: GetTextExtentPoint32W
+    ) ;; 331: GetTextExtentPoint32W
       (call $handle_GetTextExtentPoint32W (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 331: GetTextExtentPointA
+    ) ;; 332: GetTextExtentPointA
       (call $handle_GetTextExtentPointA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 332: GetTextExtentPointW
+    ) ;; 333: GetTextExtentPointW
       (call $handle_GetTextExtentPointW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 333: GetTextFaceW
+    ) ;; 334: GetTextFaceW
       (call $handle_GetTextFaceW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 334: GetTextMetricsA
+    ) ;; 335: GetTextMetricsA
       (call $handle_GetTextMetricsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 335: GetTextMetricsW
+    ) ;; 336: GetTextMetricsW
       (call $handle_GetTextMetricsW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 336: GetThreadLocale
+    ) ;; 337: GetThreadLocale
       (call $handle_GetThreadLocale (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 337: GetTickCount
+    ) ;; 338: GetTickCount
       (call $handle_GetTickCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 338: GetTimeFormatA
+    ) ;; 339: GetTimeFormatA
       (call $handle_GetTimeFormatA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 339: GetTimeZoneInformation
+    ) ;; 340: GetTimeZoneInformation
       (call $handle_GetTimeZoneInformation (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 340: GetTopWindow
+    ) ;; 341: GetTopWindow
       (call $handle_GetTopWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 341: GetUpdateRect
+    ) ;; 342: GetUpdateRect
       (call $handle_GetUpdateRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 342: GetUserDefaultLCID
+    ) ;; 343: GetUserDefaultLCID
       (call $handle_GetUserDefaultLCID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 343: GetUserDefaultLangID
+    ) ;; 344: GetUserDefaultLangID
       (call $handle_GetUserDefaultLangID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 344: GetVersion
+    ) ;; 345: GetVersion
       (call $handle_GetVersion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 345: GetVersionExA
+    ) ;; 346: GetVersionExA
       (call $handle_GetVersionExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 346: GetVersionExW
+    ) ;; 347: GetVersionExW
       (call $handle_GetVersionExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 347: GetViewportExtEx
+    ) ;; 348: GetViewportExtEx
       (call $handle_GetViewportExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 348: GetViewportOrgEx
+    ) ;; 349: GetViewportOrgEx
       (call $handle_GetViewportOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 349: GetVolumeInformationA
+    ) ;; 350: GetVolumeInformationA
       (call $handle_GetVolumeInformationA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 350: GetVolumeInformationW
+    ) ;; 351: GetVolumeInformationW
       (call $handle_GetVolumeInformationW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 351: GetWindow
+    ) ;; 352: GetWindow
       (call $handle_GetWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 352: GetWindowDC
+    ) ;; 353: GetWindowDC
       (call $handle_GetWindowDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 353: GetWindowExtEx
+    ) ;; 354: GetWindowExtEx
       (call $handle_GetWindowExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 354: GetWindowLongA
+    ) ;; 355: GetWindowLongA
       (call $handle_GetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 355: GetWindowLongW
+    ) ;; 356: GetWindowLongW
       (call $handle_GetWindowLongW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 356: GetWindowOrgEx
+    ) ;; 357: GetWindowOrgEx
       (call $handle_GetWindowOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 357: GetWindowPlacement
+    ) ;; 358: GetWindowPlacement
       (call $handle_GetWindowPlacement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 358: GetWindowRect
+    ) ;; 359: GetWindowRect
       (call $handle_GetWindowRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 359: GetWindowTextA
+    ) ;; 360: GetWindowTextA
       (call $handle_GetWindowTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 360: GetWindowTextLengthW
+    ) ;; 361: GetWindowTextLengthW
       (call $handle_GetWindowTextLengthW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 361: GetWindowTextW
+    ) ;; 362: GetWindowTextW
       (call $handle_GetWindowTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 362: GetWindowThreadProcessId
+    ) ;; 363: GetWindowThreadProcessId
       (call $handle_GetWindowThreadProcessId (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 363: GetWindowsDirectoryA
+    ) ;; 364: GetWindowsDirectoryA
       (call $handle_GetWindowsDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 364: GlobalAddAtomA
+    ) ;; 365: GlobalAddAtomA
       (call $handle_GlobalAddAtomA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 365: GlobalAddAtomW
+    ) ;; 366: GlobalAddAtomW
       (call $handle_GlobalAddAtomW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 366: GlobalAlloc
+    ) ;; 367: GlobalAlloc
       (call $handle_GlobalAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 367: GlobalCompact
+    ) ;; 368: GlobalCompact
       (call $handle_GlobalCompact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 368: GlobalDeleteAtom
+    ) ;; 369: GlobalDeleteAtom
       (call $handle_GlobalDeleteAtom (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 369: GlobalFindAtomW
+    ) ;; 370: GlobalFindAtomW
       (call $handle_GlobalFindAtomW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 370: GlobalFlags
+    ) ;; 371: GlobalFlags
       (call $handle_GlobalFlags (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 371: GlobalFree
+    ) ;; 372: GlobalFree
       (call $handle_GlobalFree (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 372: GlobalGetAtomNameW
+    ) ;; 373: GlobalGetAtomNameW
       (call $handle_GlobalGetAtomNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 373: GlobalHandle
+    ) ;; 374: GlobalHandle
       (call $handle_GlobalHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 374: GlobalLock
+    ) ;; 375: GlobalLock
       (call $handle_GlobalLock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 375: GlobalReAlloc
+    ) ;; 376: GlobalReAlloc
       (call $handle_GlobalReAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 376: GlobalSize
+    ) ;; 377: GlobalSize
       (call $handle_GlobalSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 377: GlobalUnlock
+    ) ;; 378: GlobalUnlock
       (call $handle_GlobalUnlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 378: GrayStringW
+    ) ;; 379: GrayStringW
       (call $handle_GrayStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 379: HeapAlloc
+    ) ;; 380: HeapAlloc
       (call $handle_HeapAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 380: HeapCompact
+    ) ;; 381: HeapCompact
       (call $handle_HeapCompact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 381: HeapCreate
+    ) ;; 382: HeapCreate
       (call $handle_HeapCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 382: HeapDestroy
+    ) ;; 383: HeapDestroy
       (call $handle_HeapDestroy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 383: HeapFree
+    ) ;; 384: HeapFree
       (call $handle_HeapFree (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 384: HeapReAlloc
+    ) ;; 385: HeapReAlloc
       (call $handle_HeapReAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 385: HeapSize
+    ) ;; 386: HeapSize
       (call $handle_HeapSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 386: HeapValidate
+    ) ;; 387: HeapValidate
       (call $handle_HeapValidate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 387: HeapWalk
+    ) ;; 388: HeapWalk
       (call $handle_HeapWalk (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 388: InSendMessage
+    ) ;; 389: InSendMessage
       (call $handle_InSendMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 389: InflateRect
+    ) ;; 390: InflateRect
       (call $handle_InflateRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 390: InitCommonControlsEx
+    ) ;; 391: InitCommonControlsEx
       (call $handle_InitCommonControlsEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 391: InitializeCriticalSection
+    ) ;; 392: InitializeCriticalSection
       (call $handle_InitializeCriticalSection (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 392: InsertMenuW
+    ) ;; 393: InsertMenuW
       (call $handle_InsertMenuW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 393: InterlockedDecrement
+    ) ;; 394: InterlockedDecrement
       (call $handle_InterlockedDecrement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 394: InterlockedExchange
+    ) ;; 395: InterlockedExchange
       (call $handle_InterlockedExchange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 395: InterlockedIncrement
+    ) ;; 396: InterlockedIncrement
       (call $handle_InterlockedIncrement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 396: IntersectClipRect
+    ) ;; 397: IntersectClipRect
       (call $handle_IntersectClipRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 397: IntersectRect
+    ) ;; 398: IntersectRect
       (call $handle_IntersectRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 398: InvalidateRect
+    ) ;; 399: InvalidateRect
       (call $handle_InvalidateRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 399: InvalidateRgn
+    ) ;; 400: InvalidateRgn
       (call $handle_InvalidateRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 400: InvertRect
+    ) ;; 401: InvertRect
       (call $handle_InvertRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 401: IsBadCodePtr
+    ) ;; 402: IsBadCodePtr
       (call $handle_IsBadCodePtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 402: IsBadReadPtr
+    ) ;; 403: IsBadReadPtr
       (call $handle_IsBadReadPtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 403: IsBadStringPtrA
+    ) ;; 404: IsBadStringPtrA
       (call $handle_IsBadStringPtrA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 404: IsBadStringPtrW
+    ) ;; 405: IsBadStringPtrW
       (call $handle_IsBadStringPtrW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 405: IsBadWritePtr
+    ) ;; 406: IsBadWritePtr
       (call $handle_IsBadWritePtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 406: IsChild
+    ) ;; 407: IsChild
       (call $handle_IsChild (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 407: IsClipboardFormatAvailable
+    ) ;; 408: IsClipboardFormatAvailable
       (call $handle_IsClipboardFormatAvailable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 408: IsDBCSLeadByte
+    ) ;; 409: IsDBCSLeadByte
       (call $handle_IsDBCSLeadByte (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 409: IsDebuggerPresent
+    ) ;; 410: IsDebuggerPresent
       (call $handle_IsDebuggerPresent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 410: IsDialogMessageA
+    ) ;; 411: IsDialogMessageA
       (call $handle_IsDialogMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 411: IsDialogMessageW
+    ) ;; 412: IsDialogMessageW
       (call $handle_IsDialogMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 412: IsDlgButtonChecked
+    ) ;; 413: IsDlgButtonChecked
       (call $handle_IsDlgButtonChecked (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 413: IsIconic
+    ) ;; 414: IsIconic
       (call $handle_IsIconic (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 414: IsMenu
+    ) ;; 415: IsMenu
       (call $handle_IsMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 415: IsProcessorFeaturePresent
+    ) ;; 416: IsProcessorFeaturePresent
       (call $handle_IsProcessorFeaturePresent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 416: IsRectEmpty
+    ) ;; 417: IsRectEmpty
       (call $handle_IsRectEmpty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 417: IsValidCodePage
+    ) ;; 418: IsValidCodePage
       (call $handle_IsValidCodePage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 418: IsValidLocale
+    ) ;; 419: IsValidLocale
       (call $handle_IsValidLocale (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 419: IsWindow
+    ) ;; 420: IsWindow
       (call $handle_IsWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 420: IsWindowEnabled
+    ) ;; 421: IsWindowEnabled
       (call $handle_IsWindowEnabled (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 421: IsWindowVisible
+    ) ;; 422: IsWindowVisible
       (call $handle_IsWindowVisible (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 422: IsZoomed
+    ) ;; 423: IsZoomed
       (call $handle_IsZoomed (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 423: KillTimer
+    ) ;; 424: KillTimer
       (call $handle_KillTimer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 424: LCMapStringA
+    ) ;; 425: LCMapStringA
       (call $handle_LCMapStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 425: LCMapStringW
+    ) ;; 426: LCMapStringW
       (call $handle_LCMapStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 426: LPtoDP
+    ) ;; 427: LPtoDP
       (call $handle_LPtoDP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 427: LeaveCriticalSection
+    ) ;; 428: LeaveCriticalSection
       (call $handle_LeaveCriticalSection (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 428: LineDDA
+    ) ;; 429: LineDDA
       (call $handle_LineDDA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 429: LineTo
+    ) ;; 430: LineTo
       (call $handle_LineTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 430: LoadAcceleratorsA
+    ) ;; 431: LoadAcceleratorsA
       (call $handle_LoadAcceleratorsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 431: LoadAcceleratorsW
+    ) ;; 432: LoadAcceleratorsW
       (call $handle_LoadAcceleratorsW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 432: LoadBitmapA
+    ) ;; 433: LoadBitmapA
       (call $handle_LoadBitmapA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 433: LoadBitmapW
+    ) ;; 434: LoadBitmapW
       (call $handle_LoadBitmapW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 434: LoadCursorA
+    ) ;; 435: LoadCursorA
       (call $handle_LoadCursorA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 435: LoadCursorW
+    ) ;; 436: LoadCursorW
       (call $handle_LoadCursorW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 436: LoadIconA
+    ) ;; 437: LoadIconA
       (call $handle_LoadIconA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 437: LoadIconW
+    ) ;; 438: LoadIconW
       (call $handle_LoadIconW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 438: LoadImageA
+    ) ;; 439: LoadImageA
       (call $handle_LoadImageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 439: LoadLibraryA
+    ) ;; 440: LoadLibraryA
       (call $handle_LoadLibraryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 440: LoadLibraryW
+    ) ;; 441: LoadLibraryW
       (call $handle_LoadLibraryW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 441: LoadMenuA
+    ) ;; 442: LoadMenuA
       (call $handle_LoadMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 442: LoadMenuW
+    ) ;; 443: LoadMenuW
       (call $handle_LoadMenuW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 443: LoadResource
+    ) ;; 444: LoadResource
       (call $handle_LoadResource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 444: LoadStringA
+    ) ;; 445: LoadStringA
       (call $handle_LoadStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 445: LoadStringW
+    ) ;; 446: LoadStringW
       (call $handle_LoadStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 446: LocalAlloc
+    ) ;; 447: LocalAlloc
       (call $handle_LocalAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 447: LocalFileTimeToFileTime
+    ) ;; 448: LocalFileTimeToFileTime
       (call $handle_LocalFileTimeToFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 448: LocalFree
+    ) ;; 449: LocalFree
       (call $handle_LocalFree (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 449: LocalLock
+    ) ;; 450: LocalLock
       (call $handle_LocalLock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 450: LocalReAlloc
+    ) ;; 451: LocalReAlloc
       (call $handle_LocalReAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 451: LocalUnlock
+    ) ;; 452: LocalUnlock
       (call $handle_LocalUnlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 452: LockFile
+    ) ;; 453: LockFile
       (call $handle_LockFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 453: LockResource
+    ) ;; 454: LockResource
       (call $handle_LockResource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 454: LockWindowUpdate
+    ) ;; 455: LockWindowUpdate
       (call $handle_LockWindowUpdate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 455: MapDialogRect
+    ) ;; 456: MapDialogRect
       (call $handle_MapDialogRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 456: MapViewOfFile
+    ) ;; 457: MapViewOfFile
       (call $handle_MapViewOfFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 457: MapVirtualKeyA
+    ) ;; 458: MapVirtualKeyA
       (call $handle_MapVirtualKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 458: MapWindowPoints
+    ) ;; 459: MapWindowPoints
       (call $handle_MapWindowPoints (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 459: MessageBeep
+    ) ;; 460: MessageBeep
       (call $handle_MessageBeep (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 460: MessageBoxA
+    ) ;; 461: MessageBoxA
       (call $handle_MessageBoxA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 461: MessageBoxW
+    ) ;; 462: MessageBoxW
       (call $handle_MessageBoxW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 462: ModifyMenuW
+    ) ;; 463: ModifyMenuW
       (call $handle_ModifyMenuW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 463: MoveFileA
+    ) ;; 464: MoveFileA
       (call $handle_MoveFileA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 464: MoveFileExA
+    ) ;; 465: MoveFileExA
       (call $handle_MoveFileExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 465: MoveFileExW
+    ) ;; 466: MoveFileExW
       (call $handle_MoveFileExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 466: MoveFileW
+    ) ;; 467: MoveFileW
       (call $handle_MoveFileW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 467: MoveToEx
+    ) ;; 468: MoveToEx
       (call $handle_MoveToEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 468: MoveWindow
+    ) ;; 469: MoveWindow
       (call $handle_MoveWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 469: MsgWaitForMultipleObjects
+    ) ;; 470: MsgWaitForMultipleObjects
       (call $handle_MsgWaitForMultipleObjects (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 470: MulDiv
+    ) ;; 471: MulDiv
       (call $handle_MulDiv (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 471: MultiByteToWideChar
+    ) ;; 472: MultiByteToWideChar
       (call $handle_MultiByteToWideChar (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 472: OffsetClipRgn
+    ) ;; 473: OffsetClipRgn
       (call $handle_OffsetClipRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 473: OffsetRect
+    ) ;; 474: OffsetRect
       (call $handle_OffsetRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 474: OffsetRgn
+    ) ;; 475: OffsetRgn
       (call $handle_OffsetRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 475: OffsetViewportOrgEx
+    ) ;; 476: OffsetViewportOrgEx
       (call $handle_OffsetViewportOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 476: OffsetWindowOrgEx
+    ) ;; 477: OffsetWindowOrgEx
       (call $handle_OffsetWindowOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 477: OleInitialize
+    ) ;; 478: OleInitialize
       (call $handle_OleInitialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 478: OleUninitialize
+    ) ;; 479: OleUninitialize
       (call $handle_OleUninitialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 479: OpenClipboard
+    ) ;; 480: OpenClipboard
       (call $handle_OpenClipboard (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 480: OpenFile
+    ) ;; 481: OpenFile
       (call $handle_OpenFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 481: OpenIcon
+    ) ;; 482: OpenIcon
       (call $handle_OpenIcon (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 482: OutputDebugStringA
+    ) ;; 483: OutputDebugStringA
       (call $handle_OutputDebugStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 483: OutputDebugStringW
+    ) ;; 484: OutputDebugStringW
       (call $handle_OutputDebugStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 484: PageSetupDlgA
+    ) ;; 485: PageSetupDlgA
       (call $handle_PageSetupDlgA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 485: PatBlt
+    ) ;; 486: PatBlt
       (call $handle_PatBlt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 486: PathFindFileNameA
+    ) ;; 487: PathFindFileNameA
       (call $handle_PathFindFileNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 487: PathGetArgsA
+    ) ;; 488: PathGetArgsA
       (call $handle_PathGetArgsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 488: PeekConsoleInputA
+    ) ;; 489: PeekConsoleInputA
       (call $handle_PeekConsoleInputA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 489: PeekMessageA
+    ) ;; 490: PeekMessageA
       (call $handle_PeekMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 490: PeekMessageW
+    ) ;; 491: PeekMessageW
       (call $handle_PeekMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 491: PeekNamedPipe
+    ) ;; 492: PeekNamedPipe
       (call $handle_PeekNamedPipe (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 492: PlayMetaFile
+    ) ;; 493: PlayMetaFile
       (call $handle_PlayMetaFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 493: PlayMetaFileRecord
+    ) ;; 494: PlayMetaFileRecord
       (call $handle_PlayMetaFileRecord (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 494: PolyBezier
+    ) ;; 495: PolyBezier
       (call $handle_PolyBezier (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 495: PolyBezierTo
+    ) ;; 496: PolyBezierTo
       (call $handle_PolyBezierTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 496: PolyDraw
+    ) ;; 497: PolyDraw
       (call $handle_PolyDraw (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 497: Polygon
+    ) ;; 498: Polygon
       (call $handle_Polygon (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 498: Polyline
+    ) ;; 499: Polyline
       (call $handle_Polyline (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 499: PolylineTo
+    ) ;; 500: PolylineTo
       (call $handle_PolylineTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 500: PostMessageA
+    ) ;; 501: PostMessageA
       (call $handle_PostMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 501: PostMessageW
+    ) ;; 502: PostMessageW
       (call $handle_PostMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 502: PostQuitMessage
+    ) ;; 503: PostQuitMessage
       (call $handle_PostQuitMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 503: PostThreadMessageW
+    ) ;; 504: PostThreadMessageW
       (call $handle_PostThreadMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 504: PtInRect
+    ) ;; 505: PtInRect
       (call $handle_PtInRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 505: PtVisible
+    ) ;; 506: PtVisible
       (call $handle_PtVisible (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 506: QueryPerformanceCounter
+    ) ;; 507: QueryPerformanceCounter
       (call $handle_QueryPerformanceCounter (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 507: QueryPerformanceFrequency
+    ) ;; 508: QueryPerformanceFrequency
       (call $handle_QueryPerformanceFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 508: RaiseException
+    ) ;; 509: RaiseException
       (call $handle_RaiseException (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 509: ReadConsoleA
+    ) ;; 510: ReadConsoleA
       (call $handle_ReadConsoleA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 510: ReadConsoleInputA
+    ) ;; 511: ReadConsoleInputA
       (call $handle_ReadConsoleInputA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 511: ReadConsoleInputW
+    ) ;; 512: ReadConsoleInputW
       (call $handle_ReadConsoleInputW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 512: ReadConsoleOutputAttribute
+    ) ;; 513: ReadConsoleOutputAttribute
       (call $handle_ReadConsoleOutputAttribute (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 513: ReadConsoleOutputW
+    ) ;; 514: ReadConsoleOutputW
       (call $handle_ReadConsoleOutputW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 514: ReadConsoleW
+    ) ;; 515: ReadConsoleW
       (call $handle_ReadConsoleW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 515: ReadFile
+    ) ;; 516: ReadFile
       (call $handle_ReadFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 516: RealizePalette
+    ) ;; 517: RealizePalette
       (call $handle_RealizePalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 517: RectVisible
+    ) ;; 518: RectVisible
       (call $handle_RectVisible (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 518: Rectangle
+    ) ;; 519: Rectangle
       (call $handle_Rectangle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 519: RedrawWindow
+    ) ;; 520: RedrawWindow
       (call $handle_RedrawWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 520: RegCloseKey
+    ) ;; 521: RegCloseKey
       (call $handle_RegCloseKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 521: RegCreateKeyA
+    ) ;; 522: RegCreateKeyA
       (call $handle_RegCreateKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 522: RegCreateKeyExA
+    ) ;; 523: RegCreateKeyExA
       (call $handle_RegCreateKeyExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 523: RegCreateKeyExW
+    ) ;; 524: RegCreateKeyExW
       (call $handle_RegCreateKeyExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 524: RegCreateKeyW
+    ) ;; 525: RegCreateKeyW
       (call $handle_RegCreateKeyW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 525: RegEnumKeyW
+    ) ;; 526: RegEnumKeyW
       (call $handle_RegEnumKeyW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 526: RegOpenKeyA
+    ) ;; 527: RegOpenKeyA
       (call $handle_RegOpenKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 527: RegOpenKeyExA
+    ) ;; 528: RegOpenKeyExA
       (call $handle_RegOpenKeyExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 528: RegOpenKeyExW
+    ) ;; 529: RegOpenKeyExW
       (call $handle_RegOpenKeyExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 529: RegOpenKeyW
+    ) ;; 530: RegOpenKeyW
       (call $handle_RegOpenKeyW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 530: RegQueryValueA
+    ) ;; 531: RegQueryValueA
       (call $handle_RegQueryValueA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 531: RegQueryValueExA
+    ) ;; 532: RegQueryValueExA
       (call $handle_RegQueryValueExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 532: RegQueryValueExW
+    ) ;; 533: RegQueryValueExW
       (call $handle_RegQueryValueExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 533: RegSetValueA
+    ) ;; 534: RegSetValueA
       (call $handle_RegSetValueA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 534: RegSetValueExA
+    ) ;; 535: RegSetValueExA
       (call $handle_RegSetValueExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 535: RegSetValueExW
+    ) ;; 536: RegSetValueExW
       (call $handle_RegSetValueExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 536: RegSetValueW
+    ) ;; 537: RegSetValueW
       (call $handle_RegSetValueW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 537: RegisterClassA
+    ) ;; 538: RegisterClassA
       (call $handle_RegisterClassA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 538: RegisterClassExA
+    ) ;; 539: RegisterClassExA
       (call $handle_RegisterClassExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 539: RegisterClassExW
+    ) ;; 540: RegisterClassExW
       (call $handle_RegisterClassExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 540: RegisterClassW
+    ) ;; 541: RegisterClassW
       (call $handle_RegisterClassW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 541: RegisterClipboardFormatA
+    ) ;; 542: RegisterClipboardFormatA
       (call $handle_RegisterClipboardFormatA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 542: RegisterClipboardFormatW
+    ) ;; 543: RegisterClipboardFormatW
       (call $handle_RegisterClipboardFormatW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 543: RegisterPenApp
+    ) ;; 544: RegisterPenApp
       (call $handle_RegisterPenApp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 544: RegisterWindowMessageA
+    ) ;; 545: RegisterWindowMessageA
       (call $handle_RegisterWindowMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 545: RegisterWindowMessageW
+    ) ;; 546: RegisterWindowMessageW
       (call $handle_RegisterWindowMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 546: ReinitializeCriticalSection
+    ) ;; 547: ReinitializeCriticalSection
       (call $handle_ReinitializeCriticalSection (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 547: ReleaseCapture
+    ) ;; 548: ReleaseCapture
       (call $handle_ReleaseCapture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 548: ReleaseDC
+    ) ;; 549: ReleaseDC
       (call $handle_ReleaseDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 549: ReleaseMutex
+    ) ;; 550: ReleaseMutex
       (call $handle_ReleaseMutex (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 550: ReleaseSemaphore
+    ) ;; 551: ReleaseSemaphore
       (call $handle_ReleaseSemaphore (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 551: RemoveDirectoryA
+    ) ;; 552: RemoveDirectoryA
       (call $handle_RemoveDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 552: RemoveDirectoryW
+    ) ;; 553: RemoveDirectoryW
       (call $handle_RemoveDirectoryW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 553: RemoveMenu
+    ) ;; 554: RemoveMenu
       (call $handle_RemoveMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 554: RemovePropW
+    ) ;; 555: RemovePropW
       (call $handle_RemovePropW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 555: ResetEvent
+    ) ;; 556: ResetEvent
       (call $handle_ResetEvent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 556: ResizePalette
+    ) ;; 557: ResizePalette
       (call $handle_ResizePalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 557: RestoreDC
+    ) ;; 558: RestoreDC
       (call $handle_RestoreDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 558: ResumeThread
+    ) ;; 559: ResumeThread
       (call $handle_ResumeThread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 559: ReuseDDElParam
+    ) ;; 560: ReuseDDElParam
       (call $handle_ReuseDDElParam (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 560: RoundRect
+    ) ;; 561: RoundRect
       (call $handle_RoundRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 561: RtlMoveMemory
+    ) ;; 562: RtlMoveMemory
       (call $handle_RtlMoveMemory (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 562: RtlUnwind
+    ) ;; 563: RtlUnwind
       (call $handle_RtlUnwind (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 563: RtlZeroMemory
+    ) ;; 564: RtlZeroMemory
       (call $handle_RtlZeroMemory (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 564: SHGetFileInfoA
+    ) ;; 565: SHGetFileInfoA
       (call $handle_SHGetFileInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 565: SHGetPathFromIDListA
+    ) ;; 566: SHGetPathFromIDListA
       (call $handle_SHGetPathFromIDListA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 566: SHGetSpecialFolderLocation
+    ) ;; 567: SHGetSpecialFolderLocation
       (call $handle_SHGetSpecialFolderLocation (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 567: SHGetSpecialFolderPathA
+    ) ;; 568: SHGetSpecialFolderPathA
       (call $handle_SHGetSpecialFolderPathA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 568: SHRegGetUSValueA
+    ) ;; 569: SHRegGetUSValueA
       (call $handle_SHRegGetUSValueA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 569: SaveDC
+    ) ;; 570: SaveDC
       (call $handle_SaveDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 570: ScaleViewportExtEx
+    ) ;; 571: ScaleViewportExtEx
       (call $handle_ScaleViewportExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 571: ScaleWindowExtEx
+    ) ;; 572: ScaleWindowExtEx
       (call $handle_ScaleWindowExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 572: ScreenToClient
+    ) ;; 573: ScreenToClient
       (call $handle_ScreenToClient (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 573: ScrollConsoleScreenBufferW
+    ) ;; 574: ScrollConsoleScreenBufferW
       (call $handle_ScrollConsoleScreenBufferW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 574: ScrollWindow
+    ) ;; 575: ScrollWindow
       (call $handle_ScrollWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 575: ScrollWindowEx
+    ) ;; 576: ScrollWindowEx
       (call $handle_ScrollWindowEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 576: SearchPathW
+    ) ;; 577: SearchPathW
       (call $handle_SearchPathW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 577: SelectClipPath
+    ) ;; 578: SelectClipPath
       (call $handle_SelectClipPath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 578: SelectClipRgn
+    ) ;; 579: SelectClipRgn
       (call $handle_SelectClipRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 579: SelectObject
+    ) ;; 580: SelectObject
       (call $handle_SelectObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 580: SelectPalette
+    ) ;; 581: SelectPalette
       (call $handle_SelectPalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 581: SendDlgItemMessageA
+    ) ;; 582: SendDlgItemMessageA
       (call $handle_SendDlgItemMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 582: SendDlgItemMessageW
+    ) ;; 583: SendDlgItemMessageW
       (call $handle_SendDlgItemMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 583: SendMessageA
+    ) ;; 584: SendMessageA
       (call $handle_SendMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 584: SendMessageW
+    ) ;; 585: SendMessageW
       (call $handle_SendMessageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 585: SetAbortProc
+    ) ;; 586: SetAbortProc
       (call $handle_SetAbortProc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 586: SetActiveWindow
+    ) ;; 587: SetActiveWindow
       (call $handle_SetActiveWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 587: SetArcDirection
+    ) ;; 588: SetArcDirection
       (call $handle_SetArcDirection (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 588: SetBkColor
+    ) ;; 589: SetBkColor
       (call $handle_SetBkColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 589: SetBkMode
+    ) ;; 590: SetBkMode
       (call $handle_SetBkMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 590: SetBrushOrgEx
+    ) ;; 591: SetBrushOrgEx
       (call $handle_SetBrushOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 591: SetCapture
+    ) ;; 592: SetCapture
       (call $handle_SetCapture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 592: SetClassLongA
+    ) ;; 593: SetClassLongA
       (call $handle_SetClassLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 593: SetColorAdjustment
+    ) ;; 594: SetColorAdjustment
       (call $handle_SetColorAdjustment (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 594: SetConsoleActiveScreenBuffer
+    ) ;; 595: SetConsoleActiveScreenBuffer
       (call $handle_SetConsoleActiveScreenBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 595: SetConsoleCtrlHandler
+    ) ;; 596: SetConsoleCtrlHandler
       (call $handle_SetConsoleCtrlHandler (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 596: SetConsoleCursorInfo
+    ) ;; 597: SetConsoleCursorInfo
       (call $handle_SetConsoleCursorInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 597: SetConsoleCursorPosition
+    ) ;; 598: SetConsoleCursorPosition
       (call $handle_SetConsoleCursorPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 598: SetConsoleMode
+    ) ;; 599: SetConsoleMode
       (call $handle_SetConsoleMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 599: SetConsoleScreenBufferSize
+    ) ;; 600: SetConsoleScreenBufferSize
       (call $handle_SetConsoleScreenBufferSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 600: SetConsoleTitleW
+    ) ;; 601: SetConsoleTitleW
       (call $handle_SetConsoleTitleW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 601: SetConsoleWindowInfo
+    ) ;; 602: SetConsoleWindowInfo
       (call $handle_SetConsoleWindowInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 602: SetCurrentDirectoryA
+    ) ;; 603: SetCurrentDirectoryA
       (call $handle_SetCurrentDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 603: SetCurrentDirectoryW
+    ) ;; 604: SetCurrentDirectoryW
       (call $handle_SetCurrentDirectoryW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 604: SetCursor
+    ) ;; 605: SetCursor
       (call $handle_SetCursor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 605: SetCursorPos
+    ) ;; 606: SetCursorPos
       (call $handle_SetCursorPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 606: SetDIBColorTable
+    ) ;; 607: SetDIBColorTable
       (call $handle_SetDIBColorTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 607: SetDIBits
+    ) ;; 608: SetDIBits
       (call $handle_SetDIBits (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 608: SetDIBitsToDevice
+    ) ;; 609: SetDIBitsToDevice
       (call $handle_SetDIBitsToDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 609: SetDlgItemInt
+    ) ;; 610: SetDlgItemInt
       (call $handle_SetDlgItemInt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 610: SetDlgItemTextA
+    ) ;; 611: SetDlgItemTextA
       (call $handle_SetDlgItemTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 611: SetDlgItemTextW
+    ) ;; 612: SetDlgItemTextW
       (call $handle_SetDlgItemTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 612: SetEndOfFile
+    ) ;; 613: SetEndOfFile
       (call $handle_SetEndOfFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 613: SetEnvironmentVariableA
+    ) ;; 614: SetEnvironmentVariableA
       (call $handle_SetEnvironmentVariableA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 614: SetEnvironmentVariableW
+    ) ;; 615: SetEnvironmentVariableW
       (call $handle_SetEnvironmentVariableW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 615: SetErrorMode
+    ) ;; 616: SetErrorMode
       (call $handle_SetErrorMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 616: SetEvent
+    ) ;; 617: SetEvent
       (call $handle_SetEvent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 617: SetFileAttributesA
+    ) ;; 618: SetFileAttributesA
       (call $handle_SetFileAttributesA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 618: SetFileAttributesW
+    ) ;; 619: SetFileAttributesW
       (call $handle_SetFileAttributesW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 619: SetFilePointer
+    ) ;; 620: SetFilePointer
       (call $handle_SetFilePointer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 620: SetFileTime
+    ) ;; 621: SetFileTime
       (call $handle_SetFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 621: SetFocus
+    ) ;; 622: SetFocus
       (call $handle_SetFocus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 622: SetForegroundWindow
+    ) ;; 623: SetForegroundWindow
       (call $handle_SetForegroundWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 623: SetHandleCount
+    ) ;; 624: SetHandleCount
       (call $handle_SetHandleCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 624: SetLastError
+    ) ;; 625: SetLastError
       (call $handle_SetLastError (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 625: SetLayout
+    ) ;; 626: SetLayout
       (call $handle_SetLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 626: SetLocalTime
+    ) ;; 627: SetLocalTime
       (call $handle_SetLocalTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 627: SetMapMode
+    ) ;; 628: SetMapMode
       (call $handle_SetMapMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 628: SetMapperFlags
+    ) ;; 629: SetMapperFlags
       (call $handle_SetMapperFlags (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 629: SetMenu
+    ) ;; 630: SetMenu
       (call $handle_SetMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 630: SetMenuItemBitmaps
+    ) ;; 631: SetMenuItemBitmaps
       (call $handle_SetMenuItemBitmaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 631: SetObjectOwner
+    ) ;; 632: SetObjectOwner
       (call $handle_SetObjectOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 632: SetPaletteEntries
+    ) ;; 633: SetPaletteEntries
       (call $handle_SetPaletteEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 633: SetParent
+    ) ;; 634: SetParent
       (call $handle_SetParent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 634: SetPixel
+    ) ;; 635: SetPixel
       (call $handle_SetPixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 635: SetPolyFillMode
+    ) ;; 636: SetPolyFillMode
       (call $handle_SetPolyFillMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 636: SetPropA
+    ) ;; 637: SetPropA
       (call $handle_SetPropA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 637: SetPropW
+    ) ;; 638: SetPropW
       (call $handle_SetPropW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 638: SetROP2
+    ) ;; 639: SetROP2
       (call $handle_SetROP2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 639: SetRect
+    ) ;; 640: SetRect
       (call $handle_SetRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 640: SetRectEmpty
+    ) ;; 641: SetRectEmpty
       (call $handle_SetRectEmpty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 641: SetRectRgn
+    ) ;; 642: SetRectRgn
       (call $handle_SetRectRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 642: SetScrollInfo
+    ) ;; 643: SetScrollInfo
       (call $handle_SetScrollInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 643: SetScrollPos
+    ) ;; 644: SetScrollPos
       (call $handle_SetScrollPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 644: SetScrollRange
+    ) ;; 645: SetScrollRange
       (call $handle_SetScrollRange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 645: SetStdHandle
+    ) ;; 646: SetStdHandle
       (call $handle_SetStdHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 646: SetStretchBltMode
+    ) ;; 647: SetStretchBltMode
       (call $handle_SetStretchBltMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 647: SetSystemPaletteUse
+    ) ;; 648: SetSystemPaletteUse
       (call $handle_SetSystemPaletteUse (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 648: SetTextAlign
+    ) ;; 649: SetTextAlign
       (call $handle_SetTextAlign (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 649: SetTextCharacterExtra
+    ) ;; 650: SetTextCharacterExtra
       (call $handle_SetTextCharacterExtra (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 650: SetTextColor
+    ) ;; 651: SetTextColor
       (call $handle_SetTextColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 651: SetTextJustification
+    ) ;; 652: SetTextJustification
       (call $handle_SetTextJustification (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 652: SetThreadPriority
+    ) ;; 653: SetThreadPriority
       (call $handle_SetThreadPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 653: SetTimer
+    ) ;; 654: SetTimer
       (call $handle_SetTimer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 654: SetUnhandledExceptionFilter
+    ) ;; 655: SetUnhandledExceptionFilter
       (call $handle_SetUnhandledExceptionFilter (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 655: SetViewportExtEx
+    ) ;; 656: SetViewportExtEx
       (call $handle_SetViewportExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 656: SetViewportOrgEx
+    ) ;; 657: SetViewportOrgEx
       (call $handle_SetViewportOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 657: SetWindowContextHelpId
+    ) ;; 658: SetWindowContextHelpId
       (call $handle_SetWindowContextHelpId (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 658: SetWindowExtEx
+    ) ;; 659: SetWindowExtEx
       (call $handle_SetWindowExtEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 659: SetWindowLongA
+    ) ;; 660: SetWindowLongA
       (call $handle_SetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 660: SetWindowLongW
+    ) ;; 661: SetWindowLongW
       (call $handle_SetWindowLongW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 661: SetWindowOrgEx
+    ) ;; 662: SetWindowOrgEx
       (call $handle_SetWindowOrgEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 662: SetWindowPlacement
+    ) ;; 663: SetWindowPlacement
       (call $handle_SetWindowPlacement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 663: SetWindowPos
+    ) ;; 664: SetWindowPos
       (call $handle_SetWindowPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 664: SetWindowTextA
+    ) ;; 665: SetWindowTextA
       (call $handle_SetWindowTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 665: SetWindowTextW
+    ) ;; 666: SetWindowTextW
       (call $handle_SetWindowTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 666: SetWindowsHookExA
+    ) ;; 667: SetWindowsHookExA
       (call $handle_SetWindowsHookExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 667: SetWindowsHookExW
+    ) ;; 668: SetWindowsHookExW
       (call $handle_SetWindowsHookExW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 668: SetWindowsHookW
+    ) ;; 669: SetWindowsHookW
       (call $handle_SetWindowsHookW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 669: ShellAboutA
+    ) ;; 670: ShellAboutA
       (call $handle_ShellAboutA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 670: ShellAboutW
+    ) ;; 671: ShellAboutW
       (call $handle_ShellAboutW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 671: ShellExecuteA
+    ) ;; 672: ShellExecuteA
       (call $handle_ShellExecuteA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 672: ShowCursor
+    ) ;; 673: ShowCursor
       (call $handle_ShowCursor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 673: ShowOwnedPopups
+    ) ;; 674: ShowOwnedPopups
       (call $handle_ShowOwnedPopups (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 674: ShowScrollBar
+    ) ;; 675: ShowScrollBar
       (call $handle_ShowScrollBar (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 675: ShowWindow
+    ) ;; 676: ShowWindow
       (call $handle_ShowWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 676: SizeofResource
+    ) ;; 677: SizeofResource
       (call $handle_SizeofResource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 677: Sleep
+    ) ;; 678: Sleep
       (call $handle_Sleep (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 678: StartDocA
+    ) ;; 679: StartDocA
       (call $handle_StartDocA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 679: StartDocW
+    ) ;; 680: StartDocW
       (call $handle_StartDocW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 680: StartPage
+    ) ;; 681: StartPage
       (call $handle_StartPage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 681: StrChrA
+    ) ;; 682: StrChrA
       (call $handle_StrChrA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 682: StrStrIA
+    ) ;; 683: StrStrIA
       (call $handle_StrStrIA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 683: StretchBlt
+    ) ;; 684: StretchBlt
       (call $handle_StretchBlt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 684: StretchDIBits
+    ) ;; 685: StretchDIBits
       (call $handle_StretchDIBits (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 685: StringFromCLSID
+    ) ;; 686: StringFromCLSID
       (call $handle_StringFromCLSID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 686: StringFromGUID2
+    ) ;; 687: StringFromGUID2
       (call $handle_StringFromGUID2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 687: SuspendThread
+    ) ;; 688: SuspendThread
       (call $handle_SuspendThread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 688: SystemParametersInfoA
+    ) ;; 689: SystemParametersInfoA
       (call $handle_SystemParametersInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 689: SystemParametersInfoW
+    ) ;; 690: SystemParametersInfoW
       (call $handle_SystemParametersInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 690: SystemTimeToFileTime
+    ) ;; 691: SystemTimeToFileTime
       (call $handle_SystemTimeToFileTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 691: TabbedTextOutA
+    ) ;; 692: TabbedTextOutA
       (call $handle_TabbedTextOutA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 692: TabbedTextOutW
+    ) ;; 693: TabbedTextOutW
       (call $handle_TabbedTextOutW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 693: TerminateProcess
+    ) ;; 694: TerminateProcess
       (call $handle_TerminateProcess (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 694: TextOutA
+    ) ;; 695: TextOutA
       (call $handle_TextOutA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 695: TextOutW
+    ) ;; 696: TextOutW
       (call $handle_TextOutW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 696: ThunkConnect32
+    ) ;; 697: ThunkConnect32
       (call $handle_ThunkConnect32 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 697: TlsAlloc
+    ) ;; 698: TlsAlloc
       (call $handle_TlsAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 698: TlsFree
+    ) ;; 699: TlsFree
       (call $handle_TlsFree (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 699: TlsGetValue
+    ) ;; 700: TlsGetValue
       (call $handle_TlsGetValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 700: TlsSetValue
+    ) ;; 701: TlsSetValue
       (call $handle_TlsSetValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 701: TrackPopupMenu
+    ) ;; 702: TrackPopupMenu
       (call $handle_TrackPopupMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 702: TrackPopupMenuEx
+    ) ;; 703: TrackPopupMenuEx
       (call $handle_TrackPopupMenuEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 703: TranslateAcceleratorA
+    ) ;; 704: TranslateAcceleratorA
       (call $handle_TranslateAcceleratorA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 704: TranslateAcceleratorW
+    ) ;; 705: TranslateAcceleratorW
       (call $handle_TranslateAcceleratorW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 705: TranslateMDISysAccel
+    ) ;; 706: TranslateMDISysAccel
       (call $handle_TranslateMDISysAccel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 706: TranslateMessage
+    ) ;; 707: TranslateMessage
       (call $handle_TranslateMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 707: UnhandledExceptionFilter
+    ) ;; 708: UnhandledExceptionFilter
       (call $handle_UnhandledExceptionFilter (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 708: UnhookWindowsHookEx
+    ) ;; 709: UnhookWindowsHookEx
       (call $handle_UnhookWindowsHookEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 709: UnionRect
+    ) ;; 710: UnionRect
       (call $handle_UnionRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 710: UnlockFile
+    ) ;; 711: UnlockFile
       (call $handle_UnlockFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 711: UnmapViewOfFile
+    ) ;; 712: UnmapViewOfFile
       (call $handle_UnmapViewOfFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 712: UnpackDDElParam
+    ) ;; 713: UnpackDDElParam
       (call $handle_UnpackDDElParam (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 713: UnrealizeObject
+    ) ;; 714: UnrealizeObject
       (call $handle_UnrealizeObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 714: UnregisterClassA
+    ) ;; 715: UnregisterClassA
       (call $handle_UnregisterClassA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 715: UnregisterClassW
+    ) ;; 716: UnregisterClassW
       (call $handle_UnregisterClassW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 716: UpdateWindow
+    ) ;; 717: UpdateWindow
       (call $handle_UpdateWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 717: ValidateRect
+    ) ;; 718: ValidateRect
       (call $handle_ValidateRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 718: VirtualAlloc
+    ) ;; 719: VirtualAlloc
       (call $handle_VirtualAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 719: VirtualFree
+    ) ;; 720: VirtualFree
       (call $handle_VirtualFree (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 720: VirtualProtect
+    ) ;; 721: VirtualProtect
       (call $handle_VirtualProtect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 721: WaitForMultipleObjects
+    ) ;; 722: WaitForMultipleObjects
       (call $handle_WaitForMultipleObjects (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 722: WaitForSingleObject
+    ) ;; 723: WaitForSingleObject
       (call $handle_WaitForSingleObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 723: WaitMessage
+    ) ;; 724: WaitMessage
       (call $handle_WaitMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 724: WideCharToMultiByte
+    ) ;; 725: WideCharToMultiByte
       (call $handle_WideCharToMultiByte (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 725: WinHelpA
+    ) ;; 726: WinHelpA
       (call $handle_WinHelpA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 726: WinHelpW
+    ) ;; 727: WinHelpW
       (call $handle_WinHelpW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 727: WindowFromDC
+    ) ;; 728: WindowFromDC
       (call $handle_WindowFromDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 728: WindowFromPoint
+    ) ;; 729: WindowFromPoint
       (call $handle_WindowFromPoint (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 729: WriteClassStg
+    ) ;; 730: WriteClassStg
       (call $handle_WriteClassStg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 730: WriteConsoleA
+    ) ;; 731: WriteConsoleA
       (call $handle_WriteConsoleA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 731: WriteConsoleInputW
+    ) ;; 732: WriteConsoleInputW
       (call $handle_WriteConsoleInputW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 732: WriteConsoleOutputAttribute
+    ) ;; 733: WriteConsoleOutputAttribute
       (call $handle_WriteConsoleOutputAttribute (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 733: WriteConsoleOutputCharacterA
+    ) ;; 734: WriteConsoleOutputCharacterA
       (call $handle_WriteConsoleOutputCharacterA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 734: WriteConsoleOutputW
+    ) ;; 735: WriteConsoleOutputW
       (call $handle_WriteConsoleOutputW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 735: WriteConsoleW
+    ) ;; 736: WriteConsoleW
       (call $handle_WriteConsoleW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 736: WriteFile
+    ) ;; 737: WriteFile
       (call $handle_WriteFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 737: WriteFmtUserTypeStg
+    ) ;; 738: WriteFmtUserTypeStg
       (call $handle_WriteFmtUserTypeStg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 738: WritePrivateProfileStringA
+    ) ;; 739: WritePrivateProfileStringA
       (call $handle_WritePrivateProfileStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 739: WritePrivateProfileStringW
+    ) ;; 740: WritePrivateProfileStringW
       (call $handle_WritePrivateProfileStringW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 740: WriteProfileStringA
+    ) ;; 741: WriteProfileStringA
       (call $handle_WriteProfileStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 741: _CxxThrowException
+    ) ;; 742: _CxxThrowException
       (call $handle__CxxThrowException (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 742: _EH_prolog
+    ) ;; 743: _EH_prolog
       (call $handle__EH_prolog (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 743: _XcptFilter
+    ) ;; 744: _XcptFilter
       (call $handle__XcptFilter (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 744: __CxxFrameHandler
+    ) ;; 745: __CxxFrameHandler
       (call $handle___CxxFrameHandler (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 745: __GetMainArgs
+    ) ;; 746: __GetMainArgs
       (call $handle___GetMainArgs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 746: __dllonexit
+    ) ;; 747: __dllonexit
       (call $handle___dllonexit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 747: __getmainargs
+    ) ;; 748: __getmainargs
       (call $handle___getmainargs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 748: __p__acmdln
+    ) ;; 749: __p__acmdln
       (call $handle___p__acmdln (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 749: __p__commode
+    ) ;; 750: __p__commode
       (call $handle___p__commode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 750: __p__fmode
+    ) ;; 751: __p__fmode
       (call $handle___p__fmode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 751: __p__wcmdln
+    ) ;; 752: __p__wcmdln
       (call $handle___p__wcmdln (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 752: __set_app_type
+    ) ;; 753: __set_app_type
       (call $handle___set_app_type (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 753: __setusermatherr
+    ) ;; 754: __setusermatherr
       (call $handle___setusermatherr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 754: __wgetmainargs
+    ) ;; 755: __wgetmainargs
       (call $handle___wgetmainargs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 755: _adjust_fdiv
+    ) ;; 756: _adjust_fdiv
       (call $handle__adjust_fdiv (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 756: _controlfp
+    ) ;; 757: _controlfp
       (call $handle__controlfp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 757: _exit
+    ) ;; 758: _exit
       (call $handle__exit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 758: _ftol
+    ) ;; 759: _ftol
       (call $handle__ftol (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 759: _getdcwd
+    ) ;; 760: _getdcwd
       (call $handle__getdcwd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 760: _global_unwind2
+    ) ;; 761: _global_unwind2
       (call $handle__global_unwind2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 761: _initterm
+    ) ;; 762: _initterm
       (call $handle__initterm (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 762: _itow
+    ) ;; 763: _itow
       (call $handle__itow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 763: _lclose
+    ) ;; 764: _lclose
       (call $handle__lclose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 764: _lcreat
+    ) ;; 765: _lcreat
       (call $handle__lcreat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 765: _llseek
+    ) ;; 766: _llseek
       (call $handle__llseek (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 766: _lopen
+    ) ;; 767: _lopen
       (call $handle__lopen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 767: _lread
+    ) ;; 768: _lread
       (call $handle__lread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 768: _lwrite
+    ) ;; 769: _lwrite
       (call $handle__lwrite (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 769: _mbschr
+    ) ;; 770: _mbschr
       (call $handle__mbschr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 770: _mbsinc
+    ) ;; 771: _mbsinc
       (call $handle__mbsinc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 771: _mbsnbcmp
+    ) ;; 772: _mbsnbcmp
       (call $handle__mbsnbcmp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 772: _mbsrchr
+    ) ;; 773: _mbsrchr
       (call $handle__mbsrchr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 773: _onexit
+    ) ;; 774: _onexit
       (call $handle__onexit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 774: _purecall
+    ) ;; 775: _purecall
       (call $handle__purecall (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 775: _splitpath
+    ) ;; 776: _splitpath
       (call $handle__splitpath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 776: _strdup
+    ) ;; 777: _strdup
       (call $handle__strdup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 777: _stricmp
+    ) ;; 778: _stricmp
       (call $handle__stricmp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 778: _strlwr
+    ) ;; 779: _strlwr
       (call $handle__strlwr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 779: _strrev
+    ) ;; 780: _strrev
       (call $handle__strrev (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 780: _wcsicmp
+    ) ;; 781: _wcsicmp
       (call $handle__wcsicmp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 781: _wtoi
+    ) ;; 782: _wtoi
       (call $handle__wtoi (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 782: atoi
+    ) ;; 783: atoi
       (call $handle_atoi (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 783: atol
+    ) ;; 784: atol
       (call $handle_atol (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 784: calloc
+    ) ;; 785: calloc
       (call $handle_calloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 785: exit
+    ) ;; 786: exit
       (call $handle_exit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 786: free
+    ) ;; 787: free
       (call $handle_free (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 787: lstrcatA
+    ) ;; 788: lstrcatA
       (call $handle_lstrcatA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 788: lstrcatW
+    ) ;; 789: lstrcatW
       (call $handle_lstrcatW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 789: lstrcmpA
+    ) ;; 790: lstrcmpA
       (call $handle_lstrcmpA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 790: lstrcmpW
+    ) ;; 791: lstrcmpW
       (call $handle_lstrcmpW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 791: lstrcmpiA
+    ) ;; 792: lstrcmpiA
       (call $handle_lstrcmpiA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 792: lstrcmpiW
+    ) ;; 793: lstrcmpiW
       (call $handle_lstrcmpiW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 793: lstrcpyA
+    ) ;; 794: lstrcpyA
       (call $handle_lstrcpyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 794: lstrcpyW
+    ) ;; 795: lstrcpyW
       (call $handle_lstrcpyW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 795: lstrcpynA
+    ) ;; 796: lstrcpynA
       (call $handle_lstrcpynA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 796: lstrcpynW
+    ) ;; 797: lstrcpynW
       (call $handle_lstrcpynW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 797: lstrlenA
+    ) ;; 798: lstrlenA
       (call $handle_lstrlenA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 798: lstrlenW
+    ) ;; 799: lstrlenW
       (call $handle_lstrlenW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 799: malloc
+    ) ;; 800: malloc
       (call $handle_malloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 800: mciSendCommandA
+    ) ;; 801: mciSendCommandA
       (call $handle_mciSendCommandA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 801: memcpy
+    ) ;; 802: memcpy
       (call $handle_memcpy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 802: memmove
+    ) ;; 803: memmove
       (call $handle_memmove (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 803: memset
+    ) ;; 804: memset
       (call $handle_memset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 804: mixerGetID
+    ) ;; 805: mixerGetID
       (call $handle_mixerGetID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 805: mixerGetLineInfoW
+    ) ;; 806: mixerGetLineInfoW
       (call $handle_mixerGetLineInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 806: mixerGetNumDevs
+    ) ;; 807: mixerGetNumDevs
       (call $handle_mixerGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 807: mmioAscend
+    ) ;; 808: mmioAscend
       (call $handle_mmioAscend (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 808: mmioClose
+    ) ;; 809: mmioClose
       (call $handle_mmioClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 809: mmioDescend
+    ) ;; 810: mmioDescend
       (call $handle_mmioDescend (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 810: mmioOpenA
+    ) ;; 811: mmioOpenA
       (call $handle_mmioOpenA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 811: mmioRead
+    ) ;; 812: mmioRead
       (call $handle_mmioRead (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 812: rand
+    ) ;; 813: rand
       (call $handle_rand (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 813: realloc
+    ) ;; 814: realloc
       (call $handle_realloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 814: sndPlaySoundA
+    ) ;; 815: sndPlaySoundA
       (call $handle_sndPlaySoundA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 815: sprintf
+    ) ;; 816: sprintf
       (call $handle_sprintf (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 816: srand
+    ) ;; 817: srand
       (call $handle_srand (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 817: strcat
+    ) ;; 818: strcat
       (call $handle_strcat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 818: strchr
+    ) ;; 819: strchr
       (call $handle_strchr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 819: strcmp
+    ) ;; 820: strcmp
       (call $handle_strcmp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 820: strcpy
+    ) ;; 821: strcpy
       (call $handle_strcpy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 821: strlen
+    ) ;; 822: strlen
       (call $handle_strlen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 822: strncpy
+    ) ;; 823: strncpy
       (call $handle_strncpy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 823: strrchr
+    ) ;; 824: strrchr
       (call $handle_strrchr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 824: time
+    ) ;; 825: time
       (call $handle_time (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 825: timeGetTime
+    ) ;; 826: timeGetTime
       (call $handle_timeGetTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 826: toupper
+    ) ;; 827: toupper
       (call $handle_toupper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 827: waveOutClose
+    ) ;; 828: waveOutClose
       (call $handle_waveOutClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 828: waveOutGetDevCapsA
+    ) ;; 829: waveOutGetDevCapsA
       (call $handle_waveOutGetDevCapsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 829: waveOutGetNumDevs
+    ) ;; 830: waveOutGetNumDevs
       (call $handle_waveOutGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 830: waveOutGetPosition
+    ) ;; 831: waveOutGetPosition
       (call $handle_waveOutGetPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 831: waveOutMessage
+    ) ;; 832: waveOutMessage
       (call $handle_waveOutMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 832: waveOutOpen
+    ) ;; 833: waveOutOpen
       (call $handle_waveOutOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 833: waveOutPause
+    ) ;; 834: waveOutPause
       (call $handle_waveOutPause (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 834: waveOutPrepareHeader
+    ) ;; 835: waveOutPrepareHeader
       (call $handle_waveOutPrepareHeader (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 835: waveOutReset
+    ) ;; 836: waveOutReset
       (call $handle_waveOutReset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 836: waveOutRestart
+    ) ;; 837: waveOutRestart
       (call $handle_waveOutRestart (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 837: waveOutGetVolume
+    ) ;; 838: waveOutGetVolume
       (call $handle_waveOutGetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 838: waveOutSetVolume
+    ) ;; 839: waveOutSetVolume
       (call $handle_waveOutSetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 839: waveOutUnprepareHeader
+    ) ;; 840: waveOutUnprepareHeader
       (call $handle_waveOutUnprepareHeader (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 840: waveOutWrite
+    ) ;; 841: waveOutWrite
       (call $handle_waveOutWrite (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 841: wcscmp
+    ) ;; 842: wcscmp
       (call $handle_wcscmp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 842: wcslen
+    ) ;; 843: wcslen
       (call $handle_wcslen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 843: wcsncpy
+    ) ;; 844: wcsncpy
       (call $handle_wcsncpy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 844: wcsrchr
+    ) ;; 845: wcsrchr
       (call $handle_wcsrchr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 845: wsprintfA
+    ) ;; 846: wsprintfA
       (call $handle_wsprintfA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 846: wsprintfW
+    ) ;; 847: wsprintfW
       (call $handle_wsprintfW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 847: wvsprintfW
+    ) ;; 848: wvsprintfW
       (call $handle_wvsprintfW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 848: UnhookWindowsHook
+    ) ;; 849: UnhookWindowsHook
       (call $handle_UnhookWindowsHook (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 849: mciSendCommandW
+    ) ;; 850: mciSendCommandW
       (call $handle_mciSendCommandW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 850: GetCurrentObject
+    ) ;; 851: GetCurrentObject
       (call $handle_GetCurrentObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 851: RemovePropA
+    ) ;; 852: RemovePropA
       (call $handle_RemovePropA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 852: waveInOpen
+    ) ;; 853: waveInOpen
       (call $handle_waveInOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 853: waveInClose
+    ) ;; 854: waveInClose
       (call $handle_waveInClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 854: waveInStart
+    ) ;; 855: waveInStart
       (call $handle_waveInStart (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 855: waveInStop
+    ) ;; 856: waveInStop
       (call $handle_waveInStop (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 856: waveInReset
+    ) ;; 857: waveInReset
       (call $handle_waveInReset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 857: waveInPrepareHeader
+    ) ;; 858: waveInPrepareHeader
       (call $handle_waveInPrepareHeader (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 858: waveInUnprepareHeader
+    ) ;; 859: waveInUnprepareHeader
       (call $handle_waveInUnprepareHeader (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 859: waveInAddBuffer
+    ) ;; 860: waveInAddBuffer
       (call $handle_waveInAddBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 860: waveInGetNumDevs
+    ) ;; 861: waveInGetNumDevs
       (call $handle_waveInGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 861: GlobalMemoryStatus
+    ) ;; 862: GlobalMemoryStatus
       (call $handle_GlobalMemoryStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 862: PlaySoundW
+    ) ;; 863: PlaySoundW
       (call $handle_PlaySoundW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 863: ShellExecuteW
+    ) ;; 864: ShellExecuteW
       (call $handle_ShellExecuteW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 864: ShellExecuteExA
+    ) ;; 865: ShellExecuteExA
       (call $handle_ShellExecuteExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 865: DragQueryFileW
+    ) ;; 866: DragQueryFileW
       (call $handle_DragQueryFileW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 866: SHGetFileInfoW
+    ) ;; 867: SHGetFileInfoW
       (call $handle_SHGetFileInfoW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 867: ExtractIconExA
+    ) ;; 868: ExtractIconExA
       (call $handle_ExtractIconExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 868: Shell_NotifyIconA
+    ) ;; 869: Shell_NotifyIconA
       (call $handle_Shell_NotifyIconA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 869: SHBrowseForFolderA
+    ) ;; 870: SHBrowseForFolderA
       (call $handle_SHBrowseForFolderA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 870: SHGetMalloc
+    ) ;; 871: SHGetMalloc
       (call $handle_SHGetMalloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 871: SHFileOperationA
+    ) ;; 872: SHFileOperationA
       (call $handle_SHFileOperationA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 872: RunFileDlg
+    ) ;; 873: RunFileDlg
       (call $handle_RunFileDlg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 873: ExitWindowsDialog
+    ) ;; 874: ExitWindowsDialog
       (call $handle_ExitWindowsDialog (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 874: RegisterShellHook
+    ) ;; 875: RegisterShellHook
       (call $handle_RegisterShellHook (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 875: ArrangeWindows
+    ) ;; 876: ArrangeWindows
       (call $handle_ArrangeWindows (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 876: InitCommonControls
+    ) ;; 877: InitCommonControls
       (call $handle_InitCommonControls (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 877: ImageList_Create
+    ) ;; 878: ImageList_Create
       (call $handle_ImageList_Create (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 878: ImageList_Destroy
+    ) ;; 879: ImageList_Destroy
       (call $handle_ImageList_Destroy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 879: ImageList_LoadImageA
+    ) ;; 880: ImageList_LoadImageA
       (call $handle_ImageList_LoadImageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 880: ImageList_LoadImageW
+    ) ;; 881: ImageList_LoadImageW
       (call $handle_ImageList_LoadImageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 881: CreateStatusWindowA
+    ) ;; 882: CreateStatusWindowA
       (call $handle_CreateStatusWindowA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 882: CreateToolbarEx
+    ) ;; 883: CreateToolbarEx
       (call $handle_CreateToolbarEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 883: CreateUpDownControl
+    ) ;; 884: CreateUpDownControl
       (call $handle_CreateUpDownControl (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 884: GetEffectiveClientRect
+    ) ;; 885: GetEffectiveClientRect
       (call $handle_GetEffectiveClientRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 885: DrawStatusTextA
+    ) ;; 886: DrawStatusTextA
       (call $handle_DrawStatusTextA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 886: DrawStatusTextW
+    ) ;; 887: DrawStatusTextW
       (call $handle_DrawStatusTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 887: MenuHelp
+    ) ;; 888: MenuHelp
       (call $handle_MenuHelp (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 888: ShowHideMenuCtl
+    ) ;; 889: ShowHideMenuCtl
       (call $handle_ShowHideMenuCtl (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 889: CreateMappedBitmap
+    ) ;; 890: CreateMappedBitmap
       (call $handle_CreateMappedBitmap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 890: CreatePropertySheetPageA
+    ) ;; 891: CreatePropertySheetPageA
       (call $handle_CreatePropertySheetPageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 891: PropertySheetA
+    ) ;; 892: PropertySheetA
       (call $handle_PropertySheetA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 892: ImageList_SetBkColor
+    ) ;; 893: ImageList_SetBkColor
       (call $handle_ImageList_SetBkColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 893: ImageList_GetBkColor
+    ) ;; 894: ImageList_GetBkColor
       (call $handle_ImageList_GetBkColor (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 894: CreateStatusWindowW
+    ) ;; 895: CreateStatusWindowW
       (call $handle_CreateStatusWindowW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 895: Comctl32_Alloc
+    ) ;; 896: Comctl32_Alloc
       (call $handle_Comctl32_Alloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 896: Comctl32_ReAlloc
+    ) ;; 897: Comctl32_ReAlloc
       (call $handle_Comctl32_ReAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 897: Comctl32_Free
+    ) ;; 898: Comctl32_Free
       (call $handle_Comctl32_Free (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 898: Comctl32_GetSize
+    ) ;; 899: Comctl32_GetSize
       (call $handle_Comctl32_GetSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 899: DSA_Create
+    ) ;; 900: DSA_Create
       (call $handle_DSA_Create (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 900: DSA_Destroy
+    ) ;; 901: DSA_Destroy
       (call $handle_DSA_Destroy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 901: DSA_GetItem
+    ) ;; 902: DSA_GetItem
       (call $handle_DSA_GetItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 902: DSA_GetItemPtr
+    ) ;; 903: DSA_GetItemPtr
       (call $handle_DSA_GetItemPtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 903: DSA_InsertItem
+    ) ;; 904: DSA_InsertItem
       (call $handle_DSA_InsertItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 904: DSA_DeleteItem
+    ) ;; 905: DSA_DeleteItem
       (call $handle_DSA_DeleteItem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 905: DPA_Create
+    ) ;; 906: DPA_Create
       (call $handle_DPA_Create (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 906: DPA_Destroy
+    ) ;; 907: DPA_Destroy
       (call $handle_DPA_Destroy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 907: DPA_GetPtr
+    ) ;; 908: DPA_GetPtr
       (call $handle_DPA_GetPtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 908: DPA_InsertPtr
+    ) ;; 909: DPA_InsertPtr
       (call $handle_DPA_InsertPtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 909: DPA_DeletePtr
+    ) ;; 910: DPA_DeletePtr
       (call $handle_DPA_DeletePtr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 910: DPA_DeleteAllPtrs
+    ) ;; 911: DPA_DeleteAllPtrs
       (call $handle_DPA_DeleteAllPtrs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 911: StrToIntA
+    ) ;; 912: StrToIntA
       (call $handle_StrToIntA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 912: FindWindowExA
+    ) ;; 913: FindWindowExA
       (call $handle_FindWindowExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 913: DllUnregisterServer
+    ) ;; 914: DllUnregisterServer
       (call $handle_DllUnregisterServer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 914: SearchPathA
+    ) ;; 915: SearchPathA
       (call $handle_SearchPathA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 915: RasEnumConnectionsA
+    ) ;; 916: RasEnumConnectionsA
       (call $handle_RasEnumConnectionsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 916: CoCreateGuid
+    ) ;; 917: CoCreateGuid
       (call $handle_CoCreateGuid (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 917: MonitorFromRect
+    ) ;; 918: MonitorFromRect
       (call $handle_MonitorFromRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 918: GetMonitorInfoA
+    ) ;; 919: GetMonitorInfoA
       (call $handle_GetMonitorInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 919: MonitorFromWindow
+    ) ;; 920: MonitorFromWindow
       (call $handle_MonitorFromWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 920: SetWindowRgn
+    ) ;; 921: SetWindowRgn
       (call $handle_SetWindowRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 921: GetWindowRgn
+    ) ;; 922: GetWindowRgn
       (call $handle_GetWindowRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 922: WSAStartup
+    ) ;; 923: WSAStartup
       (call $handle_WSAStartup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 923: WSACleanup
+    ) ;; 924: WSACleanup
       (call $handle_WSACleanup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 924: WSAGetLastError
+    ) ;; 925: WSAGetLastError
       (call $handle_WSAGetLastError (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 925: socket
+    ) ;; 926: socket
       (call $handle_socket (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 926: closesocket
+    ) ;; 927: closesocket
       (call $handle_closesocket (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 927: connect
+    ) ;; 928: connect
       (call $handle_connect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 928: send
+    ) ;; 929: send
       (call $handle_send (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 929: recv
+    ) ;; 930: recv
       (call $handle_recv (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 930: gethostbyname
+    ) ;; 931: gethostbyname
       (call $handle_gethostbyname (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 931: htons
+    ) ;; 932: htons
       (call $handle_htons (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 932: inet_addr
+    ) ;; 933: inet_addr
       (call $handle_inet_addr (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 933: select
+    ) ;; 934: select
       (call $handle_select (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 934: setsockopt
+    ) ;; 935: setsockopt
       (call $handle_setsockopt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 935: ioctlsocket
+    ) ;; 936: ioctlsocket
       (call $handle_ioctlsocket (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 936: SetPriorityClass
+    ) ;; 937: SetPriorityClass
       (call $handle_SetPriorityClass (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 937: _hread
+    ) ;; 938: _hread
       (call $handle__hread (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 938: MonitorFromPoint
+    ) ;; 939: MonitorFromPoint
       (call $handle_MonitorFromPoint (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 939: GetPrivateProfileStructA
+    ) ;; 940: GetPrivateProfileStructA
       (call $handle_GetPrivateProfileStructA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 940: GetClassLongA
+    ) ;; 941: GetClassLongA
       (call $handle_GetClassLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 941: CopyIcon
+    ) ;; 942: CopyIcon
       (call $handle_CopyIcon (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 942: GetIconInfo
+    ) ;; 943: GetIconInfo
       (call $handle_GetIconInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 943: DrawIconEx
+    ) ;; 944: DrawIconEx
       (call $handle_DrawIconEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 944: CreateIconIndirect
+    ) ;; 945: CreateIconIndirect
       (call $handle_CreateIconIndirect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 945: CopyImage
+    ) ;; 946: CopyImage
       (call $handle_CopyImage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 946: SetPixelV
+    ) ;; 947: SetPixelV
       (call $handle_SetPixelV (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 947: RegEnumKeyA
+    ) ;; 948: RegEnumKeyA
       (call $handle_RegEnumKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 948: ExtTextOutA
+    ) ;; 949: ExtTextOutA
       (call $handle_ExtTextOutA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 949: DrawFrameControl
+    ) ;; 950: DrawFrameControl
       (call $handle_DrawFrameControl (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 950: CoRegisterClassObject
+    ) ;; 951: CoRegisterClassObject
       (call $handle_CoRegisterClassObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 951: CoRevokeClassObject
+    ) ;; 952: CoRevokeClassObject
       (call $handle_CoRevokeClassObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 952: PrintDlgA
+    ) ;; 953: PrintDlgA
       (call $handle_PrintDlgA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 953: CoFreeUnusedLibraries
+    ) ;; 954: CoFreeUnusedLibraries
       (call $handle_CoFreeUnusedLibraries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 954: GetProcessAffinityMask
+    ) ;; 955: GetProcessAffinityMask
       (call $handle_GetProcessAffinityMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 955: SetThreadAffinityMask
+    ) ;; 956: SetThreadAffinityMask
       (call $handle_SetThreadAffinityMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 956: ChooseColorA
+    ) ;; 957: ChooseColorA
       (call $handle_ChooseColorA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 957: CreateBrushIndirect
+    ) ;; 958: CreateBrushIndirect
       (call $handle_CreateBrushIndirect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 958: AppendMenuA
+    ) ;; 959: AppendMenuA
       (call $handle_AppendMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 959: InsertMenuA
+    ) ;; 960: InsertMenuA
       (call $handle_InsertMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 960: RegisterDragDrop
+    ) ;; 961: RegisterDragDrop
       (call $handle_RegisterDragDrop (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 961: RevokeDragDrop
+    ) ;; 962: RevokeDragDrop
       (call $handle_RevokeDragDrop (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 962: wvsprintfA
+    ) ;; 963: wvsprintfA
       (call $handle_wvsprintfA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 963: CreatePopupMenu
+    ) ;; 964: CreatePopupMenu
       (call $handle_CreatePopupMenu (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 964: SysAllocString
+    ) ;; 965: SysAllocString
       (call $handle_SysAllocString (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 965: SysAllocStringLen
+    ) ;; 966: SysAllocStringLen
       (call $handle_SysAllocStringLen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 966: SysFreeString
+    ) ;; 967: SysFreeString
       (call $handle_SysFreeString (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 967: SysStringLen
+    ) ;; 968: SysStringLen
       (call $handle_SysStringLen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 968: VariantClear
+    ) ;; 969: VariantClear
       (call $handle_VariantClear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 969: LoadTypeLib
+    ) ;; 970: LoadTypeLib
       (call $handle_LoadTypeLib (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 970: timeBeginPeriod
+    ) ;; 971: timeBeginPeriod
       (call $handle_timeBeginPeriod (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 971: timeEndPeriod
+    ) ;; 972: timeEndPeriod
       (call $handle_timeEndPeriod (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 972: InterlockedCompareExchange
+    ) ;; 973: InterlockedCompareExchange
       (call $handle_InterlockedCompareExchange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 973: GdiFlush
+    ) ;; 974: GdiFlush
       (call $handle_GdiFlush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 974: DirectDrawCreate
+    ) ;; 975: DirectDrawCreate
       (call $handle_DirectDrawCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 975: DirectSoundCreate
+    ) ;; 976: DirectSoundCreate
       (call $handle_DirectSoundCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 976: DirectInputCreateA
+    ) ;; 977: DirectInputCreateA
       (call $handle_DirectInputCreateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 977: IDirectDraw_QueryInterface
+    ) ;; 978: IDirectDraw_QueryInterface
       (call $handle_IDirectDraw_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 978: IDirectDraw_AddRef
+    ) ;; 979: IDirectDraw_AddRef
       (call $handle_IDirectDraw_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 979: IDirectDraw_Release
+    ) ;; 980: IDirectDraw_Release
       (call $handle_IDirectDraw_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 980: IDirectDraw_Compact
+    ) ;; 981: IDirectDraw_Compact
       (call $handle_IDirectDraw_Compact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 981: IDirectDraw_CreateClipper
+    ) ;; 982: IDirectDraw_CreateClipper
       (call $handle_IDirectDraw_CreateClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 982: IDirectDraw_CreatePalette
+    ) ;; 983: IDirectDraw_CreatePalette
       (call $handle_IDirectDraw_CreatePalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 983: IDirectDraw_CreateSurface
+    ) ;; 984: IDirectDraw_CreateSurface
       (call $handle_IDirectDraw_CreateSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 984: IDirectDraw_DuplicateSurface
+    ) ;; 985: IDirectDraw_DuplicateSurface
       (call $handle_IDirectDraw_DuplicateSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 985: IDirectDraw_EnumDisplayModes
+    ) ;; 986: IDirectDraw_EnumDisplayModes
       (call $handle_IDirectDraw_EnumDisplayModes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 986: IDirectDraw_EnumSurfaces
+    ) ;; 987: IDirectDraw_EnumSurfaces
       (call $handle_IDirectDraw_EnumSurfaces (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 987: IDirectDraw_FlipToGDISurface
+    ) ;; 988: IDirectDraw_FlipToGDISurface
       (call $handle_IDirectDraw_FlipToGDISurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 988: IDirectDraw_GetCaps
+    ) ;; 989: IDirectDraw_GetCaps
       (call $handle_IDirectDraw_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 989: IDirectDraw_GetDisplayMode
+    ) ;; 990: IDirectDraw_GetDisplayMode
       (call $handle_IDirectDraw_GetDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 990: IDirectDraw_GetFourCCCodes
+    ) ;; 991: IDirectDraw_GetFourCCCodes
       (call $handle_IDirectDraw_GetFourCCCodes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 991: IDirectDraw_GetGDISurface
+    ) ;; 992: IDirectDraw_GetGDISurface
       (call $handle_IDirectDraw_GetGDISurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 992: IDirectDraw_GetMonitorFrequency
+    ) ;; 993: IDirectDraw_GetMonitorFrequency
       (call $handle_IDirectDraw_GetMonitorFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 993: IDirectDraw_GetScanLine
+    ) ;; 994: IDirectDraw_GetScanLine
       (call $handle_IDirectDraw_GetScanLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 994: IDirectDraw_GetVerticalBlankStatus
+    ) ;; 995: IDirectDraw_GetVerticalBlankStatus
       (call $handle_IDirectDraw_GetVerticalBlankStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 995: IDirectDraw_Initialize
+    ) ;; 996: IDirectDraw_Initialize
       (call $handle_IDirectDraw_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 996: IDirectDraw_RestoreDisplayMode
+    ) ;; 997: IDirectDraw_RestoreDisplayMode
       (call $handle_IDirectDraw_RestoreDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 997: IDirectDraw_SetCooperativeLevel
+    ) ;; 998: IDirectDraw_SetCooperativeLevel
       (call $handle_IDirectDraw_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 998: IDirectDraw_SetDisplayMode
+    ) ;; 999: IDirectDraw_SetDisplayMode
       (call $handle_IDirectDraw_SetDisplayMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 999: IDirectDraw_WaitForVerticalBlank
+    ) ;; 1000: IDirectDraw_WaitForVerticalBlank
       (call $handle_IDirectDraw_WaitForVerticalBlank (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1000: IDirectDrawSurface_QueryInterface
+    ) ;; 1001: IDirectDrawSurface_QueryInterface
       (call $handle_IDirectDrawSurface_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1001: IDirectDrawSurface_AddRef
+    ) ;; 1002: IDirectDrawSurface_AddRef
       (call $handle_IDirectDrawSurface_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1002: IDirectDrawSurface_Release
+    ) ;; 1003: IDirectDrawSurface_Release
       (call $handle_IDirectDrawSurface_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1003: IDirectDrawSurface_AddAttachedSurface
+    ) ;; 1004: IDirectDrawSurface_AddAttachedSurface
       (call $handle_IDirectDrawSurface_AddAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1004: IDirectDrawSurface_AddOverlayDirtyRect
+    ) ;; 1005: IDirectDrawSurface_AddOverlayDirtyRect
       (call $handle_IDirectDrawSurface_AddOverlayDirtyRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1005: IDirectDrawSurface_Blt
+    ) ;; 1006: IDirectDrawSurface_Blt
       (call $handle_IDirectDrawSurface_Blt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1006: IDirectDrawSurface_BltBatch
+    ) ;; 1007: IDirectDrawSurface_BltBatch
       (call $handle_IDirectDrawSurface_BltBatch (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1007: IDirectDrawSurface_BltFast
+    ) ;; 1008: IDirectDrawSurface_BltFast
       (call $handle_IDirectDrawSurface_BltFast (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1008: IDirectDrawSurface_DeleteAttachedSurface
+    ) ;; 1009: IDirectDrawSurface_DeleteAttachedSurface
       (call $handle_IDirectDrawSurface_DeleteAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1009: IDirectDrawSurface_EnumAttachedSurfaces
+    ) ;; 1010: IDirectDrawSurface_EnumAttachedSurfaces
       (call $handle_IDirectDrawSurface_EnumAttachedSurfaces (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1010: IDirectDrawSurface_EnumOverlayZOrders
+    ) ;; 1011: IDirectDrawSurface_EnumOverlayZOrders
       (call $handle_IDirectDrawSurface_EnumOverlayZOrders (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1011: IDirectDrawSurface_Flip
+    ) ;; 1012: IDirectDrawSurface_Flip
       (call $handle_IDirectDrawSurface_Flip (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1012: IDirectDrawSurface_GetAttachedSurface
+    ) ;; 1013: IDirectDrawSurface_GetAttachedSurface
       (call $handle_IDirectDrawSurface_GetAttachedSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1013: IDirectDrawSurface_GetBltStatus
+    ) ;; 1014: IDirectDrawSurface_GetBltStatus
       (call $handle_IDirectDrawSurface_GetBltStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1014: IDirectDrawSurface_GetCaps
+    ) ;; 1015: IDirectDrawSurface_GetCaps
       (call $handle_IDirectDrawSurface_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1015: IDirectDrawSurface_GetClipper
+    ) ;; 1016: IDirectDrawSurface_GetClipper
       (call $handle_IDirectDrawSurface_GetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1016: IDirectDrawSurface_GetColorKey
+    ) ;; 1017: IDirectDrawSurface_GetColorKey
       (call $handle_IDirectDrawSurface_GetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1017: IDirectDrawSurface_GetDC
+    ) ;; 1018: IDirectDrawSurface_GetDC
       (call $handle_IDirectDrawSurface_GetDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1018: IDirectDrawSurface_GetFlipStatus
+    ) ;; 1019: IDirectDrawSurface_GetFlipStatus
       (call $handle_IDirectDrawSurface_GetFlipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1019: IDirectDrawSurface_GetOverlayPosition
+    ) ;; 1020: IDirectDrawSurface_GetOverlayPosition
       (call $handle_IDirectDrawSurface_GetOverlayPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1020: IDirectDrawSurface_GetPalette
+    ) ;; 1021: IDirectDrawSurface_GetPalette
       (call $handle_IDirectDrawSurface_GetPalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1021: IDirectDrawSurface_GetPixelFormat
+    ) ;; 1022: IDirectDrawSurface_GetPixelFormat
       (call $handle_IDirectDrawSurface_GetPixelFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1022: IDirectDrawSurface_GetSurfaceDesc
+    ) ;; 1023: IDirectDrawSurface_GetSurfaceDesc
       (call $handle_IDirectDrawSurface_GetSurfaceDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1023: IDirectDrawSurface_Initialize
+    ) ;; 1024: IDirectDrawSurface_Initialize
       (call $handle_IDirectDrawSurface_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1024: IDirectDrawSurface_IsLost
+    ) ;; 1025: IDirectDrawSurface_IsLost
       (call $handle_IDirectDrawSurface_IsLost (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1025: IDirectDrawSurface_Lock
+    ) ;; 1026: IDirectDrawSurface_Lock
       (call $handle_IDirectDrawSurface_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1026: IDirectDrawSurface_ReleaseDC
+    ) ;; 1027: IDirectDrawSurface_ReleaseDC
       (call $handle_IDirectDrawSurface_ReleaseDC (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1027: IDirectDrawSurface_Restore
+    ) ;; 1028: IDirectDrawSurface_Restore
       (call $handle_IDirectDrawSurface_Restore (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1028: IDirectDrawSurface_SetClipper
+    ) ;; 1029: IDirectDrawSurface_SetClipper
       (call $handle_IDirectDrawSurface_SetClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1029: IDirectDrawSurface_SetColorKey
+    ) ;; 1030: IDirectDrawSurface_SetColorKey
       (call $handle_IDirectDrawSurface_SetColorKey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1030: IDirectDrawSurface_SetOverlayPosition
+    ) ;; 1031: IDirectDrawSurface_SetOverlayPosition
       (call $handle_IDirectDrawSurface_SetOverlayPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1031: IDirectDrawSurface_SetPalette
+    ) ;; 1032: IDirectDrawSurface_SetPalette
       (call $handle_IDirectDrawSurface_SetPalette (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1032: IDirectDrawSurface_Unlock
+    ) ;; 1033: IDirectDrawSurface_Unlock
       (call $handle_IDirectDrawSurface_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1033: IDirectDrawSurface_UpdateOverlay
+    ) ;; 1034: IDirectDrawSurface_UpdateOverlay
       (call $handle_IDirectDrawSurface_UpdateOverlay (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1034: IDirectDrawSurface_UpdateOverlayDisplay
+    ) ;; 1035: IDirectDrawSurface_UpdateOverlayDisplay
       (call $handle_IDirectDrawSurface_UpdateOverlayDisplay (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1035: IDirectDrawSurface_UpdateOverlayZOrder
+    ) ;; 1036: IDirectDrawSurface_UpdateOverlayZOrder
       (call $handle_IDirectDrawSurface_UpdateOverlayZOrder (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1036: IDirectDrawPalette_QueryInterface
+    ) ;; 1037: IDirectDrawPalette_QueryInterface
       (call $handle_IDirectDrawPalette_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1037: IDirectDrawPalette_AddRef
+    ) ;; 1038: IDirectDrawPalette_AddRef
       (call $handle_IDirectDrawPalette_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1038: IDirectDrawPalette_Release
+    ) ;; 1039: IDirectDrawPalette_Release
       (call $handle_IDirectDrawPalette_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1039: IDirectDrawPalette_GetCaps
+    ) ;; 1040: IDirectDrawPalette_GetCaps
       (call $handle_IDirectDrawPalette_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1040: IDirectDrawPalette_GetEntries
+    ) ;; 1041: IDirectDrawPalette_GetEntries
       (call $handle_IDirectDrawPalette_GetEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1041: IDirectDrawPalette_Initialize
+    ) ;; 1042: IDirectDrawPalette_Initialize
       (call $handle_IDirectDrawPalette_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1042: IDirectDrawPalette_SetEntries
+    ) ;; 1043: IDirectDrawPalette_SetEntries
       (call $handle_IDirectDrawPalette_SetEntries (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1043: IDirectSound_QueryInterface
+    ) ;; 1044: IDirectSound_QueryInterface
       (call $handle_IDirectSound_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1044: IDirectSound_AddRef
+    ) ;; 1045: IDirectSound_AddRef
       (call $handle_IDirectSound_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1045: IDirectSound_Release
+    ) ;; 1046: IDirectSound_Release
       (call $handle_IDirectSound_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1046: IDirectSound_CreateSoundBuffer
+    ) ;; 1047: IDirectSound_CreateSoundBuffer
       (call $handle_IDirectSound_CreateSoundBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1047: IDirectSound_GetCaps
+    ) ;; 1048: IDirectSound_GetCaps
       (call $handle_IDirectSound_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1048: IDirectSound_DuplicateSoundBuffer
+    ) ;; 1049: IDirectSound_DuplicateSoundBuffer
       (call $handle_IDirectSound_DuplicateSoundBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1049: IDirectSound_SetCooperativeLevel
+    ) ;; 1050: IDirectSound_SetCooperativeLevel
       (call $handle_IDirectSound_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1050: IDirectSound_Compact
+    ) ;; 1051: IDirectSound_Compact
       (call $handle_IDirectSound_Compact (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1051: IDirectSound_GetSpeakerConfig
+    ) ;; 1052: IDirectSound_GetSpeakerConfig
       (call $handle_IDirectSound_GetSpeakerConfig (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1052: IDirectSound_SetSpeakerConfig
+    ) ;; 1053: IDirectSound_SetSpeakerConfig
       (call $handle_IDirectSound_SetSpeakerConfig (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1053: IDirectSound_Initialize
+    ) ;; 1054: IDirectSound_Initialize
       (call $handle_IDirectSound_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1054: IDirectSoundBuffer_QueryInterface
+    ) ;; 1055: IDirectSoundBuffer_QueryInterface
       (call $handle_IDirectSoundBuffer_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1055: IDirectSoundBuffer_AddRef
+    ) ;; 1056: IDirectSoundBuffer_AddRef
       (call $handle_IDirectSoundBuffer_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1056: IDirectSoundBuffer_Release
+    ) ;; 1057: IDirectSoundBuffer_Release
       (call $handle_IDirectSoundBuffer_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1057: IDirectSoundBuffer_GetCaps
+    ) ;; 1058: IDirectSoundBuffer_GetCaps
       (call $handle_IDirectSoundBuffer_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1058: IDirectSoundBuffer_GetCurrentPosition
+    ) ;; 1059: IDirectSoundBuffer_GetCurrentPosition
       (call $handle_IDirectSoundBuffer_GetCurrentPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1059: IDirectSoundBuffer_GetFormat
+    ) ;; 1060: IDirectSoundBuffer_GetFormat
       (call $handle_IDirectSoundBuffer_GetFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1060: IDirectSoundBuffer_GetVolume
+    ) ;; 1061: IDirectSoundBuffer_GetVolume
       (call $handle_IDirectSoundBuffer_GetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1061: IDirectSoundBuffer_GetPan
+    ) ;; 1062: IDirectSoundBuffer_GetPan
       (call $handle_IDirectSoundBuffer_GetPan (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1062: IDirectSoundBuffer_GetFrequency
+    ) ;; 1063: IDirectSoundBuffer_GetFrequency
       (call $handle_IDirectSoundBuffer_GetFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1063: IDirectSoundBuffer_GetStatus
+    ) ;; 1064: IDirectSoundBuffer_GetStatus
       (call $handle_IDirectSoundBuffer_GetStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1064: IDirectSoundBuffer_Initialize
+    ) ;; 1065: IDirectSoundBuffer_Initialize
       (call $handle_IDirectSoundBuffer_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1065: IDirectSoundBuffer_Lock
+    ) ;; 1066: IDirectSoundBuffer_Lock
       (call $handle_IDirectSoundBuffer_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1066: IDirectSoundBuffer_Play
+    ) ;; 1067: IDirectSoundBuffer_Play
       (call $handle_IDirectSoundBuffer_Play (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1067: IDirectSoundBuffer_SetCurrentPosition
+    ) ;; 1068: IDirectSoundBuffer_SetCurrentPosition
       (call $handle_IDirectSoundBuffer_SetCurrentPosition (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1068: IDirectSoundBuffer_SetFormat
+    ) ;; 1069: IDirectSoundBuffer_SetFormat
       (call $handle_IDirectSoundBuffer_SetFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1069: IDirectSoundBuffer_SetVolume
+    ) ;; 1070: IDirectSoundBuffer_SetVolume
       (call $handle_IDirectSoundBuffer_SetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1070: IDirectSoundBuffer_SetPan
+    ) ;; 1071: IDirectSoundBuffer_SetPan
       (call $handle_IDirectSoundBuffer_SetPan (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1071: IDirectSoundBuffer_SetFrequency
+    ) ;; 1072: IDirectSoundBuffer_SetFrequency
       (call $handle_IDirectSoundBuffer_SetFrequency (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1072: IDirectSoundBuffer_Stop
+    ) ;; 1073: IDirectSoundBuffer_Stop
       (call $handle_IDirectSoundBuffer_Stop (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1073: IDirectSoundBuffer_Unlock
+    ) ;; 1074: IDirectSoundBuffer_Unlock
       (call $handle_IDirectSoundBuffer_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1074: IDirectSoundBuffer_Restore
+    ) ;; 1075: IDirectSoundBuffer_Restore
       (call $handle_IDirectSoundBuffer_Restore (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1075: IDirectInput_QueryInterface
+    ) ;; 1076: IDirectInput_QueryInterface
       (call $handle_IDirectInput_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1076: IDirectInput_AddRef
+    ) ;; 1077: IDirectInput_AddRef
       (call $handle_IDirectInput_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1077: IDirectInput_Release
+    ) ;; 1078: IDirectInput_Release
       (call $handle_IDirectInput_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1078: IDirectInput_CreateDevice
+    ) ;; 1079: IDirectInput_CreateDevice
       (call $handle_IDirectInput_CreateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1079: IDirectInput_EnumDevices
+    ) ;; 1080: IDirectInput_EnumDevices
       (call $handle_IDirectInput_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1080: IDirectInput_GetDeviceStatus
+    ) ;; 1081: IDirectInput_GetDeviceStatus
       (call $handle_IDirectInput_GetDeviceStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1081: IDirectInput_RunControlPanel
+    ) ;; 1082: IDirectInput_RunControlPanel
       (call $handle_IDirectInput_RunControlPanel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1082: IDirectInput_Initialize
+    ) ;; 1083: IDirectInput_Initialize
       (call $handle_IDirectInput_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1083: IDirectInputDevice_QueryInterface
+    ) ;; 1084: IDirectInputDevice_QueryInterface
       (call $handle_IDirectInputDevice_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1084: IDirectInputDevice_AddRef
+    ) ;; 1085: IDirectInputDevice_AddRef
       (call $handle_IDirectInputDevice_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1085: IDirectInputDevice_Release
+    ) ;; 1086: IDirectInputDevice_Release
       (call $handle_IDirectInputDevice_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1086: IDirectInputDevice_GetCapabilities
+    ) ;; 1087: IDirectInputDevice_GetCapabilities
       (call $handle_IDirectInputDevice_GetCapabilities (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1087: IDirectInputDevice_EnumObjects
+    ) ;; 1088: IDirectInputDevice_EnumObjects
       (call $handle_IDirectInputDevice_EnumObjects (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1088: IDirectInputDevice_GetProperty
+    ) ;; 1089: IDirectInputDevice_GetProperty
       (call $handle_IDirectInputDevice_GetProperty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1089: IDirectInputDevice_SetProperty
+    ) ;; 1090: IDirectInputDevice_SetProperty
       (call $handle_IDirectInputDevice_SetProperty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1090: IDirectInputDevice_Acquire
+    ) ;; 1091: IDirectInputDevice_Acquire
       (call $handle_IDirectInputDevice_Acquire (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1091: IDirectInputDevice_Unacquire
+    ) ;; 1092: IDirectInputDevice_Unacquire
       (call $handle_IDirectInputDevice_Unacquire (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1092: IDirectInputDevice_GetDeviceState
+    ) ;; 1093: IDirectInputDevice_GetDeviceState
       (call $handle_IDirectInputDevice_GetDeviceState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1093: IDirectInputDevice_GetDeviceData
+    ) ;; 1094: IDirectInputDevice_GetDeviceData
       (call $handle_IDirectInputDevice_GetDeviceData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1094: IDirectInputDevice_SetDataFormat
+    ) ;; 1095: IDirectInputDevice_SetDataFormat
       (call $handle_IDirectInputDevice_SetDataFormat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1095: IDirectInputDevice_SetEventNotification
+    ) ;; 1096: IDirectInputDevice_SetEventNotification
       (call $handle_IDirectInputDevice_SetEventNotification (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1096: IDirectInputDevice_SetCooperativeLevel
+    ) ;; 1097: IDirectInputDevice_SetCooperativeLevel
       (call $handle_IDirectInputDevice_SetCooperativeLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1097: IDirectInputDevice_GetObjectInfo
+    ) ;; 1098: IDirectInputDevice_GetObjectInfo
       (call $handle_IDirectInputDevice_GetObjectInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1098: IDirectInputDevice_GetDeviceInfo
+    ) ;; 1099: IDirectInputDevice_GetDeviceInfo
       (call $handle_IDirectInputDevice_GetDeviceInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1099: IDirectInputDevice_RunControlPanel
+    ) ;; 1100: IDirectInputDevice_RunControlPanel
       (call $handle_IDirectInputDevice_RunControlPanel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1100: IDirectInputDevice_Initialize
+    ) ;; 1101: IDirectInputDevice_Initialize
       (call $handle_IDirectInputDevice_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1101: EnumDisplayMonitors
+    ) ;; 1102: EnumDisplayMonitors
       (call $handle_EnumDisplayMonitors (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1102: midiOutGetNumDevs
+    ) ;; 1103: midiOutGetNumDevs
       (call $handle_midiOutGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1103: midiOutGetDevCapsA
+    ) ;; 1104: midiOutGetDevCapsA
       (call $handle_midiOutGetDevCapsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1104: midiOutOpen
+    ) ;; 1105: midiOutOpen
       (call $handle_midiOutOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1105: midiOutClose
+    ) ;; 1106: midiOutClose
       (call $handle_midiOutClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1106: midiOutShortMsg
+    ) ;; 1107: midiOutShortMsg
       (call $handle_midiOutShortMsg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1107: midiOutReset
+    ) ;; 1108: midiOutReset
       (call $handle_midiOutReset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1108: joyGetPos
+    ) ;; 1109: joyGetPos
       (call $handle_joyGetPos (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1109: joyGetNumDevs
+    ) ;; 1110: joyGetNumDevs
       (call $handle_joyGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1110: GetFileVersionInfoSizeA
+    ) ;; 1111: GetFileVersionInfoSizeA
       (call $handle_GetFileVersionInfoSizeA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1111: GetFileVersionInfoA
+    ) ;; 1112: GetFileVersionInfoA
       (call $handle_GetFileVersionInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1112: VerQueryValueA
+    ) ;; 1113: VerQueryValueA
       (call $handle_VerQueryValueA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1113: DirectDrawEnumerateA
+    ) ;; 1114: DirectDrawEnumerateA
       (call $handle_DirectDrawEnumerateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1114: DirectDrawEnumerateExA
+    ) ;; 1115: DirectDrawEnumerateExA
       (call $handle_DirectDrawEnumerateExA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1115: IDirect3D_QueryInterface
+    ) ;; 1116: IDirect3D_QueryInterface
       (call $handle_IDirect3D_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1116: IDirect3D_AddRef
+    ) ;; 1117: IDirect3D_AddRef
       (call $handle_IDirect3D_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1117: IDirect3D_Release
+    ) ;; 1118: IDirect3D_Release
       (call $handle_IDirect3D_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1118: IDirect3D_Initialize
+    ) ;; 1119: IDirect3D_Initialize
       (call $handle_IDirect3D_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1119: IDirect3D_EnumDevices
+    ) ;; 1120: IDirect3D_EnumDevices
       (call $handle_IDirect3D_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1120: IDirect3D_CreateLight
+    ) ;; 1121: IDirect3D_CreateLight
       (call $handle_IDirect3D_CreateLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1121: IDirect3D_CreateMaterial
+    ) ;; 1122: IDirect3D_CreateMaterial
       (call $handle_IDirect3D_CreateMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1122: IDirect3D_CreateViewport
+    ) ;; 1123: IDirect3D_CreateViewport
       (call $handle_IDirect3D_CreateViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1123: IDirect3D_FindDevice
+    ) ;; 1124: IDirect3D_FindDevice
       (call $handle_IDirect3D_FindDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1124: IDirect3D3_QueryInterface
+    ) ;; 1125: IDirect3D3_QueryInterface
       (call $handle_IDirect3D3_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1125: IDirect3D3_AddRef
+    ) ;; 1126: IDirect3D3_AddRef
       (call $handle_IDirect3D3_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1126: IDirect3D3_Release
+    ) ;; 1127: IDirect3D3_Release
       (call $handle_IDirect3D3_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1127: IDirect3D3_EnumDevices
+    ) ;; 1128: IDirect3D3_EnumDevices
       (call $handle_IDirect3D3_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1128: IDirect3D3_CreateLight
+    ) ;; 1129: IDirect3D3_CreateLight
       (call $handle_IDirect3D3_CreateLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1129: IDirect3D3_CreateMaterial
+    ) ;; 1130: IDirect3D3_CreateMaterial
       (call $handle_IDirect3D3_CreateMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1130: IDirect3D3_CreateViewport
+    ) ;; 1131: IDirect3D3_CreateViewport
       (call $handle_IDirect3D3_CreateViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1131: IDirect3D3_FindDevice
+    ) ;; 1132: IDirect3D3_FindDevice
       (call $handle_IDirect3D3_FindDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1132: IDirect3D3_CreateDevice
+    ) ;; 1133: IDirect3D3_CreateDevice
       (call $handle_IDirect3D3_CreateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1133: IDirect3D3_CreateVertexBuffer
+    ) ;; 1134: IDirect3D3_CreateVertexBuffer
       (call $handle_IDirect3D3_CreateVertexBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1134: Direct3DRMCreate
+    ) ;; 1135: Direct3DRMCreate
       (call $handle_Direct3DRMCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1135: EnumWindows
+    ) ;; 1136: EnumWindows
       (call $handle_EnumWindows (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1136: PlaySoundA
+    ) ;; 1137: PlaySoundA
       (call $handle_PlaySoundA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1137: IDirectDrawFactory_QueryInterface
+    ) ;; 1138: IDirectDrawFactory_QueryInterface
       (call $handle_IDirectDrawFactory_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1138: IDirectDrawFactory_AddRef
+    ) ;; 1139: IDirectDrawFactory_AddRef
       (call $handle_IDirectDrawFactory_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1139: IDirectDrawFactory_Release
+    ) ;; 1140: IDirectDrawFactory_Release
       (call $handle_IDirectDrawFactory_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1140: IDirectDrawFactory_CreateDirectDraw
+    ) ;; 1141: IDirectDrawFactory_CreateDirectDraw
       (call $handle_IDirectDrawFactory_CreateDirectDraw (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1141: IDirectDrawFactory_DirectDrawEnumerate
+    ) ;; 1142: IDirectDrawFactory_DirectDrawEnumerate
       (call $handle_IDirectDrawFactory_DirectDrawEnumerate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1142: CLSIDFromProgID
+    ) ;; 1143: CLSIDFromProgID
       (call $handle_CLSIDFromProgID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1143: IDirect3DDevice3_QueryInterface
+    ) ;; 1144: IDirect3DDevice3_QueryInterface
       (call $handle_IDirect3DDevice3_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1144: IDirect3DDevice3_AddRef
+    ) ;; 1145: IDirect3DDevice3_AddRef
       (call $handle_IDirect3DDevice3_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1145: IDirect3DDevice3_Release
+    ) ;; 1146: IDirect3DDevice3_Release
       (call $handle_IDirect3DDevice3_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1146: IDirect3DDevice3_GetCaps
+    ) ;; 1147: IDirect3DDevice3_GetCaps
       (call $handle_IDirect3DDevice3_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1147: IDirect3DDevice3_GetStats
+    ) ;; 1148: IDirect3DDevice3_GetStats
       (call $handle_IDirect3DDevice3_GetStats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1148: IDirect3DDevice3_AddViewport
+    ) ;; 1149: IDirect3DDevice3_AddViewport
       (call $handle_IDirect3DDevice3_AddViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1149: IDirect3DDevice3_DeleteViewport
+    ) ;; 1150: IDirect3DDevice3_DeleteViewport
       (call $handle_IDirect3DDevice3_DeleteViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1150: IDirect3DDevice3_NextViewport
+    ) ;; 1151: IDirect3DDevice3_NextViewport
       (call $handle_IDirect3DDevice3_NextViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1151: IDirect3DDevice3_EnumTextureFormats
+    ) ;; 1152: IDirect3DDevice3_EnumTextureFormats
       (call $handle_IDirect3DDevice3_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1152: IDirect3DDevice3_BeginScene
+    ) ;; 1153: IDirect3DDevice3_BeginScene
       (call $handle_IDirect3DDevice3_BeginScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1153: IDirect3DDevice3_EndScene
+    ) ;; 1154: IDirect3DDevice3_EndScene
       (call $handle_IDirect3DDevice3_EndScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1154: IDirect3DDevice3_GetDirect3D
+    ) ;; 1155: IDirect3DDevice3_GetDirect3D
       (call $handle_IDirect3DDevice3_GetDirect3D (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1155: IDirect3DDevice3_SetCurrentViewport
+    ) ;; 1156: IDirect3DDevice3_SetCurrentViewport
       (call $handle_IDirect3DDevice3_SetCurrentViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1156: IDirect3DDevice3_GetCurrentViewport
+    ) ;; 1157: IDirect3DDevice3_GetCurrentViewport
       (call $handle_IDirect3DDevice3_GetCurrentViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1157: IDirect3DDevice3_SetRenderTarget
+    ) ;; 1158: IDirect3DDevice3_SetRenderTarget
       (call $handle_IDirect3DDevice3_SetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1158: IDirect3DDevice3_GetRenderTarget
+    ) ;; 1159: IDirect3DDevice3_GetRenderTarget
       (call $handle_IDirect3DDevice3_GetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1159: IDirect3DDevice3_Begin
+    ) ;; 1160: IDirect3DDevice3_Begin
       (call $handle_IDirect3DDevice3_Begin (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1160: IDirect3DDevice3_BeginIndexed
+    ) ;; 1161: IDirect3DDevice3_BeginIndexed
       (call $handle_IDirect3DDevice3_BeginIndexed (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1161: IDirect3DDevice3_Vertex
+    ) ;; 1162: IDirect3DDevice3_Vertex
       (call $handle_IDirect3DDevice3_Vertex (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1162: IDirect3DDevice3_Index
+    ) ;; 1163: IDirect3DDevice3_Index
       (call $handle_IDirect3DDevice3_Index (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1163: IDirect3DDevice3_End
+    ) ;; 1164: IDirect3DDevice3_End
       (call $handle_IDirect3DDevice3_End (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1164: IDirect3DDevice3_GetRenderState
+    ) ;; 1165: IDirect3DDevice3_GetRenderState
       (call $handle_IDirect3DDevice3_GetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1165: IDirect3DDevice3_SetRenderState
+    ) ;; 1166: IDirect3DDevice3_SetRenderState
       (call $handle_IDirect3DDevice3_SetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1166: IDirect3DDevice3_GetLightState
+    ) ;; 1167: IDirect3DDevice3_GetLightState
       (call $handle_IDirect3DDevice3_GetLightState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1167: IDirect3DDevice3_SetLightState
+    ) ;; 1168: IDirect3DDevice3_SetLightState
       (call $handle_IDirect3DDevice3_SetLightState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1168: IDirect3DDevice3_SetTransform
+    ) ;; 1169: IDirect3DDevice3_SetTransform
       (call $handle_IDirect3DDevice3_SetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1169: IDirect3DDevice3_GetTransform
+    ) ;; 1170: IDirect3DDevice3_GetTransform
       (call $handle_IDirect3DDevice3_GetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1170: IDirect3DDevice3_MultiplyTransform
+    ) ;; 1171: IDirect3DDevice3_MultiplyTransform
       (call $handle_IDirect3DDevice3_MultiplyTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1171: IDirect3DDevice3_DrawPrimitive
+    ) ;; 1172: IDirect3DDevice3_DrawPrimitive
       (call $handle_IDirect3DDevice3_DrawPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1172: IDirect3DDevice3_DrawIndexedPrimitive
+    ) ;; 1173: IDirect3DDevice3_DrawIndexedPrimitive
       (call $handle_IDirect3DDevice3_DrawIndexedPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1173: IDirect3DDevice3_SetClipStatus
+    ) ;; 1174: IDirect3DDevice3_SetClipStatus
       (call $handle_IDirect3DDevice3_SetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1174: IDirect3DDevice3_GetClipStatus
+    ) ;; 1175: IDirect3DDevice3_GetClipStatus
       (call $handle_IDirect3DDevice3_GetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1175: IDirect3DDevice3_DrawPrimitiveStrided
+    ) ;; 1176: IDirect3DDevice3_DrawPrimitiveStrided
       (call $handle_IDirect3DDevice3_DrawPrimitiveStrided (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1176: IDirect3DDevice3_DrawIndexedPrimitiveStrided
+    ) ;; 1177: IDirect3DDevice3_DrawIndexedPrimitiveStrided
       (call $handle_IDirect3DDevice3_DrawIndexedPrimitiveStrided (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1177: IDirect3DDevice3_DrawPrimitiveVB
+    ) ;; 1178: IDirect3DDevice3_DrawPrimitiveVB
       (call $handle_IDirect3DDevice3_DrawPrimitiveVB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1178: IDirect3DDevice3_DrawIndexedPrimitiveVB
+    ) ;; 1179: IDirect3DDevice3_DrawIndexedPrimitiveVB
       (call $handle_IDirect3DDevice3_DrawIndexedPrimitiveVB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1179: IDirect3DDevice3_ComputeSphereVisibility
+    ) ;; 1180: IDirect3DDevice3_ComputeSphereVisibility
       (call $handle_IDirect3DDevice3_ComputeSphereVisibility (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1180: IDirect3DDevice3_GetTexture
+    ) ;; 1181: IDirect3DDevice3_GetTexture
       (call $handle_IDirect3DDevice3_GetTexture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1181: IDirect3DDevice3_SetTexture
+    ) ;; 1182: IDirect3DDevice3_SetTexture
       (call $handle_IDirect3DDevice3_SetTexture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1182: IDirect3DDevice3_GetTextureStageState
+    ) ;; 1183: IDirect3DDevice3_GetTextureStageState
       (call $handle_IDirect3DDevice3_GetTextureStageState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1183: IDirect3DDevice3_SetTextureStageState
+    ) ;; 1184: IDirect3DDevice3_SetTextureStageState
       (call $handle_IDirect3DDevice3_SetTextureStageState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1184: IDirect3DDevice3_ValidateDevice
+    ) ;; 1185: IDirect3DDevice3_ValidateDevice
       (call $handle_IDirect3DDevice3_ValidateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1185: IDirect3DViewport3_QueryInterface
+    ) ;; 1186: IDirect3DViewport3_QueryInterface
       (call $handle_IDirect3DViewport3_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1186: IDirect3DViewport3_AddRef
+    ) ;; 1187: IDirect3DViewport3_AddRef
       (call $handle_IDirect3DViewport3_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1187: IDirect3DViewport3_Release
+    ) ;; 1188: IDirect3DViewport3_Release
       (call $handle_IDirect3DViewport3_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1188: IDirect3DViewport3_Initialize
+    ) ;; 1189: IDirect3DViewport3_Initialize
       (call $handle_IDirect3DViewport3_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1189: IDirect3DViewport3_GetViewport
+    ) ;; 1190: IDirect3DViewport3_GetViewport
       (call $handle_IDirect3DViewport3_GetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1190: IDirect3DViewport3_SetViewport
+    ) ;; 1191: IDirect3DViewport3_SetViewport
       (call $handle_IDirect3DViewport3_SetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1191: IDirect3DViewport3_TransformVertices
+    ) ;; 1192: IDirect3DViewport3_TransformVertices
       (call $handle_IDirect3DViewport3_TransformVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1192: IDirect3DViewport3_LightElements
+    ) ;; 1193: IDirect3DViewport3_LightElements
       (call $handle_IDirect3DViewport3_LightElements (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1193: IDirect3DViewport3_SetBackground
+    ) ;; 1194: IDirect3DViewport3_SetBackground
       (call $handle_IDirect3DViewport3_SetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1194: IDirect3DViewport3_GetBackground
+    ) ;; 1195: IDirect3DViewport3_GetBackground
       (call $handle_IDirect3DViewport3_GetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1195: IDirect3DViewport3_SetBackgroundDepth
+    ) ;; 1196: IDirect3DViewport3_SetBackgroundDepth
       (call $handle_IDirect3DViewport3_SetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1196: IDirect3DViewport3_GetBackgroundDepth
+    ) ;; 1197: IDirect3DViewport3_GetBackgroundDepth
       (call $handle_IDirect3DViewport3_GetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1197: IDirect3DViewport3_Clear
+    ) ;; 1198: IDirect3DViewport3_Clear
       (call $handle_IDirect3DViewport3_Clear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1198: IDirect3DViewport3_AddLight
+    ) ;; 1199: IDirect3DViewport3_AddLight
       (call $handle_IDirect3DViewport3_AddLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1199: IDirect3DViewport3_DeleteLight
+    ) ;; 1200: IDirect3DViewport3_DeleteLight
       (call $handle_IDirect3DViewport3_DeleteLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1200: IDirect3DViewport3_NextLight
+    ) ;; 1201: IDirect3DViewport3_NextLight
       (call $handle_IDirect3DViewport3_NextLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1201: IDirect3DViewport3_GetViewport2
+    ) ;; 1202: IDirect3DViewport3_GetViewport2
       (call $handle_IDirect3DViewport3_GetViewport2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1202: IDirect3DViewport3_SetViewport2
+    ) ;; 1203: IDirect3DViewport3_SetViewport2
       (call $handle_IDirect3DViewport3_SetViewport2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1203: IDirect3DViewport3_SetBackgroundDepth2
+    ) ;; 1204: IDirect3DViewport3_SetBackgroundDepth2
       (call $handle_IDirect3DViewport3_SetBackgroundDepth2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1204: IDirect3DViewport3_GetBackgroundDepth2
+    ) ;; 1205: IDirect3DViewport3_GetBackgroundDepth2
       (call $handle_IDirect3DViewport3_GetBackgroundDepth2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1205: IDirect3DViewport3_Clear2
+    ) ;; 1206: IDirect3DViewport3_Clear2
       (call $handle_IDirect3DViewport3_Clear2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1206: IDirect3DLight_QueryInterface
+    ) ;; 1207: IDirect3DLight_QueryInterface
       (call $handle_IDirect3DLight_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1207: IDirect3DLight_AddRef
+    ) ;; 1208: IDirect3DLight_AddRef
       (call $handle_IDirect3DLight_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1208: IDirect3DLight_Release
+    ) ;; 1209: IDirect3DLight_Release
       (call $handle_IDirect3DLight_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1209: IDirect3DLight_Initialize
+    ) ;; 1210: IDirect3DLight_Initialize
       (call $handle_IDirect3DLight_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1210: IDirect3DLight_SetLight
+    ) ;; 1211: IDirect3DLight_SetLight
       (call $handle_IDirect3DLight_SetLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1211: IDirect3DLight_GetLight
+    ) ;; 1212: IDirect3DLight_GetLight
       (call $handle_IDirect3DLight_GetLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1212: IDirect3DMaterial3_QueryInterface
+    ) ;; 1213: IDirect3DMaterial3_QueryInterface
       (call $handle_IDirect3DMaterial3_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1213: IDirect3DMaterial3_AddRef
+    ) ;; 1214: IDirect3DMaterial3_AddRef
       (call $handle_IDirect3DMaterial3_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1214: IDirect3DMaterial3_Release
+    ) ;; 1215: IDirect3DMaterial3_Release
       (call $handle_IDirect3DMaterial3_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1215: IDirect3DMaterial3_SetMaterial
+    ) ;; 1216: IDirect3DMaterial3_SetMaterial
       (call $handle_IDirect3DMaterial3_SetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1216: IDirect3DMaterial3_GetMaterial
+    ) ;; 1217: IDirect3DMaterial3_GetMaterial
       (call $handle_IDirect3DMaterial3_GetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1217: IDirect3DMaterial3_GetHandle
+    ) ;; 1218: IDirect3DMaterial3_GetHandle
       (call $handle_IDirect3DMaterial3_GetHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1218: IDirect3DMaterial3_Reserved1
+    ) ;; 1219: IDirect3DMaterial3_Reserved1
       (call $handle_IDirect3DMaterial3_Reserved1 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1219: IDirect3DMaterial3_Reserved2
+    ) ;; 1220: IDirect3DMaterial3_Reserved2
       (call $handle_IDirect3DMaterial3_Reserved2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1220: timeGetDevCaps
+    ) ;; 1221: timeGetDevCaps
       (call $handle_timeGetDevCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1221: GetLogicalDriveStringsA
+    ) ;; 1222: GetLogicalDriveStringsA
       (call $handle_GetLogicalDriveStringsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1222: SetLocaleInfoA
+    ) ;; 1223: SetLocaleInfoA
       (call $handle_SetLocaleInfoA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1223: GetKeyboardType
+    ) ;; 1224: GetKeyboardType
       (call $handle_GetKeyboardType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1224: GetTextCharacterExtra
+    ) ;; 1225: GetTextCharacterExtra
       (call $handle_GetTextCharacterExtra (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1225: ModifyMenuA
+    ) ;; 1226: ModifyMenuA
       (call $handle_ModifyMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1226: GetSystemInfo
+    ) ;; 1227: GetSystemInfo
       (call $handle_GetSystemInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1227: GetUserNameA
+    ) ;; 1228: GetUserNameA
       (call $handle_GetUserNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1228: GetComputerNameA
+    ) ;; 1229: GetComputerNameA
       (call $handle_GetComputerNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1229: DirectPlayCreate
+    ) ;; 1230: DirectPlayCreate
       (call $handle_DirectPlayCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1230: DirectPlayEnumerate
+    ) ;; 1231: DirectPlayEnumerate
       (call $handle_DirectPlayEnumerate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1231: DirectPlayEnumerateA
+    ) ;; 1232: DirectPlayEnumerateA
       (call $handle_DirectPlayEnumerateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1232: DirectPlayLobbyCreateA
+    ) ;; 1233: DirectPlayLobbyCreateA
       (call $handle_DirectPlayLobbyCreateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1233: DirectSoundEnumerateA
+    ) ;; 1234: DirectSoundEnumerateA
       (call $handle_DirectSoundEnumerateA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1234: mciSendStringA
+    ) ;; 1235: mciSendStringA
       (call $handle_mciSendStringA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1235: midiOutGetVolume
+    ) ;; 1236: midiOutGetVolume
       (call $handle_midiOutGetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1236: midiOutSetVolume
+    ) ;; 1237: midiOutSetVolume
       (call $handle_midiOutSetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1237: OpenMutexA
+    ) ;; 1238: OpenMutexA
       (call $handle_OpenMutexA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1238: CreateMutexA
+    ) ;; 1239: CreateMutexA
       (call $handle_CreateMutexA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1239: PaintRgn
+    ) ;; 1240: PaintRgn
       (call $handle_PaintRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1240: CharUpperA
+    ) ;; 1241: CharUpperA
       (call $handle_CharUpperA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1241: CharLowerA
+    ) ;; 1242: CharLowerA
       (call $handle_CharLowerA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1242: ImmAssociateContext
+    ) ;; 1243: ImmAssociateContext
       (call $handle_ImmAssociateContext (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1243: ImmGetContext
+    ) ;; 1244: ImmGetContext
       (call $handle_ImmGetContext (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1244: ImmReleaseContext
+    ) ;; 1245: ImmReleaseContext
       (call $handle_ImmReleaseContext (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1245: ExtEscape
+    ) ;; 1246: ExtEscape
       (call $handle_ExtEscape (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1246: SetMessageQueue
+    ) ;; 1247: SetMessageQueue
       (call $handle_SetMessageQueue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1247: timeSetEvent
+    ) ;; 1248: timeSetEvent
       (call $handle_timeSetEvent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1248: timeKillEvent
+    ) ;; 1249: timeKillEvent
       (call $handle_timeKillEvent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1249: PostThreadMessageA
+    ) ;; 1250: PostThreadMessageA
       (call $handle_PostThreadMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1250: IDirectDraw2_GetAvailableVidMem
+    ) ;; 1251: IDirectDraw2_GetAvailableVidMem
       (call $handle_IDirectDraw2_GetAvailableVidMem (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1251: FlashWindow
+    ) ;; 1252: FlashWindow
       (call $handle_FlashWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1252: IDirectDrawClipper_QueryInterface
+    ) ;; 1253: IDirectDrawClipper_QueryInterface
       (call $handle_IDirectDrawClipper_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1253: IDirectDrawClipper_AddRef
+    ) ;; 1254: IDirectDrawClipper_AddRef
       (call $handle_IDirectDrawClipper_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1254: IDirectDrawClipper_Release
+    ) ;; 1255: IDirectDrawClipper_Release
       (call $handle_IDirectDrawClipper_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1255: IDirectDrawClipper_GetClipList
+    ) ;; 1256: IDirectDrawClipper_GetClipList
       (call $handle_IDirectDrawClipper_GetClipList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1256: IDirectDrawClipper_GetHWnd
+    ) ;; 1257: IDirectDrawClipper_GetHWnd
       (call $handle_IDirectDrawClipper_GetHWnd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1257: IDirectDrawClipper_Initialize
+    ) ;; 1258: IDirectDrawClipper_Initialize
       (call $handle_IDirectDrawClipper_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1258: IDirectDrawClipper_IsClipListChanged
+    ) ;; 1259: IDirectDrawClipper_IsClipListChanged
       (call $handle_IDirectDrawClipper_IsClipListChanged (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1259: IDirectDrawClipper_SetClipList
+    ) ;; 1260: IDirectDrawClipper_SetClipList
       (call $handle_IDirectDrawClipper_SetClipList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1260: IDirectDrawClipper_SetHWnd
+    ) ;; 1261: IDirectDrawClipper_SetHWnd
       (call $handle_IDirectDrawClipper_SetHWnd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1261: ICInfo
+    ) ;; 1262: ICInfo
       (call $handle_ICInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1262: ICOpen
+    ) ;; 1263: ICOpen
       (call $handle_ICOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1263: ICClose
+    ) ;; 1264: ICClose
       (call $handle_ICClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1264: GetPriorityClass
+    ) ;; 1265: GetPriorityClass
       (call $handle_GetPriorityClass (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1265: GetThreadPriority
+    ) ;; 1266: GetThreadPriority
       (call $handle_GetThreadPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1266: GetUpdateRgn
+    ) ;; 1267: GetUpdateRgn
       (call $handle_GetUpdateRgn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1267: SubtractRect
+    ) ;; 1268: SubtractRect
       (call $handle_SubtractRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1268: GetKeyboardLayout
+    ) ;; 1269: GetKeyboardLayout
       (call $handle_GetKeyboardLayout (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1269: SetThreadLocale
+    ) ;; 1270: SetThreadLocale
       (call $handle_SetThreadLocale (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1270: OemToCharA
+    ) ;; 1271: OemToCharA
       (call $handle_OemToCharA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1271: GetKeyboardLayoutList
+    ) ;; 1272: GetKeyboardLayoutList
       (call $handle_GetKeyboardLayoutList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1272: IDirect3D2_QueryInterface
+    ) ;; 1273: IDirect3D2_QueryInterface
       (call $handle_IDirect3D2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1273: IDirect3D2_AddRef
+    ) ;; 1274: IDirect3D2_AddRef
       (call $handle_IDirect3D2_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1274: IDirect3D2_Release
+    ) ;; 1275: IDirect3D2_Release
       (call $handle_IDirect3D2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1275: IDirect3D2_EnumDevices
+    ) ;; 1276: IDirect3D2_EnumDevices
       (call $handle_IDirect3D2_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1276: IDirect3D2_CreateLight
+    ) ;; 1277: IDirect3D2_CreateLight
       (call $handle_IDirect3D2_CreateLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1277: IDirect3D2_CreateMaterial
+    ) ;; 1278: IDirect3D2_CreateMaterial
       (call $handle_IDirect3D2_CreateMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1278: IDirect3D2_CreateViewport
+    ) ;; 1279: IDirect3D2_CreateViewport
       (call $handle_IDirect3D2_CreateViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1279: IDirect3D2_FindDevice
+    ) ;; 1280: IDirect3D2_FindDevice
       (call $handle_IDirect3D2_FindDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1280: IDirect3D2_CreateDevice
+    ) ;; 1281: IDirect3D2_CreateDevice
       (call $handle_IDirect3D2_CreateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1281: IDirect3D7_QueryInterface
+    ) ;; 1282: IDirect3D7_QueryInterface
       (call $handle_IDirect3D7_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1282: IDirect3D7_AddRef
+    ) ;; 1283: IDirect3D7_AddRef
       (call $handle_IDirect3D7_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1283: IDirect3D7_Release
+    ) ;; 1284: IDirect3D7_Release
       (call $handle_IDirect3D7_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1284: IDirect3D7_EnumDevices
+    ) ;; 1285: IDirect3D7_EnumDevices
       (call $handle_IDirect3D7_EnumDevices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1285: IDirect3D7_CreateDevice
+    ) ;; 1286: IDirect3D7_CreateDevice
       (call $handle_IDirect3D7_CreateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1286: IDirect3D7_CreateVertexBuffer
+    ) ;; 1287: IDirect3D7_CreateVertexBuffer
       (call $handle_IDirect3D7_CreateVertexBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1287: IDirect3D7_EnumZBufferFormats
+    ) ;; 1288: IDirect3D7_EnumZBufferFormats
       (call $handle_IDirect3D7_EnumZBufferFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1288: IDirect3D7_EvictManagedTextures
+    ) ;; 1289: IDirect3D7_EvictManagedTextures
       (call $handle_IDirect3D7_EvictManagedTextures (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1289: IDirect3DDevice_QueryInterface
+    ) ;; 1290: IDirect3DDevice_QueryInterface
       (call $handle_IDirect3DDevice_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1290: IDirect3DDevice_AddRef
+    ) ;; 1291: IDirect3DDevice_AddRef
       (call $handle_IDirect3DDevice_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1291: IDirect3DDevice_Release
+    ) ;; 1292: IDirect3DDevice_Release
       (call $handle_IDirect3DDevice_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1292: IDirect3DDevice_Initialize
+    ) ;; 1293: IDirect3DDevice_Initialize
       (call $handle_IDirect3DDevice_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1293: IDirect3DDevice_GetCaps
+    ) ;; 1294: IDirect3DDevice_GetCaps
       (call $handle_IDirect3DDevice_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1294: IDirect3DDevice_SwapTextureHandles
+    ) ;; 1295: IDirect3DDevice_SwapTextureHandles
       (call $handle_IDirect3DDevice_SwapTextureHandles (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1295: IDirect3DDevice_CreateExecuteBuffer
+    ) ;; 1296: IDirect3DDevice_CreateExecuteBuffer
       (call $handle_IDirect3DDevice_CreateExecuteBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1296: IDirect3DDevice_GetStats
+    ) ;; 1297: IDirect3DDevice_GetStats
       (call $handle_IDirect3DDevice_GetStats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1297: IDirect3DDevice_Execute
+    ) ;; 1298: IDirect3DDevice_Execute
       (call $handle_IDirect3DDevice_Execute (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1298: IDirect3DDevice_AddViewport
+    ) ;; 1299: IDirect3DDevice_AddViewport
       (call $handle_IDirect3DDevice_AddViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1299: IDirect3DDevice_DeleteViewport
+    ) ;; 1300: IDirect3DDevice_DeleteViewport
       (call $handle_IDirect3DDevice_DeleteViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1300: IDirect3DDevice_NextViewport
+    ) ;; 1301: IDirect3DDevice_NextViewport
       (call $handle_IDirect3DDevice_NextViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1301: IDirect3DDevice_Pick
+    ) ;; 1302: IDirect3DDevice_Pick
       (call $handle_IDirect3DDevice_Pick (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1302: IDirect3DDevice_GetPickRecords
+    ) ;; 1303: IDirect3DDevice_GetPickRecords
       (call $handle_IDirect3DDevice_GetPickRecords (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1303: IDirect3DDevice_EnumTextureFormats
+    ) ;; 1304: IDirect3DDevice_EnumTextureFormats
       (call $handle_IDirect3DDevice_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1304: IDirect3DDevice_CreateMatrix
+    ) ;; 1305: IDirect3DDevice_CreateMatrix
       (call $handle_IDirect3DDevice_CreateMatrix (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1305: IDirect3DDevice_SetMatrix
+    ) ;; 1306: IDirect3DDevice_SetMatrix
       (call $handle_IDirect3DDevice_SetMatrix (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1306: IDirect3DDevice_GetMatrix
+    ) ;; 1307: IDirect3DDevice_GetMatrix
       (call $handle_IDirect3DDevice_GetMatrix (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1307: IDirect3DDevice_DeleteMatrix
+    ) ;; 1308: IDirect3DDevice_DeleteMatrix
       (call $handle_IDirect3DDevice_DeleteMatrix (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1308: IDirect3DDevice_BeginScene
+    ) ;; 1309: IDirect3DDevice_BeginScene
       (call $handle_IDirect3DDevice_BeginScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1309: IDirect3DDevice_EndScene
+    ) ;; 1310: IDirect3DDevice_EndScene
       (call $handle_IDirect3DDevice_EndScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1310: IDirect3DDevice_GetDirect3D
+    ) ;; 1311: IDirect3DDevice_GetDirect3D
       (call $handle_IDirect3DDevice_GetDirect3D (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1311: IDirect3DDevice2_QueryInterface
+    ) ;; 1312: IDirect3DDevice2_QueryInterface
       (call $handle_IDirect3DDevice2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1312: IDirect3DDevice2_AddRef
+    ) ;; 1313: IDirect3DDevice2_AddRef
       (call $handle_IDirect3DDevice2_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1313: IDirect3DDevice2_Release
+    ) ;; 1314: IDirect3DDevice2_Release
       (call $handle_IDirect3DDevice2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1314: IDirect3DDevice2_GetCaps
+    ) ;; 1315: IDirect3DDevice2_GetCaps
       (call $handle_IDirect3DDevice2_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1315: IDirect3DDevice2_SwapTextureHandles
+    ) ;; 1316: IDirect3DDevice2_SwapTextureHandles
       (call $handle_IDirect3DDevice2_SwapTextureHandles (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1316: IDirect3DDevice2_GetStats
+    ) ;; 1317: IDirect3DDevice2_GetStats
       (call $handle_IDirect3DDevice2_GetStats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1317: IDirect3DDevice2_AddViewport
+    ) ;; 1318: IDirect3DDevice2_AddViewport
       (call $handle_IDirect3DDevice2_AddViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1318: IDirect3DDevice2_DeleteViewport
+    ) ;; 1319: IDirect3DDevice2_DeleteViewport
       (call $handle_IDirect3DDevice2_DeleteViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1319: IDirect3DDevice2_NextViewport
+    ) ;; 1320: IDirect3DDevice2_NextViewport
       (call $handle_IDirect3DDevice2_NextViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1320: IDirect3DDevice2_EnumTextureFormats
+    ) ;; 1321: IDirect3DDevice2_EnumTextureFormats
       (call $handle_IDirect3DDevice2_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1321: IDirect3DDevice2_BeginScene
+    ) ;; 1322: IDirect3DDevice2_BeginScene
       (call $handle_IDirect3DDevice2_BeginScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1322: IDirect3DDevice2_EndScene
+    ) ;; 1323: IDirect3DDevice2_EndScene
       (call $handle_IDirect3DDevice2_EndScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1323: IDirect3DDevice2_GetDirect3D
+    ) ;; 1324: IDirect3DDevice2_GetDirect3D
       (call $handle_IDirect3DDevice2_GetDirect3D (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1324: IDirect3DDevice2_SetCurrentViewport
+    ) ;; 1325: IDirect3DDevice2_SetCurrentViewport
       (call $handle_IDirect3DDevice2_SetCurrentViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1325: IDirect3DDevice2_GetCurrentViewport
+    ) ;; 1326: IDirect3DDevice2_GetCurrentViewport
       (call $handle_IDirect3DDevice2_GetCurrentViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1326: IDirect3DDevice2_SetRenderTarget
+    ) ;; 1327: IDirect3DDevice2_SetRenderTarget
       (call $handle_IDirect3DDevice2_SetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1327: IDirect3DDevice2_GetRenderTarget
+    ) ;; 1328: IDirect3DDevice2_GetRenderTarget
       (call $handle_IDirect3DDevice2_GetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1328: IDirect3DDevice2_Begin
+    ) ;; 1329: IDirect3DDevice2_Begin
       (call $handle_IDirect3DDevice2_Begin (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1329: IDirect3DDevice2_BeginIndexed
+    ) ;; 1330: IDirect3DDevice2_BeginIndexed
       (call $handle_IDirect3DDevice2_BeginIndexed (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1330: IDirect3DDevice2_Vertex
+    ) ;; 1331: IDirect3DDevice2_Vertex
       (call $handle_IDirect3DDevice2_Vertex (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1331: IDirect3DDevice2_Index
+    ) ;; 1332: IDirect3DDevice2_Index
       (call $handle_IDirect3DDevice2_Index (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1332: IDirect3DDevice2_End
+    ) ;; 1333: IDirect3DDevice2_End
       (call $handle_IDirect3DDevice2_End (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1333: IDirect3DDevice2_GetRenderState
+    ) ;; 1334: IDirect3DDevice2_GetRenderState
       (call $handle_IDirect3DDevice2_GetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1334: IDirect3DDevice2_SetRenderState
+    ) ;; 1335: IDirect3DDevice2_SetRenderState
       (call $handle_IDirect3DDevice2_SetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1335: IDirect3DDevice2_GetLightState
+    ) ;; 1336: IDirect3DDevice2_GetLightState
       (call $handle_IDirect3DDevice2_GetLightState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1336: IDirect3DDevice2_SetLightState
+    ) ;; 1337: IDirect3DDevice2_SetLightState
       (call $handle_IDirect3DDevice2_SetLightState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1337: IDirect3DDevice2_SetTransform
+    ) ;; 1338: IDirect3DDevice2_SetTransform
       (call $handle_IDirect3DDevice2_SetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1338: IDirect3DDevice2_GetTransform
+    ) ;; 1339: IDirect3DDevice2_GetTransform
       (call $handle_IDirect3DDevice2_GetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1339: IDirect3DDevice2_MultiplyTransform
+    ) ;; 1340: IDirect3DDevice2_MultiplyTransform
       (call $handle_IDirect3DDevice2_MultiplyTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1340: IDirect3DDevice2_DrawPrimitive
+    ) ;; 1341: IDirect3DDevice2_DrawPrimitive
       (call $handle_IDirect3DDevice2_DrawPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1341: IDirect3DDevice2_DrawIndexedPrimitive
+    ) ;; 1342: IDirect3DDevice2_DrawIndexedPrimitive
       (call $handle_IDirect3DDevice2_DrawIndexedPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1342: IDirect3DDevice2_SetClipStatus
+    ) ;; 1343: IDirect3DDevice2_SetClipStatus
       (call $handle_IDirect3DDevice2_SetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1343: IDirect3DDevice2_GetClipStatus
+    ) ;; 1344: IDirect3DDevice2_GetClipStatus
       (call $handle_IDirect3DDevice2_GetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1344: IDirect3DDevice7_QueryInterface
+    ) ;; 1345: IDirect3DDevice7_QueryInterface
       (call $handle_IDirect3DDevice7_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1345: IDirect3DDevice7_AddRef
+    ) ;; 1346: IDirect3DDevice7_AddRef
       (call $handle_IDirect3DDevice7_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1346: IDirect3DDevice7_Release
+    ) ;; 1347: IDirect3DDevice7_Release
       (call $handle_IDirect3DDevice7_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1347: IDirect3DDevice7_GetCaps
+    ) ;; 1348: IDirect3DDevice7_GetCaps
       (call $handle_IDirect3DDevice7_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1348: IDirect3DDevice7_EnumTextureFormats
+    ) ;; 1349: IDirect3DDevice7_EnumTextureFormats
       (call $handle_IDirect3DDevice7_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1349: IDirect3DDevice7_BeginScene
+    ) ;; 1350: IDirect3DDevice7_BeginScene
       (call $handle_IDirect3DDevice7_BeginScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1350: IDirect3DDevice7_EndScene
+    ) ;; 1351: IDirect3DDevice7_EndScene
       (call $handle_IDirect3DDevice7_EndScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1351: IDirect3DDevice7_GetDirect3D
+    ) ;; 1352: IDirect3DDevice7_GetDirect3D
       (call $handle_IDirect3DDevice7_GetDirect3D (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1352: IDirect3DDevice7_SetRenderTarget
+    ) ;; 1353: IDirect3DDevice7_SetRenderTarget
       (call $handle_IDirect3DDevice7_SetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1353: IDirect3DDevice7_GetRenderTarget
+    ) ;; 1354: IDirect3DDevice7_GetRenderTarget
       (call $handle_IDirect3DDevice7_GetRenderTarget (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1354: IDirect3DDevice7_Clear
+    ) ;; 1355: IDirect3DDevice7_Clear
       (call $handle_IDirect3DDevice7_Clear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1355: IDirect3DDevice7_SetTransform
+    ) ;; 1356: IDirect3DDevice7_SetTransform
       (call $handle_IDirect3DDevice7_SetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1356: IDirect3DDevice7_GetTransform
+    ) ;; 1357: IDirect3DDevice7_GetTransform
       (call $handle_IDirect3DDevice7_GetTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1357: IDirect3DDevice7_SetViewport
+    ) ;; 1358: IDirect3DDevice7_SetViewport
       (call $handle_IDirect3DDevice7_SetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1358: IDirect3DDevice7_MultiplyTransform
+    ) ;; 1359: IDirect3DDevice7_MultiplyTransform
       (call $handle_IDirect3DDevice7_MultiplyTransform (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1359: IDirect3DDevice7_GetViewport
+    ) ;; 1360: IDirect3DDevice7_GetViewport
       (call $handle_IDirect3DDevice7_GetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1360: IDirect3DDevice7_SetMaterial
+    ) ;; 1361: IDirect3DDevice7_SetMaterial
       (call $handle_IDirect3DDevice7_SetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1361: IDirect3DDevice7_GetMaterial
+    ) ;; 1362: IDirect3DDevice7_GetMaterial
       (call $handle_IDirect3DDevice7_GetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1362: IDirect3DDevice7_SetLight
+    ) ;; 1363: IDirect3DDevice7_SetLight
       (call $handle_IDirect3DDevice7_SetLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1363: IDirect3DDevice7_GetLight
+    ) ;; 1364: IDirect3DDevice7_GetLight
       (call $handle_IDirect3DDevice7_GetLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1364: IDirect3DDevice7_BeginStateBlock
+    ) ;; 1365: IDirect3DDevice7_BeginStateBlock
       (call $handle_IDirect3DDevice7_BeginStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1365: IDirect3DDevice7_EndStateBlock
+    ) ;; 1366: IDirect3DDevice7_EndStateBlock
       (call $handle_IDirect3DDevice7_EndStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1366: IDirect3DDevice7_PreLoad
+    ) ;; 1367: IDirect3DDevice7_PreLoad
       (call $handle_IDirect3DDevice7_PreLoad (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1367: IDirect3DDevice7_DrawPrimitive
+    ) ;; 1368: IDirect3DDevice7_DrawPrimitive
       (call $handle_IDirect3DDevice7_DrawPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1368: IDirect3DDevice7_DrawIndexedPrimitive
+    ) ;; 1369: IDirect3DDevice7_DrawIndexedPrimitive
       (call $handle_IDirect3DDevice7_DrawIndexedPrimitive (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1369: IDirect3DDevice7_SetClipStatus
+    ) ;; 1370: IDirect3DDevice7_SetClipStatus
       (call $handle_IDirect3DDevice7_SetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1370: IDirect3DDevice7_GetClipStatus
+    ) ;; 1371: IDirect3DDevice7_GetClipStatus
       (call $handle_IDirect3DDevice7_GetClipStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1371: IDirect3DDevice7_DrawPrimitiveStrided
+    ) ;; 1372: IDirect3DDevice7_DrawPrimitiveStrided
       (call $handle_IDirect3DDevice7_DrawPrimitiveStrided (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1372: IDirect3DDevice7_DrawIndexedPrimitiveStrided
+    ) ;; 1373: IDirect3DDevice7_DrawIndexedPrimitiveStrided
       (call $handle_IDirect3DDevice7_DrawIndexedPrimitiveStrided (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1373: IDirect3DDevice7_DrawPrimitiveVB
+    ) ;; 1374: IDirect3DDevice7_DrawPrimitiveVB
       (call $handle_IDirect3DDevice7_DrawPrimitiveVB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1374: IDirect3DDevice7_DrawIndexedPrimitiveVB
+    ) ;; 1375: IDirect3DDevice7_DrawIndexedPrimitiveVB
       (call $handle_IDirect3DDevice7_DrawIndexedPrimitiveVB (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1375: IDirect3DDevice7_ComputeSphereVisibility
+    ) ;; 1376: IDirect3DDevice7_ComputeSphereVisibility
       (call $handle_IDirect3DDevice7_ComputeSphereVisibility (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1376: IDirect3DDevice7_GetTexture
+    ) ;; 1377: IDirect3DDevice7_GetTexture
       (call $handle_IDirect3DDevice7_GetTexture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1377: IDirect3DDevice7_SetTexture
+    ) ;; 1378: IDirect3DDevice7_SetTexture
       (call $handle_IDirect3DDevice7_SetTexture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1378: IDirect3DDevice7_GetTextureStageState
+    ) ;; 1379: IDirect3DDevice7_GetTextureStageState
       (call $handle_IDirect3DDevice7_GetTextureStageState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1379: IDirect3DDevice7_SetTextureStageState
+    ) ;; 1380: IDirect3DDevice7_SetTextureStageState
       (call $handle_IDirect3DDevice7_SetTextureStageState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1380: IDirect3DDevice7_ValidateDevice
+    ) ;; 1381: IDirect3DDevice7_ValidateDevice
       (call $handle_IDirect3DDevice7_ValidateDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1381: IDirect3DDevice7_ApplyStateBlock
+    ) ;; 1382: IDirect3DDevice7_ApplyStateBlock
       (call $handle_IDirect3DDevice7_ApplyStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1382: IDirect3DDevice7_CaptureStateBlock
+    ) ;; 1383: IDirect3DDevice7_CaptureStateBlock
       (call $handle_IDirect3DDevice7_CaptureStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1383: IDirect3DDevice7_DeleteStateBlock
+    ) ;; 1384: IDirect3DDevice7_DeleteStateBlock
       (call $handle_IDirect3DDevice7_DeleteStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1384: IDirect3DDevice7_CreateStateBlock
+    ) ;; 1385: IDirect3DDevice7_CreateStateBlock
       (call $handle_IDirect3DDevice7_CreateStateBlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1385: IDirect3DDevice7_Load
+    ) ;; 1386: IDirect3DDevice7_Load
       (call $handle_IDirect3DDevice7_Load (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1386: IDirect3DDevice7_LightEnable
+    ) ;; 1387: IDirect3DDevice7_LightEnable
       (call $handle_IDirect3DDevice7_LightEnable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1387: IDirect3DDevice7_GetLightEnable
+    ) ;; 1388: IDirect3DDevice7_GetLightEnable
       (call $handle_IDirect3DDevice7_GetLightEnable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1388: IDirect3DDevice7_SetClipPlane
+    ) ;; 1389: IDirect3DDevice7_SetClipPlane
       (call $handle_IDirect3DDevice7_SetClipPlane (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1389: IDirect3DDevice7_GetClipPlane
+    ) ;; 1390: IDirect3DDevice7_GetClipPlane
       (call $handle_IDirect3DDevice7_GetClipPlane (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1390: IDirect3DDevice7_GetInfo
+    ) ;; 1391: IDirect3DDevice7_GetInfo
       (call $handle_IDirect3DDevice7_GetInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1391: IDirect3DDevice7_SetRenderState
+    ) ;; 1392: IDirect3DDevice7_SetRenderState
       (call $handle_IDirect3DDevice7_SetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1392: IDirect3DDevice7_GetRenderState
+    ) ;; 1393: IDirect3DDevice7_GetRenderState
       (call $handle_IDirect3DDevice7_GetRenderState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1393: IDirect3DViewport_QueryInterface
+    ) ;; 1394: IDirect3DViewport_QueryInterface
       (call $handle_IDirect3DViewport_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1394: IDirect3DViewport_AddRef
+    ) ;; 1395: IDirect3DViewport_AddRef
       (call $handle_IDirect3DViewport_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1395: IDirect3DViewport_Release
+    ) ;; 1396: IDirect3DViewport_Release
       (call $handle_IDirect3DViewport_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1396: IDirect3DViewport_Initialize
+    ) ;; 1397: IDirect3DViewport_Initialize
       (call $handle_IDirect3DViewport_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1397: IDirect3DViewport_GetViewport
+    ) ;; 1398: IDirect3DViewport_GetViewport
       (call $handle_IDirect3DViewport_GetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1398: IDirect3DViewport_SetViewport
+    ) ;; 1399: IDirect3DViewport_SetViewport
       (call $handle_IDirect3DViewport_SetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1399: IDirect3DViewport_TransformVertices
+    ) ;; 1400: IDirect3DViewport_TransformVertices
       (call $handle_IDirect3DViewport_TransformVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1400: IDirect3DViewport_LightElements
+    ) ;; 1401: IDirect3DViewport_LightElements
       (call $handle_IDirect3DViewport_LightElements (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1401: IDirect3DViewport_SetBackground
+    ) ;; 1402: IDirect3DViewport_SetBackground
       (call $handle_IDirect3DViewport_SetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1402: IDirect3DViewport_GetBackground
+    ) ;; 1403: IDirect3DViewport_GetBackground
       (call $handle_IDirect3DViewport_GetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1403: IDirect3DViewport_SetBackgroundDepth
+    ) ;; 1404: IDirect3DViewport_SetBackgroundDepth
       (call $handle_IDirect3DViewport_SetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1404: IDirect3DViewport_GetBackgroundDepth
+    ) ;; 1405: IDirect3DViewport_GetBackgroundDepth
       (call $handle_IDirect3DViewport_GetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1405: IDirect3DViewport_Clear
+    ) ;; 1406: IDirect3DViewport_Clear
       (call $handle_IDirect3DViewport_Clear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1406: IDirect3DViewport_AddLight
+    ) ;; 1407: IDirect3DViewport_AddLight
       (call $handle_IDirect3DViewport_AddLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1407: IDirect3DViewport_DeleteLight
+    ) ;; 1408: IDirect3DViewport_DeleteLight
       (call $handle_IDirect3DViewport_DeleteLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1408: IDirect3DViewport_NextLight
+    ) ;; 1409: IDirect3DViewport_NextLight
       (call $handle_IDirect3DViewport_NextLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1409: IDirect3DViewport2_QueryInterface
+    ) ;; 1410: IDirect3DViewport2_QueryInterface
       (call $handle_IDirect3DViewport2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1410: IDirect3DViewport2_AddRef
+    ) ;; 1411: IDirect3DViewport2_AddRef
       (call $handle_IDirect3DViewport2_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1411: IDirect3DViewport2_Release
+    ) ;; 1412: IDirect3DViewport2_Release
       (call $handle_IDirect3DViewport2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1412: IDirect3DViewport2_Initialize
+    ) ;; 1413: IDirect3DViewport2_Initialize
       (call $handle_IDirect3DViewport2_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1413: IDirect3DViewport2_GetViewport
+    ) ;; 1414: IDirect3DViewport2_GetViewport
       (call $handle_IDirect3DViewport2_GetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1414: IDirect3DViewport2_SetViewport
+    ) ;; 1415: IDirect3DViewport2_SetViewport
       (call $handle_IDirect3DViewport2_SetViewport (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1415: IDirect3DViewport2_TransformVertices
+    ) ;; 1416: IDirect3DViewport2_TransformVertices
       (call $handle_IDirect3DViewport2_TransformVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1416: IDirect3DViewport2_LightElements
+    ) ;; 1417: IDirect3DViewport2_LightElements
       (call $handle_IDirect3DViewport2_LightElements (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1417: IDirect3DViewport2_SetBackground
+    ) ;; 1418: IDirect3DViewport2_SetBackground
       (call $handle_IDirect3DViewport2_SetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1418: IDirect3DViewport2_GetBackground
+    ) ;; 1419: IDirect3DViewport2_GetBackground
       (call $handle_IDirect3DViewport2_GetBackground (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1419: IDirect3DViewport2_SetBackgroundDepth
+    ) ;; 1420: IDirect3DViewport2_SetBackgroundDepth
       (call $handle_IDirect3DViewport2_SetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1420: IDirect3DViewport2_GetBackgroundDepth
+    ) ;; 1421: IDirect3DViewport2_GetBackgroundDepth
       (call $handle_IDirect3DViewport2_GetBackgroundDepth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1421: IDirect3DViewport2_Clear
+    ) ;; 1422: IDirect3DViewport2_Clear
       (call $handle_IDirect3DViewport2_Clear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1422: IDirect3DViewport2_AddLight
+    ) ;; 1423: IDirect3DViewport2_AddLight
       (call $handle_IDirect3DViewport2_AddLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1423: IDirect3DViewport2_DeleteLight
+    ) ;; 1424: IDirect3DViewport2_DeleteLight
       (call $handle_IDirect3DViewport2_DeleteLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1424: IDirect3DViewport2_NextLight
+    ) ;; 1425: IDirect3DViewport2_NextLight
       (call $handle_IDirect3DViewport2_NextLight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1425: IDirect3DViewport2_GetViewport2
+    ) ;; 1426: IDirect3DViewport2_GetViewport2
       (call $handle_IDirect3DViewport2_GetViewport2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1426: IDirect3DViewport2_SetViewport2
+    ) ;; 1427: IDirect3DViewport2_SetViewport2
       (call $handle_IDirect3DViewport2_SetViewport2 (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1427: IDirect3DMaterial_QueryInterface
+    ) ;; 1428: IDirect3DMaterial_QueryInterface
       (call $handle_IDirect3DMaterial_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1428: IDirect3DMaterial_AddRef
+    ) ;; 1429: IDirect3DMaterial_AddRef
       (call $handle_IDirect3DMaterial_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1429: IDirect3DMaterial_Release
+    ) ;; 1430: IDirect3DMaterial_Release
       (call $handle_IDirect3DMaterial_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1430: IDirect3DMaterial_Initialize
+    ) ;; 1431: IDirect3DMaterial_Initialize
       (call $handle_IDirect3DMaterial_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1431: IDirect3DMaterial_SetMaterial
+    ) ;; 1432: IDirect3DMaterial_SetMaterial
       (call $handle_IDirect3DMaterial_SetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1432: IDirect3DMaterial_GetMaterial
+    ) ;; 1433: IDirect3DMaterial_GetMaterial
       (call $handle_IDirect3DMaterial_GetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1433: IDirect3DMaterial_GetHandle
+    ) ;; 1434: IDirect3DMaterial_GetHandle
       (call $handle_IDirect3DMaterial_GetHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1434: IDirect3DMaterial_Reserve
+    ) ;; 1435: IDirect3DMaterial_Reserve
       (call $handle_IDirect3DMaterial_Reserve (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1435: IDirect3DMaterial_Unreserve
+    ) ;; 1436: IDirect3DMaterial_Unreserve
       (call $handle_IDirect3DMaterial_Unreserve (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1436: IDirect3DMaterial2_QueryInterface
+    ) ;; 1437: IDirect3DMaterial2_QueryInterface
       (call $handle_IDirect3DMaterial2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1437: IDirect3DMaterial2_AddRef
+    ) ;; 1438: IDirect3DMaterial2_AddRef
       (call $handle_IDirect3DMaterial2_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1438: IDirect3DMaterial2_Release
+    ) ;; 1439: IDirect3DMaterial2_Release
       (call $handle_IDirect3DMaterial2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1439: IDirect3DMaterial2_SetMaterial
+    ) ;; 1440: IDirect3DMaterial2_SetMaterial
       (call $handle_IDirect3DMaterial2_SetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1440: IDirect3DMaterial2_GetMaterial
+    ) ;; 1441: IDirect3DMaterial2_GetMaterial
       (call $handle_IDirect3DMaterial2_GetMaterial (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1441: IDirect3DMaterial2_GetHandle
+    ) ;; 1442: IDirect3DMaterial2_GetHandle
       (call $handle_IDirect3DMaterial2_GetHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1442: IDirect3DExecuteBuffer_QueryInterface
+    ) ;; 1443: IDirect3DExecuteBuffer_QueryInterface
       (call $handle_IDirect3DExecuteBuffer_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1443: IDirect3DExecuteBuffer_AddRef
+    ) ;; 1444: IDirect3DExecuteBuffer_AddRef
       (call $handle_IDirect3DExecuteBuffer_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1444: IDirect3DExecuteBuffer_Release
+    ) ;; 1445: IDirect3DExecuteBuffer_Release
       (call $handle_IDirect3DExecuteBuffer_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1445: IDirect3DExecuteBuffer_Initialize
+    ) ;; 1446: IDirect3DExecuteBuffer_Initialize
       (call $handle_IDirect3DExecuteBuffer_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1446: IDirect3DExecuteBuffer_Lock
+    ) ;; 1447: IDirect3DExecuteBuffer_Lock
       (call $handle_IDirect3DExecuteBuffer_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1447: IDirect3DExecuteBuffer_Unlock
+    ) ;; 1448: IDirect3DExecuteBuffer_Unlock
       (call $handle_IDirect3DExecuteBuffer_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1448: IDirect3DExecuteBuffer_SetExecuteData
+    ) ;; 1449: IDirect3DExecuteBuffer_SetExecuteData
       (call $handle_IDirect3DExecuteBuffer_SetExecuteData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1449: IDirect3DExecuteBuffer_GetExecuteData
+    ) ;; 1450: IDirect3DExecuteBuffer_GetExecuteData
       (call $handle_IDirect3DExecuteBuffer_GetExecuteData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1450: IDirect3DExecuteBuffer_Validate
+    ) ;; 1451: IDirect3DExecuteBuffer_Validate
       (call $handle_IDirect3DExecuteBuffer_Validate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1451: IDirect3DExecuteBuffer_Optimize
+    ) ;; 1452: IDirect3DExecuteBuffer_Optimize
       (call $handle_IDirect3DExecuteBuffer_Optimize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1452: IDirect3DVertexBuffer_QueryInterface
+    ) ;; 1453: IDirect3DVertexBuffer_QueryInterface
       (call $handle_IDirect3DVertexBuffer_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1453: IDirect3DVertexBuffer_AddRef
+    ) ;; 1454: IDirect3DVertexBuffer_AddRef
       (call $handle_IDirect3DVertexBuffer_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1454: IDirect3DVertexBuffer_Release
+    ) ;; 1455: IDirect3DVertexBuffer_Release
       (call $handle_IDirect3DVertexBuffer_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1455: IDirect3DVertexBuffer_Lock
+    ) ;; 1456: IDirect3DVertexBuffer_Lock
       (call $handle_IDirect3DVertexBuffer_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1456: IDirect3DVertexBuffer_Unlock
+    ) ;; 1457: IDirect3DVertexBuffer_Unlock
       (call $handle_IDirect3DVertexBuffer_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1457: IDirect3DVertexBuffer_ProcessVertices
+    ) ;; 1458: IDirect3DVertexBuffer_ProcessVertices
       (call $handle_IDirect3DVertexBuffer_ProcessVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1458: IDirect3DVertexBuffer_GetVertexBufferDesc
+    ) ;; 1459: IDirect3DVertexBuffer_GetVertexBufferDesc
       (call $handle_IDirect3DVertexBuffer_GetVertexBufferDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1459: IDirect3DVertexBuffer_Optimize
+    ) ;; 1460: IDirect3DVertexBuffer_Optimize
       (call $handle_IDirect3DVertexBuffer_Optimize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1460: IDirect3DVertexBuffer7_QueryInterface
+    ) ;; 1461: IDirect3DVertexBuffer7_QueryInterface
       (call $handle_IDirect3DVertexBuffer7_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1461: IDirect3DVertexBuffer7_AddRef
+    ) ;; 1462: IDirect3DVertexBuffer7_AddRef
       (call $handle_IDirect3DVertexBuffer7_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1462: IDirect3DVertexBuffer7_Release
+    ) ;; 1463: IDirect3DVertexBuffer7_Release
       (call $handle_IDirect3DVertexBuffer7_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1463: IDirect3DVertexBuffer7_Lock
+    ) ;; 1464: IDirect3DVertexBuffer7_Lock
       (call $handle_IDirect3DVertexBuffer7_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1464: IDirect3DVertexBuffer7_Unlock
+    ) ;; 1465: IDirect3DVertexBuffer7_Unlock
       (call $handle_IDirect3DVertexBuffer7_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1465: IDirect3DVertexBuffer7_ProcessVertices
+    ) ;; 1466: IDirect3DVertexBuffer7_ProcessVertices
       (call $handle_IDirect3DVertexBuffer7_ProcessVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1466: IDirect3DVertexBuffer7_GetVertexBufferDesc
+    ) ;; 1467: IDirect3DVertexBuffer7_GetVertexBufferDesc
       (call $handle_IDirect3DVertexBuffer7_GetVertexBufferDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1467: IDirect3DVertexBuffer7_Optimize
+    ) ;; 1468: IDirect3DVertexBuffer7_Optimize
       (call $handle_IDirect3DVertexBuffer7_Optimize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1468: IDirect3DVertexBuffer7_ProcessVerticesStrided
+    ) ;; 1469: IDirect3DVertexBuffer7_ProcessVerticesStrided
       (call $handle_IDirect3DVertexBuffer7_ProcessVerticesStrided (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1469: IDirect3DTexture_QueryInterface
+    ) ;; 1470: IDirect3DTexture_QueryInterface
       (call $handle_IDirect3DTexture_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1470: IDirect3DTexture_AddRef
+    ) ;; 1471: IDirect3DTexture_AddRef
       (call $handle_IDirect3DTexture_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1471: IDirect3DTexture_Release
+    ) ;; 1472: IDirect3DTexture_Release
       (call $handle_IDirect3DTexture_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1472: IDirect3DTexture_Initialize
+    ) ;; 1473: IDirect3DTexture_Initialize
       (call $handle_IDirect3DTexture_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1473: IDirect3DTexture_GetHandle
+    ) ;; 1474: IDirect3DTexture_GetHandle
       (call $handle_IDirect3DTexture_GetHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1474: IDirect3DTexture_PaletteChanged
+    ) ;; 1475: IDirect3DTexture_PaletteChanged
       (call $handle_IDirect3DTexture_PaletteChanged (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1475: IDirect3DTexture_Load
+    ) ;; 1476: IDirect3DTexture_Load
       (call $handle_IDirect3DTexture_Load (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1476: IDirect3DTexture_Unload
+    ) ;; 1477: IDirect3DTexture_Unload
       (call $handle_IDirect3DTexture_Unload (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1477: IDirect3DTexture2_QueryInterface
+    ) ;; 1478: IDirect3DTexture2_QueryInterface
       (call $handle_IDirect3DTexture2_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1478: IDirect3DTexture2_AddRef
+    ) ;; 1479: IDirect3DTexture2_AddRef
       (call $handle_IDirect3DTexture2_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1479: IDirect3DTexture2_Release
+    ) ;; 1480: IDirect3DTexture2_Release
       (call $handle_IDirect3DTexture2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1480: IDirect3DTexture2_GetHandle
+    ) ;; 1481: IDirect3DTexture2_GetHandle
       (call $handle_IDirect3DTexture2_GetHandle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1481: IDirect3DTexture2_PaletteChanged
+    ) ;; 1482: IDirect3DTexture2_PaletteChanged
       (call $handle_IDirect3DTexture2_PaletteChanged (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1482: IDirect3DTexture2_Load
+    ) ;; 1483: IDirect3DTexture2_Load
       (call $handle_IDirect3DTexture2_Load (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1483: DirectDrawCreateClipper
+    ) ;; 1484: DirectDrawCreateClipper
       (call $handle_DirectDrawCreateClipper (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1484: auxGetNumDevs
+    ) ;; 1485: auxGetNumDevs
       (call $handle_auxGetNumDevs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1485: auxGetDevCapsA
+    ) ;; 1486: auxGetDevCapsA
       (call $handle_auxGetDevCapsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1486: auxGetVolume
+    ) ;; 1487: auxGetVolume
       (call $handle_auxGetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1487: auxSetVolume
+    ) ;; 1488: auxSetVolume
       (call $handle_auxSetVolume (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 1488: auxOutMessage
+    ) ;; 1489: auxOutMessage
       (call $handle_auxOutMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
@@ -5973,65 +5977,65 @@
   ;; Generated by tools/gen_dispatch.js from api_table.json
   ;; ============================================================
   (func $init_dx_com_thunks (export "init_dx_com_thunks")
-    ;; IDirectDraw: 23 methods starting at api_id 977
-    (global.set $DX_VTBL_DDRAW (call $init_com_vtable (i32.const 977) (i32.const 23)))
-    ;; IDirectDraw2: extends IDirectDraw (23) + 1 extra = 24 total, extra at api_id 1250
+    ;; IDirectDraw: 23 methods starting at api_id 978
+    (global.set $DX_VTBL_DDRAW (call $init_com_vtable (i32.const 978) (i32.const 23)))
+    ;; IDirectDraw2: extends IDirectDraw (23) + 1 extra = 24 total, extra at api_id 1251
     (global.set $DX_VTBL_DDRAW2 (call $extend_com_vtable
-      (global.get $DX_VTBL_DDRAW) (i32.const 23) (i32.const 1250) (i32.const 24)))
-    ;; IDirectDrawSurface: 36 methods starting at api_id 1000
-    (global.set $DX_VTBL_DDSURF (call $init_com_vtable (i32.const 1000) (i32.const 36)))
-    ;; IDirectDrawPalette: 7 methods starting at api_id 1036
-    (global.set $DX_VTBL_DDPAL (call $init_com_vtable (i32.const 1036) (i32.const 7)))
-    ;; IDirectDrawClipper: 9 methods starting at api_id 1252
-    (global.set $DX_VTBL_DDCLIP (call $init_com_vtable (i32.const 1252) (i32.const 9)))
-    ;; IDirectSound: 11 methods starting at api_id 1043
-    (global.set $DX_VTBL_DSOUND (call $init_com_vtable (i32.const 1043) (i32.const 11)))
-    ;; IDirectSoundBuffer: 21 methods starting at api_id 1054
-    (global.set $DX_VTBL_DSBUF (call $init_com_vtable (i32.const 1054) (i32.const 21)))
-    ;; IDirectInput: 8 methods starting at api_id 1075
-    (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1075) (i32.const 8)))
-    ;; IDirectInputDevice: 18 methods starting at api_id 1083
-    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1083) (i32.const 18)))
-    ;; IDirect3D: 9 methods starting at api_id 1115
-    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1115) (i32.const 9)))
-    ;; IDirect3D3: 10 methods starting at api_id 1124
-    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1124) (i32.const 10)))
-    ;; IDirectDrawFactory: 5 methods starting at api_id 1137
-    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1137) (i32.const 5)))
-    ;; IDirect3DDevice3: 42 methods starting at api_id 1143
-    (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1143) (i32.const 42)))
-    ;; IDirect3DViewport3: 21 methods starting at api_id 1185
-    (global.set $DX_VTBL_D3DVP3 (call $init_com_vtable (i32.const 1185) (i32.const 21)))
-    ;; IDirect3DLight: 6 methods starting at api_id 1206
-    (global.set $DX_VTBL_D3DLIGHT (call $init_com_vtable (i32.const 1206) (i32.const 6)))
-    ;; IDirect3DMaterial3: 8 methods starting at api_id 1212
-    (global.set $DX_VTBL_D3DMAT3 (call $init_com_vtable (i32.const 1212) (i32.const 8)))
-    ;; IDirect3D2: 9 methods starting at api_id 1272
-    (global.set $DX_VTBL_D3D2 (call $init_com_vtable (i32.const 1272) (i32.const 9)))
-    ;; IDirect3D7: 8 methods starting at api_id 1281
-    (global.set $DX_VTBL_D3D7 (call $init_com_vtable (i32.const 1281) (i32.const 8)))
-    ;; IDirect3DDevice: 22 methods starting at api_id 1289
-    (global.set $DX_VTBL_D3DDEV1 (call $init_com_vtable (i32.const 1289) (i32.const 22)))
-    ;; IDirect3DDevice2: 33 methods starting at api_id 1311
-    (global.set $DX_VTBL_D3DDEV2 (call $init_com_vtable (i32.const 1311) (i32.const 33)))
-    ;; IDirect3DDevice7: 49 methods starting at api_id 1344
-    (global.set $DX_VTBL_D3DDEV7 (call $init_com_vtable (i32.const 1344) (i32.const 49)))
-    ;; IDirect3DViewport: 16 methods starting at api_id 1393
-    (global.set $DX_VTBL_D3DVP1 (call $init_com_vtable (i32.const 1393) (i32.const 16)))
-    ;; IDirect3DViewport2: 18 methods starting at api_id 1409
-    (global.set $DX_VTBL_D3DVP2 (call $init_com_vtable (i32.const 1409) (i32.const 18)))
-    ;; IDirect3DMaterial: 9 methods starting at api_id 1427
-    (global.set $DX_VTBL_D3DMAT1 (call $init_com_vtable (i32.const 1427) (i32.const 9)))
-    ;; IDirect3DMaterial2: 6 methods starting at api_id 1436
-    (global.set $DX_VTBL_D3DMAT2 (call $init_com_vtable (i32.const 1436) (i32.const 6)))
-    ;; IDirect3DExecuteBuffer: 10 methods starting at api_id 1442
-    (global.set $DX_VTBL_D3DEXEC (call $init_com_vtable (i32.const 1442) (i32.const 10)))
-    ;; IDirect3DVertexBuffer: 8 methods starting at api_id 1452
-    (global.set $DX_VTBL_D3DVB (call $init_com_vtable (i32.const 1452) (i32.const 8)))
-    ;; IDirect3DVertexBuffer7: 9 methods starting at api_id 1460
-    (global.set $DX_VTBL_D3DVB7 (call $init_com_vtable (i32.const 1460) (i32.const 9)))
-    ;; IDirect3DTexture: 8 methods starting at api_id 1469
-    (global.set $DX_VTBL_D3DTEX (call $init_com_vtable (i32.const 1469) (i32.const 8)))
-    ;; IDirect3DTexture2: 6 methods starting at api_id 1477
-    (global.set $DX_VTBL_D3DTEX2 (call $init_com_vtable (i32.const 1477) (i32.const 6)))
+      (global.get $DX_VTBL_DDRAW) (i32.const 23) (i32.const 1251) (i32.const 24)))
+    ;; IDirectDrawSurface: 36 methods starting at api_id 1001
+    (global.set $DX_VTBL_DDSURF (call $init_com_vtable (i32.const 1001) (i32.const 36)))
+    ;; IDirectDrawPalette: 7 methods starting at api_id 1037
+    (global.set $DX_VTBL_DDPAL (call $init_com_vtable (i32.const 1037) (i32.const 7)))
+    ;; IDirectDrawClipper: 9 methods starting at api_id 1253
+    (global.set $DX_VTBL_DDCLIP (call $init_com_vtable (i32.const 1253) (i32.const 9)))
+    ;; IDirectSound: 11 methods starting at api_id 1044
+    (global.set $DX_VTBL_DSOUND (call $init_com_vtable (i32.const 1044) (i32.const 11)))
+    ;; IDirectSoundBuffer: 21 methods starting at api_id 1055
+    (global.set $DX_VTBL_DSBUF (call $init_com_vtable (i32.const 1055) (i32.const 21)))
+    ;; IDirectInput: 8 methods starting at api_id 1076
+    (global.set $DX_VTBL_DINPUT (call $init_com_vtable (i32.const 1076) (i32.const 8)))
+    ;; IDirectInputDevice: 18 methods starting at api_id 1084
+    (global.set $DX_VTBL_DIDEV (call $init_com_vtable (i32.const 1084) (i32.const 18)))
+    ;; IDirect3D: 9 methods starting at api_id 1116
+    (global.set $DX_VTBL_D3D (call $init_com_vtable (i32.const 1116) (i32.const 9)))
+    ;; IDirect3D3: 10 methods starting at api_id 1125
+    (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1125) (i32.const 10)))
+    ;; IDirectDrawFactory: 5 methods starting at api_id 1138
+    (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1138) (i32.const 5)))
+    ;; IDirect3DDevice3: 42 methods starting at api_id 1144
+    (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1144) (i32.const 42)))
+    ;; IDirect3DViewport3: 21 methods starting at api_id 1186
+    (global.set $DX_VTBL_D3DVP3 (call $init_com_vtable (i32.const 1186) (i32.const 21)))
+    ;; IDirect3DLight: 6 methods starting at api_id 1207
+    (global.set $DX_VTBL_D3DLIGHT (call $init_com_vtable (i32.const 1207) (i32.const 6)))
+    ;; IDirect3DMaterial3: 8 methods starting at api_id 1213
+    (global.set $DX_VTBL_D3DMAT3 (call $init_com_vtable (i32.const 1213) (i32.const 8)))
+    ;; IDirect3D2: 9 methods starting at api_id 1273
+    (global.set $DX_VTBL_D3D2 (call $init_com_vtable (i32.const 1273) (i32.const 9)))
+    ;; IDirect3D7: 8 methods starting at api_id 1282
+    (global.set $DX_VTBL_D3D7 (call $init_com_vtable (i32.const 1282) (i32.const 8)))
+    ;; IDirect3DDevice: 22 methods starting at api_id 1290
+    (global.set $DX_VTBL_D3DDEV1 (call $init_com_vtable (i32.const 1290) (i32.const 22)))
+    ;; IDirect3DDevice2: 33 methods starting at api_id 1312
+    (global.set $DX_VTBL_D3DDEV2 (call $init_com_vtable (i32.const 1312) (i32.const 33)))
+    ;; IDirect3DDevice7: 49 methods starting at api_id 1345
+    (global.set $DX_VTBL_D3DDEV7 (call $init_com_vtable (i32.const 1345) (i32.const 49)))
+    ;; IDirect3DViewport: 16 methods starting at api_id 1394
+    (global.set $DX_VTBL_D3DVP1 (call $init_com_vtable (i32.const 1394) (i32.const 16)))
+    ;; IDirect3DViewport2: 18 methods starting at api_id 1410
+    (global.set $DX_VTBL_D3DVP2 (call $init_com_vtable (i32.const 1410) (i32.const 18)))
+    ;; IDirect3DMaterial: 9 methods starting at api_id 1428
+    (global.set $DX_VTBL_D3DMAT1 (call $init_com_vtable (i32.const 1428) (i32.const 9)))
+    ;; IDirect3DMaterial2: 6 methods starting at api_id 1437
+    (global.set $DX_VTBL_D3DMAT2 (call $init_com_vtable (i32.const 1437) (i32.const 6)))
+    ;; IDirect3DExecuteBuffer: 10 methods starting at api_id 1443
+    (global.set $DX_VTBL_D3DEXEC (call $init_com_vtable (i32.const 1443) (i32.const 10)))
+    ;; IDirect3DVertexBuffer: 8 methods starting at api_id 1453
+    (global.set $DX_VTBL_D3DVB (call $init_com_vtable (i32.const 1453) (i32.const 8)))
+    ;; IDirect3DVertexBuffer7: 9 methods starting at api_id 1461
+    (global.set $DX_VTBL_D3DVB7 (call $init_com_vtable (i32.const 1461) (i32.const 9)))
+    ;; IDirect3DTexture: 8 methods starting at api_id 1470
+    (global.set $DX_VTBL_D3DTEX (call $init_com_vtable (i32.const 1470) (i32.const 8)))
+    ;; IDirect3DTexture2: 6 methods starting at api_id 1478
+    (global.set $DX_VTBL_D3DTEX2 (call $init_com_vtable (i32.const 1478) (i32.const 6)))
   )
