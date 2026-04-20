@@ -178,30 +178,28 @@
             (global.set $dlg_ended (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))
-        ;; Drain nc_flags so the dialog's chrome and client-area erase
-        ;; actually fire. The main GetMessageA path walks these via
-        ;; nc_flags_scan; the modal pump used to skip them entirely, so
-        ;; modal dialogs stayed chrome-less with a transparent client.
-        ;; We drive the default handlers directly (bypassing the DlgProc)
-        ;; since DlgProcs conventionally return FALSE for NC/erase and
-        ;; expect DefDlgProc → DefWindowProc to do the drawing.
+        ;; Drain nc_flags for the dialog hwnd only — children don't have
+        ;; NC chrome. Without this filter, typing into an edit control
+        ;; (which calls InvalidateRect → host_invalidate → nc_post_paint
+        ;; on the edit hwnd) would cause us to draw a 3D edge + title bar
+        ;; for the edit's rect, leaving a spurious chrome fragment on the
+        ;; dialog back-canvas.
         (if (global.get $nc_flags_count)
           (then
+            (local.set $arg1 (call $nc_flags_test (global.get $dlg_pump_hwnd)))
             ;; WM_NCPAINT (bit 0)
-            (local.set $arg0 (call $nc_flags_scan (i32.const 1)))
-            (if (local.get $arg0)
+            (if (i32.and (local.get $arg1) (i32.const 1))
               (then
-                (call $nc_flags_clear (local.get $arg0) (i32.const 1))
-                (call $defwndproc_do_ncpaint (local.get $arg0))
+                (call $nc_flags_clear (global.get $dlg_pump_hwnd) (i32.const 1))
+                (call $defwndproc_do_ncpaint (global.get $dlg_pump_hwnd))
                 (global.set $eip (global.get $dlg_loop_thunk))
                 (global.set $steps (i32.const 0))
                 (return)))
             ;; WM_ERASEBKGND (bit 1) — default: COLOR_BTNFACE for dialogs
-            (local.set $arg0 (call $nc_flags_scan (i32.const 2)))
-            (if (local.get $arg0)
+            (if (i32.and (local.get $arg1) (i32.const 2))
               (then
-                (call $nc_flags_clear (local.get $arg0) (i32.const 2))
-                (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))
+                (call $nc_flags_clear (global.get $dlg_pump_hwnd) (i32.const 2))
+                (drop (call $host_erase_background (global.get $dlg_pump_hwnd) (i32.const 16)))
                 (global.set $eip (global.get $dlg_loop_thunk))
                 (global.set $steps (i32.const 0))
                 (return)))))
