@@ -59,6 +59,7 @@
     (local $edge i32)        ;; EDGE_RAISED (0x05) or EDGE_SUNKEN (0x0A)
     (local $off i32)         ;; glyph offset (0 or 1) when pressed
     (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
+    (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
 
     ;; Use whole-window DC (0xC0000 offset) so _getDrawTarget returns
     ;; ox=0,oy=0 — ncpaint draws at window-local coords without needing
@@ -70,16 +71,45 @@
     (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
 
-    ;; -------------------------------------------------
-    ;; Fill entire window rect with btnFace. The 3D edge,
-    ;; caption gradient, and client-area WM_PAINT all draw
-    ;; on top. One fill eliminates all gap rows between
-    ;; caption/menu/client/border.
-    ;; -------------------------------------------------
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 0) (i32.const 0)
-            (local.get $w) (local.get $h)
-            (i32.const 0x30011)))
+    ;; Fill NC region with btnFace as four strips around CLIENT_RECT.
+    ;; Full-rect fill would wipe child pixels from the shared back-canvas
+    ;; on any NC-only trigger (SetWindowTextA, activation, flash); only
+    ;; invalidated children get WM_PAINT, siblings stay gone. Fall back
+    ;; to full fill when CLIENT_RECT is unset (pre-NCCALCSIZE — safe,
+    ;; children haven't painted yet).
+    (local.set $cr_l (call $client_rect_get_l (local.get $hwnd)))
+    (local.set $cr_t (call $client_rect_get_t (local.get $hwnd)))
+    (local.set $cr_r (call $client_rect_get_r (local.get $hwnd)))
+    (local.set $cr_b (call $client_rect_get_b (local.get $hwnd)))
+    (if (i32.or (i32.le_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
+                (i32.le_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30011))))
+      (else
+        (if (i32.gt_s (local.get $cr_t) (i32.const 0))
+          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $cr_t)
+                        (i32.const 0x30011)))))
+        (if (i32.lt_s (local.get $cr_b) (local.get $h))
+          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (local.get $cr_b)
+                        (local.get $w) (i32.sub (local.get $h) (local.get $cr_b))
+                        (i32.const 0x30011)))))
+        (if (i32.gt_s (local.get $cr_l) (i32.const 0))
+          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (local.get $cr_t)
+                        (local.get $cr_l) (i32.sub (local.get $cr_b) (local.get $cr_t))
+                        (i32.const 0x30011)))))
+        (if (i32.lt_s (local.get $cr_r) (local.get $w))
+          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (local.get $cr_r) (local.get $cr_t)
+                        (i32.sub (local.get $w) (local.get $cr_r))
+                        (i32.sub (local.get $cr_b) (local.get $cr_t))
+                        (i32.const 0x30011)))))))
 
     ;; -------------------------------------------------
     ;; Outset 3D border around the whole window.
