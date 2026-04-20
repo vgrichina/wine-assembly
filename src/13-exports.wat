@@ -14,12 +14,12 @@
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
-      ;; Watchpoint: break when watched dword changes
+      ;; Watchpoint: break when watched region (1/2/4 bytes) changes
       (if (global.get $watch_addr)
         (then
-          (if (i32.ne (call $gl32 (global.get $watch_addr)) (global.get $watch_val))
+          (if (i32.ne (call $watch_load (global.get $watch_addr)) (global.get $watch_val))
             (then
-              (global.set $watch_val (call $gl32 (global.get $watch_addr)))
+              (global.set $watch_val (call $watch_load (global.get $watch_addr)))
               (br $halt)))))
       ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
       (if (global.get $yield_flag)
@@ -258,13 +258,26 @@
     (i32.load offset=4 (i32.add (global.get $HIT_COUNT_BASE)
                                 (i32.shl (local.get $slot) (i32.const 3)))))
   (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)))
+  ;; Size-aware load for watchpoint. $watch_size: 1=byte, 2=word, anything else=dword.
+  (func $watch_load (param $addr i32) (result i32)
+    (if (result i32) (i32.eq (global.get $watch_size) (i32.const 1))
+      (then (call $gl8 (local.get $addr)))
+      (else (if (result i32) (i32.eq (global.get $watch_size) (i32.const 2))
+        (then (call $gl16 (local.get $addr)))
+        (else (call $gl32 (local.get $addr)))))))
   (func (export "set_watchpoint") (param $addr i32)
     (global.set $watch_addr (local.get $addr))
     (if (local.get $addr)
-      (then (global.set $watch_val (call $gl32 (local.get $addr))))
+      (then (global.set $watch_val (call $watch_load (local.get $addr))))
       (else (global.set $watch_val (i32.const 0)))))
+  (func (export "set_watchpoint_size") (param $size i32)
+    (global.set $watch_size (local.get $size))
+    ;; re-read current value with new size so caller sees consistent baseline
+    (if (global.get $watch_addr)
+      (then (global.set $watch_val (call $watch_load (global.get $watch_addr))))))
   (func (export "get_watch_val") (result i32) (global.get $watch_val))
   (func (export "get_watch_addr") (result i32) (global.get $watch_addr))
+  (func (export "get_watch_size") (result i32) (global.get $watch_size))
 
   ;; call_func(addr, arg0, arg1, arg2, arg3): push args right-to-left + halt
   ;; return addr, set EIP, then caller uses run() to execute. Result in EAX.

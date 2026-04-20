@@ -33,8 +33,9 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace` | Every decoded block's EIP |
 | `--trace-seh` | SEH chain operations |
 | `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
-| `--trace-at=0xADDR` (`--trace-at-dump=0xADDR:LEN[,...]`) | Log regs + optional hexdump of given regions each time EIP hits addr (no stop) |
-| `--watch=0xADDR` (`--watch-value=0xVAL`) | Break when memory dword changes / equals value |
+| `--trace-at=0xADDR` (`--trace-at-dump=0xADDR:LEN[,...]`) | Log regs + optional hexdump of given regions each time EIP hits addr (no stop). Add `--trace-at-watch` to diff each hexdump vs previous hit (bytes marked `*`). |
+| `--watch=0xADDR` / `--watch-byte=ADDR` / `--watch-word=ADDR` (`--watch-value=0xVAL`, `--watch-log`) | Break when memory at ADDR changes. Size: dword/byte/word. `--watch-log` logs every change without stopping into debug prompt (essential for non-interactive runs). `--watch-value` filters to a specific target value. |
+| `--show-cstring=0xADDR[,...]` | On every `--trace-at` hit and debug prompt, decode 1-byte-refcount + ASCII-at-+1 CString layout. Prints `[CString@ADDR] rc=N len=M "text"` — great for MFC/Borland apps where strings are packed this way. |
 | `--skip=0xADDR[,...]` | Simulate `ret` when EIP hits — step past a fn |
 | `--dump=0xADDR:LEN`, `--dump-seh`, `--dump-backcanvas` | Post-run memory hexdump / SEH dump / per-window back-canvas PNGs |
 

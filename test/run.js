@@ -5,6 +5,7 @@ const { createHostImports } = require('../lib/host-imports');
 const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
+const { decodeMfcCString } = require('../lib/mem-utils');
 let createCanvas, Win98Renderer;
 try {
   const canvasMod = require('canvas');
@@ -53,7 +54,12 @@ const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each t
 const TRACE_AT_DUMP = getArg('trace-at-dump', null); // --trace-at-dump=0xADDR:LEN[,0xADDR:LEN,...]: hexdump these regions on each --trace-at hit
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
+const WATCH_BYTE = getArg('watch-byte', null);   // --watch-byte=0xADDR: byte-granularity watch
+const WATCH_WORD = getArg('watch-word', null);   // --watch-word=0xADDR: 16-bit watch
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
+const WATCH_LOG = hasFlag('watch-log');          // --watch-log: log each change and keep running (no debug prompt)
+const TRACE_AT_WATCH = hasFlag('trace-at-watch'); // --trace-at-watch: diff --trace-at-dump regions vs previous hit, show changed bytes
+const SHOW_CSTRING = getArg('show-cstring', null); // --show-cstring=0xADDR[,0xADDR...]: decode MFC CString at these addrs in trace-at and debug prompt
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
@@ -77,8 +83,9 @@ const traceAtAddr = TRACE_AT ? parseInt(TRACE_AT, 16) : 0; // set_bp supports on
 let traceAtHits = 0;
 const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
-  return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 64 };
+  return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 64, prev: null };
 }) : [];
+const showCStringAddrs = SHOW_CSTRING ? SHOW_CSTRING.split(',').map(s => parseInt(s, 16) >>> 0) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
 const skipAddrs = SKIP_SPEC ? SKIP_SPEC.split(',').map(s => parseInt(s, 16)) : [];
 const countAddrs = COUNT_SPEC ? COUNT_SPEC.split(',').map(s => parseInt(s, 16)) : [];
@@ -1153,20 +1160,79 @@ async function main() {
     }
   };
 
+  // Grab a snapshot of a guest region as Uint8Array (for diff tracking)
+  const readBytes = (guestAddr, len) => {
+    const out = new Uint8Array(len);
+    const bytes = new Uint8Array(memory.buffer);
+    for (let i = 0; i < len; i++) out[i] = bytes[g2w(guestAddr + i)];
+    return out;
+  };
+
+  // Diff-hexdump: like hexdump but brackets bytes that differ from `prev`
+  const hexdumpDiff = (guestAddr, len, prev) => {
+    const cur = readBytes(guestAddr, len);
+    let changedRanges = [];
+    for (let i = 0; i < len; i++) {
+      if (prev[i] !== cur[i]) {
+        if (changedRanges.length && changedRanges[changedRanges.length-1][1] === i-1) {
+          changedRanges[changedRanges.length-1][1] = i;
+        } else {
+          changedRanges.push([i, i]);
+        }
+      }
+    }
+    console.log(`Hexdump ${hex(guestAddr)} (${len} bytes)${changedRanges.length ? ' [changed: ' + changedRanges.map(r => r[0] === r[1] ? `+${r[0]}` : `+${r[0]}..${r[1]}`).join(',') + ']' : ' [no changes]'}:`);
+    for (let off = 0; off < len; off += 16) {
+      let hexPart = '', ascPart = '';
+      for (let i = 0; i < 16 && off + i < len; i++) {
+        const b = cur[off + i];
+        const marker = prev[off + i] !== b ? '*' : ' ';
+        hexPart += b.toString(16).padStart(2, '0') + marker;
+        ascPart += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.';
+      }
+      console.log(`  ${hex(guestAddr + off)}  ${hexPart.padEnd(49)}${ascPart}`);
+    }
+    return cur;
+  };
+
+  // Pretty-print MFC CStrings at --show-cstring= addrs (returns multi-line string or '')
+  const showCStrings = () => {
+    if (!showCStringAddrs.length || !decodeMfcCString) return '';
+    const mem = new Uint8Array(memory.buffer);
+    const imageBase = instance.exports.get_image_base();
+    const lines = [];
+    for (const addr of showCStringAddrs) {
+      const d = decodeMfcCString(mem, addr, imageBase);
+      if (d) lines.push(`  [CString@${hex(addr)}] rc=${d.refcount} len=${d.len} "${d.text}"`);
+      else lines.push(`  [CString@${hex(addr)}] (not a CString)`);
+    }
+    return lines.join('\n');
+  };
+
   let prevEip = 0, stuckCount = 0, prevApiCount = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
-  // Watchpoint: WASM-level per-block memory watch (dword granularity)
-  let watchAddr = 0, watchPrevVal = 0;
-  if (WATCH_SPEC) {
-    const addrStr = WATCH_SPEC.split(':')[0];
-    watchAddr = parseInt(addrStr, 16);
-    console.log(`Watchpoint set: ${hex(watchAddr)} (dword, checked every block)`);
+  // Watchpoint: WASM-level per-block memory watch (1/2/4 byte granularity)
+  let watchAddr = 0, watchPrevVal = 0, watchSize = 4;
+  if (WATCH_BYTE) {
+    watchAddr = parseInt(WATCH_BYTE.split(':')[0], 16);
+    watchSize = 1;
+  } else if (WATCH_WORD) {
+    watchAddr = parseInt(WATCH_WORD.split(':')[0], 16);
+    watchSize = 2;
+  } else if (WATCH_SPEC) {
+    watchAddr = parseInt(WATCH_SPEC.split(':')[0], 16);
+    watchSize = 4;
+  }
+  if (watchAddr) {
+    const sizeName = { 1: 'byte', 2: 'word', 4: 'dword' }[watchSize];
+    console.log(`Watchpoint set: ${hex(watchAddr)} (${sizeName}, checked every block)`);
   }
 
   const activateWatchpoint = () => {
     if (!watchAddr) return;
+    if (instance.exports.set_watchpoint_size) instance.exports.set_watchpoint_size(watchSize);
     instance.exports.set_watchpoint(watchAddr);
     watchPrevVal = instance.exports.get_watch_val();
   };
@@ -1194,6 +1260,8 @@ async function main() {
     dumpStack(reason);
     disasmAt(instance.exports.get_eip());
     if (TRACE_SEH) dumpSEH();
+    const cs = showCStrings();
+    if (cs) console.log(cs);
     while (logs.length) console.log(logs.shift());
     const readline = require('readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -1717,7 +1785,16 @@ async function main() {
         let stk = '';
         for (let i = 0; i < 6; i++) stk += hex(mem32[(wEsp >> 2) + i]) + ' ';
         console.log(`[TRACE-AT #${traceAtHits}] ${regs()} [esp..]=${stk}`);
-        for (const d of traceAtDumps) hexdump(d.addr, d.len);
+        for (const d of traceAtDumps) {
+          if (TRACE_AT_WATCH && d.prev) {
+            d.prev = hexdumpDiff(d.addr, d.len, d.prev);
+          } else {
+            hexdump(d.addr, d.len);
+            if (TRACE_AT_WATCH) d.prev = readBytes(d.addr, d.len);
+          }
+        }
+        const cs = showCStrings();
+        if (cs) console.log(cs);
         if (e.set_bp) e.set_bp(traceAtAddr);
       }
     }
@@ -1848,8 +1925,10 @@ async function main() {
 
 // Watchpoint check
     if (checkWatchpoint(batch)) {
-      stepping = true;
-      await debugPrompt('Watch');
+      if (!WATCH_LOG) {
+        stepping = true;
+        await debugPrompt('Watch');
+      }
     }
 
     // API breakpoint check

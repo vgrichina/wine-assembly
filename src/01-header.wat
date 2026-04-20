@@ -864,8 +864,10 @@
   (global $help_back_count  (mut i32) (i32.const 0))  ;; Back stack size
 
   ;; Watchpoint: break when [watch_addr] changes (0=disabled)
+  ;; $watch_size: 1/2/4 bytes (default 4 = dword); 0 also treated as 4
   (global $watch_addr (mut i32) (i32.const 0))
   (global $watch_val  (mut i32) (i32.const 0))
+  (global $watch_size (mut i32) (i32.const 4))
   ;; Tick count (incremented by GetTickCount, starts at ~1 second)
   (global $tick_count (mut i32) (i32.const 1000))
 
