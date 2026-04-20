@@ -12,24 +12,30 @@ const RUN_JS = path.join(__dirname, 'run.js');
 const PNG_DIR = path.join(ROOT, 'scratch', 'harness-pngs');
 const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in PNG
 
-// Count unique RGB triples in a PNG file. Returns null if load fails.
-async function countUniqueColors(pngPath) {
+// Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
+// topShare = fraction of pixels covered by the most common color. A PNG is
+// "blank" iff colors ≤ threshold AND topShare > 0.95 (near-solid fill).
+// Cartoon/sprite content with few distinct colors but visible shapes
+// (e.g. black hearts on a red background) has topShare < 0.95 and PASSes.
+async function analyzePng(pngPath) {
   try {
     const img = await loadImage(pngPath);
     const w = img.width, h = img.height;
-    if (!w || !h) return 0;
+    if (!w || !h) return { colors: 0, topShare: 1 };
     const c = createCanvas(w, h);
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0);
     const data = ctx.getImageData(0, 0, w, h).data;
-    const seen = new Set();
-    // Sample every 4th pixel for speed on large canvases
-    const step = 4 * 4;
-    for (let i = 0; i < data.length; i += step) {
-      seen.add((data[i] << 16) | (data[i+1] << 8) | data[i+2]);
-      if (seen.size > 64) break;  // early exit — definitely not blank
+    const hist = new Map();
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const k = (data[i] << 16) | (data[i+1] << 8) | data[i+2];
+      hist.set(k, (hist.get(k) || 0) + 1);
+      total++;
     }
-    return seen.size;
+    let top = 0;
+    for (const n of hist.values()) if (n > top) top = n;
+    return { colors: hist.size, topShare: total ? top / total : 1 };
   } catch (_) {
     return null;
   }
@@ -316,14 +322,19 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     const r = runExe(tc, pngPath);
 
     // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
+    // Two-signal: few unique colors AND >95% of pixels in one color = blank.
+    // Cartoon content (few colors but real shapes) passes the second check.
     if (r.status === 'OK' && fs.existsSync(pngPath)) {
-      const colors = await countUniqueColors(pngPath);
-      r.colors = colors;
-      if (colors !== null && colors <= BLANK_COLOR_THRESHOLD) {
-        r.status = 'WARN';
-        r.reason = `${r.reason} — BLANK (${colors} colors in PNG)`;
-      } else if (colors !== null) {
-        r.reason = `${r.reason}, ${colors}+ colors`;
+      const a = await analyzePng(pngPath);
+      if (a) {
+        r.colors = a.colors;
+        const isBlank = a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.95;
+        if (isBlank) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — BLANK (${a.colors} colors, ${(a.topShare*100).toFixed(1)}% one color)`;
+        } else {
+          r.reason = `${r.reason}, ${a.colors} colors`;
+        }
       }
     }
     results.push(r);
