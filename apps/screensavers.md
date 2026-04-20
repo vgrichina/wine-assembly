@@ -525,6 +525,57 @@ So the CString literally contains one character ("c") with a correctly-formed MF
 
 Also useful: `--watch-log` on the parent CString pointer slot (wherever `[edi+4]` resides for this particular struct) to find who assigned the 1-char CString to that object.
 
+**Session (g) continued — writer is GetOrCreate's own `strlwr(strdup(key))` result copy, not external corruption:**
+
+`--watch-byte=0x74a16ac1 --watch-log` hit at batch 121 with prev_eip=0x74402ac6 inside a generic MFC `CString::AssignCopy(this, src, len)` at fn 0x74402a50 (106 xrefs — hot path). The specific call that wrote here came from 0x7441a28e inside `TextureMap::GetOrCreate` (fn 0x7441a220) itself:
+
+```
+7441a255  push eax                  ; key's buffer-ptr ([key_CString+4])
+7441a256  call 0x744aac30           ; strdup → new buffer
+7441a25e  push eax
+7441a25f  call 0x7448f2c0           ; strlwr (in-place lowercase A-Z)
+7441a288  push ecx                  ; nSrcLen (strlen of result)
+7441a289  push esi                  ; src = lowercased dup
+7441a28a  lea ecx, [esp+0x24]       ; local CString
+7441a28e  call 0x74402a50           ; AssignCopy (writes 'c' into 0x74a16ac1)
+```
+
+So `0x74a16ac1` is the LOCAL lowercased-key CString built inside GetOrCreate. Its length is 1 because the **caller is passing a 1-char key CString** ("C" uppercase → lowercased to "c").
+
+**Caller traced one more level:** the 4 GetOrCreate wrappers (0x7441a540/620/8a0/980) are each called from exactly one site:
+
+| Wrapper | Flag | Caller | Enclosing fn |
+|---------|------|--------|--------------|
+| 0x7441a540 | 1 (insert-on-miss) | 0x744214a4 | 0x744213f7 |
+| 0x7441a620 | 0 | — (no static xref) | |
+| 0x7441a8a0 | 1 | — (no static xref) | |
+| 0x7441a980 | 0 | 0x74451242 | 0x7445114e |
+
+Call site at 0x74421498:
+```
+lea ecx, [ebx+0xc]    ; key-CString address (arg1 of wrapper)
+lea edx, [esp+0x18]   ; out-CString buffer
+push ecx              ; push &key
+mov ecx, [ebx+0x4]    ; TextureMap this = [ebx+0x4]
+push edx              ; push &out
+call 0x7441a540       ; → GetOrCreate(flag=1)
+```
+
+So `ebx` is a record struct where:
+- `[ebx+0x04]` holds a TextureMap pointer (the "this" for the member fn)
+- `[ebx+0x0C]` is an inline CString member holding the texture key
+- `[ebx+0x10]` is the CString's buffer pointer (points to the "C" string data)
+
+Fn `0x744213f7` is clearly a **mesh/material record builder** — its entry region is filled with FPU stores to `[ebp+0x18..0x64]` (floats for position/color/transform). It's almost certainly parsing a chunk from `AR_MESH.X` / `AR_TEXTU.GIF` / the scene geometry stream, and storing a **per-mesh texture key** at `[ebx+0x0C]`. For ARCHITEC the stored key is the 1-char string "C".
+
+**Likely root cause:** the .X / scene binary parser is reading a 1-byte-length-prefixed string incorrectly and stopping after 1 byte. Or the .X file literally has a material named "C" (unlikely but possible) and the app expects a built-in texture named "c" to exist — which it doesn't because our built-in TextureMap is empty.
+
+**Concrete next steps:**
+1. xref fn `0x744213f7` upward to find the parser loop that fills the struct at `ebx`.
+2. Check `test/binaries/screensavers/AR_MESH.X` and `ALIEN.X` for any single-char material/texture names.
+3. Separately, investigate the "built-in textures" theory: there are hard-coded names like `"Granite"`, `"Marble"` that scenes expect — find the init code that registers them. If `"c"` is a single-letter built-in (e.g. color-channel shortcut), that init path is the real missing piece.
+4. Tool gap felt this session: add `--trace-call=0xADDR[,...]` that auto-decodes the first CString arg at entry (this-call ECX or [esp+4]). Would have short-circuited 3 levels of disasm.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
