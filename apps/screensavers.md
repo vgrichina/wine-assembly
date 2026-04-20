@@ -576,6 +576,36 @@ Fn `0x744213f7` is clearly a **mesh/material record builder** — its entry regi
 3. Separately, investigate the "built-in textures" theory: there are hard-coded names like `"Granite"`, `"Marble"` that scenes expect — find the init code that registers them. If `"c"` is a single-letter built-in (e.g. color-channel shortcut), that init path is the real missing piece.
 4. Tool gap felt this session: add `--trace-call=0xADDR[,...]` that auto-decodes the first CString arg at entry (this-call ECX or [esp+4]). Would have short-circuited 3 levels of disasm.
 
+**Session (g) continued — THE BIG REVEAL: this is a Pascal ShortString / length-prefixed buffer:**
+
+Located the actual key buffer at guest `0x74a16900` (= `[ebx+0x10]` where ebx=0x74a168f0 is the parent struct observed at GetOrCreate entry). `--watch=0x74a16900 --watch-log` produced a sequence of DWORD values that tells the whole story:
+
+| Batch | Old dword | New dword | LE bytes | Interpretation |
+|-------|-----------|-----------|----------|----------------|
+| 87 | 0x00000000 | 0x6c6f4300 | 00 43 6f 6c | `[len=0]`+"Col" |
+| 88 | 0x6c6f4300 | 0x6c6f4301 | 01 43 6f 6c | `[len=1]`+"Col" → observer sees "C" |
+| 89 | 0x6c6f4301 | 0x6c6f4300 | 00 43 6f 6c | len back to 0 |
+| 94 | 0x6c6f4300 | 0x6c6f0000 | 00 00 6f 6c | "ol" remnant |
+| 95 | 0x6c6f0000 | 0x74614d00 | 00 4d 61 74 | `[len=0]`+"Mat" |
+| 96 | 0x74614d00 | 0x74614d01 | 01 4d 61 74 | `[len=1]`+"Mat" → observer sees "M" |
+| 97 | 0x74614d01 | 0x74614d00 | 00 4d 61 74 | len back to 0 |
+
+**This is a Pascal ShortString layout: first byte = length, subsequent bytes = chars.** OR: it's a fixed 4-byte slot used to hold packed 3-char identifiers ("Col", "Mat") with a separate in-band length/flag byte.
+
+Someone is **repeatedly setting byte[0] to 1, letting code read the buffer as a C-string (seeing just 1 char "C" or "M"), then restoring byte[0] to 0**. That's a property-probe pattern — the caller is asking "what's the first char?" and the implementation is simulating it by temporarily claiming length=1.
+
+Our emulator's TextureMap::GetOrCreate path picks up the 1-char state and honestly tries to load a file named "c" — which fails.
+
+**Why it fails on the emulator but presumably works on real Win98:**
+- On real Win98, texture loading is fast and the 1-char state is transient — the "real" texture key gets assigned later, overwriting this probe-artifact. GetOrCreate gets called with a proper key ("MARBLE-green.ppm" etc.) before any fopen matters.
+- On our emulator, SOMETHING is calling GetOrCreate while the slot is still in probe state, latching the bad key.
+- Alternatively, we have a threading / ordering bug — a code path that's supposed to run AFTER a different one (that writes the real key) is running first.
+
+**Next-session starting points:**
+1. Find the full sequence of callers that touch `0x74a16900`. Run with `--trace-at` at EVERY EIP in the watch-log (0x7445de41, 0x74454aca, 0x74402fa9, 0x7440ad33, 0x7445e1b8, 0x744205f2) to understand the setter/getter pairs.
+2. The Borland string library almost certainly has a `StrAsg` / `LStrAsg` (AnsiString assignment) that manages refcounts and lengths. Identify the Borland runtime in the PE (look for `@System@LStrAsg` / `System::AnsiString::operator=` patterns) and compare behavior to what our emulator does for memcpy/strcpy primitives.
+3. Check whether the struct `ebx` (0x74a168f0) is supposed to have its texture key set by a LATER code path that's being skipped. e.g. the 0x744213f7 fn we identified as the parser may fire for one scene element but not the next — the "c" key may be a LEFTOVER from initialization that a subsequent parse should overwrite but doesn't.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
