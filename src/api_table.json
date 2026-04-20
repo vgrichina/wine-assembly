@@ -10440,5 +10440,19 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3656723766
+  },
+  {
+    "id": 1492,
+    "name": "CreateEllipticRgn",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1205160998
+  },
+  {
+    "id": 1493,
+    "name": "GetRgnBox",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 855758575
   }
 ]

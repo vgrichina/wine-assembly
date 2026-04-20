@@ -3972,11 +3972,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
-  ;; 361: CreateRectRgnIndirect — STUB: unimplemented
+  ;; 361: CreateRectRgnIndirect(lprc) — read RECT and call CreateRectRgn host fn.
   (func $handle_CreateRectRgnIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CreateRectRgnIndirect(lprc) — 1 arg stdcall
-    (global.set $rgn_counter (i32.add (global.get $rgn_counter) (i32.const 1)))
-    (global.set $eax (i32.or (i32.const 0x00DD0000) (global.get $rgn_counter)))
+    (local $r i32)
+    (local.set $r (call $g2w (local.get $arg0)))
+    (global.set $eax (call $host_gdi_create_rect_rgn
+      (i32.load (local.get $r))
+      (i32.load (i32.add (local.get $r) (i32.const 4)))
+      (i32.load (i32.add (local.get $r) (i32.const 8)))
+      (i32.load (i32.add (local.get $r) (i32.const 12)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -5031,33 +5035,10 @@
   )
 
   ;; 454: CreatePolygonRgn(lpPoints, cPoints, fnPolyFillMode) → HRGN
-  ;; Compute bounding box of the points and delegate to CreateRectRgn.
+  ;; Pass points through to host for exact polygon clipping.
   (func $handle_CreatePolygonRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pts i32) (local $n i32) (local $i i32)
-    (local $x i32) (local $y i32)
-    (local $minx i32) (local $miny i32) (local $maxx i32) (local $maxy i32)
-    (local.set $pts (call $g2w (local.get $arg0)))
-    (local.set $n (local.get $arg1))
-    (local.set $minx (i32.const 0x7fffffff))
-    (local.set $miny (i32.const 0x7fffffff))
-    (local.set $maxx (i32.const 0x80000000))
-    (local.set $maxy (i32.const 0x80000000))
-    (local.set $i (i32.const 0))
-    (block $done (loop $lp
-      (br_if $done (i32.ge_s (local.get $i) (local.get $n)))
-      (local.set $x (i32.load (i32.add (local.get $pts) (i32.mul (local.get $i) (i32.const 8)))))
-      (local.set $y (i32.load (i32.add (local.get $pts) (i32.add (i32.mul (local.get $i) (i32.const 8)) (i32.const 4)))))
-      (if (i32.lt_s (local.get $x) (local.get $minx)) (then (local.set $minx (local.get $x))))
-      (if (i32.lt_s (local.get $y) (local.get $miny)) (then (local.set $miny (local.get $y))))
-      (if (i32.gt_s (local.get $x) (local.get $maxx)) (then (local.set $maxx (local.get $x))))
-      (if (i32.gt_s (local.get $y) (local.get $maxy)) (then (local.set $maxy (local.get $y))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp)))
-    (if (i32.le_s (local.get $n) (i32.const 0)) (then
-      (local.set $minx (i32.const 0)) (local.set $miny (i32.const 0))
-      (local.set $maxx (i32.const 0)) (local.set $maxy (i32.const 0))))
-    (global.set $eax (call $host_gdi_create_rect_rgn
-      (local.get $minx) (local.get $miny) (local.get $maxx) (local.get $maxy)))
+    (global.set $eax (call $host_gdi_create_polygon_rgn
+      (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -6320,9 +6301,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 578: ExcludeClipRect — STUB: unimplemented
+  ;; 578: ExcludeClipRect(hdc, l, t, r, b) — 5 args stdcall.
   (func $handle_ExcludeClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_exclude_clip_rect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 579: SelectClipRgn(hdc, hrgn) — 2 args stdcall
@@ -6367,9 +6350,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 585: IntersectClipRect — STUB: unimplemented
+  ;; 585: IntersectClipRect(hdc, l, t, r, b) — 5 args stdcall.
   (func $handle_IntersectClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_intersect_clip_rect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 586: GetWindowOrgEx(hdc, lpPoint) → BOOL
@@ -8781,4 +8766,22 @@
       (then (call $gs32 (call $g2w (local.get $arg3)) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; CreateEllipticRgn(left, top, right, bottom) → HRGN
+  (func $handle_CreateEllipticRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_create_ellipse_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; GetRgnBox(hrgn, lprc) → complexity. Writes bbox into lprc and returns
+  ;; SIMPLEREGION/COMPLEXREGION/NULLREGION (1/2/3) like the real GDI.
+  (func $handle_GetRgnBox (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rect_wa i32)
+    (local.set $rect_wa (if (result i32) (local.get $arg1)
+      (then (call $g2w (local.get $arg1))) (else (i32.const 0))))
+    (global.set $eax (call $host_gdi_get_rgn_box
+      (local.get $arg0) (local.get $rect_wa)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
 

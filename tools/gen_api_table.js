@@ -417,6 +417,9 @@ const extra = [
   { name: 'GetKeyboardLayout', nargs: 1 },
   // KERNEL32 — Telnet sets thread locale at startup; accept & ignore
   { name: 'SetThreadLocale', nargs: 1 },
+  // GDI32 — region builders + queries (exact polygon clip + GetRgnBox).
+  { name: 'CreateEllipticRgn', nargs: 4 },
+  { name: 'GetRgnBox', nargs: 2 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

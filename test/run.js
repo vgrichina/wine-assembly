@@ -42,6 +42,7 @@ const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
+const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
@@ -349,6 +350,7 @@ async function main() {
 
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
+  if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_DX) traceCategories.add('dx');
   if (TRACE_FS) traceCategories.add('fs');
@@ -1515,6 +1517,8 @@ async function main() {
           logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`);
           if (DUMP_BACKCANVAS) {
             for (const [hwndStr, win] of Object.entries(renderer.windows)) {
+              if (!win) continue;
+              logs.push(`[input] window hwnd=${hwndStr} pos=${win.x},${win.y} size=${win.w}x${win.h} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas}`);
               if (win._backCanvas && win._backCanvas.toBuffer) {
                 const bcPath = ev.path.replace('.png', `_back_${hwndStr}.png`);
                 fs.writeFileSync(bcPath, win._backCanvas.toBuffer('image/png'));
