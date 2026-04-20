@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 280 funcref)
+  (table $handlers 281 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -332,5 +332,6 @@
     $th_cmpxchg16          ;; 277: cmpxchg r/m16, r16 (same encoding as th_cmpxchg)
     $th_xadd16             ;; 278: xadd r/m16, r16 (same encoding as th_xadd)
     $th_test_r16_i16       ;; 279: test r16, imm16 (op=reg, imm in next word)
+    $th_xlat               ;; 280: XLAT — AL = [EBX + AL] (zero-ext AL as offset)
   )
 

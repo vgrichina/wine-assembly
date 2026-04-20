@@ -1231,6 +1231,7 @@
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x9E)) (then (call $te (i32.const 212) (i32.const 0)) (br $decode))) ;; SAHF
       (if (i32.eq (local.get $op) (i32.const 0x9F)) (then (call $te (i32.const 213) (i32.const 0)) (br $decode))) ;; LAHF
+      (if (i32.eq (local.get $op) (i32.const 0xD7)) (then (call $te (i32.const 280) (i32.const 0)) (br $decode))) ;; XLAT
       (if (i32.eq (local.get $op) (i32.const 0x99)) ;; CDQ / CWD
         (then (if (local.get $prefix_66)
           (then (call $te (i32.const 180) (i32.const 0)))  ;; CWD

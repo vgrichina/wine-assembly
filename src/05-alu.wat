@@ -2244,6 +2244,14 @@
         (else (global.set $flag_res (i32.const 1))))))
     (return_call $next))
 
+  ;; Handler 280: XLAT — AL = byte [EBX + zero-extended AL]. No flags touched.
+  (func $th_xlat (param $op i32)
+    (local $b i32)
+    (local.set $b (i32.load8_u (call $g2w
+      (i32.add (global.get $ebx) (i32.and (global.get $eax) (i32.const 0xFF))))))
+    (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFFFF00)) (local.get $b)))
+    (return_call $next))
+
   ;; Handler 213: LAHF — load AH from flags (SF, ZF, 0, AF, 0, PF, 1, CF)
   (func $th_lahf (param $op i32)
     (local $ah i32)
