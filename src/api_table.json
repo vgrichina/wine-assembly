@@ -10426,5 +10426,19 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2159409594
+  },
+  {
+    "id": 1490,
+    "name": "SetMenuItemInfoA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 783918890
+  },
+  {
+    "id": 1491,
+    "name": "GetMenuItemInfoA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3656723766
   }
 ]

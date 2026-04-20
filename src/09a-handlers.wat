@@ -5108,9 +5108,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
-  ;; 458: EnableScrollBar — STUB: unimplemented
+  ;; 458: EnableScrollBar(hWnd, wSBflags, wArrows) — we have no scroll bars,
+  ;; so enabling/disabling is a no-op. Return TRUE so apps don't think the
+  ;; call failed.
   (func $handle_EnableScrollBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
   )
 
   ;; 459: GetCaretPos — STUB: unimplemented
@@ -6755,9 +6758,26 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 621: GetMenuItemCount — STUB: unimplemented
+  ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
+  ;; is a stub. flip2d calls this during window setup but doesn't depend on it.
+  (func $handle_SetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
+  )
+
+  ;; GetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; zero the struct
+  ;; past its dwSize (caller-provided at +0) so callers don't see garbage.
+  (func $handle_GetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
+  )
+
+  ;; 621: GetMenuItemCount(hMenu) — the menu subsystem is a stub that doesn't
+  ;; track items, so report 0 (empty menu) rather than crashing. DX samples
+  ;; like flip2d call this during window setup but don't care about the count.
   (func $handle_GetMenuItemCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
   ;; 622: GetTopWindow(hWnd) — 1 arg stdcall, return NULL

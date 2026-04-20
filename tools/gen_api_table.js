@@ -42,6 +42,8 @@ const extra = [
   { name: 'RegOpenKeyA', nargs: 3 },
   { name: 'RegOpenKeyExA', nargs: 5 },
   { name: 'MessageBeep', nargs: 1 },
+  { name: 'SetMenuItemInfoA', nargs: 4 },
+  { name: 'GetMenuItemInfoA', nargs: 4 },
   // APIs with multi-name comments (not caught by single-name regex)
   { name: 'RegisterClassExA', nargs: 1 },
   { name: 'RegisterClassA', nargs: 1 },
