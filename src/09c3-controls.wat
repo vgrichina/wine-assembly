@@ -3685,14 +3685,132 @@
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
   )
 
+  ;; Draw a scrollbar arrow button: edge box + 4-row triangle glyph.
+  ;; dir: 0=up, 1=down, 2=left, 3=right
+  ;; (bit0 = apex-trailing, bit1 = horizontal axis)
+  ;; pressed: 0 = raised, 1 = sunken + glyph shifted 1px down/right
+  (func $draw_sb_arrow (param $hdc i32) (param $bx i32) (param $by i32)
+                       (param $bw i32) (param $bh i32) (param $dir i32) (param $pressed i32)
+    (local $cx i32) (local $cy i32) (local $i i32) (local $u i32) (local $half i32)
+    ;; Background fill + 3D edge (raised normally, sunken when pressed).
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $bx) (local.get $by)
+            (i32.add (local.get $bx) (local.get $bw))
+            (i32.add (local.get $by) (local.get $bh))
+            (i32.const 0x30011))) ;; LTGRAY_BRUSH
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $bx) (local.get $by)
+            (i32.add (local.get $bx) (local.get $bw))
+            (i32.add (local.get $by) (local.get $bh))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pressed)) ;; BDR_SUNKEN : BDR_RAISED
+            (i32.const 0x0F))) ;; BF_RECT
+    ;; Glyph center (shift 1px down/right when pressed for the classic Win98 look).
+    (local.set $cx (i32.add (i32.add (local.get $bx) (i32.div_s (local.get $bw) (i32.const 2))) (local.get $pressed)))
+    (local.set $cy (i32.add (i32.add (local.get $by) (i32.div_s (local.get $bh) (i32.const 2))) (local.get $pressed)))
+    ;; 4 1-thick scanlines forming a triangle (1,3,5,7 wide).
+    (local.set $i (i32.const 0))
+    (block $end (loop $next
+      (br_if $end (i32.ge_s (local.get $i) (i32.const 4)))
+      (local.set $u (i32.sub (local.get $i) (i32.const 2)))
+      ;; half-extent: bit0=0 → i (apex first); bit0=1 → 3-i (apex last)
+      (if (i32.and (local.get $dir) (i32.const 1))
+        (then (local.set $half (i32.sub (i32.const 3) (local.get $i))))
+        (else (local.set $half (local.get $i))))
+      (if (i32.and (local.get $dir) (i32.const 2))
+        (then ;; horizontal: u→x, half→y
+          (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (i32.add (local.get $cx) (local.get $u))
+                  (i32.sub (local.get $cy) (local.get $half))
+                  (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 1))
+                  (i32.add (i32.add (local.get $cy) (local.get $half)) (i32.const 1))
+                  (i32.const 0x30014)))) ;; BLACK_BRUSH
+        (else ;; vertical: u→y, half→x
+          (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (i32.sub (local.get $cx) (local.get $half))
+                  (i32.add (local.get $cy) (local.get $u))
+                  (i32.add (i32.add (local.get $cx) (local.get $half)) (i32.const 1))
+                  (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 1))
+                  (i32.const 0x30014)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next))))
+
   ;; ScrollBar control wndproc (class 7).
-  ;; Draws a Win98-style scrollbar track with sunken edge and a raised thumb.
+  ;; Draws a Win98-style scrollbar: arrow button at each end + sunken track + raised thumb.
   ;; Reads position/range from SCROLL_TABLE (set via SetScrollPos/SetScrollRange).
   (func $scrollbar_ctrl_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $slot i32) (local $base i32) (local $pos i32) (local $smin i32) (local $smax i32)
     (local $style i32) (local $is_vert i32) (local $track_len i32) (local $thumb_size i32)
     (local $thumb_pos i32) (local $range i32) (local $brush i32)
+    (local $arrow i32) (local $long_dim i32)
+    (local $mx i32) (local $my i32) (local $part i32) (local $parent i32)
+    (local $sb_msg i32) (local $sb_code i32)
+    (local $is_pressed i32)
+
+    ;; --- Mouse input: arrow buttons only (page regions / thumb drag TODO) ---
+    ;; WM_LBUTTONDOWN
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        (local.set $is_vert (i32.and (local.get $style) (i32.const 1)))
+        (local.set $long_dim (select (local.get $h) (local.get $w) (local.get $is_vert)))
+        (local.set $arrow (i32.const 16))
+        (if (i32.lt_s (local.get $long_dim) (i32.const 36))
+          (then (local.set $arrow (i32.const 0))))
+        ;; lParam: low word = x, high word = y (signed 16-bit)
+        (local.set $mx (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $my (i32.shr_s (local.get $lParam) (i32.const 16)))
+        ;; part: 0=none, 1=up, 2=down, 3=left, 4=right
+        (local.set $part (i32.const 0))
+        (if (local.get $arrow)
+          (then
+            (if (local.get $is_vert)
+              (then
+                (if (i32.lt_s (local.get $my) (local.get $arrow))
+                  (then (local.set $part (i32.const 1))))
+                (if (i32.ge_s (local.get $my) (i32.sub (local.get $h) (local.get $arrow)))
+                  (then (local.set $part (i32.const 2)))))
+              (else
+                (if (i32.lt_s (local.get $mx) (local.get $arrow))
+                  (then (local.set $part (i32.const 3))))
+                (if (i32.ge_s (local.get $mx) (i32.sub (local.get $w) (local.get $arrow)))
+                  (then (local.set $part (i32.const 4))))))))
+        (if (local.get $part)
+          (then
+            (global.set $sb_pressed_hwnd (local.get $hwnd))
+            (global.set $sb_pressed_part (local.get $part))
+            (call $invalidate_hwnd (local.get $hwnd))
+            ;; Send WM_VSCROLL (0x115) / WM_HSCROLL (0x114) to parent.
+            ;; SB_LINEUP=0, SB_LINEDOWN=1, SB_LINELEFT=0, SB_LINERIGHT=1.
+            (local.set $sb_code
+              (select (i32.const 0) (i32.const 1)
+                      (i32.or (i32.eq (local.get $part) (i32.const 1))
+                              (i32.eq (local.get $part) (i32.const 3)))))
+            (local.set $sb_msg (select (i32.const 0x115) (i32.const 0x114) (local.get $is_vert)))
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (drop (call $wnd_send_message (local.get $parent) (local.get $sb_msg)
+                    (local.get $sb_code) (local.get $hwnd)))))
+        (return (i32.const 0))))
+
+    ;; WM_LBUTTONUP — clear pressed state, send SB_ENDSCROLL.
+    (if (i32.eq (local.get $msg) (i32.const 0x0202))
+      (then
+        (if (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+          (then
+            (global.set $sb_pressed_hwnd (i32.const 0))
+            (global.set $sb_pressed_part (i32.const 0))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (local.set $style (call $wnd_get_style (local.get $hwnd)))
+            (local.set $is_vert (i32.and (local.get $style) (i32.const 1)))
+            (local.set $sb_msg (select (i32.const 0x115) (i32.const 0x114) (local.get $is_vert)))
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (drop (call $wnd_send_message (local.get $parent) (local.get $sb_msg)
+                    (i32.const 8) (local.get $hwnd))))) ;; SB_ENDSCROLL
+        (return (i32.const 0))))
+
     ;; WM_PAINT
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -3704,6 +3822,16 @@
         ;; SBS_VERT = 0x01
         (local.set $is_vert (i32.and (local.get $style) (i32.const 1)))
 
+        ;; Arrow button size: 16px (Win98 SM_CXVSCROLL). Skip arrows if the
+        ;; scrollbar's long axis is too short to fit two arrows + any thumb.
+        (local.set $long_dim (select (local.get $h) (local.get $w) (local.get $is_vert)))
+        (local.set $arrow (i32.const 16))
+        (if (i32.lt_s (local.get $long_dim) (i32.const 36))
+          (then (local.set $arrow (i32.const 0))))
+        ;; This window's pressed flag = 1 if we own the press.
+        (local.set $is_pressed
+          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+
         ;; Fill track with scrollbar background (COLOR_SCROLLBAR = light gray)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
@@ -3712,6 +3840,36 @@
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x0A) (i32.const 0x0F))) ;; BDR_SUNKEN, BF_RECT
+
+        ;; Arrow buttons at each end of the long axis.
+        ;; $sb_pressed_part: 1=up, 2=down, 3=left, 4=right.
+        (if (local.get $arrow)
+          (then
+            (if (local.get $is_vert)
+              (then
+                (call $draw_sb_arrow (local.get $hdc)
+                  (i32.const 0) (i32.const 0) (local.get $w) (local.get $arrow)
+                  (i32.const 0) ;; up
+                  (i32.and (local.get $is_pressed)
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 1))))
+                (call $draw_sb_arrow (local.get $hdc)
+                  (i32.const 0) (i32.sub (local.get $h) (local.get $arrow))
+                  (local.get $w) (local.get $arrow)
+                  (i32.const 1) ;; down
+                  (i32.and (local.get $is_pressed)
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 2)))))
+              (else
+                (call $draw_sb_arrow (local.get $hdc)
+                  (i32.const 0) (i32.const 0) (local.get $arrow) (local.get $h)
+                  (i32.const 2) ;; left
+                  (i32.and (local.get $is_pressed)
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 3))))
+                (call $draw_sb_arrow (local.get $hdc)
+                  (i32.sub (local.get $w) (local.get $arrow)) (i32.const 0)
+                  (local.get $arrow) (local.get $h)
+                  (i32.const 3) ;; right
+                  (i32.and (local.get $is_pressed)
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 4))))))))
 
         ;; Read scroll state
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -3728,20 +3886,24 @@
             (local.set $range (i32.sub (local.get $smax) (local.get $smin)))
             (if (i32.gt_s (local.get $range) (i32.const 0))
               (then
-                ;; Thumb size = max(16, track_len / (range+1))
-                (if (local.get $is_vert)
-                  (then (local.set $track_len (i32.sub (local.get $h) (i32.const 4))))
-                  (else (local.set $track_len (i32.sub (local.get $w) (i32.const 4)))))
+                ;; Track lives between the two arrow buttons (or +/-2px sunken
+                ;; inset when arrows aren't drawn).
+                (local.set $track_len
+                  (i32.sub (local.get $long_dim)
+                    (select (i32.mul (local.get $arrow) (i32.const 2))
+                            (i32.const 4)
+                            (local.get $arrow))))
                 (local.set $thumb_size (i32.div_u (local.get $track_len) (i32.add (local.get $range) (i32.const 1))))
                 (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
                   (then (local.set $thumb_size (i32.const 16))))
-                ;; Thumb position
-                (local.set $thumb_pos (i32.add (i32.const 2)
-                  (i32.div_u
-                    (i32.mul
-                      (i32.sub (local.get $pos) (local.get $smin))
-                      (i32.sub (local.get $track_len) (local.get $thumb_size)))
-                    (local.get $range))))
+                ;; Thumb position (origin = arrow_size, or 2 if no arrows)
+                (local.set $thumb_pos
+                  (i32.add (select (local.get $arrow) (i32.const 2) (local.get $arrow))
+                    (i32.div_u
+                      (i32.mul
+                        (i32.sub (local.get $pos) (local.get $smin))
+                        (i32.sub (local.get $track_len) (local.get $thumb_size)))
+                      (local.get $range))))
                 ;; Draw thumb
                 (if (local.get $is_vert)
                   (then
