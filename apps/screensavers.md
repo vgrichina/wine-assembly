@@ -458,6 +458,27 @@ The CString contains literally "C" — not a truncation of "CALogo.gif". They ar
 
 **Tracing work landed this session** (items 1-6 from the TL;DR): non-interactive `--watch-log`, `--watch-byte/-word` (new WAT `$watch_size`), `--trace-at-watch` diff dumps, `--show-cstring` pretty-printer, shared `walkStackFrame()` in `lib/mem-utils.js`, `_frameHint` refactor in `lib/filesystem.js`. All committed.
 
+**Session 2026-04-20 (e) — TextureMap is empty; scene-picker skips architec.scn:**
+
+Confirmed via `--trace-at=0x7441a220 --trace-at-dump=0x74e12a38:16`: the TextureMap std::map at `this+0x254` has **size=0** and `_Myhead` with left==right==self (empty-tree sentinel). So EVERY TextureMap::Get call misses regardless of input — the map was never populated.
+
+**Why** — `--trace-ini` (category already existed in `lib/storage.js`; had to discover it) revealed the actual scene-loading flow:
+
+1. App enumerates every `.scn` file, reads `[Description]/Name` + `[Description]/Active`.
+2. `architec.scn` has `Active=0`; all other `ca_*.scn` files have `Active=1`.
+3. App reads **every key** from architec.scn anyway (Texture0=`ar_textu`, Backdrop=`ar_wallp.GIF`, etc.) — this is just the scene-enumeration/metadata pass.
+4. Then loads `ca_diagr.scn` (Texture0=`Granite`, Backdrop=`""`, Environment=`YUV`) — a different scene wins the pick.
+5. `Granite` isn't on disk as a file; it's a hard-coded texture name presumably served by a built-in TextureMap ("Granite", "Marble", etc.) that the app is supposed to populate at init.
+6. The map is still empty at batch 260 → the texture-registration code never ran.
+
+**So the "C" key is most likely a single-char texture lookup derived from a string-iteration pattern OR a glyph cache hit — investigating further needs a watch on where LookupRequest is constructed (who writes "C" as the src CString at `[ebx+0x0c]`).**
+
+**Real next-session starting points:**
+1. **Find the TextureMap populate fn.** Vtable is at `0x744b28b0` — disassemble its methods (especially constructor and insert). Search xrefs to `0x74e12a38` (the map's internal hashtable base) OR to the empty-string sentinel `0x744b24a0`.
+2. **Identify what string `"Granite"` / `"Marble"` / etc. should trigger.** These are hardcoded built-in texture names; find them as string literals in the PE and trace xrefs to find the init path that registers them with TextureMap.
+3. **Confirm whether "C" is a glyph-cache key vs. a texture-name char iteration.** Watch `0x74a16910` (the LookupRequest struct) from earlier batches to see who constructs it and with what source.
+4. **Useful tool that's missing:** `--trace-call=0xADDR` — log ARG values on every entry to a given fn. Would immediately answer "what keys get passed to TextureMap::Get?" without the current break-and-dump dance.
+
 #### Gemini review of emulator WATs — candidate emu bugs
 
 Ran a second-opinion review across `src/03-registers.wat` / `04-cache.wat` / `05-alu.wat` / `06-fpu.wat` / `07-decoder.wat` looking for mechanisms that could cause deterministic divergence after N identical iterations. Findings to verify (ranked by plausibility for this symptom):
