@@ -490,6 +490,14 @@
   ;; NC_FLAGS_COUNT: running count of slots with any bit set, so the
   ;; per-GetMessageA-call scan can early-out when the table is empty.
   (global $nc_flags_count (mut i32) (i32.const 0))
+  ;; Sysbutton press state for non-client area chrome. While the user holds
+  ;; LMB on a title-bar button (close/min/max), $nc_pressed_hwnd holds that
+  ;; window's hwnd and $nc_pressed_hit holds the HT* code (HTCLOSE=20,
+  ;; HTMINBUTTON=8, HTMAXBUTTON=9). $defwndproc_ncpaint draws the matching
+  ;; button with EDGE_SUNKEN + 1px glyph offset. Set/cleared from JS via
+  ;; nc_set_pressed / nc_clear_pressed.
+  (global $nc_pressed_hwnd (mut i32) (i32.const 0))
+  (global $nc_pressed_hit  (mut i32) (i32.const 0))
   ;; TITLE_TABLE: parallel to WND_RECORDS, 8 bytes per slot = { wa_ptr:i32, len:i32 }
   ;; ptr is a WASM linear address of a heap-allocated ASCII title (no NUL).
   ;; Written by SetWindowTextA; read by $defwndproc_handle_ncpaint.

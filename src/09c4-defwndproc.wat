@@ -55,6 +55,10 @@
     (local $max_x i32)
     (local $min_x i32)
     (local $cx i32) (local $cy i32) (local $cs i32)
+    (local $is_p i32)        ;; pressed flag for current sysbutton
+    (local $edge i32)        ;; EDGE_RAISED (0x05) or EDGE_SUNKEN (0x0A)
+    (local $off i32)         ;; glyph offset (0 or 1) when pressed
+    (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
 
     ;; Use whole-window DC (0xC0000 offset) so _getDrawTarget returns
     ;; ox=0,oy=0 — ncpaint draws at window-local coords without needing
@@ -148,6 +152,13 @@
     (local.set $max_x   (i32.sub (local.get $cap_r) (i32.add (i32.mul (local.get $btn_w) (i32.const 2)) (i32.const 4))))
     (local.set $min_x   (i32.sub (local.get $cap_r) (i32.add (i32.mul (local.get $btn_w) (i32.const 3)) (i32.const 4))))
 
+    ;; Pressed-state per sysbutton (only when this hwnd matches nc_pressed_hwnd).
+    (if (i32.eq (global.get $nc_pressed_hwnd) (local.get $hwnd))
+      (then
+        (local.set $pr_close (i32.eq (global.get $nc_pressed_hit) (i32.const 20)))
+        (local.set $pr_max   (i32.eq (global.get $nc_pressed_hit) (i32.const 9)))
+        (local.set $pr_min   (i32.eq (global.get $nc_pressed_hit) (i32.const 8)))))
+
     ;; --- Close button frame ---
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $close_x) (local.get $btn_y)
@@ -158,13 +169,17 @@
             (local.get $close_x) (local.get $btn_y)
             (i32.add (local.get $close_x) (local.get $btn_w))
             (i32.add (local.get $btn_y) (local.get $btn_h))
-            (i32.const 0x05) (i32.const 0x0F)))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_close))
+            (i32.const 0x0F)))
     ;; X glyph: two diagonal strokes inside the button.
     ;; The original used lineWidth=1.5 strokes; we approximate with
     ;; two 1px BLACK_PEN passes (offset by 1px) to get a 2px-thick X.
+    ;; When pressed, shift the glyph 1px down/right for the classic Win98
+    ;; sunken-button feel.
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_close)))
     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
-    (local.set $cx (i32.add (local.get $close_x) (i32.const 4)))
-    (local.set $cy (i32.add (local.get $btn_y) (i32.const 3)))
+    (local.set $cx (i32.add (i32.add (local.get $close_x) (i32.const 4)) (local.get $off)))
+    (local.set $cy (i32.add (i32.add (local.get $btn_y) (i32.const 3)) (local.get $off)))
     (local.set $cs (i32.const 7))
     (drop (call $host_gdi_move_to (local.get $hdc) (local.get $cx) (local.get $cy)))
     (drop (call $host_gdi_line_to (local.get $hdc)
@@ -199,49 +214,54 @@
             (local.get $max_x) (local.get $btn_y)
             (i32.add (local.get $max_x) (local.get $btn_w))
             (i32.add (local.get $btn_y) (local.get $btn_h))
-            (i32.const 0x05) (i32.const 0x0F)))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_max))
+            (i32.const 0x0F)))
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_max)))
+    ;; Glyph base shifted by $off for the pressed-button feel.
+    (local.set $cx (i32.add (local.get $max_x) (local.get $off)))
+    (local.set $cy (i32.add (local.get $btn_y) (local.get $off)))
     (if (local.get $is_maxed)
       (then
         ;; Restore glyph: two overlapping 7x7 boxes.
         ;; Back box (top-right)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 5))
-                (i32.add (local.get $btn_y) (i32.const 2))
-                (i32.add (local.get $max_x) (i32.const 12))
-                (i32.add (local.get $btn_y) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 5))
+                (i32.add (local.get $cy) (i32.const 2))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 4))
                 (i32.const 0x30014)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 5))
-                (i32.add (local.get $btn_y) (i32.const 2))
-                (i32.add (local.get $max_x) (i32.const 12))
-                (i32.add (local.get $btn_y) (i32.const 9))
+                (i32.add (local.get $cx) (i32.const 5))
+                (i32.add (local.get $cy) (i32.const 2))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 9))
                 (i32.const 0x06) (i32.const 0x0F)))
         ;; Front box (bottom-left), white interior
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 3))
-                (i32.add (local.get $btn_y) (i32.const 4))
-                (i32.add (local.get $max_x) (i32.const 10))
-                (i32.add (local.get $btn_y) (i32.const 11))
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 11))
                 (i32.const 0x30010)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 3))
-                (i32.add (local.get $btn_y) (i32.const 4))
-                (i32.add (local.get $max_x) (i32.const 10))
-                (i32.add (local.get $btn_y) (i32.const 11))
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 11))
                 (i32.const 0x05) (i32.const 0x0F))))
       (else
         ;; Maximize glyph: 9x8 box with thick top stroke.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 3))
-                (i32.add (local.get $btn_y) (i32.const 3))
-                (i32.add (local.get $max_x) (i32.const 12))
-                (i32.add (local.get $btn_y) (i32.const 5))
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 5))
                 (i32.const 0x30014)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-                (i32.add (local.get $max_x) (i32.const 3))
-                (i32.add (local.get $btn_y) (i32.const 3))
-                (i32.add (local.get $max_x) (i32.const 12))
-                (i32.add (local.get $btn_y) (i32.const 11))
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 11))
                 (i32.const 0x05) (i32.const 0x0F)))))
 
     ;; --- Min button: 7x2 horizontal bar near the bottom ---
@@ -254,12 +274,14 @@
             (local.get $min_x) (local.get $btn_y)
             (i32.add (local.get $min_x) (local.get $btn_w))
             (i32.add (local.get $btn_y) (local.get $btn_h))
-            (i32.const 0x05) (i32.const 0x0F)))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_min))
+            (i32.const 0x0F)))
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_min)))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.add (local.get $min_x) (i32.const 4))
-            (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 5)))
-            (i32.add (local.get $min_x) (i32.const 11))
-            (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3)))
+            (i32.add (i32.add (local.get $min_x) (i32.const 4)) (local.get $off))
+            (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 5))) (local.get $off))
+            (i32.add (i32.add (local.get $min_x) (i32.const 11)) (local.get $off))
+            (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
             (i32.const 0x30014)))
 
     (local.get $cap_h))
@@ -454,3 +476,15 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))
+
+  ;; ---- Sysbutton press state (used by JS while user holds LMB on a
+  ;; title-bar button). Setting to (hwnd, hit) makes the next ncpaint
+  ;; render that button with EDGE_SUNKEN + 1px glyph offset. nc_clear
+  ;; restores the raised look. JS calls these from handleMouseDown /
+  ;; handleMouseMove / handleMouseUp around the press-and-release window.
+  (func $nc_set_pressed (export "nc_set_pressed") (param $hwnd i32) (param $hit i32)
+    (global.set $nc_pressed_hwnd (local.get $hwnd))
+    (global.set $nc_pressed_hit  (local.get $hit)))
+  (func $nc_clear_pressed (export "nc_clear_pressed")
+    (global.set $nc_pressed_hwnd (i32.const 0))
+    (global.set $nc_pressed_hit  (i32.const 0)))
