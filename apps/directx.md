@@ -306,16 +306,20 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | ddex2 / ddex3 / ddex5 | blank | Similar DDraw path to ddex1 but palette fix doesn't cover them |
 | flip2d | **PASS** (65+ colors) | Needed user32 stubs (GetMenuItemCount, EnableScrollBar, {Set,Get}MenuItemInfoA — 8de8043) |
 | palette / stretch | **PASS** (65+ colors) | |
-| flip3dtl | **PASS** (22 colors) | Needed XLAT (0xD7) decoder support — CRT float-classification hung on it (commit 0dfa24f) |
+| flip3dtl | **PASS** (3D cube, 3 visible faces) | Needed DDSURF2 vtable (18e2278) + back-face culling (f5162f6) — was all-black without cull |
 | Boids | **PASS** (32+ colors) | |
-| Donuts | **PASS** (window created) | |
+| Donuts | **PASS** (title screen + menu) | |
+| Wormhole | **PASS** (3D wireframe tunnel) | Renders well — no cull needed (wireframe) |
 | tunnel / twist | blank | Run to completion but hit D3D error path ("D3D Example Message" MessageBox + ExitProcess) — real upstream D3DIM issue |
-| Globe / Bellhop / Viewer / Wormhole | blank | D3DIM Phase-0 stubs (see `direct3d-im.md`) |
+| Globe / Viewer | blank | Need D3DRM (Retained Mode) — "Failed to create D3DRM device" |
+| Bellhop | blank | Needs DirectPlay — "Could not create DirectPlay object 0x80004002" |
 | Donut | blank | DDraw; 20k-API render loop runs but output doesn't composite — similar to ddex2/3/5 |
 | FoxBear | blank | DDraw sprite demo; same composition issue |
 
 ### Recent changes (2026-04-20)
 
+- **f5162f6** — D3DIM back-face culling (CULLMODE rs=22) — flip3dtl cube now renders 3 visible faces (red/blue/green) instead of all-black
+- **18e2278** — IDirectDrawSurface2 vtable (GetDDInterface/PageLock/PageUnlock) — unblocked flip3dtl DrawPrimitive loop
 - **f0d3835** — Default 8bpp palette at SetDisplayMode when app skips CreatePalette (ddex1 fix)
 - **8de8043** — user32 stubs: GetMenuItemCount, EnableScrollBar, {Set,Get}MenuItemInfoA (flip2d/viewer unblocked)
 - **0dfa24f** — XLAT decoder opcode — flip3dtl hung on CRT FPU-class helper before wndproc ever registered
