@@ -729,6 +729,16 @@
   (global $initterm_end (mut i32) (i32.const 0))  ;; end of fn ptr table
   (global $initterm_ret (mut i32) (i32.const 0))  ;; original caller return address
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
+  ;; bsearch trampoline state (CACA000C continuation drives the search)
+  (global $bsearch_key     (mut i32) (i32.const 0))  ;; guest ptr to key
+  (global $bsearch_base    (mut i32) (i32.const 0))  ;; guest ptr to array base
+  (global $bsearch_size    (mut i32) (i32.const 0))  ;; element size in bytes
+  (global $bsearch_compar  (mut i32) (i32.const 0))  ;; guest fn ptr (cdecl comparator)
+  (global $bsearch_low     (mut i32) (i32.const 0))  ;; inclusive lower bound
+  (global $bsearch_high    (mut i32) (i32.const 0))  ;; exclusive upper bound
+  (global $bsearch_mid     (mut i32) (i32.const 0))  ;; current probe index
+  (global $bsearch_ret     (mut i32) (i32.const 0))  ;; caller return address
+  (global $bsearch_thunk   (mut i32) (i32.const 0))  ;; guest addr of CACA000C thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
   (global $DLL_TABLE i32 (i32.const 0x04462000))  ;; 32 bytes x 16 DLLs = 512 bytes

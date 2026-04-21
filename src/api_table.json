@@ -10475,5 +10475,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4022437158
+  },
+  {
+    "id": 1497,
+    "name": "bsearch",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3761877705
   }
 ]

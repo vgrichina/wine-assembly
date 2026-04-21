@@ -326,6 +326,57 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; bsearch(key, base, nmemb, size, compar) — cdecl, guest-callback comparator.
+  ;; Drives the binary search step-by-step: each probe pushes (key, elem) on the
+  ;; stack plus the CACA000C return thunk, then jumps to compar. The continuation
+  ;; handler in 09b-dispatch.wat narrows [low, high) based on the returned eax and
+  ;; re-enters this helper until the range collapses or a match is found.
+  (func $bsearch_probe
+    (local $mid i32) (local $elem i32)
+    ;; range empty → return NULL to caller
+    (if (i32.ge_u (global.get $bsearch_low) (global.get $bsearch_high))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (global.get $bsearch_ret))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $mid (i32.div_u
+      (i32.add (global.get $bsearch_low) (global.get $bsearch_high))
+      (i32.const 2)))
+    (global.set $bsearch_mid (local.get $mid))
+    (local.set $elem (i32.add (global.get $bsearch_base)
+      (i32.mul (local.get $mid) (global.get $bsearch_size))))
+    ;; Push compar args (cdecl: right-to-left) then return thunk.
+    ;; [esp-4]=thunk, [esp-8]=key, [esp-12]=elem
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $elem))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $bsearch_key))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $bsearch_thunk))
+    (global.set $eip (global.get $bsearch_compar))
+    (global.set $steps (i32.const 0))
+  )
+
+  (func $handle_bsearch (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; arg0=key, arg1=base, arg2=nmemb, arg3=size, arg4=compar. cdecl → caller
+    ;; pops the 5 args; we only save the return address and leave args in place.
+    (global.set $bsearch_ret    (call $gl32 (global.get $esp)))
+    (global.set $bsearch_key    (local.get $arg0))
+    (global.set $bsearch_base   (local.get $arg1))
+    (global.set $bsearch_size   (local.get $arg3))
+    (global.set $bsearch_compar (local.get $arg4))
+    (global.set $bsearch_low    (i32.const 0))
+    (global.set $bsearch_high   (local.get $arg2))
+    ;; Empty array or NULL comparator → return NULL immediately.
+    (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg4)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (call $bsearch_probe)
+  )
+
   ;; fallback: unknown API — crash with full details
   (func $handle_fallback (param $name_ptr i32) (param $api_id i32)
     (call $host_log_i32 (local.get $api_id))

@@ -9,19 +9,15 @@ DirectDraw sample from the DX5 SDK: animated fox-and-bear sprite demo using colo
 - **2026-04-21 early** — stuck at 93 API calls: EIP=0 right after `SetDisplayMode`. Two back-to-back fixes:
   - `4962118` — `QueryInterface(IID_IDirectDraw2)` was mutating the primary wrapper's vtable in-place. FoxBear QIs for DDRAW2 then continues calling v1-signature methods on the original pointer; the mutated vtable made `SetDisplayMode` pop 28 bytes (v2) when only 20 were pushed (v1). ESP 8 bytes too high → ret-to-0. Fixed by allocating a separate DDRAW2 wrapper via `dx_get_wrapper_for_vtbl`.
   - `229a5bb` — `fs_create_file_mapping` didn't normalize `hFile >>> 0`, so the handle came in signed and missed the Map. FoxBear's art-file load bailed with "Could not load art file".
-- **2026-04-21 current** — reaches the render-loop init, then crashes at `0x00408e67` on unimplemented **`bsearch`** (`last API: bsearch`).
+- **2026-04-21 mid** — reached the render-loop init, crashed at `0x00408e67` on unimplemented **`bsearch`**.
+- **2026-04-21 late** — `bsearch` implemented via a CACA000C continuation thunk (WAT drives the binary search one probe at a time, invoking the guest comparator via the usual push-args/push-thunk/jump pattern; continuation pops the 2 pushed args, inspects `eax`, narrows `[low, high)` and re-probes or returns). First render shows the bear sprite blitted in the top-left corner (`test/output/foxbear.png`). 3114 API calls before the message pump idles without input.
 
-## Next blocker — `bsearch`
+## Next blocker — animation / sprite placement
 
-`void *bsearch(const void *key, const void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *));`
-
-Requires guest-callback dispatch (WAT calls back into guest x86 for the comparator). Same pattern as `qsort` — neither is implemented yet.
-
-Implementation sketch:
-- Either invoke the comparator by setting EIP + stack and driving the emulator for one call (like SendMessageA's CACA0005 continuation thunk), or
-- Add a CACA000X continuation that loops through the array performing a binary search, invoking the callback for each comparison.
-
-Until one of those lands, FoxBear stops here.
+Only the bear renders, and only in the top-left. Expected output is both fox and bear animating across a tiled background. Likely causes to investigate:
+- Timer-driven frame tick: no `SetTimer` WM_TIMER firing → no animation.
+- Sprite list: bsearch finds one entry and returns; second sprite may come from a different draw path. Confirm by checking further BltFast calls after first frame.
+- Offset / placement math could be short-circuiting (bsearch returns the first art entry for every sprite name).
 
 ## Files & addresses
 

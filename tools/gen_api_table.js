@@ -424,6 +424,8 @@ const extra = [
   // GDI32 — region builders + queries (exact polygon clip + GetRgnBox).
   { name: 'CreateEllipticRgn', nargs: 4 },
   { name: 'GetRgnBox', nargs: 2 },
+  // MSVCRT — binary search with guest-callback comparator (CACA000C continuation).
+  { name: 'bsearch', nargs: 5 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

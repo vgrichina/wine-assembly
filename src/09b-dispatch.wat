@@ -410,6 +410,26 @@
         (global.set $eip (global.get $initterm_ret))
         (return)))
 
+    ;; bsearch continuation — comparator returned eax = sign(key - elem).
+    ;; eax==0 → hit; eax<0 → narrow to [low, mid); eax>0 → narrow to [mid+1, high).
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000C))
+      (then
+        ;; compar's ret popped the thunk addr; our 2 pushed args remain.
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (if (i32.eqz (global.get $eax))
+          (then
+            (global.set $eax (i32.add (global.get $bsearch_base)
+              (i32.mul (global.get $bsearch_mid) (global.get $bsearch_size))))
+            (global.set $eip (global.get $bsearch_ret))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+            (return)))
+        (if (i32.lt_s (global.get $eax) (i32.const 0))
+          (then (global.set $bsearch_high (global.get $bsearch_mid)))
+          (else (global.set $bsearch_low
+            (i32.add (global.get $bsearch_mid) (i32.const 1)))))
+        (call $bsearch_probe)
+        (return)))
+
     ;; DirectDrawEnumerateA callback returned — set EAX=DD_OK and return to caller
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0007))
       (then
