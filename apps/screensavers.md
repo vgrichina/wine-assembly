@@ -674,9 +674,20 @@ Full review saved at `/tmp/gemini-emu-review.txt`.
 | `0x7441ad40` | `std::vector<ModeEntry>::insert` (20-byte elements, div-by-20 via 0x66666667) |
 
 ### 4. MFC screensavers blocked on COM/DirectDraw
-**Priority: DEFERRED** — CORBIS/FASHION/HORROR/WOTRAVEL call `CoCreateInstance` to load images via COM (likely IPicture). Our stub returns E_NOINTERFACE, so no images load and no timer is ever set. WIN98.SCR now runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
+**Priority: DEFERRED** — WIN98.SCR runs its animation loop (fixed IDirectDraw2 SetDisplayMode stack corruption and implemented IDirectDrawSurface::GetDC) but DDraw surface content is not yet rendered to screen — needs DDraw-to-renderer blitting. All 5 MFC screensavers reach the message loop correctly (CBT hook fix works) but have no visible animation content.
 
 Added `CLSIDFromProgID` stub returning `REGDB_E_CLASSNOTREG` (0x80040154) so the four COM-image screensavers degrade gracefully instead of `crash_unimplemented`. `IDirectDrawFactory` (ddrawex.dll CLSID 0x4FD2A832) short-circuited in `CoCreateInstance` and exposes 5 vtable methods (api_ids 1136–1140) that delegate to the existing DDraw wrappers.
+
+**Investigation (CORBIS.SCR, 2026-04-20).** The "COM image loading" hypothesis was wrong — it's not IPicture/OleLoadPicture. CORBIS actually:
+1. `CoCreateInstance(CLSID_DirectDrawFactory {4FD2A832-…}, IID=4FD2A833 IDirectDrawFactory)` — already short-circuited, succeeds.
+2. `IDirectDrawFactory::CreateDirectDraw` → `IDirectDraw::CreateSurface` — works.
+3. `CLSIDFromProgID(L"DirectAnimation.DAView")` then `CLSIDFromProgID(L"DirectAnimation.DAStatics")` — both stubbed to `REGDB_E_CLASSNOTREG`.
+4. Reads `HKLM\SOFTWARE\Microsoft\Plus!98\ScreenSavers.Corbis\MediaDirectory` (not found) and an internal fallback string at `0x4d66bc`.
+5. Runaway EIP to `0x0053f3ad` shortly after — likely indirect call through a DAView vtable slot that was never populated because CLSIDFromProgID failed.
+
+The actual blocker is **DirectAnimation** (DAView + DAStatics), a very large COM surface (IDAView, IDAStatics, IDAImage, IDASound, etc. — from `danim.dll`). Not small. Bringing even a minimal DirectAnimation up is probably bigger than the DirectDraw work already done. The other three (FASHION/HORROR/WOTRAVEL) share the framework so likely identical.
+
+Path forward if revisited: either (a) implement a minimal DirectAnimation-over-canvas shim, or (b) detect the CLSIDFromProgID failure path and confirm whether the runaway is just a missing NULL-check in the guest (degrade-to-black instead of crashing) — the latter is probably cheaper but leaves zero animation.
 
 ## Completed
 
