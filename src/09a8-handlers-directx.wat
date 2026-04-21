@@ -645,6 +645,14 @@
     (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $flags))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
+    ;; Primary surface → resize main window so back-canvas matches primary dims.
+    ;; Apps like donut create a WS_POPUP window at size 0,0 and never call
+    ;; SetDisplayMode — without this, SetDIBitsToDevice clips to the 1x1 back-canvas.
+    (if (i32.and (local.get $caps) (i32.const 0x200))
+      (then (if (global.get $main_hwnd) (then
+        (call $host_move_window (global.get $main_hwnd)
+          (i32.const 0) (i32.const 0)
+          (local.get $w) (local.get $h) (i32.const 0))))))
     ;; If primary with back buffer count > 0, create back buffer and link it
     (if (i32.and
           (i32.ne (i32.and (local.get $caps) (i32.const 0x200)) (i32.const 0))  ;; PRIMARY
