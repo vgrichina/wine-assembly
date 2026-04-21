@@ -508,7 +508,12 @@ async function main() {
           try { dxInfo = ' ' + decodeDx(t, esp, dv, g2w, memory); } catch (_) {}
         }
       }
-      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}${dxInfo}`);
+      let callerInfo = '';
+      try {
+        const callerRet = dv.getUint32(g2w(esp), true);
+        callerInfo = ` [esp=${hex(esp)} ret=${hex(callerRet)}]`;
+      } catch (_) {}
+      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}${dxInfo}${callerInfo}`);
       // Dump MSG struct contents for DispatchMessageA
       if (t.includes('DispatchMessage') && apiCount <= 100) {
         try {

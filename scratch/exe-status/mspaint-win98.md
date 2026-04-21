@@ -1,61 +1,48 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: FAIL (crash on IsBadWritePtr call path)
+## Status: WARN-BLANK — runs cleanly, client area still empty (no chrome/menu/toolbar)
 
-Regression from the 2026-04-09 report (was PASS 106 APIs). Current failure
-mode shows `[API] IsBadWritePtr` immediately followed by
-`*** CRASH: memory access out of bounds` at EIP≈0x011874fa (inside
-dynamically-loaded advapi32.dll).
+**Binary:** `test/binaries/mspaint.exe` (344064 bytes — ANSI Win98 build)
 
-## Crash Context
+## Previous Bug: Stack Leak in Message Loop (FIXED)
 
-- MSPaint calls `LoadLibraryA("advapi32.dll")` during MFC init. Our dynamic
-  LoadLibrary path (commit b416e02) runs `$process_dll_imports` for the
-  freshly loaded DLL.
-- advapi32.dll imports from KERNEL32 include **9 ordinal-only imports**
-  (ordinals 3, 9, 2, 4, 7, 5, 6, 11, 17). See
-  `node tools/pe-imports.js test/binaries/dlls/advapi32.dll --all`.
-- `$process_dll_imports` in src/08b-dll-loader.wat:280-285 handles these as
-  "system DLL ordinal import". It creates a thunk with the marker
-  `0x4F524400` ("ORD\0") but stores **0xFFFF** in the thunk's api_id slot
-  instead of the real ordinal — the actual ordinal from
-  `entry & 0xFFFF` is discarded.
-- When dispatcher sees `name_rva=0x4F524400`, none of the CACA markers
-  match, so it falls through to the "normal API dispatch" arm at
-  09b-dispatch.wat:192: `name_ptr = GUEST_BASE + 0x4F524400 + 2`, then
-  `$strlen(name_ptr)` + `$host_log(...)`, which read WASM memory at
-  ~0x4F724xxx. Depending on WASM memory size that is either OOB (trap) or
-  garbage bytes.
+App was doing ~34,000 "ghost" DefWindowProcA calls in the idle loop. ESP climbed out
+of the guest stack region at ~20 bytes/call.
 
-## Root Cause
+**Root cause:** the EIP-in-thunk-zone dispatch path in `$run` (src/13-exports.wat) never
+set EIP after running a normal API handler. Handlers do `esp += 4 + nargs*4` (pop ret +
+stdcall args) but never touch EIP — the caller (`$th_call_ind`) normally sets EIP from
+the saved `$op`. When `$handle_DispatchMessageA` redirected EIP to a thunk (because the
+resolved wndproc itself lives in the thunk zone, e.g. MFC's AfxWndProc thunked via the
+import table at 0x04e03530), the main loop re-entered the thunk every pass, running the
+handler again and again, each pass popping 20 bytes off ESP.
 
-Two bugs stack up:
-1. `$process_dll_imports` stores 0xFFFF instead of the real ordinal
-   (src/08b-dll-loader.wat:285). Fix: `(i32.and $entry 0xFFFF)`.
-2. `$win32_dispatch` has no branch for the `0x4F524400` marker, so it
-   treats it like a normal API thunk and reads name_ptr from garbage.
+**Fix:** save `prev_eip` before calling `$win32_dispatch`; if the handler didn't change
+EIP, pop `[prev_esp]` as the new EIP — mirroring what `$th_call_ind` does for CALL-to-thunk.
+See 13-exports.wat at the thunk-zone dispatch check.
 
-Even with #1 fixed, there is no name to look up, so #2 is the real gap:
-we need an ordinal→name table for KERNEL32 (and any other system DLL a
-dynamically-loaded DLL imports from) so ordinal imports can reuse the
-existing name-based API hash table.
+After the fix: idle loop settles at ESP=0x04bfff1c with a clean PeekMessageA/GetMessageA/
+TlsGetValue cycle. 10k API calls in 200 batches vs. 38k in 200 batches before, and none
+of them are phantom DefWindowProcA.
 
-## Fix Sketch
+## Remaining Issue: Blank Client Area
 
-Option A — cheap: add a `0x4F524400` handler in $win32_dispatch that
-calls `$crash_unimplemented` with a synthetic "KERNEL32.#<ordinal>"
-string. This at least turns the silent memory crash into a clear
-"implement ordinal N" message.
+App boots, creates window with "Paint" title (275x400) and one full-client child hwnd
+(269x373). PNG shows the gray back-canvas but no menu bar, toolbar, status bar, tool
+palette, or color palette.
 
-Option B — real fix: embed a static ordinal→name map for KERNEL32
-(generated from the Win98 kernel32.dll export table) in a new
-`.generated.wat` file, then use it to resolve ordinal imports into
-existing named thunks during `$process_dll_imports`.
+At 200 batches the idle loop is established and nothing new paints. Next diagnostic
+steps (low priority — app isn't crashing):
 
-Option B would also unblock WordPad (same crash signature).
+1. `--trace-gdi` to see whether any drawing primitives are being called into the child's
+   back-canvas during startup.
+2. `--trace-dc` to confirm DC resolution lands on the right canvas (child vs main).
+3. Compare with what NCPAINT / WM_PAINT traffic the notepad Win98 binary generates —
+   MFC may be waiting on a state flag that never gets set during our startup chain.
+4. Check whether MSPaint creates a toolbar via `CreateToolbarEx` / manual CreateWindowEx
+   and whether those children actually get registered + painted.
 
-## Difficulty: Medium
+## NT Variant — Unrelated, Different Failure
 
-The two-line fix in `$process_dll_imports` + a dispatcher bail-out is
-~30 minutes. The full ordinal-table approach is a day of work but
-likely unblocks several MFC apps that go through advapi32.
+The NT build fails much earlier at MFC42U's DllMain (Win9x platform check). See
+`apps/mspaint-nt.md`.

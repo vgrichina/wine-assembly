@@ -4,6 +4,7 @@
   (func $run (export "run") (param $max_blocks i32)
     (local $thread i32) (local $blocks i32)
     (local $hc_i i32) (local $hc_slot i32)
+    (local $prev_eip i32) (local $prev_esp i32)
     (local.set $blocks (local.get $max_blocks))
     (block $halt (loop $main
       (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
@@ -57,8 +58,16 @@
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
                    (i32.lt_u (global.get $eip) (global.get $thunk_guest_end)))
         (then
+          (local.set $prev_eip (global.get $eip))
+          (local.set $prev_esp (global.get $esp))
           (call $win32_dispatch (i32.div_u
             (i32.sub (global.get $eip) (global.get $thunk_guest_base)) (i32.const 8)))
+          ;; If handler didn't redirect EIP, pop the saved return address.
+          ;; Normal API handlers do `esp += 4 + nargs*4` but never set EIP;
+          ;; without this, re-entry to the same thunk loops forever and
+          ;; bleeds ESP by the handler's pop each pass.
+          (if (i32.eq (global.get $eip) (local.get $prev_eip))
+            (then (global.set $eip (call $gl32 (local.get $prev_esp)))))
           (br $main)))
       ;; DEBUG: count entries into the wall-error call site (was diagnosing FUCOMPP bug)
       (if (i32.eq (global.get $eip) (i32.const 0x01009604))
