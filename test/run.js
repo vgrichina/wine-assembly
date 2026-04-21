@@ -1216,7 +1216,7 @@ async function main() {
     return lines.join('\n');
   };
 
-  let prevEip = 0, stuckCount = 0, prevApiCount = 0;
+  let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -1955,18 +1955,23 @@ async function main() {
     const eip = instance.exports.get_eip();
 if (VERBOSE) {
       console.log(`[${batch}] ${regs()}`);
-    } else if (eip !== prevEip || apiCount !== prevApiCount) {
-      if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
-      prevEip = eip;
-      prevApiCount = apiCount;
-      stuckCount = 0;
     } else {
-      stuckCount++;
-      if (stuckCount > STUCK_AFTER && !scheduledInput.length) {
-        console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
-        if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
-        dumpStack();
-        break;
+      const ex = instance.exports;
+      const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
+      if (eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
+        if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
+        prevEip = eip;
+        prevApiCount = apiCount;
+        prevRegFp = regFp;
+        stuckCount = 0;
+      } else {
+        stuckCount++;
+        if (stuckCount > STUCK_AFTER && !scheduledInput.length) {
+          console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
+          if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
+          dumpStack();
+          break;
+        }
       }
     }
   }
