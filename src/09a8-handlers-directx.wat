@@ -458,14 +458,21 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    ;; IDirectDraw2/4/7 — upgrade vtable in-place and return same object
+    ;; IDirectDraw2/4/7 — return a distinct wrapper with DDRAW2 vtable.
+    ;; Must NOT mutate the primary wrapper: apps like foxbear QI for
+    ;; IDirectDraw2 but continue using the original pointer with v1-signature
+    ;; calls (SetDisplayMode with 3 args, not 5). Upgrading in-place then
+    ;; made SetDisplayMode pop 28 bytes (v2) when only 20 were pushed (v1),
+    ;; corrupting ESP and jumping to 0.
     (if (i32.or (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
         (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
                 (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
       (then
-        (i32.store (call $g2w (local.get $arg0)) (global.get $DX_VTBL_DDRAW2))
-        (call $gs32 (local.get $arg2) (local.get $arg0))
         (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (call $gs32 (local.get $arg2)
+          (call $dx_get_wrapper_for_vtbl
+            (call $dx_slot_of (local.get $obj))
+            (global.get $DX_VTBL_DDRAW2)))
         (i32.store (i32.add (local.get $obj) (i32.const 4))
           (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
         (global.set $eax (i32.const 0))
