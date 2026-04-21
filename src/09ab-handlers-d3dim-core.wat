@@ -605,6 +605,40 @@
       (local.set $rth (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))
       (call $zbuffer_fill (local.get $zbuf) (local.get $rtw) (local.get $rth) (local.get $zval)))))
 
+  ;; ── Back-face culling ─────────────────────────────────────────
+  ;; D3DRENDERSTATE_CULLMODE (rs=22) stored at state+256+22*4 = state+344.
+  ;; 0=uninit → treat as default D3DCULL_CCW. 1=NONE, 2=CW, 3=CCW.
+  ;; Screen-space (Y-down) signed cross: >0 → CW on screen, <0 → CCW.
+  ;; TLVERTEX are already in screen space, so front-facing = CW = cross>0.
+  (func $d3dim_cull_tri (param $this i32)
+    (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32) (param $x2 i32) (param $y2 i32)
+    (result i32)
+    (local $state i32) (local $mode i32) (local $cross i32)
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $mode (call $gl32 (i32.add (local.get $state) (i32.const 344))))
+    (if (i32.eq (local.get $mode) (i32.const 1)) (then (return (i32.const 0))))
+    (local.set $cross
+      (i32.sub
+        (i32.mul (i32.sub (local.get $x1) (local.get $x0)) (i32.sub (local.get $y2) (local.get $y0)))
+        (i32.mul (i32.sub (local.get $x2) (local.get $x0)) (i32.sub (local.get $y1) (local.get $y0)))))
+    (if (i32.eq (local.get $mode) (i32.const 2))
+      (then (return (i32.gt_s (local.get $cross) (i32.const 0)))))
+    (i32.lt_s (local.get $cross) (i32.const 0)))
+
+  (func $d3dim_draw_tri_culled
+    (param $this i32) (param $rt i32)
+    (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32) (param $x2 i32) (param $y2 i32)
+    (param $color i32)
+    (if (call $d3dim_cull_tri (local.get $this)
+          (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1) (local.get $x2) (local.get $y2))
+      (then (return)))
+    (call $rasterize_triangle_flat (local.get $rt)
+      (local.get $x0) (local.get $y0)
+      (local.get $x1) (local.get $y1)
+      (local.get $x2) (local.get $y2)
+      (local.get $color)))
+
   ;; ============================================================
   ;; PHASE 2 — Flat-shaded triangle rasterizer (TLVERTEX fast path)
   ;; ============================================================
@@ -739,7 +773,7 @@
         (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
         (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
         (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
-        (call $rasterize_triangle_flat (local.get $rt)
+        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt)
           (local.get $x0) (local.get $y0)
           (local.get $x1) (local.get $y1)
           (local.get $x2) (local.get $y2)
@@ -757,14 +791,28 @@
         (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))))
         (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
         (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
-        (call $rasterize_triangle_flat (local.get $rt)
-          (i32.trunc_f32_s (f32.load (local.get $v0)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
-          (i32.trunc_f32_s (f32.load (local.get $v1)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
-          (i32.trunc_f32_s (f32.load (local.get $v2)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
-          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (local.set $x0 (i32.trunc_f32_s (f32.load (local.get $v0))))
+        (local.set $y0 (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4)))))
+        (local.set $x1 (i32.trunc_f32_s (f32.load (local.get $v1))))
+        (local.set $y1 (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4)))))
+        (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
+        (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
+        (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        ;; Odd i in a strip has inverted winding — swap v0/v1 so the cull test
+        ;; sees a consistent front/back sign.
+        (if (i32.and (local.get $i) (i32.const 1))
+          (then
+            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt)
+              (local.get $x1) (local.get $y1)
+              (local.get $x0) (local.get $y0)
+              (local.get $x2) (local.get $y2)
+              (local.get $col)))
+          (else
+            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt)
+              (local.get $x0) (local.get $y0)
+              (local.get $x1) (local.get $y1)
+              (local.get $x2) (local.get $y2)
+              (local.get $col))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $slp)))
       (return)))
@@ -786,7 +834,7 @@
         (br_if $fdone (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $v1 (i32.add (local.get $v_wa) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
         (local.set $v2 (i32.add (local.get $v1) (i32.const 32)))
-        (call $rasterize_triangle_flat (local.get $rt)
+        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt)
           (i32.trunc_f32_s (f32.load (local.get $v0)))
           (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
           (i32.trunc_f32_s (f32.load (local.get $v1)))
@@ -821,7 +869,7 @@
       (local.set $v0 (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))))
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
-      (call $rasterize_triangle_flat (local.get $rt)
+      (call $d3dim_draw_tri_culled (local.get $dev_this) (local.get $rt)
         (i32.trunc_f32_s (f32.load (local.get $v0)))
         (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
         (i32.trunc_f32_s (f32.load (local.get $v1)))
