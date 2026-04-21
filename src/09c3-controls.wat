@@ -2022,7 +2022,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 28)))
+        (local.set $state (call $heap_alloc (i32.const 36)))
         (local.set $sw (call $g2w (local.get $state)))
         (i32.store        (local.get $sw) (i32.const 0)) ;; items_buf_ptr
         (i32.store offset=4  (local.get $sw) (i32.const 0)) ;; items_used
@@ -2031,6 +2031,8 @@
         (i32.store offset=16 (local.get $sw) (i32.const -1)) ;; cur_sel
         (i32.store offset=20 (local.get $sw) (i32.const 0)) ;; top_index
         (i32.store offset=24 (local.get $sw) (i32.load offset=8 (local.get $cs_w))) ;; ctrl_id from CREATESTRUCT.hMenu
+        (i32.store offset=28 (local.get $sw) (i32.const 0)) ;; drag_anchor_y (thumb drag)
+        (i32.store offset=32 (local.get $sw) (i32.const 0)) ;; drag_anchor_top
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -2203,14 +2205,24 @@
                                 (i32.add (local.get $top) (i32.const 1)))))
                       (global.set $sb_pressed_hwnd (local.get $hwnd))
                       (global.set $sb_pressed_part (i32.const 2)))
-                    (else ;; track click — page up/down based on thumb position
+                    (else ;; track click — page or thumb-drag start
                       (if (i32.gt_s (local.get $max) (i32.const 0))
                         (then
-                          (call $listbox_page_hit
-                            (local.get $hwnd) (local.get $sw)
-                            (local.get $row_y) (local.get $h)
-                            (local.get $top) (local.get $max)
-                            (local.get $visible))))))))
+                          (if (i32.eq
+                                (call $listbox_page_hit
+                                  (local.get $hwnd) (local.get $sw)
+                                  (local.get $row_y) (local.get $h)
+                                  (local.get $top) (local.get $max)
+                                  (local.get $visible))
+                                (i32.const 3))
+                            (then
+                              ;; Thumb hit — take mouse capture so WM_MOUSEMOVE
+                              ;; and WM_LBUTTONUP are routed to this listbox
+                              ;; even when the cursor leaves it. sb_pressed
+                              ;; drives the thumb-pressed paint visual.
+                              (global.set $capture_hwnd (local.get $hwnd))
+                              (global.set $sb_pressed_hwnd (local.get $hwnd))
+                              (global.set $sb_pressed_part (i32.const 5))))))))))
                 (call $invalidate_hwnd (local.get $hwnd))
                 (return (i32.const 0))))))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
@@ -2245,6 +2257,34 @@
             (global.set $sb_pressed_hwnd (i32.const 0))
             (global.set $sb_pressed_part (i32.const 0))
             (call $invalidate_hwnd (local.get $hwnd))))
+        ;; Release mouse capture if we owned it (thumb drag). Harmless if
+        ;; another hwnd holds capture — we only clear our own.
+        (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+          (then (global.set $capture_hwnd (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_MOUSEMOVE (0x0200) — thumb drag ----------
+    ;; Active only when this hwnd owns sb_pressed with part=5 (thumb).
+    ;; Recomputes top from anchor_top + delta_y mapped to [0,max] using
+    ;; the same arrow=16 / track=h-32 geometry as $paint_vscrollbar_rect.
+    (if (i32.eq (local.get $msg) (i32.const 0x0200))
+      (then
+        (if (i32.and (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+                     (i32.eq (global.get $sb_pressed_part) (i32.const 5)))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+            (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
+            (local.set $count (i32.load offset=12 (local.get $sw)))
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $max (i32.sub (local.get $count) (local.get $visible)))
+            (if (i32.lt_s (local.get $max) (i32.const 0))
+              (then (local.set $max (i32.const 0))))
+            (if (i32.gt_s (local.get $max) (i32.const 0))
+              (then
+                (call $listbox_drag_to (local.get $hwnd) (local.get $sw)
+                  (local.get $row_y) (local.get $h) (local.get $max))
+                (call $invalidate_hwnd (local.get $hwnd))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
@@ -3867,21 +3907,26 @@
                     (i32.const 0x05) (i32.const 0x0F))))))) ;; BDR_RAISED, BF_RECT
   )
 
-  ;; Track-click page hit for a WS_VSCROLL listbox strip.
-  ;; Computes the thumb position using the same geometry as
-  ;; $paint_vscrollbar_rect (arrow=16, track = h - 32). If the click y
-  ;; sits above the thumb → page up (top -= visible); below → page down
-  ;; (top += visible). Top is clamped to [0, max]. Mutates ListBoxState.top.
+  ;; Track-click classifier for a WS_VSCROLL listbox strip. Computes the
+  ;; thumb position using the same geometry as $paint_vscrollbar_rect
+  ;; (arrow=16, track = h - 32). Returns:
+  ;;   0 — geometry degenerate, caller ignores
+  ;;   1 — click above thumb: pages up (top -= visible, mutated + stored)
+  ;;   2 — click below thumb: pages down (top += visible, mutated + stored)
+  ;;   3 — click ON the thumb: caller should begin a drag. Stashes
+  ;;       drag_anchor_y (= row_y) and drag_anchor_top (= current top)
+  ;;       at ListBoxState+28 / +32 so WM_MOUSEMOVE can recompute top
+  ;;       from the cursor delta.
   (func $listbox_page_hit
         (param $hwnd i32) (param $sw i32)
         (param $row_y i32) (param $h i32)
-        (param $top i32) (param $max i32) (param $visible i32)
+        (param $top i32) (param $max i32) (param $visible i32) (result i32)
     (local $arrow i32) (local $track_y i32) (local $track_h i32)
     (local $thumb_size i32) (local $thumb_pos i32) (local $new_top i32)
     (local.set $arrow (i32.const 16))
     (local.set $track_y (local.get $arrow))
     (local.set $track_h (i32.sub (local.get $h) (i32.mul (local.get $arrow) (i32.const 2))))
-    (if (i32.le_s (local.get $track_h) (i32.const 0)) (then (return)))
+    (if (i32.le_s (local.get $track_h) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $thumb_size (i32.div_u (local.get $track_h) (i32.add (local.get $max) (i32.const 1))))
     (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
       (then (local.set $thumb_size (i32.const 16))))
@@ -3900,13 +3945,54 @@
         (local.set $new_top (i32.sub (local.get $top) (local.get $visible)))
         (if (i32.lt_s (local.get $new_top) (i32.const 0))
           (then (local.set $new_top (i32.const 0))))
-        (i32.store offset=20 (local.get $sw) (local.get $new_top)))
-      (else (if (i32.ge_s (local.get $row_y) (i32.add (local.get $thumb_pos) (local.get $thumb_size)))
-        (then
-          (local.set $new_top (i32.add (local.get $top) (local.get $visible)))
-          (if (i32.gt_s (local.get $new_top) (local.get $max))
-            (then (local.set $new_top (local.get $max))))
-          (i32.store offset=20 (local.get $sw) (local.get $new_top)))))))
+        (i32.store offset=20 (local.get $sw) (local.get $new_top))
+        (return (i32.const 1))))
+    (if (i32.ge_s (local.get $row_y) (i32.add (local.get $thumb_pos) (local.get $thumb_size)))
+      (then
+        (local.set $new_top (i32.add (local.get $top) (local.get $visible)))
+        (if (i32.gt_s (local.get $new_top) (local.get $max))
+          (then (local.set $new_top (local.get $max))))
+        (i32.store offset=20 (local.get $sw) (local.get $new_top))
+        (return (i32.const 2))))
+    ;; On the thumb — stash anchors for the drag loop.
+    (i32.store offset=28 (local.get $sw) (local.get $row_y))
+    (i32.store offset=32 (local.get $sw) (local.get $top))
+    (i32.const 3))
+
+  ;; Recompute top_index from the current cursor y during a thumb drag.
+  ;; Anchors (drag_anchor_y at +28, drag_anchor_top at +32) were stashed
+  ;; when the drag started. new_top = anchor_top + delta_y * max / range,
+  ;; clamped to [0, max], where range = track_h - thumb_size. Uses the
+  ;; same geometry as $paint_vscrollbar_rect.
+  (func $listbox_drag_to
+        (param $hwnd i32) (param $sw i32)
+        (param $row_y i32) (param $h i32) (param $max i32)
+    (local $arrow i32) (local $track_h i32)
+    (local $thumb_size i32) (local $range i32)
+    (local $anchor_y i32) (local $anchor_top i32)
+    (local $delta i32) (local $new_top i32)
+    (local.set $arrow (i32.const 16))
+    (local.set $track_h (i32.sub (local.get $h) (i32.mul (local.get $arrow) (i32.const 2))))
+    (if (i32.le_s (local.get $track_h) (i32.const 0)) (then (return)))
+    (local.set $thumb_size (i32.div_u (local.get $track_h) (i32.add (local.get $max) (i32.const 1))))
+    (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
+      (then (local.set $thumb_size (i32.const 16))))
+    (if (i32.gt_u (local.get $thumb_size) (local.get $track_h))
+      (then (local.set $thumb_size (local.get $track_h))))
+    (local.set $range (i32.sub (local.get $track_h) (local.get $thumb_size)))
+    (if (i32.le_s (local.get $range) (i32.const 0)) (then (return)))
+    (local.set $anchor_y   (i32.load offset=28 (local.get $sw)))
+    (local.set $anchor_top (i32.load offset=32 (local.get $sw)))
+    (local.set $delta (i32.sub (local.get $row_y) (local.get $anchor_y)))
+    (local.set $new_top
+      (i32.add (local.get $anchor_top)
+        (i32.div_s (i32.mul (local.get $delta) (local.get $max))
+                   (local.get $range))))
+    (if (i32.lt_s (local.get $new_top) (i32.const 0))
+      (then (local.set $new_top (i32.const 0))))
+    (if (i32.gt_s (local.get $new_top) (local.get $max))
+      (then (local.set $new_top (local.get $max))))
+    (i32.store offset=20 (local.get $sw) (local.get $new_top)))
 
   ;; ScrollBar control wndproc (class 7).
   ;; Draws a Win98-style scrollbar: arrow button at each end + sunken track + raised thumb.
