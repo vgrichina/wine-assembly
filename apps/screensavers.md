@@ -38,6 +38,14 @@
 **Priority: LOW** — Only affects FOXTROT (PEANUTS/CATHY/DOONBURY now work)
 Mask inversion issue — sprites render as white silhouettes instead of colored characters.
 
+**Session 2026-04-20 investigation (inconclusive).** Traced through AND+PAINT compositing pipeline in `lib/host-imports.js` with pixel-level sampling of each step:
+- Two bitmap resources loaded: 1500x235 (8bpp, 69-color palette — used for biplane animation) and 225x80 (8bpp, only **3** non-zero palette entries: 0=white, 1=gray, 2=maroon-bg).
+- Mono→color expansion for SRCAND is correct: bit 0→destDC.textColor, bit 1→destDC.bkColor. Verified sprite-sheet preprocessing clears bg to 0 and preserves sprite pixels.
+- RLE8 decode is correct: center of the 75x80 character sub-sprite in the 225x80 sheet decodes to palette idx 0, which IS white in the source palette.
+- 1500x235 biplane renders correctly in full color (visible at top of output PNG).
+
+Conclusion: the small 75x80 character sprites genuinely only have white/gray/maroon pixels in the source art. The rendered "white silhouettes" may be faithful to the source. Either (a) real Windows rendered these characters differently via dynamic palette mapping / SelectPalette+RealizePalette we don't emulate, or (b) the visual is intended and the note was a misdiagnosis. No blit-path fix applies — leaving as-is pending a reference screenshot of the original.
+
 ### 2. ~~Stub PlaySoundA for GA_SAVER~~ — DONE (already stubbed; GA_SAVER renders)
 
 ### 3. CITYSCAP/PHODISC — why DIB is never populated
