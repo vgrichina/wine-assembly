@@ -2343,13 +2343,19 @@
   ;; 205: exit
   (func $handle_exit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-    (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)
+    (call $host_exit (local.get $arg0))
+    (global.set $eip (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)) (return)
   )
 
   ;; 206: _exit
   (func $handle__exit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-    (call $host_exit (local.get $arg0)) (global.set $steps (i32.const 0)) (return)
+    (call $host_exit (local.get $arg0))
+    (global.set $eip (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)) (return)
   )
 
   ;; 207: __getmainargs

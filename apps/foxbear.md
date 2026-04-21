@@ -12,12 +12,15 @@ DirectDraw sample from the DX5 SDK: animated fox-and-bear sprite demo using colo
 - **2026-04-21 mid** — reached the render-loop init, crashed at `0x00408e67` on unimplemented **`bsearch`**.
 - **2026-04-21 late** — `bsearch` implemented via a CACA000C continuation thunk (WAT drives the binary search one probe at a time, invoking the guest comparator via the usual push-args/push-thunk/jump pattern; continuation pops the 2 pushed args, inspects `eax`, narrows `[low, high)` and re-probes or returns). First render shows the bear sprite blitted in the top-left corner (`test/output/foxbear.png`). 3114 API calls before the message pump idles without input.
 
-## Next blocker — animation / sprite placement
+## Next blocker — WinMain bails before entering the message loop
 
-Only the bear renders, and only in the top-left. Expected output is both fox and bear animating across a tiled background. Likely causes to investigate:
-- Timer-driven frame tick: no `SetTimer` WM_TIMER firing → no animation.
-- Sprite list: bsearch finds one entry and returns; second sprite may come from a different draw path. Confirm by checking further BltFast calls after first frame.
-- Offset / placement math could be short-circuiting (bsearch returns the first art entry for every sprite name).
+After bsearch was fixed, foxbear runs 3285 API calls and renders two sprite poses (bear + fox peeking) into the top-left ~160×100 region of the 640×480 window, then calls `exit(0)` from `mainCRTStartup` (ret=0x00409c2e). `handle_exit` now sets `yield_flag` so the emulator halts cleanly instead of looping.
+
+The anomaly: **the message pump at `0x00402680` is never entered** — zero `PeekMessageA` / `GetMessageA` calls in the trace, yet the render function (`0x00407e90`, called via `[eax+0x6c]` = DDraw `Restore`, then frame draw) fires enough times to put two sprites on-screen. That rendering must be happening inside the startup WM_PAINT chain our GetMessage phases deliver, via WndProc dispatch.
+
+WinMain's post-init path has three early-returns with `xor eax,eax; ret` (0x40260c, 0x402879, 0x4028bf) — one of those almost certainly fires before the main loop. Init check returning 0 causes WinMain to return 0 → mainCRTStartup → exit(0).
+
+Next step: breakpoint `--break=0x402600,0x402879,0x4028bf` and see which early-return path WinMain takes, then work backwards to which DDraw/init call we're getting wrong.
 
 ## Files & addresses
 
