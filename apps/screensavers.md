@@ -13,9 +13,9 @@
 | CATHY.SCR | OK | Renders, sprites working | Sprite compositing fixed |
 | DOONBURY.SCR | OK | Renders, sprites working | Sprite compositing fixed |
 | FOXTROT.SCR | OK | Renders, white silhouettes | Mask inversion issue |
-| GA_SAVER.SCR | OK | Crashes on PlaySoundA | Needs WINMM stub |
-| CITYSCAP.SCR | OK | Blank (no drawing) | Uses CreateDIBSection/StretchDIBits for rendering |
-| PHODISC.SCR | OK | Blank (no drawing) | Likely same CreateDIBSection issue |
+| GA_SAVER.SCR | OK | Renders (Garfield/Odie on pogo sticks) | PlaySoundA already stubbed — stale note |
+| CITYSCAP.SCR | OK | Blank (spins in GetMessageA, no render) | Not a DIBSection blit issue; see Open Task 3 |
+| PHODISC.SCR | OK | Desktop teal (no photo content) | DIB blit no longer wipes canvas; asset-load path still missing |
 
 ### MFC42-based (need MFC42.DLL)
 | Screensaver | /c Config | /s Visuals | Notes |
@@ -30,7 +30,7 @@
 | Screensaver | /c Config | /s Visuals | Notes |
 |-------------|-----------|------------|-------|
 | WIN98.SCR | OK | Renders | DDraw QI AddRef fix |
-| ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI | OK | Black (no animation) | Throw `CA::DXException("No valid modes found for this device")` after EnumDisplayModes + IDirect3D2::EnumDevices. See Open Task 5. |
+| ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI | OK | Black (no animation) | "No valid modes" throw FIXED (sessions e/f/g/h 2026-04-18). All 7 now run 1500+ batches past the throw into the D3D rendering loop. Screen stays black because actual D3D geometry/texture rendering is stubbed — deeper work, see Open Task 5. |
 
 ## Open Tasks
 
@@ -38,16 +38,23 @@
 **Priority: LOW** — Only affects FOXTROT (PEANUTS/CATHY/DOONBURY now work)
 Mask inversion issue — sprites render as white silhouettes instead of colored characters.
 
-### 2. Stub PlaySoundA for GA_SAVER
-**Priority: LOW** — GA_SAVER crashes on PlaySoundA. Needs to be added to api_table.json and stubbed to return TRUE.
+### 2. ~~Stub PlaySoundA for GA_SAVER~~ — DONE (already stubbed; GA_SAVER renders)
 
-### 3. Implement CreateDIBSection / StretchDIBits rendering path
-**Priority: MEDIUM** — Needed for CITYSCAP and PHODISC
-**Files:** `src/09a-handlers.wat`, `lib/host-imports.js`
+### 3. CITYSCAP/PHODISC — why DIB is never populated
+**Priority: MEDIUM**
+**Files:** `lib/host-imports.js`, CITYSCAP/PHODISC app logic
 
-These screensavers use CreateDIBSection to create bitmaps with direct pixel access, then StretchDIBits to blit them. StretchDIBits is implemented but may have issues. CreateDIBSection needs a working `ppvBits` return (pointer to pixel data in guest memory).
+**Session 2026-04-20 — dibSection resync fix (committed).** `_syncDibSection` used to blindly rebuild the bitmap canvas from guest memory on every BitBlt source resolution. Apps that draw into a DIB section's DC via GDI primitives keep the guest bits at zero, so each subsequent blit wiped the canvas back to black. Fixed by sparse-hashing 256 sample bytes of the guest buffer per sync; skip when unchanged from last hash. Creation-time records the zero-state hash so a GDI-only app is never resynced.
 
-### 5. D3D screensavers: "No valid modes found for this device"
+- **PHODISC.SCR** — was fully black, now shows the desktop teal background. Photo content still missing (asset-load path not traced yet).
+- **CITYSCAP.SCR** — still black. Root cause is NOT the DIB blit: app spins in GetMessageA (~8000 of 27K total API calls over 2000 batches) with no SetTimer/InvalidateRect ever firing. Its render function never runs. Separate investigation — probably missing a startup message or config-registry read that enables the render path.
+- **PEANUTS.SCR regression-tested** — renders correctly (Snoopy/Woodstock scene unchanged).
+
+### 5. D3D screensavers: render pipeline (was "No valid modes")
+
+**Status (2026-04-20):** "No valid modes" throw is fixed (sessions e/f/g/h in prior log). All 7 D3D savers now run 1500+ batches through DDraw + IDirect3D2::EnumDevices + CreateDevice + the per-frame Blt loop without crashing. They produce black frames because the D3D rendering path itself (vertex processing, texture sampling, rasterization) is stubbed — the sub-calls execute but don't commit pixels anywhere. Next work here is not a single fix but a full Direct3D IM render pipeline (out of current session scope).
+
+**Historical log below.**
 
 **Status (2026-04-18):** `MessageBox("Couldn't find any scene definitions…")` was hiding a real emulator bug. With `.SCN`/`.X`/`.GIF` assets staged in `test/binaries/screensavers/` (see `SOURCES.md`), the saver's `FindFirstFileA(".\\*.scn")` now succeeds and D3D init runs further — but the `CA::DXException("No valid modes found for this device")` throw at `0x74414d83` fires after all DDraw/D3D setup completes (verified: batch 120, `prev_eip=0x74414d6b`, throw payload has string at obj+4).
 
