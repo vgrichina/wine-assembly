@@ -1,6 +1,59 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: WARN-BLANK — runs cleanly, MFC now subclasses child hwnd (paint still blank)
+## Status: WARN-BLANK — MFC subclass OK, but CMainFrame::OnCreate not firing
+
+**Current symptom:** render is a bare Win98 frame with title "Paint" and system buttons;
+client area solid gray (just one `FillRect` + `DrawEdge` on hwnd 0x10002). No toolbar,
+no tool palette, no color palette, no status bar — none of CMainFrame's child windows
+are created, because `CMainFrame::OnCreate()` never runs.
+
+### New finding (this session): WM_CREATE falls through to DefWindowProcA
+
+Trace API # 1186 on the main frame (hwnd=0x10001) shows:
+
+```
+#1186 CallWindowProcA(pfn=0x04e03550, hwnd=0x10001, msg=WM_CREATE, wParam=0, lParam=0x01000100)
+#1187 DefWindowProcA(0x10001, WM_CREATE, 0, 0x01000100)
+```
+
+`pfn=0x04e03550` is the class-placeholder thunk → `DefWindowProcA` (thunk idx 1706,
+api_id 98). This is MFC's `CWnd::Default()` chaining to the old wndproc from inside
+`AfxCallWndProc` (mfc42 at 0x5f40275f), which only happens when `OnWndMsg` returns
+FALSE — i.e. the message map lookup for WM_CREATE on the attached CWnd didn't find
+a handler.
+
+Possible explanations:
+1. `FromHandlePermanent(0x10001)` returns a *temporary* / generic `CWnd` (no map
+   entry for CMainFrame's ON_WM_CREATE). Would happen if MFC's CBT hook never
+   called `pWnd->Attach(hwnd)` against the CMainFrame passed via
+   `AfxHookWindowCreate`.
+2. `pThreadState->m_pWndInit` is NULL or wrong when the CBT hook reads it
+   (TLS mismatch). Our `TlsAlloc` returns index 0 first — MFC and MSVCRT both
+   use slot 0 / 1 in this trace; if any slot collides, the thread-state pointer
+   could be wrong.
+3. Virtual dispatch `call [eax+0xa0]` (AfxCallWndProc @ 0x5f40228e) lands on the
+   wrong vtable — a generic CWnd vtable rather than CFrameWnd's.
+
+### Suggested next diagnostics
+
+- **Probe `m_pWndInit` at CBT hook entry.** Use `--trace-at=0x0105778f` (MFC CBT
+  filter) with `--trace-at-dump` to dump the thread-state struct referenced by
+  `TlsGetValue(slot0)` — confirms whether Attach can find the CMainFrame*.
+- **Break at AfxCallWndProc vtable indirect** (`0x0105228e` under our relocation,
+  i.e. 0x5f40228e − 0x5f400000 + 0x01056000 = `0x0105828e`). Dump `[edi]` (vtable
+  ptr) and compare to CFrameWnd's vtable — if they don't match, the Attach picked
+  the wrong CWnd.
+- **Compare against a CBT-subclassed path that works.** The child at hwnd=0x10002
+  runs the same CBT→subclass dance (#1199 SetWindowLongA) — does *its* WM_CREATE
+  reach CView::OnCreate, or does it also fall through? We never see LoadBitmap /
+  LoadToolbar / additional CreateWindowEx after either, so likely both fall through.
+
+### Prior fix (intact): Child CBT hook continuation (CACA0026)
+
+See "Fix Applied (this session)" history below — children now get HCBT_CREATEWND,
+and MFC's hook does `SetWindowLongA(child, GWL_WNDPROC, AfxWndProc)`. That part
+is working; the remaining gap is that the subclassed wndproc's message map still
+doesn't recognize WM_CREATE as CMainFrame::OnCreate.
 
 **Binary:** `test/binaries/mspaint.exe` (344064 bytes — ANSI Win98 build)
 
