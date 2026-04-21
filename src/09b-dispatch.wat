@@ -129,6 +129,18 @@
         (global.set $steps (i32.const 0))
         (return)))
 
+    ;; CACA0026: Child CBT hook returned — just hand the child hwnd back to
+    ;; the CreateWindowExA caller. The hook may have called SetWindowLongA to
+    ;; subclass the child (MFC's AfxWndProc pattern); by now wnd_table has
+    ;; the updated wndproc. WM_CREATE/WM_SIZE for the child are delivered
+    ;; later via the pending_child queue in GetMessageA.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0026))
+      (then
+        (global.set $eax (global.get $child_cbt_saved_hwnd))
+        (global.set $eip (global.get $child_cbt_saved_ret))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     ;; CBT hook continuation — hook returned, now dispatch WM_CREATE
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0002))
       (then

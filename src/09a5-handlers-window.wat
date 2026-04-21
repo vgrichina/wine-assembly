@@ -353,6 +353,34 @@
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
     (call $paint_queue_push (global.get $next_hwnd))
+    ;; If a CBT hook is installed, fire HCBT_CREATEWND for this child so MFC
+    ;; (and anything else using per-hwnd subclassing) can swap in its real
+    ;; wndproc via SetWindowLongA before we start delivering messages.
+    (if (global.get $cbt_hook_proc)
+    (then
+    ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
+    (global.set $child_cbt_saved_hwnd (global.get $next_hwnd))
+    (global.set $child_cbt_saved_ret (call $gl32 (global.get $esp)))
+    ;; Build CBT_CREATEWND at image_base+0x140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
+    ;; CREATESTRUCT was already populated above.
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x140)) (i32.add (global.get $image_base) (i32.const 0x100)))
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x144)) (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
+    ;; Push stdcall hook args: lParam, wParam, nCode
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x140)))  ;; lParam = &CBT_CREATEWND
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $next_hwnd))                               ;; wParam = child hwnd
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 3))                                         ;; nCode = HCBT_CREATEWND
+    ;; Push CACA0026 return thunk
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $child_cbt_ret_thunk))
+    (global.set $eax (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eip (global.get $cbt_hook_proc))
+    (global.set $steps (i32.const 0))
+    (return)))
     ))
     (global.set $eax (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))

@@ -208,6 +208,18 @@
       (i32.const 0xCACA0024))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Child-CreateWindow CBT hook continuation (marker 0xCACA0026)
+    ;; Unlike CACA0002, this does NOT dispatch WM_CREATE — it just returns
+    ;; the child hwnd to the CreateWindowEx caller. Child WM_CREATE/WM_SIZE
+    ;; are still delivered via the pending_child queue in GetMessageA.
+    (global.set $child_cbt_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0026))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate modal dialog pump thunk (marker 0xCACA0006). Used by
     ;; $modal_begin to park EIP while a WAT-driven modal common dialog
     ;; (Open/Save/Color/Font/...) is being interacted with.

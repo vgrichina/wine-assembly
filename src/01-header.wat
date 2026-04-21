@@ -696,7 +696,10 @@
   ;; Synchronous WM_CREATE: continuation thunk + saved state
   (global $createwnd_ret_thunk (mut i32) (i32.const 0))
   (global $sync_msg_ret_thunk (mut i32) (i32.const 0))
-  (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation
+  (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation (CACA0002)
+  (global $child_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Child CBT hook → return hwnd to caller (CACA0026)
+  (global $child_cbt_saved_hwnd (mut i32) (i32.const 0))
+  (global $child_cbt_saved_ret  (mut i32) (i32.const 0))
   ;; Synchronous activation chain (first ShowWindow): ACTIVATEAPP → ACTIVATE → SETFOCUS → done
   (global $createwnd_activate_thunk (mut i32) (i32.const 0))   ;; CACA0022: WM_ACTIVATE
   (global $createwnd_setfocus_thunk (mut i32) (i32.const 0))   ;; CACA0023: WM_SETFOCUS
