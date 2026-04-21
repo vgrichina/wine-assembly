@@ -42,6 +42,22 @@
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
   ;; invalidate(hwnd)
+  (import "host" "invalidate_rect" (func $host_invalidate_rect (param i32 i32 i32 i32 i32 i32)))
+  ;; invalidate_rect(hwnd, l, t, r, b, erase) — union into per-hwnd update rgn
+  (import "host" "invalidate_rgn" (func $host_invalidate_rgn (param i32 i32 i32)))
+  ;; invalidate_rgn(hwnd, hrgn, erase)
+  (import "host" "validate_rect" (func $host_validate_rect (param i32 i32 i32 i32 i32) (result i32)))
+  ;; validate_rect(hwnd, l, t, r, b) → 1 if updateRgn now empty
+  (import "host" "validate_rgn" (func $host_validate_rgn (param i32 i32) (result i32)))
+  ;; validate_rgn(hwnd, hrgn)
+  (import "host" "get_update_rect" (func $host_get_update_rect (param i32 i32) (result i32)))
+  ;; get_update_rect(hwnd, rectWA) — writes bbox, returns 1 if non-empty
+  (import "host" "get_update_rgn" (func $host_get_update_rgn (param i32 i32) (result i32)))
+  ;; get_update_rgn(hwnd, dstHrgn) — copies updateRgn into hrgn, returns region type
+  (import "host" "begin_paint_clip" (func $host_begin_paint_clip (param i32 i32 i32) (result i32)))
+  ;; begin_paint_clip(hdc, hwnd, rectWA) — install updateRgn as DC clip + write bbox to rectWA
+  (import "host" "apply_window_clip" (func $host_apply_window_clip (param i32 i32) (result i32)))
+  ;; apply_window_clip(hdc, hwnd) — WS_CLIPCHILDREN / WS_CLIPSIBLINGS exclusions
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
   ;; erase_background(hwnd, hbrBackground) → 1
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))

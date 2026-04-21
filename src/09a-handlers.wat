@@ -1150,8 +1150,13 @@
 
   ;; 85: GetDC
   (func $handle_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hdc i32)
     ;; GetDC(hwnd) → hdc = hwnd + 0x40000; GetDC(NULL) → 0x40000
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))
+    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0x40000)))
+    ;; Phase 3b/3c: apply CLIPCHILDREN / CLIPSIBLINGS exclusions.
+    (if (local.get $arg0)
+      (then (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))))
+    (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -1654,13 +1659,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 115: InvalidateRect
+  ;; 115: InvalidateRect(hwnd, lprc, bErase). lprc=NULL → full client rect.
   (func $handle_InvalidateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Route paint to main or child window
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wa i32) (local $cs i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (local.get $arg1)
+      (then
+        (local.set $wa (call $g2w (local.get $arg1)))
+        (local.set $l (i32.load (local.get $wa)))
+        (local.set $t (i32.load offset=4 (local.get $wa)))
+        (local.set $r (i32.load offset=8 (local.get $wa)))
+        (local.set $b (i32.load offset=12 (local.get $wa))))
+      (else
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
+        (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+    (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (local.get $arg2))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-    (then (global.set $paint_pending (i32.const 1)))
-    (else (if (i32.ne (local.get $arg0) (i32.const 0))
-    (then (call $paint_queue_push (local.get $arg0))))))
+      (then (global.set $paint_pending (i32.const 1)))
+      (else (call $paint_queue_push (local.get $arg0))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -2701,7 +2722,7 @@
 
   ;; 243: BeginPaint
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $brush i32)
+    (local $cs i32) (local $brush i32) (local $hdc i32) (local $wa i32) (local $partial i32)
     ;; Win98: BeginPaint sends WM_ERASEBKGND before returning. The default
     ;; handler fills the client area with the class's hbrBackground. Our
     ;; wndproc plumbing doesn't round-trip SendMessage cleanly for every
@@ -2715,16 +2736,24 @@
     (drop (call $host_erase_background (local.get $arg0) (local.get $brush)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
-    (call $gs32 (local.get $arg1) (i32.add (local.get $arg0) (i32.const 0x40000))) ;; hdc = hwnd + 0x40000
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase = FALSE (we erased)
-    ;; rcPaint = {0, 0, clientW, clientH} — query host for per-window client size
-    ;; left(+8) and top(+12) already 0 from zero_memory
-    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 16))
-      (i32.and (local.get $cs) (i32.const 0xFFFF)))        ;; right = clientW
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
-      (i32.shr_u (local.get $cs) (i32.const 16)))          ;; bottom = clientH
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 0x40000)))
+    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0x40000)))
+    (call $gs32 (local.get $arg1) (local.get $hdc)) ;; hdc
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase
+    ;; Phase 2: install updateRgn as DC clipRgn and write rcPaint from its bbox.
+    ;; rcPaint lives at PAINTSTRUCT+8; pass the guest address + g2w'd WA for the host.
+    (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
+    (local.set $partial (call $host_begin_paint_clip (local.get $hdc) (local.get $arg0) (local.get $wa)))
+    (if (i32.eqz (local.get $partial))
+      (then
+        ;; Empty updateRgn: rcPaint = full client (no DC clip installed).
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
+        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
+        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
+    ;; Phase 3b/3c: WS_CLIPCHILDREN / WS_CLIPSIBLINGS
+    (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))
+    (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -3812,9 +3841,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — return SIMPLEREGION (2)
+  ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — copy updateRgn into hRgn.
   (func $handle_GetUpdateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 2))
+    (global.set $eax (call $host_get_update_rgn (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -4168,20 +4197,65 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 382: RedrawWindow — STUB: unimplemented
+  ;; 382: RedrawWindow(hwnd, lprcUpdate, hrgnUpdate, flags). Minimal:
+  ;; treat as InvalidateRect/Rgn. RDW_VALIDATE (flags & 8) clears instead.
+  ;; Other flag nuances (RDW_FRAME, RDW_UPDATENOW, RDW_NOCHILDREN) ignored.
   (func $handle_RedrawWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wa i32) (local $cs i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Derive rect: lprcUpdate if set, else hrgnUpdate bbox, else full client.
+    (if (local.get $arg1)
+      (then
+        (local.set $wa (call $g2w (local.get $arg1)))
+        (local.set $l (i32.load (local.get $wa)))
+        (local.set $t (i32.load offset=4 (local.get $wa)))
+        (local.set $r (i32.load offset=8 (local.get $wa)))
+        (local.set $b (i32.load offset=12 (local.get $wa))))
+      (else
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
+        (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+    (if (i32.and (local.get $arg3) (i32.const 0x8))  ;; RDW_VALIDATE
+      (then
+        (drop (call $host_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))))
+      (else
+        (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (i32.and (local.get $arg3) (i32.const 0x4)))
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 1)))
+          (else (call $paint_queue_push (local.get $arg0))))
+        (call $host_invalidate (local.get $arg0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 383: ValidateRect — STUB: unimplemented
+  ;; 383: ValidateRect(hwnd, lprc). lprc=NULL → full client (clear all).
   (func $handle_ValidateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; ValidateRect(hWnd, lpRect) — 2 args stdcall
-    ;; Marks the window region as valid (clears paint_pending).
-    ;; If hWnd is main_hwnd, clear paint_pending.
-    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wa i32) (local $cs i32) (local $empty i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (if (local.get $arg1)
+      (then
+        (local.set $wa (call $g2w (local.get $arg1)))
+        (local.set $l (i32.load (local.get $wa)))
+        (local.set $t (i32.load offset=4 (local.get $wa)))
+        (local.set $r (i32.load offset=8 (local.get $wa)))
+        (local.set $b (i32.load offset=12 (local.get $wa))))
+      (else
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
+        (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+    (local.set $empty (call $host_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
+    (if (i32.and (local.get $empty) (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then (global.set $paint_pending (i32.const 0))))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 384: GetWindowDC — STUB: unimplemented
@@ -5102,22 +5176,28 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 460: GetUpdateRect(hwnd, lpRect, bErase) — return TRUE with full client rect.
-  ;; This build does not track per-window dirty regions; BeginPaint always paints
-  ;; the whole client area, so any caller asking "what is dirty?" is told the
-  ;; entire client rect, matching what BeginPaint will hand them.
+  ;; 460: GetUpdateRect(hwnd, lpRect, bErase) — writes updateRgn bbox if present;
+  ;; otherwise writes the full client rect (back-compat fallback for apps that
+  ;; check this on startup before any Invalidate). Returns TRUE iff non-empty.
   (func $handle_GetUpdateRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $rv i32) (local $wa i32) (local $cs i32)
     (if (local.get $arg1)
       (then
-        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-        (call $gs32 (local.get $arg1) (i32.const 0))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
-          (i32.and (local.get $cs) (i32.const 0xFFFF)))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
-          (i32.shr_u (local.get $cs) (i32.const 16)))))
-    (global.set $eax (i32.const 1))
+        (local.set $wa (call $g2w (local.get $arg1)))
+        (local.set $rv (call $host_get_update_rect (local.get $arg0) (local.get $wa)))
+        (if (i32.eqz (local.get $rv))
+          (then
+            ;; Empty updateRgn. If paint_pending (main) or in paint_queue (child),
+            ;; the caller will paint full client — hand them the full client rect.
+            (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+            (i32.store (local.get $wa) (i32.const 0))
+            (i32.store offset=4 (local.get $wa) (i32.const 0))
+            (i32.store offset=8 (local.get $wa) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+            (i32.store offset=12 (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))
+            (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+              (then (local.set $rv (global.get $paint_pending)))))))
+      (else (local.set $rv (call $host_get_update_rect (local.get $arg0) (i32.const 0)))))
+    (global.set $eax (local.get $rv))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -7741,9 +7821,27 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 694: InvalidateRgn — STUB: unimplemented
+  ;; 694: InvalidateRgn(hwnd, hrgn, bErase). hrgn=NULL → full client rect.
   (func $handle_InvalidateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $cs i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (local.get $arg1)
+      (then (call $host_invalidate_rgn (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+      (else
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (call $host_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
+          (i32.and (local.get $cs) (i32.const 0xFFFF))
+          (i32.shr_u (local.get $cs) (i32.const 16))
+          (local.get $arg2))))
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 1)))
+      (else (call $paint_queue_push (local.get $arg0))))
+    (call $host_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
   ;; 695: LoadStringW — load string resource (writes ASCII into buffer for now)

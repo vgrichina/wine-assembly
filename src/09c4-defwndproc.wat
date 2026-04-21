@@ -71,45 +71,25 @@
     (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
 
-    ;; Fill NC region with btnFace as four strips around CLIENT_RECT.
-    ;; Full-rect fill would wipe child pixels from the shared back-canvas
-    ;; on any NC-only trigger (SetWindowTextA, activation, flash); only
-    ;; invalidated children get WM_PAINT, siblings stay gone. Fall back
-    ;; to full fill when CLIENT_RECT is unset (pre-NCCALCSIZE — safe,
-    ;; children haven't painted yet).
+    ;; Fill NC region with btnFace. Exclude CLIENT_RECT from the DC's clip
+    ;; so child pixels on the shared back-canvas survive NC-only triggers
+    ;; (SetWindowTextA, activation, flash). Fall back to full fill when
+    ;; CLIENT_RECT is unset (pre-NCCALCSIZE — safe, children haven't
+    ;; painted yet).
     (local.set $cr_l (call $client_rect_get_l (local.get $hwnd)))
     (local.set $cr_t (call $client_rect_get_t (local.get $hwnd)))
     (local.set $cr_r (call $client_rect_get_r (local.get $hwnd)))
     (local.set $cr_b (call $client_rect_get_b (local.get $hwnd)))
-    (if (i32.or (i32.le_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
-                (i32.le_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
+    (if (i32.and (i32.gt_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
+                 (i32.gt_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
       (then
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (i32.const 0)
-                (local.get $w) (local.get $h)
-                (i32.const 0x30011))))
-      (else
-        (if (i32.gt_s (local.get $cr_t) (i32.const 0))
-          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
-                        (i32.const 0) (i32.const 0)
-                        (local.get $w) (local.get $cr_t)
-                        (i32.const 0x30011)))))
-        (if (i32.lt_s (local.get $cr_b) (local.get $h))
-          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
-                        (i32.const 0) (local.get $cr_b)
-                        (local.get $w) (i32.sub (local.get $h) (local.get $cr_b))
-                        (i32.const 0x30011)))))
-        (if (i32.gt_s (local.get $cr_l) (i32.const 0))
-          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
-                        (i32.const 0) (local.get $cr_t)
-                        (local.get $cr_l) (i32.sub (local.get $cr_b) (local.get $cr_t))
-                        (i32.const 0x30011)))))
-        (if (i32.lt_s (local.get $cr_r) (local.get $w))
-          (then (drop (call $host_gdi_fill_rect (local.get $hdc)
-                        (local.get $cr_r) (local.get $cr_t)
-                        (i32.sub (local.get $w) (local.get $cr_r))
-                        (i32.sub (local.get $cr_b) (local.get $cr_t))
-                        (i32.const 0x30011)))))))
+        (drop (call $host_gdi_exclude_clip_rect (local.get $hdc)
+                (local.get $cr_l) (local.get $cr_t)
+                (local.get $cr_r) (local.get $cr_b)))))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.const 0) (i32.const 0)
+            (local.get $w) (local.get $h)
+            (i32.const 0x30011)))
 
     ;; -------------------------------------------------
     ;; Outset 3D border around the whole window.
@@ -123,7 +103,9 @@
 
     ;; If no caption, we're done.
     (if (i32.eqz (local.get $has_caption))
-      (then (return (i32.const 0))))
+      (then
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (return (i32.const 0))))
 
     ;; -------------------------------------------------
     ;; Title bar gradient at (3, 3, w-3, 21).
@@ -314,6 +296,8 @@
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
             (i32.const 0x30014)))
 
+    ;; Reset the DC clip so persistent 0xC0000 state doesn't leak.
+    (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (local.get $cap_h))
 
   ;; ============================================================
