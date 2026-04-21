@@ -296,25 +296,31 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
 | **MCM / MW3** | Blocked | Need D3D Immediate Mode (see `direct3d-im.md`) |
 
-### DX5 SDK samples (harness, 2026-04-20)
+### DX5 SDK samples (harness, 2026-04-21)
 
 Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which DX5 samples truly render vs. init-but-blank. PNGs land in `scratch/harness-pngs/`.
 
 | Sample | Status | Notes |
 |--------|--------|-------|
-| ddex1 | **PASS** (12 colors) | Default 8bpp palette fix (f0d3835) — app skips CreatePalette |
-| ddex2 / ddex3 / ddex5 | blank | Similar DDraw path to ddex1 but palette fix doesn't cover them |
-| flip2d | **PASS** (65+ colors) | Needed user32 stubs (GetMenuItemCount, EnableScrollBar, {Set,Get}MenuItemInfoA — 8de8043) |
-| palette / stretch | **PASS** (65+ colors) | |
-| flip3dtl | **PASS** (3D cube, 3 visible faces) | Needed DDSURF2 vtable (18e2278) + back-face culling (f5162f6) — was all-black without cull |
-| Boids | **PASS** (32+ colors) | |
-| Donuts | **PASS** (title screen + menu) | |
-| Wormhole | **PASS** (3D wireframe tunnel) | Renders well — no cull needed (wireframe) |
-| tunnel / twist | blank | Run to completion but hit D3D error path ("D3D Example Message" MessageBox + ExitProcess) — real upstream D3DIM issue |
-| Globe / Viewer | blank | Need D3DRM (Retained Mode) — "Failed to create D3DRM device" |
-| Bellhop | blank | Needs DirectPlay — "Could not create DirectPlay object 0x80004002" |
-| Donut | blank | DDraw; 20k-API render loop runs but output doesn't composite — similar to ddex2/3/5 |
-| FoxBear | blank | DDraw sprite demo; same composition issue |
+| ddex1 | **PASS** (22 colors) | Default 8bpp palette fix (f0d3835) |
+| ddex2 | **PASS** (9 colors, full Back Buffer splash) | Unblocked by primary-resize (e8e579f) + QI wrapper (4962118) |
+| ddex3 / ddex5 | warn (blank) | Reaches render loop but ≤3 colors |
+| ddex4 | **PASS** (82 colors, 3D donuts on checkerboard) | |
+| flip2d | **PASS** (632 colors, spinning cube + FPS) | |
+| flip3dtl | **PASS** (628 colors, HAL-marked cube) | DDSURF2 vtable (18e2278) + back-face culling (f5162f6) |
+| palette / stretch / boids | **PASS** | |
+| Donut | **PASS** (56 colors, red torus) | Primary-resize (e8e579f) |
+| Donuts | **PASS** (Space Donuts splash + menu) | |
+| Wormhole | **PASS** (3D wireframe tunnel) | |
+| tunnel / twist | warn (2 colors) | Hit D3D loadtex error path early |
+| Globe / Viewer / Bellhop | warn (blank) | D3DIM render loop runs but output stays black |
+| FoxBear | **FAIL** at bsearch | Reaches art-file load; stops at unimplemented C-runtime `bsearch` (see `foxbear.md`) |
+
+### Recent changes (2026-04-21)
+
+- **229a5bb** — `fs_create_file_mapping` normalizes `hFile >>> 0`. Unblocks foxbear past art-file mapping.
+- **4962118** — `QueryInterface(DDRAW2)` returns a separate wrapper instead of mutating the primary vtable in-place. Apps that QI for DDRAW2 then keep calling v1-signature methods on the original pointer no longer wrong-pop ESP. Unblocks foxbear SetDisplayMode→ret-to-0; expands ddex2 from blank banner to full Back Buffer scene.
+- **e8e579f** — `CreateSurface(PRIMARY)` now resizes the main window to display-mode dims (mirroring `SetDisplayMode`). Apps that create a 0-sized WS_POPUP and rely on DDraw going fullscreen (donut, donuts, ddex2-5, flip2d, wormhole, …) no longer present onto a 1x1 back-canvas.
 
 ### Recent changes (2026-04-20)
 
