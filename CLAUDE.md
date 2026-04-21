@@ -159,6 +159,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/disasm_fn.js` — disassemble at one or more VAs: `node tools/disasm_fn.js <exe> 0xADDR[,0xADDR,...] [count]`. Warns when the start looks like a mid-instruction desync.
 - `tools/xrefs.js` — find all references to a data/code VA: `node tools/xrefs.js <exe> 0xADDR [--near=0xN] [--code]`. Classifies each ref as `load`/`store`/`branch`/`other`; handles Borland-style code-in-data sections (sections named `CodeSeg`/`DataSeg` even when flagged data). Use `--near` to catch branches into any byte of a trampoline region.
 - `tools/find_fn.js` — given an interior VA, locate the enclosing function's entry: `node tools/find_fn.js <exe> 0xADDR[,0xADDR,...]`. Walks back to the nearest `55 8B EC` prologue, `CC`/`90` padding boundary, or `C3`/`C2` ret. Use when a trace hit lands mid-function and you need the entry for `--break=` or a clean `disasm_fn` start.
+- `tools/find_field.js` — find all accesses to a struct field `[reg+OFFSET]` by scanning ModRM displacements: `node tools/find_field.js <exe> 0xOFF [--reg=esi,edi] [--op=write,read,lea,cmp,imm,indirect] [--context=N] [--fn]`. Use when REing C++ class layouts to locate setters/getters of a specific member offset.
 - `tools/hexdump.js` — Memory hexdump utility
 - `tools/parse-rsrc.js` — PE resource section parser
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)

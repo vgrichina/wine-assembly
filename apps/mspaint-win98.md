@@ -1,12 +1,148 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: WARN-BLANK — CPBFrame::OnCreate is CALLED but CFrameWnd::OnCreate never returns
+## Status: WARN-BLANK — WM_CREATE fully handled; blocker is view's WM_PAINT
 
 **Current symptom:** render is a bare Win98 frame with title "Paint" and system buttons;
 client area solid gray (just one `FillRect` + `DrawEdge` on hwnd 0x10002). No toolbar,
 no tool palette, no color palette, no status bar.
 
-### Major correction (latest session): WM_CREATE *does* reach CPBFrame::OnCreate
+### Major correction (this session): OnCreate chain works end-to-end
+
+Previous session said "CFrameWnd::OnCreate never returns." **Wrong.** Resolved
+the IAT thunk at mspaint 0x0102ebf4 → IAT slot 0x01001478 → mfc42 ordinal 4457 →
+RVA 0xd799 → runtime 0x01063799 (mfc42 base 0x01056000).
+
+Traced end-to-end with `--trace-at` (single-address only; run.js limits to the
+first entry in comma-list at line 83 — `set_bp supports only one addr`):
+
+1. **0x01063799** CFrameWnd::OnCreate wrapper enters: `[esp]=0x0101cf46`
+   (retaddr in CPBFrame::OnCreate), `[esp+4]=0x01000100` (lpcs) ✓
+2. **0x010637a8** OnCreateHelper enters: `[esp]=0x010637a5`, lpcs/lpParams
+   pushed ✓
+3. **0x0105777a** (post-sub_1768 call to sub_1000, i.e.
+   `AfxGetModuleThreadState`): EAX=0x01188cdc ✓
+4. **0x0105778d** (post `call [edx+0xa8]` virtual): EAX=0 ✓
+5. **0x010637b0** (helper after sub_1768 returns): EAX=0, cmp -1 passes ✓
+6. **0x010637cb** (post `call [eax+0xe4]` OnCreateClient virt): EAX=1
+   (handled) ✓
+7. **0x010637f4** (post SendMessage WM_IDLEUPDATECMDUI 0x362): ✓
+8. Helper returns EAX=0 → wrapper `ret 4` → CPBFrame::OnCreate cmp eax,-1
+9. **0x0101cf4f** success path runs: stores `[esi+0xd8]` at `0x0103c744`,
+   `[esi+0x17c]` at `0x0103d180`, `esi+=0x298` at `0x0103c808` ✓
+10. **0x01058649** sig-9 dispatcher continuation: stores eax, sets
+    handled=TRUE, jumps to OnWndMsg tail ✓
+11. **0x010583ce** OnWndMsg tail returns EAX=1 ✓
+
+**So WM_CREATE is fully handled.** Previous MD claim that CPBFrame::OnCreate
+returns to DefWindowProcA was based on a misread of trace `#1186
+CallWindowProcA(pfn=0x04e03550, hwnd=0x10001, WM_CREATE)` — that Default call
+is not dispositive; OnWndMsg's return path reaches the success exit.
+
+### Real blocker: CPaintView::OnDraw early-exits on `[this+0x44] == 0`
+
+Only two CreateWindowExA calls in the whole startup:
+- `#1161 CreateWindowExA("MSPaintApp"/class, title="Paint")` → hwnd=0x10001 (frame)
+- `#1193 CreateWindowExA("AfxFrameOrView42")` → hwnd=0x10002 (view)
+
+No toolbar/status-bar/tool-palette HWNDs get created — expected for mspaint
+Win98 where toolbar/palette/status are drawn directly inside CView::OnPaint.
+So the renderer should show them inside hwnd=0x10002's WM_PAINT.
+
+Traced WM_PAINT dispatch end-to-end (this session):
+
+1. BeginPaint fires (API #1865, retaddr inside `CPaintDC::CPaintDC` at
+   mfc42 runtime 0x01061f0d).
+2. Caller retaddr at `CPaintDC` ctor entry = 0x0106793a — mfc42
+   `CView::OnPaint` at entry 0x01067921 (RVA 0x11921). OnPaint pattern:
+   ```
+   call CPaintDC::CPaintDC    ; BeginPaint
+   call [eax+0xe4]            ; virtual OnPrepareDC
+   call [eax+0xf8]            ; virtual OnDraw
+   call CPaintDC::~CPaintDC   ; EndPaint
+   ```
+3. **CPaintView::OnDraw = vtable[0xf8] = 0x0101f23f**. Disasm:
+   ```
+   0101f23f  push ebp; mov ebp,esp; sub esp,0x10
+   0101f247  mov esi, ecx           ; esi = this (CPaintView=0x0158be24)
+   0101f249  xor ebx, ebx
+   0101f24c  mov ecx, [esi+0x44]    ; read pInner
+   0101f24f  cmp ecx, ebx
+   0101f251  jz   0x101f2c4         ; ← TAKEN: pInner==0 → skip all drawing
+   ```
+4. Verified at OnDraw entry with `--trace-at=0x0101f23f --trace-at-dump=
+   0x0158be24:96`: offset +0x44 is indeed `00 00 00 00`.
+5. `[CPaintView+0x44]` is also the gate for `CPaintView::OnSize`
+   (0x0101f616): same `mov ecx, [esi+0x44]; test; jz return` pattern.
+
+So the whole view is inert because `[view+0x44]` never gets populated. That
+field is the document-or-bitmap owned pointer whose setter is below.
+
+### The [view+0x44] setter chain
+
+Found with new `tools/find_field.js 0x44 --reg=esi --op=write` (added this
+session — documents ModRM layout scanning for RE):
+
+- Ctor `0x0101f09e`: `mov [esi+0x44], eax` at 0x0101f0ae (zeros it)
+- **Real setter `0x0101f80f`**: allocates 0x78-byte object (`call 0x102e798`
+  = `operator new(0x78)`), runs its ctor (`call 0x1017a5e`), then
+  `0x0101f8b6: mov [esi+0x44], edi` (new object). Internal flow also creates
+  a child window with style `0x50000000` (WS_CHILD|WS_VISIBLE) — so this
+  allocates + wires the Paint canvas/DIB-window wrapper.
+
+Call chain to the setter:
+- Setter 0x0101f80f called **only** from fn `0x0101f63c` at 0x0101f7bc.
+- 0x0101f63c early-exits unless `esi = [ecx+0x40]` is non-null AND
+  `edi = [esi+0xf0]` is non-null.
+- 0x0101f63c called only from 0x0101f54d inside fn `0x0101f546`.
+- **0x0101f546 is CPaintView's vtable slot 0xe4 = OnPrepareDC** (from
+  CView::OnPaint disasm line `call [eax+0xe4]`). OnPrepareDC is called
+  right before OnDraw during WM_PAINT.
+
+So OnPrepareDC is invoked, but one of two null-checks short-circuits it
+before it reaches the setter:
+- `[CPaintView+0x40] == 0`, OR
+- `[<that object>+0xf0] == 0`
+
+### Next-session plan
+
+1. Trace at 0x0101f546 (OnPrepareDC entry) and dump `[this+0x40]` + the
+   follow-through fields. Confirm whether it's `[view+0x40]` that's null
+   (framework never populated it) or the deeper `[that+0xf0]`.
+2. `[view+0x40]` is typically the CDocument pointer — if null, the SDI
+   CDocTemplate flow was never run. Check `AfxWinMain` → `CWinApp::InitInstance`
+   → `AddDocTemplate` → `ProcessShellCommand` → `CDocTemplate::OpenDocumentFile`
+   path for where our emulator diverges (likely a stub returning 0 silently
+   or an IPC/registry check).
+3. Alternative: the ON_COMMAND_UI-style "File/New" posted at startup doesn't
+   fire, so the CDocument is never created → no view attachment → `[view+0x40]`
+   stays 0. Check the accelerator/menu translation at `#1201..1296` for a
+   skipped WM_COMMAND(ID_FILE_NEW).
+
+### Tool added
+
+`tools/find_field.js <exe> <off> [--reg=R] [--op=K] [--context=N] [--fn]` —
+scan .text for ModRM `[reg+disp]` accesses at a given displacement, with
+optional filtering and context-disasm around each hit. Documented in
+CLAUDE.md Tools section.
+
+### Useful address references
+
+| Name | Runtime | File VA | Notes |
+|---|---|---|---|
+| CPBFrame::OnCreate | 0x0101cf3a | — | mspaint .text |
+| CFrameWnd::OnCreate wrapper | 0x01063799 | 0x5f40d799 | ord 4457 |
+| CFrameWnd::OnCreateHelper | 0x010637a8 | 0x5f40d7a8 | called by wrapper |
+| sub_1768 (thread-state + virt Create) | 0x01057768 | 0x5f401768 | `CWnd::OnCreate` base |
+| sub_1000 (AfxGetModuleThreadState) | 0x01057000 | 0x5f401000 | TlsGetValue-backed |
+| AfxCallWndProc | 0x01058223 | 0x5f402223 | virt call at +0x6b |
+| OnWndMsg tail | 0x010583ce | 0x5f4023ce | returns EAX=1 when handled |
+| AfxCallWndProc sig-9 cont | 0x01058649 | 0x5f402649 | stores eax, handled=TRUE |
+| CWnd::Default (m_pfnSuper) | 0x0105875f | 0x5f40275f | call [IAT→CallWindowProcA] |
+| CPBFrame this | 0x0158b994 | — | vtable 0x010043a4 |
+| CPaintView this | 0x0158be24 | — | vtable 0x01005104 |
+| mfc42 base at runtime | 0x01056000 | 0x5f400000 | delta -0x5e3aa000 |
+
+### Historical (sessions before): verified foundation
 
 Previous sessions concluded WM_CREATE fell through to DefWindowProcA because
 the message-map chain walk failed. **That was wrong.** Verified end-to-end:
@@ -36,7 +172,15 @@ the message-map chain walk failed. **That was wrong.** Verified end-to-end:
 So the entire MFC message-map machinery works in our emulator. WM_CREATE is
 dispatched correctly.
 
-### The real blocker: CFrameWnd::OnCreate never returns
+### The "CFrameWnd::OnCreate never returns" claim (now REFUTED)
+
+See correction above. Previous session traced 0x0101cf73 (pop esi; ret 0x4)
+and saw zero hits. That was misleading: 0x0101cf73 is **mid-block** (no
+branch target, no call return lands there — block runs from 0x0101cf4f
+through the `ret` as one unit). `--trace-at` only fires on block entries,
+so 0x0101cf73 would never fire even when OnCreate returns normally.
+0x0101cf4f *is* a branch target (jnz from 0x0101cf49) and it does fire —
+proving the success path executes.
 
 CPBFrame::OnCreate disasm (at 0x0101cf3a):
 ```
@@ -51,12 +195,6 @@ CPBFrame::OnCreate disasm (at 0x0101cf3a):
 0101cf4f  ...                        ; success: stash pointers, xor eax,eax, return 0
 0101cf73  pop esi; ret 0x4
 ```
-
-**Trace at 0x0101cf73 with 100 batches NEVER fires.** OnCreate enters but
-control never returns from `call 0x0102ebf4`. So the problem is inside
-mfc42's CFrameWnd::OnCreate — which is where MFC creates the view, toolbar,
-status bar, menu bar. One of those sub-CreateWindow calls is hanging, or
-some framework state check is wedging.
 
 ### Ruled-out paths (cumulative across sessions)
 
