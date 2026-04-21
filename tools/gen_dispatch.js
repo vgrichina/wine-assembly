@@ -58,6 +58,7 @@ const comInterfaces = [
   { prefix: 'IDirectDraw',          global: 'DX_VTBL_DDRAW' },
   { prefix: 'IDirectDraw2',         global: 'DX_VTBL_DDRAW2',   extends: 'IDirectDraw' },
   { prefix: 'IDirectDrawSurface',   global: 'DX_VTBL_DDSURF' },
+  { prefix: 'IDirectDrawSurface2',  global: 'DX_VTBL_DDSURF2', extends: 'IDirectDrawSurface' },
   { prefix: 'IDirectDrawPalette',   global: 'DX_VTBL_DDPAL' },
   { prefix: 'IDirectDrawClipper',  global: 'DX_VTBL_DDCLIP' },
   { prefix: 'IDirectSound',         global: 'DX_VTBL_DSOUND' },

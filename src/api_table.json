@@ -10454,5 +10454,26 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 855758575
+  },
+  {
+    "id": 1494,
+    "name": "IDirectDrawSurface2_GetDDInterface",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2187028522
+  },
+  {
+    "id": 1495,
+    "name": "IDirectDrawSurface2_PageLock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3135379509
+  },
+  {
+    "id": 1496,
+    "name": "IDirectDrawSurface2_PageUnlock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4022437158
   }
 ]

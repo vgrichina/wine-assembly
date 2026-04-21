@@ -281,6 +281,10 @@ const extra = [
   { name: 'IDirectDrawSurface_UpdateOverlay', nargs: 5 },
   { name: 'IDirectDrawSurface_UpdateOverlayDisplay', nargs: 2 },
   { name: 'IDirectDrawSurface_UpdateOverlayZOrder', nargs: 3 },
+  // IDirectDrawSurface2 extensions (slots 36-38 atop IDirectDrawSurface)
+  { name: 'IDirectDrawSurface2_GetDDInterface', nargs: 2 },
+  { name: 'IDirectDrawSurface2_PageLock', nargs: 2 },
+  { name: 'IDirectDrawSurface2_PageUnlock', nargs: 2 },
   // IDirectDrawPalette vtable (6 methods)
   { name: 'IDirectDrawPalette_QueryInterface', nargs: 3 },
   { name: 'IDirectDrawPalette_AddRef', nargs: 1 },

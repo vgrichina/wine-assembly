@@ -44,6 +44,7 @@
   (global $DX_VTBL_D3DMAT3    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDSURF2   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
   ;; Direct3D Immediate Mode vtables (Phase 0+ — populated by $init_dx_com_thunks)
   (global $DX_VTBL_D3D2      (mut i32) (i32.const 0))
@@ -70,6 +71,10 @@
   ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
   ;; footprint; must move in response to allocations.
   (global $dx_vidmem_used (mut i32) (i32.const 0))
+
+  ;; Most-recently-created IDirectDraw guest ptr; IDirectDrawSurface2::GetDDInterface
+  ;; returns it so apps like flip3dtl can navigate from RT surface back to DDraw.
+  (global $dx_ddraw_this (mut i32) (i32.const 0))
 
   ;; DirectInput mouse tracking (for relative dx/dy)
   (global $di_mouse_last_x (mut i32) (i32.const 0))
@@ -385,6 +390,7 @@
         (return)))
     ;; *lplpDD = obj_guest
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
+    (global.set $dx_ddraw_this (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
@@ -622,7 +628,7 @@
         (i32.div_u (i32.mul (local.get $dib_size) (i32.const 4)) (i32.const 3)))))
     (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $vidmem_bytes)))
     ;; Create COM object
-    (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
     (if (i32.eqz (local.get $obj))
       (then
         (global.set $eax (i32.const 0x80004005))
@@ -644,7 +650,7 @@
           (i32.ne (i32.and (local.get $caps) (i32.const 0x200)) (i32.const 0))  ;; PRIMARY
           (i32.gt_u (i32.load (i32.add (local.get $ddsd_wa) (i32.const 20))) (i32.const 0))) ;; backbuf count
       (then
-        (local.set $back_obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF)))
+        (local.set $back_obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
         (if (local.get $back_obj) (then
           (local.set $back_entry (call $dx_from_this (local.get $back_obj)))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 12)) (local.get $w))
@@ -1721,6 +1727,20 @@
   (func $handle_IDirectDrawSurface_UpdateOverlayZOrder (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirectDrawSurface2 extensions — slots 36-38 beyond IDirectDrawSurface's 36.
+  ;; flip3dtl QI's the RT surface for IID_IDirectDrawSurface2 and calls slot 36.
+  (func $handle_IDirectDrawSurface2_GetDDInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (global.get $dx_ddraw_this))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectDrawSurface2_PageLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectDrawSurface2_PageUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
