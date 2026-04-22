@@ -119,8 +119,15 @@ DC handle array at `0x1005a20`: 16 entries (0x80002..0x80020), one per sprite (e
 - **Known issues:**
   - SetROP2 is stubbed (always R2_COPYPEN) — white highlight lines on the 3D border draw gray instead of white
 
+## Open Tasks
+
+- **`$handle_SetDlgItemInt` is a silent return-1 stub** (`src/09a-handlers.wat:1517`). Should locate the edit control by id, write the ASCII integer into its `EditState.text_buf`, and fire WM_SETTEXT so the renderer picks it up. Consequence today: the Custom Field dialog's Height/Width/Mines edit boxes paint empty instead of `8 / 8 / 10`. Violates the "Real implementations" project rule.
+- **Cancel button not visible in Custom Field dialog.** Chrome + OK render cleanly, but the Cancel button doesn't appear in the PNG — suspect it's in the RT_DIALOG template but missing from the paint queue pass that runs before the pump yields, or its child rect lies outside the dialog's client-area paint region. Worth checking once SetDlgItemInt is real.
+- **Clip-bypass fix's scope is narrow.** The `_drawWithClip` bypass only kicks in when the target hwnd matches `_activeChildDraw.hwnd`. Child-control composites (acd.hwnd = parent) are intentionally unaffected. If a child control's DC carries a clipRgn set during its own BeginPaint, it still clips on its dedicated canvas — revisit if any control paint turns up clipped incorrectly.
+
 ## Progress Log
 
+- **Custom Field dialog now renders (both Win98 and XP winmine)**: after WM_INITDIALOG ran `SetDlgItemInt` x3 and `ret 0x10`'d back into the `CACA0004` dlg pump, EIP dropped to 0 and the emulator stalled. Root cause in `13-exports.wat` thunk-zone auto-pop (added in `5291175`): when a continuation thunk re-enters itself by setting `eip = dlg_loop_thunk` (same as `prev_eip`), the `eip == prev_eip` check read that as "handler didn't redirect" and popped `[prev_esp]` (=0) into EIP. Fix: added `$handler_set_eip` flag in `01-header.wat`; `CACA0004` in `09b-dispatch.wat` raises it; `$run` only auto-pops when both `eip == prev_eip` AND `handler_set_eip == 0`. Normal API handlers (e.g. DispatchMessageA → thunk-resident wndproc) still get their auto-pop semantics (MFC-paint scenario from the 5291175 commit preserved). Custom dialog draws chrome + Height/Width/Mines labels + edit frames + OK button; values and Cancel are follow-ups (see Open Tasks).
 - GetMenuItemRect: Added handler with RECT fill (items spaced 100px horizontally, top=0, bottom=20). Fixed missing `esp += 20` stdcall cleanup that caused EIP=0x14 crash.
 - GetLayout/SetLayout: Added stubs returning 0 (LTR layout). Unblocked the GDI drawing path.
 - Window sizing function fully understood — measures menu items to detect wrapping, computes grid-based window size, accounts for window chrome via GetSystemMetrics.

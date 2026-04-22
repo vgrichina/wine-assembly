@@ -204,6 +204,10 @@
     ;; DialogBoxParamA continuation — dialog proc returned, pump next message or finish
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0004))
       (then
+        ;; This branch always re-dispatches the pump by setting EIP; mark it
+        ;; so the outer thunk-zone auto-pop (in $run) doesn't misread an
+        ;; unchanged EIP as "handler left EIP alone" and pop [esp].
+        (global.set $handler_set_eip (i32.const 1))
         (local.set $arg4 (i32.const 0))  ;; reuse as wndproc temp
         ;; If EndDialog was called, destroy dialog and return result
         (if (global.get $dlg_ended)

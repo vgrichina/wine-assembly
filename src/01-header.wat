@@ -870,6 +870,12 @@
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
+  ;; Flag set by continuation-thunk handlers that explicitly (re)direct EIP.
+  ;; Read by $run's thunk-zone auto-pop: when a handler leaves EIP equal to
+  ;; its own thunk addr (e.g. CACA0004 re-enters the dialog pump), the outer
+  ;; code needs to know that was intentional — otherwise it pops [esp] as a
+  ;; new EIP, stalling the dialog loop with EIP=0.
+  (global $handler_set_eip (mut i32) (i32.const 0))
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
   ;; ---- Modal dialog (Open/Save/Color/Font/...) state ----
