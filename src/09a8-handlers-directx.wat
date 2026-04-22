@@ -1694,11 +1694,19 @@
 
   ;; SetColorKey(this, dwFlags, lpDDColorKey)
   (func $handle_IDirectDrawSurface_SetColorKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
+    (local $entry i32) (local $ck i32) (local $bpp i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     ;; DDCKEY_SRCBLT = 0x8, DDCKEY_DESTBLT = 0x2
-    (i32.store (i32.add (local.get $entry) (i32.const 24))
-      (call $gl32 (local.get $arg2))) ;; dwColorSpaceLowValue
+    ;; Mask the key to the surface bit-depth: apps sometimes pass 0x0000FFFF
+    ;; on 8bpp surfaces, but per-pixel compares load only `bpp` bits, so an
+    ;; un-masked key would never match → no transparency.
+    (local.set $ck (call $gl32 (local.get $arg2)))
+    (local.set $bpp (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (local.set $ck (i32.and (local.get $ck) (i32.const 0xFF))))
+      (else (if (i32.eq (local.get $bpp) (i32.const 16))
+        (then (local.set $ck (i32.and (local.get $ck) (i32.const 0xFFFF)))))))
+    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $ck)) ;; dwColorSpaceLowValue
     ;; Set has_colorkey flag
     (i32.store (i32.add (local.get $entry) (i32.const 28))
       (i32.or (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 0x100)))
