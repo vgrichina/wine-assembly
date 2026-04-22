@@ -3037,7 +3037,27 @@
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
+        ;; Focus transfer: mirror SetFocus's WM_KILLFOCUS to the previous
+        ;; focus window. Without this, the old edit keeps its 0x08 focus
+        ;; flag and keeps drawing a caret after the user clicks another
+        ;; control. WAT-native wndprocs dispatch synchronously; x86 ones
+        ;; fall back to the post queue (matches $handle_SetFocus).
+        (if (i32.and (i32.ne (global.get $focus_hwnd) (local.get $hwnd))
+                     (i32.ne (global.get $focus_hwnd) (i32.const 0)))
+          (then
+            (if (i32.ge_u (call $wnd_table_get (global.get $focus_hwnd))
+                          (i32.const 0xFFFF0000))
+              (then (drop (call $wat_wndproc_dispatch
+                      (global.get $focus_hwnd) (i32.const 0x0008)
+                      (local.get $hwnd) (i32.const 0))))
+              (else (drop (call $post_queue_push
+                      (global.get $focus_hwnd) (i32.const 0x0008)
+                      (local.get $hwnd) (i32.const 0)))))))
         (global.set $focus_hwnd (local.get $hwnd))
+        ;; Grab mouse capture so the renderer routes WM_MOUSEMOVE here
+        ;; with MK_LBUTTON while the user drags — needed for selection
+        ;; extension. Released on WM_LBUTTONUP below.
+        (global.set $capture_hwnd (local.get $hwnd))
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         ;; Mark focused + drag-tracking bit 4 (0x10).
@@ -3100,6 +3120,9 @@
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
               (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
+        ;; Release capture grabbed on WM_LBUTTONDOWN.
+        (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+          (then (global.set $capture_hwnd (i32.const 0))))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
