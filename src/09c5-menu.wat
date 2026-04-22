@@ -893,6 +893,12 @@
         (i32.store (local.get $tbl) (i32.const 0))
         (return)))
     (if (local.get $old) (then (return)))
+    ;; LoadMenuA returns `resId | 0x00BE0000` as a fake handle. When MFC's
+    ;; CreateWindowExA(hMenu=...) forwards that value through to us, strip
+    ;; the tag so find_resource sees the raw resource ID.
+    (if (i32.eq (i32.and (local.get $menu_id) (i32.const 0xFFFF0000))
+                (i32.const 0x00BE0000))
+      (then (local.set $menu_id (i32.and (local.get $menu_id) (i32.const 0xFFFF)))))
     ;; Resolve resource bytes.
     (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
     (if (i32.eqz (local.get $entry)) (then (return)))
