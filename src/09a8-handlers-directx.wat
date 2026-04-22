@@ -1771,13 +1771,13 @@
     (if (local.get $arg1)
       (then (call $gs32 (local.get $arg1) (global.get $dx_ddraw_this))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IDirectDrawSurface2_PageLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IDirectDrawSurface2_PageUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import

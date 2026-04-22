@@ -902,6 +902,32 @@ The `0x77fff650` value is suggestive: it is `ebp - 0x24` from the callee's frame
 
 **Regression check.** Notepad, calc, mspaint, pinball, FreeCell all still run clean after the TIB/SearchPath fixes — the EDI-corruption bug is hit only by this specific MSVC throw idiom in d3drm client code.
 
+##### Session 2026-04-22 (cont.2) — root-caused: IDirectDrawSurface2::GetDDInterface popped 8 instead of 12
+
+The "EDI corrupted across `call 0x744113a0`" was misleading — nothing in the callee overwrote the saved-EDI slot at `[0x77fff3c4]`. A direct hexdump of that slot right after return showed it still contains the correct value 0. The value 0x77fff650 that pop-edi returned came from `[0x77fff3c0]` — i.e. **ESP was 4 bytes lower than expected** when the epilogue ran.
+
+Narrowed the drift by tracing ESP at block entries inside the callee:
+
+| block | ESP |
+|---|---|
+| 0x744113a0 (entry) | 0x77fff678 |
+| 0x74411480 | 0x77fff3c4 ✓ |
+| 0x74411517 | 0x77fff3c4 ✓ |
+| 0x74411583 | 0x77fff3c4 ✓ |
+| 0x74411656 | **0x77fff3c0** ← −4 drift |
+
+Between 0x74411583 and 0x74411656, the code does `push edx; push eax; mov ecx, [eax]; call [ecx+0x90]; ...; jge 0x74411656`. That's a COM method call with 2 stdcall args (`this` + out-ptr). Reading the thunk at vtable offset 0x90 (slot 36) of the object pinpointed the method: api_id `0x5d6` = **`IDirectDrawSurface2::GetDDInterface`**.
+
+Our handler at `src/09a8-handlers-directx.wat:1770` was doing `esp += 8` instead of `esp += 12` (4 ret addr + 8 for the 2 stdcall args). After the call returned, ESP was 4 bytes too low, and the rest of the callee's stack frame decoded one slot off — so `pop edi` in the epilogue read the slot below the saved one, giving the phantom `0x77fff650`.
+
+`PageLock` and `PageUnlock` in the same block had the identical off-by-4 bug (`esp += 8` instead of `esp += 12` for their 1-arg-beyond-this prototypes).
+
+**Fix.** Bumped all three handlers to `esp += 12`. After rebuild, ARCHITEC advances 4 more API calls past the phantom throw and crashes anew at `call [ecx+0x8]` with `[eax]=0` (a Release through an already-freed or zeroed COM vtable, `prev_eip=0x744215e4`). That's a separate issue — leave for next session.
+
+**Why previous framings were wrong.** The cont.1 summary hypothesized SEH unwind not restoring callee-saved regs, or a stray write into the saved-EDI slot. Both were wrong. The bug was simpler: a 2-arg stdcall COM method had the wrong ESP cleanup in its handler, and downstream code decoded its own stack one slot off. Lesson reinforced: when a register "changes" across a call, always verify the saved-slot on the stack with an explicit dump before building unwind theories — and when ESP drifts by exactly 4 across a COM call, check the handler's ESP cleanup arithmetic first.
+
+**Regression check.** Notepad, calc, mspaint (Win98), WIN98.SCR all still run clean after the fix.
+
 **Why cont.3 was wrong.** The "Grapple-198 string at 0x74a16421" observation was a disasm-time guess, not a runtime confirmation. At runtime, with TLS broken, the string the app tried to pass was never constructed. cont.3's call chain (LoadMesh → worker → loader B → MeshBuilder::Load) is still correct; what flows through it was wrong. The lesson ([memory note](feedback_verify_runtime_call_site.md) already applies): disasm hints where a string *should* come from but can't tell you what it *is* at call time.
 
 **Regression check:** notepad, calc, mspaint (Win98), pinball all run clean after the TLS change — no API behavior depends on TIB+0x2c being zero.
