@@ -1245,6 +1245,11 @@
     (local $bpp i32) (local $bps i32) (local $row i32)
     (local $drblt_flags i32)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
+    (call $host_dx_trace (i32.const 12) (call $dx_slot_of (local.get $dst_entry))
+      (if (result i32) (local.get $arg2)
+        (then (call $dx_slot_of (call $dx_from_this (local.get $arg2))))
+        (else (i32.const -1)))
+      (local.get $arg1) (local.get $arg3))
     (call $host_dx_trace (i32.const 3) (call $dx_slot_of (local.get $dst_entry))
       (if (result i32) (local.get $arg2)
         (then (call $dx_slot_of (call $dx_from_this (local.get $arg2))))
@@ -1274,6 +1279,8 @@
         (local.set $row (call $gl32 (i32.add
           (call $gl32 (i32.add (global.get $esp) (i32.const 24))) ;; lpDDBltFx arg6
           (i32.const 36)))) ;; DDBLTFX.dwFillColor at offset 36
+        (call $host_dx_trace (i32.const 13) (call $dx_slot_of (local.get $dst_entry))
+          (local.get $row) (local.get $dx) (local.get $dy))
         ;; Fill destination rect
         (block $fill_done
           (local.set $sy (i32.const 0))
@@ -1371,6 +1378,9 @@
     (local.set $src_dib (i32.load (i32.add (local.get $src_entry) (i32.const 20))))
     (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
     (local.set $trans (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; dwTrans (6th arg)
+    (call $host_dx_trace (i32.const 14) (call $dx_slot_of (local.get $dst_entry))
+      (call $dx_slot_of (local.get $src_entry))
+      (local.get $arg1) (local.get $arg2))
     (call $host_dx_trace (i32.const 11) (call $dx_slot_of (local.get $dst_entry))
       (call $dx_slot_of (local.get $src_entry))
       (i32.load (i32.add (local.get $src_entry) (i32.const 24)))
