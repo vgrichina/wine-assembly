@@ -24,6 +24,31 @@ Meanwhile the last guest block before `exit` is at `0x00403261` (inside the asse
 
 Next step: `--trace` narrowed to the 0x402000..0x403500 window (or `--trace-at` on each bitmap-load call site inside 0x00402f6f) to find where the loader decides to bail. Look for the call to `0x00407f40` returning 0 → `xor edi,edi` → eventual `invoke _cexit` / abort.
 
+**2026-04-21 further investigation:**
+
+- `exit` IAT thunk is at `0x00409b50` (single `jmp [0x41047c]`), imported from CRTDLL.dll (not MSVCRT).
+- mainCRTStartup is at `0x00409b60`; it calls WinMain at `0x00409c20`, then `call exit` at `0x00409c29`. Breakpoints on `0x00409b60` hit once (batch 0 entry), `0x00409c25/29` **never** hit — so control never returns normally to mainCRTStartup post-WinMain.
+- WinMain has exactly three `ret 0x10` epilogues: `0x402615`, `0x40267e`, `0x402776` (full .text scan confirms). Block-entry breakpoints on all three (`0x40260c`, `0x402675`, `0x40276b`) **never** fire. So WinMain itself doesn't return either.
+- Yet `exit` fires with `ret=0x00409c2e` on the stack. The last guest block before `exit` is `0x00403261`, which is a **plain `ret`** epilogue of some unidentified function: `add esp,4; xor eax,eax; pop ebp/edi/esi/ebx; add esp,0x20; ret`. Between batch 557 (inside render inner loop at `0x00407cef`, ESP=0x03fff7a4) and batch 558 (at `0x00403261`, ESP=0x03fffdcc) the stack unwinds ~1576 bytes in a single unlogged transition — suggests SEH-driven unwind or a longjmp/abort path, not an ordinary chain of rets.
+- Conjecture: the render function hits an exception (divide by zero? null deref on a missing palette?) that triggers SEH/`__except` → a handler unwinds the stack, returns 0 via the plain-ret fn at `0x00403261`, and that function's caller falls into `call exit` directly.
+
+Next step: `--trace-seh` + break on SEH dispatcher entry to see if an exception fires mid-render. If yes, dump the exception record to see which render instruction is faulting.
+
+**Resolution of WinMain-exit mystery + actual root cause:**
+
+The "breakpoints don't fire" was a harness bug, not an emu bug. `--break=a,b,c` uses `set_bp` only when exactly **one** address is passed — multiple break addrs fell back to a JS check that only runs on `eipBefore` (first block per batch). With default `batch-size=1000`, mid-batch block entries were invisible. Fixed in this session: when `breakAddrs.length > 1`, `BATCH_SIZE` is forced to 1 so every block entry hits the JS check.
+
+With the fix, `--break=0x40260c,0x402675,0x40276b` fires correctly: **WinMain returns via `0x00402675`** — its middle epilogue, reached by `0x00402671 test eax,eax; 0x00402673 jnz 0x402681; fall through to xor eax,eax`.
+
+Failure chain:
+1. WinMain calls `0x004020c0` at `0x0040266c` (message-pump wrapper).
+2. `0x004020c0` calls `0x00404970` → which calls `0x00402940` (gfx begin/error-reporter) → which calls `0x00407a10` (`gfxBegin`).
+3. `gfxBegin` at `0x00407a10` calls `0x004081a0` (full DDraw init: reads INI values `FoxBear.use_dest`, `FoxBear.sysmem`, `FoxBear.use_emulation`, `FoxBear.buffers` via `GetProfileIntA`, then enumerates drivers, `DirectDrawCreate`, `SetCooperativeLevel`, `SetDisplayMode`, creates primary + back buffers).
+4. `0x004081a0` returns 0 → `gfxBegin` returns 0 → `0x00402940` pushes string `"gfxBegin failed."` at `0x0040c530` and calls `0x004028f0` (error reporter, probably `OutputDebugStringA` + `MessageBoxA`) → returns 0.
+5. Propagates up: message-pump wrapper returns 0 → WinMain's middle epilogue → CRT `exit(0)`.
+
+The error string `"gfxBegin failed."` is logged via OutputDebugString — our run currently swallows it silently. The *actual* root blocker is inside `0x004081a0`: one of the DDraw primary/back surface creations fails. Next session: `--break=0x004081a0` + step through to find which COM call returns failure, add `--trace-host=` for the DDraw calls if not already wrapped.
+
 Session fix **041faa9** matters here: earlier runs stopped at batch 11 with a false STUCK at the sprite blit inner loop (`0x407cef`), masking the fact that the app *does* finish its init render and then self-exits via the CRT. With the fingerprint in STUCK, the full 3285-API run reproduces deterministically.
 
 ## Files & addresses

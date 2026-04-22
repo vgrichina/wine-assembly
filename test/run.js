@@ -35,7 +35,10 @@ const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps a
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
-const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
+// When multiple --break addrs are passed, the WASM `set_bp` only holds one,
+// so the JS fallback (eipBefore check) must see every block entry. Force
+// batch-size=1 so each block run hits the check loop.
+let BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
@@ -80,6 +83,9 @@ const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw 
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
+if (breakAddrs.length > 1) {
+  BATCH_SIZE = 1; // WASM set_bp holds only one addr; JS check must see every block
+}
 const traceAtAddr = TRACE_AT ? parseInt(TRACE_AT, 16) : 0; // set_bp supports only one addr
 let traceAtHits = 0;
 const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
