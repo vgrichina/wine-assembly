@@ -1627,37 +1627,14 @@ async function main() {
         renderer.handleMouseUp(ev.x, ev.y, 2);
         logs.push(`[input] rclick ${ev.x},${ev.y} at batch ${batch}`);
       } else if (ev.action === 'dblclick' && renderer && renderer.handleMouseDown) {
-        // First click primes the system; the DBLCLK is injected for the
-        // top-level window under the cursor. FreeCell uses it for auto-
-        // move-to-home. No CS_DBLCLKS detection exists in the emulator, so
-        // we synthesize the DBLCLK message directly.
+        // Two consecutive clicks at the same spot. handleMouseDown's
+        // built-in timing check folds the second DOWN into WM_LBUTTONDBLCLK
+        // so it reaches WAT-native dialog children via dialog_route_mouse.
         renderer.handleMouseDown(ev.x, ev.y, 1);
         renderer.handleMouseUp(ev.x, ev.y, 1);
-        let targetWin = null;
-        for (const w of Object.values(renderer.windows)) {
-          if (!w.visible || w.parentHwnd) continue;
-          if (ev.x >= w.x && ev.x < w.x + w.w && ev.y >= w.y && ev.y < w.y + w.h) {
-            if (!targetWin || (w.z || 0) >= (targetWin.z || 0)) targetWin = w;
-          }
-        }
-        if (targetWin) {
-          const clientX = targetWin.x + 3;
-          const hasMenu = renderer._hasMenuBar && renderer._hasMenuBar(targetWin);
-          const clientY = targetWin.y + 3 + 18 + (hasMenu ? 18 : 0) + 1;
-          const relX = ev.x - clientX;
-          const relY = ev.y - clientY;
-          renderer.inputQueue.push({
-            type: 'mouse',
-            hwnd: targetWin.hwnd,
-            msg: 0x0203, // WM_LBUTTONDBLCLK
-            wParam: 0x0001, // MK_LBUTTON
-            lParam: ((relY & 0xFFFF) << 16) | (relX & 0xFFFF),
-          });
-          renderer.handleMouseUp(ev.x, ev.y, 1);
-          logs.push(`[input] dblclick ${ev.x},${ev.y} hwnd=0x${targetWin.hwnd.toString(16)} at batch ${batch}`);
-        } else {
-          logs.push(`[input] dblclick ${ev.x},${ev.y} — no target window at batch ${batch}`);
-        }
+        renderer.handleMouseDown(ev.x, ev.y, 1);
+        renderer.handleMouseUp(ev.x, ev.y, 1);
+        logs.push(`[input] dblclick ${ev.x},${ev.y} at batch ${batch}`);
       } else if (ev.action === 'mouseup' && renderer && renderer.handleMouseUp) {
         renderer.handleMouseUp(ev.x, ev.y, 1);
         logs.push(`[input] mouseup ${ev.x},${ev.y} at batch ${batch}`);
