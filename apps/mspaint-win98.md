@@ -1,6 +1,83 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: WARN-BLANK — WM_CREATE fully handled; blocker is view's WM_PAINT
+## Status: WARN-BLANK — CDocTemplate/InitialUpdate path never runs; view has no document
+
+### 2026-04-21 correction: vtable slot misidentified last session
+
+Previous writeup said "OnPrepareDC is 0x0101f546 at vtable+0xe4" and the
+gate `[view+0x44]==0` was thus reachable via OnPrepareDC. **Wrong on both
+counts.** Verified this session with xrefs.js + raw hexdump of the
+CPBView vtable at 0x01005104:
+
+| slot | value | function |
+|---|---|---|
+| +0xe0 | 0x0102f00e | IAT thunk (inherited) |
+| +0xe4 | **0x0101f427** | real OnPrepareDC — trivial: calls base, if `[this+0x20]` (m_hWnd) non-null, calls one helper. Does NOT reach the setter chain. |
+| +0xe8 | **0x0101f546** | the setter-chain gate (previously misidentified as 0xe4). In MFC4.2 CView, slot 0xe8 is `OnInitialUpdate`. |
+| +0xec | 0x0101f5be | likely OnUpdate |
+| +0xf8 | 0x0101f23f | OnDraw ✓ |
+
+(Prior writeup confused `27 f4 01 01` at offset +0xe4 with `46 f5 01 01`
+at +0xe8 — hexdump off-by-4.)
+
+### New probes (this session)
+
+1. **`--trace-at=0x0101f546 --max-batches=2000` → 0 hits.** Slot 0xe8
+   (OnInitialUpdate) is NEVER invoked on CPBView.
+2. **`--watch=0x0158be64 --watch-log` (guest addr = `view+0x40`) → 0
+   writes.** `m_pDocument` is never populated.
+3. Class-name scan of .rdata: `CPBDoc`, `CPBFrame`, `CPBView` (not
+   CMainFrame/CPaintView/CPaintDoc — prior writeup had these wrong).
+   `CImgWnd` is the canvas-wrapper class the setter at 0x0101f80f
+   constructs.
+
+### Diagnosis
+
+CPBView is constructed (trace shows hwnd=0x10002, Attach + CBT subclass
+ran), but nothing ever calls `CView::OnInitialUpdate` and nothing ever
+sets `m_pDocument`. Both are signatures of the CDocTemplate path not
+completing. In a normal MFC SDI startup:
+
+```
+CWinApp::InitInstance → AddDocTemplate(CSingleDocTemplate)
+                    → ProcessShellCommand(cmdInfo)
+                    → CWinApp::OnCmdMsg(ID_FILE_NEW,...)
+                    → CWinApp::OnFileNew → m_pDocManager->OnFileNew()
+                    → CDocTemplate::OpenDocumentFile(NULL)
+                    → CreateNewDocument           ← new CPBDoc
+                    → CreateNewFrame              ← new CPBFrame
+                    → CFrameWnd::LoadFrame (runs) → creates view
+                    → InitialUpdateFrame(pDoc, TRUE)
+                        → pDoc->AddView(pView)    ← writes m_pDocument
+                        → pView->OnInitialUpdate  ← slot 0xe8 fires
+                        → pView->SendMessageToDescendants(WM_INITIALUPDATE)
+```
+
+We observe `CFrameWnd::LoadFrame` running end-to-end (the WM_CREATE trace
+from last session confirms), so control reaches at least the frame
+creation. But neither `AddView` (writes view+0x40) nor `OnInitialUpdate`
+(slot 0xe8) fires → `InitialUpdateFrame` is either not called, or called
+with `pDoc = NULL`.
+
+### Next-session plan
+
+1. Find `CFrameWnd::InitialUpdateFrame` in mfc42 (ordinal lookup) and
+   trace-at its entry. If it fires with pDoc=NULL, then
+   CreateNewDocument returned NULL — probably because `new CPBDoc`
+   failed or the DocTemplate list is empty.
+2. If InitialUpdateFrame never fires, walk back: trace
+   `CWinApp::ProcessShellCommand`, then `CDocManager::OnFileNew`.
+3. Inspect CPBApp::InitInstance for `AddDocTemplate` call. If it
+   isn't called (DocTemplate list empty), DocManager has nothing to
+   open. That would also explain this quickly.
+4. Alternative shortcut: dump CREATESTRUCT.lpCreateParams for the view's
+   CreateWindowExA (API #1193). lpCreateParams is a CCreateContext* with
+   `m_pCurrentDoc`. If it's NULL, DocTemplate didn't produce a doc.
+   Call-site retaddr is 0x0105fdb7 (mfc42), and the 12th arg is at
+   [esp+48] just before the call. Can trace-at-dump on the retaddr
+   block and reconstruct from a stack snapshot taken just before the
+   thunk transition (or add an arg to the trace-api formatter for
+   CreateWindowExA).
 
 **Current symptom:** render is a bare Win98 frame with title "Paint" and system buttons;
 client area solid gray (just one `FillRect` + `DrawEdge` on hwnd 0x10002). No toolbar,
