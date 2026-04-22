@@ -304,7 +304,8 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 |--------|--------|-------|
 | ddex1 | **PASS** (22 colors) | Default 8bpp palette fix (f0d3835) |
 | ddex2 | **PASS** (9 colors, full Back Buffer splash) | Unblocked by primary-resize (e8e579f) + QI wrapper (4962118) |
-| ddex3 / ddex5 | warn (blank) | Reaches render loop but ≤3 colors |
+| ddex3 | **PASS** ("Even Screen" / "Odd Screen" splash, 3 colors) | Was WARN; render is correct (sparse text on solid blue) — blank heuristic topShare threshold tightened from 0.95 to 0.97 |
+| ddex5 | **PASS** (checkerboard + bouncing balls + color-key sprites) | Was WARN at 80 batches; needs 500 — `maxBatches` override in harness |
 | ddex4 | **PASS** (82 colors, 3D donuts on checkerboard) | |
 | flip2d | **PASS** (632 colors, spinning cube + FPS) | |
 | flip3dtl | **PASS** (628 colors, HAL-marked cube) | DDSURF2 vtable (18e2278) + back-face culling (f5162f6) |

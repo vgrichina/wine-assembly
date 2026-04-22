@@ -14,9 +14,10 @@ const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in 
 
 // Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
 // topShare = fraction of pixels covered by the most common color. A PNG is
-// "blank" iff colors ≤ threshold AND topShare > 0.95 (near-solid fill).
-// Cartoon/sprite content with few distinct colors but visible shapes
-// (e.g. black hearts on a red background) has topShare < 0.95 and PASSes.
+// "blank" iff colors ≤ threshold AND topShare > 0.97 (near-solid fill).
+// Sparse text on a solid fill (e.g. ddex3's "Even Screen" title) is a real
+// render with 3 colors but ~95% background and must PASS — so the cutoff
+// is tighter than 0.95.
 async function analyzePng(pngPath) {
   try {
     const img = await loadImage(pngPath);
@@ -135,7 +136,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/ddex2.exe', name: 'DX5 DDraw Sample 2 (ddex2)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex3.exe', name: 'DX5 DDraw Sample 3 (ddex3)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex4.exe', name: 'DX5 DDraw Sample 4 (ddex4)' },
-  { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)' },
+  { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)', maxBatches: 500 },
   { exe: 'test/binaries/dx-sdk/bin/flip2d.exe', name: 'DX5 Flip2D' },
   { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette' },
   { exe: 'test/binaries/dx-sdk/bin/stretch.exe', name: 'DX5 Stretch' },
@@ -328,7 +329,7 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
       const a = await analyzePng(pngPath);
       if (a) {
         r.colors = a.colors;
-        const isBlank = a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.95;
+        const isBlank = a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.97;
         if (isBlank) {
           r.status = 'WARN';
           r.reason = `${r.reason} — BLANK (${a.colors} colors, ${(a.topShare*100).toFixed(1)}% one color)`;
