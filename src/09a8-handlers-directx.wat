@@ -14,15 +14,15 @@
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
   (global $DX_OBJECTS i32 (i32.const 0x07FF0000))
-  (global $DX_MAX i32 (i32.const 256))
+  (global $DX_MAX i32 (i32.const 1024))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
-  ;; COM wrapper stubs: 256 × 8 bytes in high memory (safe from guest address collision)
-  (global $COM_WRAPPERS i32 (i32.const 0x07FF2000))
+  ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
+  (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
   ;; Auxiliary wrappers for QueryInterface results that need a different vtable
   ;; than the primary wrapper. Each entry is [vtbl, slot], same shape as the
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
-  (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FF2800))
+  (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
   (global $com_aux_next (mut i32) (i32.const 0))
 

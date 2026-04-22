@@ -61,11 +61,36 @@
       (br $l)))
     (local.get $len))
 
+  ;; Right-justify $written bytes within $width at $dst, pad-front with $pad.
+  ;; Returns the padded width (i.e. final byte count). No-op if width<=written.
+  (func $apply_pad (param $dst i32) (param $written i32) (param $width i32) (param $pad i32) (result i32)
+    (local $n i32) (local $i i32)
+    (if (i32.le_u (local.get $width) (local.get $written))
+      (then (return (local.get $written))))
+    (local.set $n (i32.sub (local.get $width) (local.get $written)))
+    ;; Shift bytes right by $n: copy from end to start
+    (local.set $i (local.get $written))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (call $gs8 (i32.add (local.get $dst) (i32.add (local.get $i) (local.get $n)))
+        (call $gl8 (i32.add (local.get $dst) (local.get $i))))
+      (br $l)))
+    ;; Fill prefix with $pad
+    (local.set $i (i32.const 0))
+    (block $d2 (loop $l2
+      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $pad))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l2)))
+    (local.get $width))
+
   ;; wsprintfA: lpOut (guest), lpFmt (guest), arg_ptr (guest stack ptr to first vararg)
   ;; Returns number of chars written (not counting NUL)
   (func $wsprintf_impl (param $out i32) (param $fmt i32) (param $arg_ptr i32) (result i32)
     (local $fi i32) (local $oi i32) (local $ch i32) (local $arg i32)
     (local $sptr i32) (local $sch i32) (local $written i32)
+    (local $pad_zero i32) (local $width i32)
     (block $done (loop $loop
       (local.set $ch (call $gl8 (i32.add (local.get $fmt) (local.get $fi))))
       (br_if $done (i32.eqz (local.get $ch)))
@@ -75,22 +100,28 @@
           (local.set $oi (i32.add (local.get $oi) (i32.const 1)))
           (local.set $fi (i32.add (local.get $fi) (i32.const 1)))
           (br $loop)))
-      ;; Got '%'
+      ;; Got '%' — reset per-conversion state
+      (local.set $pad_zero (i32.const 0))
+      (local.set $width (i32.const 0))
       (local.set $fi (i32.add (local.get $fi) (i32.const 1)))
       (local.set $ch (call $gl8 (i32.add (local.get $fmt) (local.get $fi))))
-      ;; Skip flags: '-', '+', '0', ' ', '#'
+      ;; Parse flags: '-', '+', '0', ' ', '#'  (only '0' affects output here)
       (block $skip_flags (loop $fl
         (br_if $skip_flags (i32.and (i32.ne (local.get $ch) (i32.const 45))
           (i32.and (i32.ne (local.get $ch) (i32.const 43))
           (i32.and (i32.ne (local.get $ch) (i32.const 48))
           (i32.and (i32.ne (local.get $ch) (i32.const 32))
                    (i32.ne (local.get $ch) (i32.const 35)))))))
+        (if (i32.eq (local.get $ch) (i32.const 48))
+          (then (local.set $pad_zero (i32.const 1))))
         (local.set $fi (i32.add (local.get $fi) (i32.const 1)))
         (local.set $ch (call $gl8 (i32.add (local.get $fmt) (local.get $fi))))
         (br $fl)))
-      ;; Skip width digits
+      ;; Parse width digits
       (block $skip_w (loop $wl
         (br_if $skip_w (i32.or (i32.lt_u (local.get $ch) (i32.const 48)) (i32.gt_u (local.get $ch) (i32.const 57))))
+        (local.set $width (i32.add (i32.mul (local.get $width) (i32.const 10))
+                                   (i32.sub (local.get $ch) (i32.const 48))))
         (local.set $fi (i32.add (local.get $fi) (i32.const 1)))
         (local.set $ch (call $gl8 (i32.add (local.get $fmt) (local.get $fi))))
         (br $wl)))
@@ -124,25 +155,33 @@
       (if (i32.or (i32.eq (local.get $ch) (i32.const 100)) (i32.eq (local.get $ch) (i32.const 105)))
         (then
           (local.set $written (call $write_int (i32.add (local.get $out) (local.get $oi)) (local.get $arg)))
-          (local.set $oi (i32.add (local.get $oi) (local.get $written)))
+          (local.set $oi (i32.add (local.get $oi)
+            (call $apply_pad (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
+              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)))))
           (br $loop)))
       ;; 'u': unsigned decimal
       (if (i32.eq (local.get $ch) (i32.const 117))
         (then
           (local.set $written (call $write_uint (i32.add (local.get $out) (local.get $oi)) (local.get $arg)))
-          (local.set $oi (i32.add (local.get $oi) (local.get $written)))
+          (local.set $oi (i32.add (local.get $oi)
+            (call $apply_pad (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
+              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)))))
           (br $loop)))
       ;; 'x': lowercase hex
       (if (i32.eq (local.get $ch) (i32.const 120))
         (then
           (local.set $written (call $write_hex (i32.add (local.get $out) (local.get $oi)) (local.get $arg) (i32.const 0)))
-          (local.set $oi (i32.add (local.get $oi) (local.get $written)))
+          (local.set $oi (i32.add (local.get $oi)
+            (call $apply_pad (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
+              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)))))
           (br $loop)))
       ;; 'X': uppercase hex
       (if (i32.eq (local.get $ch) (i32.const 88))
         (then
           (local.set $written (call $write_hex (i32.add (local.get $out) (local.get $oi)) (local.get $arg) (i32.const 1)))
-          (local.set $oi (i32.add (local.get $oi) (local.get $written)))
+          (local.set $oi (i32.add (local.get $oi)
+            (call $apply_pad (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
+              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)))))
           (br $loop)))
       ;; 'c': character
       (if (i32.eq (local.get $ch) (i32.const 99))
