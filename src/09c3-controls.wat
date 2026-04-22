@@ -286,6 +286,13 @@
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
 
+    ;; WM_NCPAINT → paint chrome (title bar + border) on back-canvas.
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    ;; WM_ERASEBKGND → fill client with COLOR_BTNFACE (index 16).
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
+
     ;; Recover FR ptr stashed at userdata, owner from FR+4. Both WM_CLOSE
     ;; (title-bar X) and WM_COMMAND (Cancel/Find Next) need this.
     (local.set $fr (call $wnd_get_userdata (local.get $hwnd)))
@@ -3780,14 +3787,19 @@
       (i32.const 0x1E3)   ;; "Find" title constant
       (i32.const 340) (i32.const 128)
       (i32.const 2))      ;; kind bit 1 = isFindDialog
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (i32.const 0x1E3) (i32.const 4))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     ;; Tag the parent dialog as control class 10 so $control_wndproc_dispatch
     ;; routes WM_COMMAND from child buttons to $findreplace_wndproc.
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 10) (i32.const 0))
+    ;; Queue WM_NCPAINT + WM_ERASEBKGND on the registered slot so the main
+    ;; GetMessageA loop dispatches chrome + background fill. Must run AFTER
+    ;; wnd_table_set — nc_flags_set is a no-op when the slot doesn't exist.
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))  ;; bits 0+1
+    (call $dlg_fill_bkgnd (local.get $dlg))
     ;; Static "Find what:"
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
