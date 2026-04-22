@@ -440,6 +440,10 @@
   ;; FPU unimplemented opcode message — passed to $crash_unimplemented when an
   ;; x87 escape opcode is decoded but the (group, reg, rm) tuple has no handler.
   (data (i32.const 0x2F0) "FPU_UNIMPL\00")
+  ;; Default ShellAbout szOtherStuff — used when the caller passes an empty
+  ;; string (Win98 notepad does this, relying on real shell32 to synthesize
+  ;; version/copyright lines). 52 bytes including NUL.
+  (data (i32.const 0x300) "Version 4.10\nCopyright (C) 1985-1998 Microsoft Corp.\00")
 
   ;; ============================================================
   ;; MEMORY MAP

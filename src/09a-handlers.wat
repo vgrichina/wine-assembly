@@ -2284,14 +2284,26 @@
   ;; comes from $create_about_dialog → $host_register_dialog_frame +
   ;; $ctrl_create_child.
   (func $handle_ShellAboutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dlg i32)
+    (local $dlg i32) (local $other i32)
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (drop (call $host_shell_about
       (local.get $dlg) (local.get $arg0) (call $g2w (local.get $arg1))))
+    ;; Win98 notepad passes an empty szOtherStuff and relies on real shell32
+    ;; to synthesize the version/copyright lines. Substitute our default
+    ;; (data at 0x300) into a fresh guest heap buffer when the caller's
+    ;; string is NULL or empty.
+    (local.set $other (local.get $arg2))
+    (if (i32.eqz (local.get $other))
+      (then (local.set $other (i32.const 1))))
+    (if (i32.eqz (i32.load8_u (call $g2w (local.get $other))))
+      (then
+        (local.set $other (call $heap_alloc (i32.const 53)))
+        (call $memcpy (call $g2w (local.get $other))
+                      (i32.const 0x300) (i32.const 53))))
     (call $create_about_dialog
       (local.get $dlg) (local.get $arg0)
-      (local.get $arg1) (local.get $arg2))
+      (local.get $arg1) (local.get $other))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

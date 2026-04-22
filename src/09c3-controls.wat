@@ -383,6 +383,15 @@
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $close i32)
     (local.set $close (i32.const 0))
+    ;; WM_NCPAINT → paint chrome (title bar + border) on back-canvas.
+    ;; Without this the dialog has no frame: ShellAbout doesn't run the
+    ;; modal pump (which would drain nc_flags directly), so paint messages
+    ;; come via the main GetMessageA loop and must be handled here.
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    ;; WM_ERASEBKGND → fill client with COLOR_BTNFACE (index 16).
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
     ;; WM_CLOSE → close
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then (local.set $close (i32.const 1))))
@@ -434,8 +443,9 @@
       (local.get $title_buf_w)
       (local.get $w) (local.get $h)
       (i32.const 1))  ;; kind bit 0 = isAboutDialog
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (local.get $title_buf_w)
+      (i32.add (local.get $app_len) (i32.const 6)))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     ;; Tag the parent dialog as control class 11 so $control_wndproc_dispatch
@@ -443,6 +453,12 @@
     ;; to $about_wndproc.
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 11) (i32.const 0))
+    ;; Queue WM_NCPAINT + WM_ERASEBKGND on the now-registered slot so the
+    ;; main GetMessageA loop dispatches chrome + background fill to
+    ;; $about_wndproc. Must run AFTER wnd_table_set — nc_flags_set is a
+    ;; no-op when the slot doesn't exist yet.
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))  ;; bits 0+1
+    (call $dlg_fill_bkgnd (local.get $dlg))
     ;; Line 1: appname static
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 10) (i32.const 236) (i32.const 18)
