@@ -1513,8 +1513,58 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 104: SetDlgItemInt(hDlg, nIDDlgItem, uValue, bSigned) — stub, ignore
+  ;; 104: SetDlgItemInt(hDlg, nIDDlgItem, uValue, bSigned) — format integer
+  ;; into decimal ASCII and delegate to WM_SETTEXT on the child edit.
   (func $handle_SetDlgItemInt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ctrl i32) (local $buf i32) (local $buf_w i32)
+    (local $val i32) (local $neg i32) (local $tmp i32)
+    (local $digits i32) (local $i i32)
+    (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
+    (if (local.get $ctrl)
+      (then
+        (local.set $val (local.get $arg2))
+        (local.set $neg (i32.const 0))
+        (if (i32.and (local.get $arg3) (i32.shr_s (local.get $val) (i32.const 31)))
+          (then
+            (local.set $neg (i32.const 1))
+            (local.set $val (i32.sub (i32.const 0) (local.get $val)))))
+        ;; 16-byte scratch is plenty: max 10 digits + sign + NUL
+        (local.set $buf (call $heap_alloc (i32.const 16)))
+        (if (local.get $buf)
+          (then
+            (local.set $buf_w (call $g2w (local.get $buf)))
+            ;; Count digits (at least 1 for val==0)
+            (local.set $tmp (local.get $val))
+            (local.set $digits (i32.const 1))
+            (block $cnt_done (loop $cnt
+              (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))
+              (br_if $cnt_done (i32.eqz (local.get $tmp)))
+              (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+              (br $cnt)))
+            ;; Write sign if needed
+            (if (local.get $neg)
+              (then
+                (i32.store8 (local.get $buf_w) (i32.const 0x2D))  ;; '-'
+                (local.set $buf_w (i32.add (local.get $buf_w) (i32.const 1)))))
+            ;; Emit digits right-to-left
+            (local.set $i (i32.sub (local.get $digits) (i32.const 1)))
+            (local.set $tmp (local.get $val))
+            (block $emit_done (loop $emit
+              (i32.store8
+                (i32.add (local.get $buf_w) (local.get $i))
+                (i32.add (i32.const 0x30) (i32.rem_u (local.get $tmp) (i32.const 10))))
+              (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))
+              (br_if $emit_done (i32.eqz (local.get $i)))
+              (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+              (br $emit)))
+            ;; NUL terminator
+            (i32.store8 (i32.add (local.get $buf_w) (local.get $digits)) (i32.const 0))
+            (drop (call $wnd_send_message (local.get $ctrl)
+                    (i32.const 0x000C)          ;; WM_SETTEXT
+                    (i32.const 0)
+                    (local.get $buf)))
+            (call $heap_free (local.get $buf)))))
+      )
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
