@@ -79,6 +79,14 @@
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04)) (global.get $esp))
     ;; TIB+0x08: Stack bottom (1MB below top)
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08)) (i32.sub (global.get $esp) (i32.const 0x100000)))
+    ;; TIB+0x2c: ThreadLocalStoragePointer — point at our TLS slot array so that
+    ;; apps doing direct FS:[0x2c][index*4] reads (bypassing TlsGetValue) see the
+    ;; same values our TlsSetValue writes. Eagerly allocate the slot array.
+    (if (i32.eqz (global.get $tls_slots))
+      (then
+        (global.set $tls_slots (call $heap_alloc (i32.const 256)))
+        (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x2c)) (global.get $tls_slots))
     (global.get $entry_point))
 
   ;; ============================================================
