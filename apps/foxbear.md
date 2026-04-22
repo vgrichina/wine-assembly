@@ -51,6 +51,14 @@ The error string `"gfxBegin failed."` is logged via OutputDebugString — our ru
 
 Session fix **041faa9** matters here: earlier runs stopped at batch 11 with a false STUCK at the sprite blit inner loop (`0x407cef`), masking the fact that the app *does* finish its init render and then self-exits via the CRT. With the fingerprint in STUCK, the full 3285-API run reproduces deterministically.
 
+**Resolution (2026-04-21 evening, commit `07cc27e`):** the actual root cause was *not* in DDraw init — gfxBegin was returning success all along. The blocker was further along, in the asset loader at `0x00402990`:
+
+1. The loader iterates 0x105 bitmap IDs, building each filename via `wsprintfA(buf, "%03u.BMP", idx)` / `"%02uL.BMP"` etc., then calls `0x00407f40(buf)` which `bsearch`es the foxbear.art directory for a matching name.
+2. Our `$wsprintf_impl` parsed the conversion specifier but **silently dropped the width digits and the `'0'` flag** — so `"%03u"` produced `"1"` instead of `"001"`, every bsearch missed, every load returned 0, the loader returned 0, message-pump wrapper returned 0, WinMain bailed via the middle epilogue at `0x00402675`.
+3. After fixing wsprintf to honor `%0Nu` padding, lookups succeeded for the first 273 sprites and then failed for the last 14 — `dx_create_com_obj` was running out of `DX_OBJECTS` slots (DX_MAX=256, foxbear keeps all 287 sprite surfaces alive, plus primary/back/palette). Bumped DX_MAX to 1024 (shifted COM_WRAPPERS to 0x07FF8000 / AUX to 0x07FFA000 so they still fit).
+
+After both fixes the message pump runs and renders the animated bear+fox loop (`test/output/foxbear-after-pad-and-com.png`). Some white squares around sprites (transparency/colorkey artifact) and HUD text rendering with garbage characters at the bottom — those are next-session topics. The "WinMain bails before entering the message loop" mystery is resolved.
+
 ## Files & addresses
 
 - `foxbear.art` mapped as read-only via `CreateFileA` (`OPEN_EXISTING`) → `CreateFileMappingA` (`PAGE_READONLY`) → `MapViewOfFile`.
