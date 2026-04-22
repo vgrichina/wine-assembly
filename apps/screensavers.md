@@ -689,6 +689,182 @@ The actual blocker is **DirectAnimation** (DAView + DAStatics), a very large COM
 
 Path forward if revisited: either (a) implement a minimal DirectAnimation-over-canvas shim, or (b) detect the CLSIDFromProgID failure path and confirm whether the runaway is just a missing NULL-check in the guest (degrade-to-black instead of crashing) — the latter is probably cheaper but leaves zero animation.
 
+##### Session 2026-04-21 — DrawPrimitive diagnostic: d3rm submits degenerate origin-quads
+
+Picked up from (cont.5) thread. Rebuilt and ran ARCHITEC `/s` with an expanded DP2 trace (lib/host-imports.js case 10 now dumps all 8 dwords per vertex, not just sx/sy/color). Finding:
+
+- 20 `IDirect3DDevice2_DrawPrimitive` calls in 3000 batches. All identical:
+  - `primType=5` (TRIANGLESTRIP), `vtxType=3` (TLVERTEX), `count=4`
+  - All 4 vertices are byte-for-byte identical within each call:
+    `sx=0.0, sy=0.0, sz=0.99, rhw=1.01, color=0x3f000000, spec=0xffffffff, tu=0, tv=0`
+- These aren't garbage: rhw≈1.01 and spec=0xffffffff are deliberate d3rm values. The app is submitting real TLVERTEX data — just with (sx,sy) collapsed to origin.
+
+**Why all (0,0)?** Because d3rm has no mesh. Per cont.4: 0 `.X` files ever opened — `AR_MESH.X` / `GRAPPLE.X` never trigger `CreateFileA`. `.SCN` and texture `.GIF` loads work (via `SearchPath`), but the mesh-load leg of d3rm never fires. So d3rm's render loop processes an empty mesh → every "triangle strip" collapses to 4 copies of the origin vertex.
+
+**Implication for priorities:** a software rasterizer is moot until mesh loading works. Even a perfect DrawPrimitive would rasterize 0-pixel degenerate triangles. Next actionable step is finding why d3rm's mesh loader never reaches a file API. Candidates:
+
+1. d3rm's internal `.X` parser may use a CRT path that bypasses our traced wrappers. Confirm by breaking on d3rm's `CreateFile` IAT thunk (whichever module-local thunk at `0x745x_xxxx` resolves `CreateFileA` — d3rm has its own IAT).
+2. The app may never pass the mesh filename to d3rm at all — e.g. an app-side `IDirect3DRMMeshBuilder::Load` stub or missing init step. cont.5 notes "zero `IDirect3DRM*` methods called" in the trace, consistent with this.
+3. Scene-init may bail before reaching mesh load. Break on app-side scene-load fn (see cont.4 entry re: `fn 0x74451020` texture loader — its peer fn for meshes is unidentified).
+
+**Diagnostic uncommitted:** the richer DP2 formatter in `lib/host-imports.js` (case 10). Worth keeping for future DP inspection.
+
+##### Session 2026-04-21 (cont.) — mesh loader located, executes, but produces nothing
+
+Following cont.6: found the app-side mesh loader. It runs, receives correct names, calls its vtable worker, and returns without opening a file. So the bottleneck isn't "d3rm never gets asked" — it's "app-side load silently succeeds with empty data".
+
+Located via `tools/xrefs.js` on the `"Inform: Loading mesh from \"%s\""` string (`0x744ca9e4`):
+
+- **Scene-loader `LoadMesh(name)` entry:** `0x7442b680`. Sets `ebp = this` (ecx), takes name in `[esp+arg0]`.
+- Flow: reject `name == "<none>"` (strcmp vs `0x744caa04`), append `.x` extension (strcmp vs `0x744c9ac0=".x"`), compare vs cached `[ebp+4]`, log "Loading mesh from…", then `call [edx+0x18]` where `edx = *(this+0x104) = 0x744b2a2c` (vtable in `.rdata`).
+- Vtable `[+0x18]` = **method `0x74426290`** — the real mesh-load worker.
+
+Evidence it runs:
+
+- `--trace-at=0x7442b680 --trace-at-dump=0x74a16421:32` → 20+ hits in 3000 batches; first arg is ASCII `"Grapple-198"` (matches the scene spec from cont.4).
+- `--trace-at=0x7442b725` (post-`<none>`-check) → 22 hits; `--trace-at=0x7442b828` (fail branch) → 8 hits.
+- `--trace-at=0x7442b799` (block after `call [edx+0x18]`) → 22 hits. **Vtable call is executed and returns cleanly.**
+
+Yet `--trace-fs` shows zero `.X` opens and trace-api shows zero `IDirect3DRM*` method calls. The load reports neither success via d3rm nor failure via the `"Mesh %s not found or load failed"` error string (`0x744ca9c0`) — it silently returns with empty data.
+
+Disasm of `0x74426290` (first 80 bytes, via `tools/disasm_fn.js`): string-tail comparison against `0x744c9ac4` (likely `xof`/`.xof` suffix), a call to logging fn `0x74468d60` at level 4, strlen>4 gate (`jle 0x7442633f`). No `CreateFileA`, no DX call in the prologue — the load logic is deeper or behind another vtable.
+
+**New hypothesis:** mesh cache already populated (wrongly) before LoadMesh is first called — possibly from an earlier bulk archive scan (`.LST`/`.DAT`) that returned zero entries against our VFS but was treated as "OK, cache built". Each LoadMesh then finds a stub cache entry and returns it.
+
+**Next-session leads (priority order):**
+
+1. Break on call `0x74423c10` at `0x7442b7f7` (reached only if vtable-path fails and falls to the `"Mesh not found"` error-log branch). Currently never hits → vtable thinks it succeeded.
+2. Bisect-walk through `0x74426290` to the first point it either (a) reads a file, (b) invokes a d3drm method, or (c) returns. Use `--trace-at` on its jump targets.
+3. `--trace-fs` scan for bulk reads during scene-init — look for an archive-style pattern (one open, many reads) before the first `0x7442b680` hit.
+
+**Runtime diagnostics (no source edits needed to reproduce):** `--trace-at=0x7442b680 --trace-at-dump=0x74a16421:32` for mesh-name visibility; `--trace-at=0x7442b725` / `0x7442b799` for branch confirmation.
+
+##### Session 2026-04-21 (cont.2) — mesh load IS loudly failing; culprit is stale d3drm pointer
+
+Revised cont.1: the "silent success" hypothesis was wrong. Every mesh load hits the error-log path; we just never saw the log because the app's logger (`0x74423c10`) doesn't route to `OutputDebugStringA`.
+
+Branch probes (same 3000-batch ARCHITEC `/s` run):
+
+- `--trace-at=0x7442b7ed` (error path, `"Mesh %s not found or load failed"` log) → **22 hits** (every single load).
+- `--trace-at=0x7442b7da` / `0x7442b85c` (success paths) → 0 hits.
+
+So `call 0x74425720` at `0x7442b7d1` returns NULL every time — this is the "did-the-vtable-call-produce-a-mesh-object?" getter, and it always reports "no".
+
+**Mesh-load worker `0x74426290` — three candidate loaders tried in sequence:**
+
+After `.xof` suffix strip and "Loading external visual from %s" log at `0x744c9a7c`, the worker calls three helpers; any returning `al=1` wins (`jnz 0x744263e3`). If all fail, bl=0 and `"Couldn't load %s"` (`0x744c9a68`) is logged via `0x74423c70`.
+
+| Helper | Addr | Dispatches via |
+|---|---|---|
+| A | `0x74425ac0` | Internal — does string stuff then opens something via `0x7446d100`/`0x7446d1c0` (looks like `_mbsdup` + `strlen`). Actual loader body past the first 40 bytes. |
+| B | `0x74425750` | `COM_obj = [0x744f828c]; COM_obj->Vtbl[0x18](COM_obj, &out)` — likely `IDirect3DRM::CreateMeshBuilder` (slot 6). Logs `0x744c9818` fmt at entry; logs `0x744c97f4` fmt on failure. |
+| C | `0x74425960` | `COM_obj = [0x744f828c]; COM_obj->Vtbl[0x10](COM_obj, 0, &out)` — 2-arg method, possibly `IDirect3DRM::CreateFrame(parent=NULL, &out)` or a loader overload. Logs `0x744c9874` fmt at entry; `0x744c9854` fmt on failure. |
+
+Both B and C null-check `[0x744f828c]`: if NULL, call `0x7448d250(0x80004003)` (E_POINTER) — then re-read the global, implying `0x7448d250` is a **lazy-init constructor** that populates the global on first use.
+
+**Runtime value of `[0x744f828c]`:** `0x74e13390`. This is in app-heap territory (apps frequently alloc at `0x74a0_____` / `0x74e0_____`), **not in our DX_OBJECTS range** (`0x07FF_0000`). So the app's IDirect3DRM pointer is NOT one of our emulator-tracked COM wrappers — it's either a d3drm.dll-internal allocation or an uninitialized slot that got past the NULL check because it holds garbage.
+
+This is the real root cause: **the app dereferences an IDirect3DRM vtable that doesn't resolve to our handler dispatch.** Trace-api would never show `IDirect3DRM*` method calls because the calls go through the stale/wrong vtable and fail synchronously.
+
+**Next-session leads (in priority order):**
+
+1. **Find where `0x744f828c` gets written.** `node tools/xrefs.js ARCHITEC.SCR 0x744f828c` should show `mov [0x744f828c], eax` stores. The writer is almost certainly `0x7448d250` (the lazy-init fn). Break on it, check what it's setting the global to — probably the return value of a `Direct3DRMCreate` call our emulator is mishandling.
+2. Confirm by searching for `Direct3DRMCreate` IAT thunk in the `.idata` or in d3drm.dll's thunk area, breakpoint it, observe the return value. If our `handle_Direct3DRMCreate` writes a DX_OBJECTS pointer but something later overwrites `[0x744f828c]` with an app-allocated shim, that's the bug.
+3. If `0x74e13390` really is what `Direct3DRMCreate` returned: look at our COM wrapper layout — we may be failing to populate the vtable at `*obj` (so `[eax]` holds garbage and `[ecx+0x18]` dispatches into random code).
+
+**Runtime diagnostics:** `--trace-at=0x7442b7ed` (error-path counter), `--trace-at=0x7442b725 --trace-at-dump=0x744f828c:4` (inspect the global), `tools/xrefs.js ARCHITEC.SCR 0x744f828c` (find writer).
+
+##### Session 2026-04-21 (cont.3) — full call chain pinned: d3drm returns D3DRMERR_FILENOTFOUND
+
+Traced the complete path app→d3drm and identified exactly where the load fails. Revised diagnosis: the COM globals at `0x744f828c` / `0x744f8314` aren't "stale" — they're legitimately populated by d3drm.dll's own allocations (d3drm runs as real x86 code in our emulator, not a stubbed wrapper).
+
+**Global population sequence** (via `tools/xrefs.js ARCHITEC.SCR 0x744f828c --op=store`):
+
+1. Static init at `0x7444a640` zeros both globals.
+2. Lazy init at `0x7444a714`:
+   - `[0x744f8314]` gets an `IDirect3DRM` (v1) pointer — runtime value `0x74e1339c` (d3drm's internal heap).
+   - Then `[0x744f8314]->QueryInterface(IID_IDirect3DRM3, &[0x744f828c])` where IID = `2BC49361-8327-11CF-AC4A-0000C03825A1`. Result: `[0x744f828c] = 0x74e13390`.
+
+So `[0x744f828c]` is an **IDirect3DRM3** pointer into d3drm-allocated memory, with a real d3drm.dll vtable at `0x745fa9b8` — **not** one of our emulator's DX_OBJECTS wrappers. Method calls on it dispatch into d3drm.dll code that runs natively in our emulator.
+
+**MeshBuilder::Load call signature** (loader B at `0x74425750`, after `CreateMeshBuilder` succeeds with HRESULT=0):
+
+```
+push [ebp+0x4]     ; lpArg (scene-side user data)
+push 0x74450e70    ; lpCallback (app texture-load callback)
+push 0x80          ; dwLoadOptions (non-standard — flags nibble doesn't match D3DRMLOAD_*)
+push 0             ; lpvObjID
+push edi           ; lpvObjSource = "Grapple-198" (no .x extension!)
+push esi           ; this (mesh builder)
+call [eax+0x2c]    ; vtable +0x2c = IDirect3DRMMeshBuilder::Load (slot 11)
+```
+
+Load resolves to d3drm.dll `0x745a518f` → thin CS-wrapped dispatch → real worker `0x74592acc` (d3drm-file VA `0x64792acc`).
+
+**Runtime HRESULT capture** (`--trace-at=0x744257e4`, the block-entry on jge-failure branch): `EAX=0x88760313` on every one of 22 attempts.
+
+Decoded: `0x88760313 = MAKE_DDHRESULT(0x313) = MAKE_DDHRESULT(787)` = **`D3DRMERR_FILENOTFOUND`** (from `d3drmdef.h`: codes 780-790 span BADOBJECT through BADRESOURCE; 787 is FILENOTFOUND).
+
+`--trace-fs` during the same run shows zero `.x` opens and zero `Grapple*` lookups. So d3drm internally decides "file not found" **before reaching `CreateFileA`**. Two plausible causes:
+
+1. **No extension & no search-path:** the app passes `"Grapple-198"` (not `"Grapple-198.x"`). d3drm's Load normally uses `SearchPath` or a DirectX-registered search directory to resolve bare names. If those registry/search-path hooks are stubbed to empty, d3drm bails pre-open.
+2. **Accept-check failure:** d3drm verifies the filename against recognized extensions (`.x`, `.xof`) before opening. A bare name without extension and without the FROMMEMORY/FROMSTREAM flag set could be rejected immediately.
+
+The non-standard flags value `0x80` is another clue — it's not any documented `D3DRMLOAD_*` constant. The Windows SDK defines only bits 0..5; bit 7 set suggests either the app is using an undocumented / extended flag, or a d3drm-private "search policy" bit that our d3drm.dll version doesn't recognize.
+
+**Next-session leads (in priority order):**
+
+1. Disasm d3drm.dll at `0x64792acc` (real Load) past the arg-marshalling to find the pre-open rejection. It calls `0x647ce0c5` with six args including buffer `0x64781700` and fn-ptr `0x647914e3` (likely a file-reader factory). The `0x88760313` return site in d3drm: file-offsets `0x1b9f8`, `0x1bb04`, `0x2e06e`, `0x2e309`, `0x4d547`, `0x4d57b` (but these are mid-instruction byte matches, not immediate-load instructions — 0x88760313 is computed inline via `or` from smaller constants, making static location tricky). Strategy: break on d3drm.dll function entries and bisect.
+2. **Cheaper experiment:** try giving d3drm what it wants. The app's `SearchPath` / `GetFullPathName` hooks — do we implement them to walk a registered DirectX 3D-R-M search dir? Check `src/09a-handlers.wat` for `SearchPathA`. If bare-name resolution is the issue, maybe we can pre-register the scene asset dir as a search path, or make our CreateFileA fall through to VFS for bare names.
+3. Cross-reference what WORKS: `.scn` files open fine (`FindFirstFile(".\*.scn") → "architec.scn"` — see trace-fs output above). So CWD-relative file lookup works for the app's code, but d3drm.dll may use a different resolution path.
+
+**Established ground-truth this session:**
+- Mesh-name flow: `Grapple-198` string at `0x74a16421` → passed to `LoadMesh(0x7442b680)` → passed to worker `0x74426290` → passed to loader B `0x74425750` → passed to d3drm.dll `MeshBuilder::Load` → returns `D3DRMERR_FILENOTFOUND`.
+- IDirect3DRM3 live at `0x74e13390`, vtable `0x745fa9b8`, Load method at runtime VA `0x745a518f` = dll-file VA `0x6478a18f`.
+- d3drm.dll relocation delta at load time: `0x7459b000 - 0x64780000 = 0xfe1b000` (needed to cross-ref between disasm of the DLL and runtime breakpoints).
+
+##### Session 2026-04-22 — cont.3 diagnosis was wrong; real root causes found & fixed
+
+Two unrelated bugs compounded to make d3drm return FILENOTFOUND. The "empty lpvObjSource" symptom from cont.3 was evidence of the first, not the second.
+
+**Bug 1: TIB.ThreadLocalStoragePointer (FS:[0x2c]) was NULL.**
+
+The screensaver's MFC string helpers (`0x7446d100`, `0x7446d1c0`) resolve per-thread scratch buffers via *direct* FS segment access:
+
+```
+mov eax, [0x744fa348]     ; slot index stored in .data by TlsAlloc
+fs: mov ecx, [0x2c]       ; ThreadLocalStoragePointer (TLS array base)
+mov eax, [ecx+eax*4]      ; slot value
+lea ebx, [eax+0x1690]     ; per-thread basename buffer
+```
+
+They never call `TlsGetValue`. Our `$tls_slots` lives in its own allocation and nothing pointed TIB+0x2c at it, so `fs:[0x2c]` always returned 0 and the helpers dereferenced `[0 + slot*4]` (unrelated guest memory). Every string copy silently read from address ~0 and returned a bogus pointer — the mesh-name buffer presented to `MeshBuilder::Load` was the helper's "return value" NUL-stored into guest address zero, i.e. effectively empty.
+
+Fixed in `src/08-pe-loader.wat` `$enter_entry_point`: eagerly allocate `$tls_slots` at PE load and set `fs_base+0x2c = tls_slots`. Now `TlsSetValue` and direct FS-segment reads agree. Verified with break at `0x745e8f1d` (d3drm's `0x647cdf1d`): `ebp+0xc` now points at a stack buffer that actually contains a filename string.
+
+**Bug 2: `fs_search_path` called `writeStr` with wrong arg order.**
+
+```js
+// was:
+if (bufGA) writeStr(bufGA, full, bufLen, isWide);
+// but writeStr(guestAddr, str, isWide) — only 3 params
+```
+
+`bufLen` (0x800) was being consumed as `isWide`, so every SearchPath result was written as UTF-16. When the app's ANSI SearchPathA wrapper then copied the result via `rep movsd` + `rep movsb`, it saw `"C\0:\0\\\0..."` and stopped at the first NUL — 1 char, plus terminator. Downstream buffer: `"C\0"` with prior "lsph16.x" bytes leaking through from underneath, producing the puzzling `"C\0ph16.x"` pattern in memory dumps.
+
+Fixed `lib/filesystem.js` line 497 by dropping the stray `bufLen` arg. Trace now shows:
+
+```
+[fs] SearchPath("Grdmelon.gif") → "C:\grdmelon.gif"
+[fs] CreateFile("c:\grdmelon.gif", access=0x80000000, creation=3) → 0xf0000001   ← SUCCESS
+```
+
+**Post-fix status.** ARCHITEC.SCR `/s` now actually opens at least one texture file. The run then crashes at `EIP=0` after ~9800 API calls; prev EIP `0x744122af` is `mov ecx,[eax]; push eax; call [ecx+8]` — a COM `Release` call through a vtable whose slot 2 is NULL. EBX = `0x7c3e6018` appears repeatedly on the stack — a single object being over-released or whose vtable never got populated. Separate bug; not blocking the same path.
+
+**Why cont.3 was wrong.** The "Grapple-198 string at 0x74a16421" observation was a disasm-time guess, not a runtime confirmation. At runtime, with TLS broken, the string the app tried to pass was never constructed. cont.3's call chain (LoadMesh → worker → loader B → MeshBuilder::Load) is still correct; what flows through it was wrong. The lesson ([memory note](feedback_verify_runtime_call_site.md) already applies): disasm hints where a string *should* come from but can't tell you what it *is* at call time.
+
+**Regression check:** notepad, calc, mspaint (Win98), pinball all run clean after the TLS change — no API behavior depends on TIB+0x2c being zero.
+
 ## Completed
 
 ### InSendMessage / EnumWindows + ESP cleanup (6 DDraw screensavers)
