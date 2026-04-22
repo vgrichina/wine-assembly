@@ -18,9 +18,13 @@ After bsearch was fixed, foxbear runs 3285 API calls and renders two sprite pose
 
 The anomaly: **the message pump at `0x00402680` is never entered** — zero `PeekMessageA` / `GetMessageA` calls in the trace, yet the render function (`0x00407e90`, called via `[eax+0x6c]` = DDraw `Restore`, then frame draw) fires enough times to put two sprites on-screen. That rendering must be happening inside the startup WM_PAINT chain our GetMessage phases deliver, via WndProc dispatch.
 
-WinMain's post-init path has three early-returns with `xor eax,eax; ret` (0x40260c, 0x402879, 0x4028bf) — one of those almost certainly fires before the main loop. Init check returning 0 causes WinMain to return 0 → mainCRTStartup → exit(0).
+WinMain (entry `0x004024b0`, `ret 0x10` signature) has three epilogues found by scanning the .text for `83 C4 1C C2 10 00`: `0x402615`, `0x40267e`, `0x402776`. None of them fire with `--break=0x402615,0x40267e,0x402776 --max-batches=50000` — so WinMain *itself* never returns from those sites.
 
-Next step: breakpoint `--break=0x402600,0x402879,0x4028bf` and see which early-return path WinMain takes, then work backwards to which DDraw/init call we're getting wrong.
+Meanwhile the last guest block before `exit` is at `0x00403261` (inside the asset-loader fn at `~0x00402f6f`, which iterates bitmap IDs 0xC2..0xCB etc. and calls `0x00407f40` to load each), and `exit`'s caller is `0x00409c2e` in `mainCRTStartup`. The unwind path between the asset loader and mainCRTStartup's exit call is still opaque — likely an SEH fastfail or `__report_fatal` → `_exit` chain.
+
+Next step: `--trace` narrowed to the 0x402000..0x403500 window (or `--trace-at` on each bitmap-load call site inside 0x00402f6f) to find where the loader decides to bail. Look for the call to `0x00407f40` returning 0 → `xor edi,edi` → eventual `invoke _cexit` / abort.
+
+Session fix **041faa9** matters here: earlier runs stopped at batch 11 with a false STUCK at the sprite blit inner loop (`0x407cef`), masking the fact that the app *does* finish its init render and then self-exits via the CRT. With the fingerprint in STUCK, the full 3285-API run reproduces deterministically.
 
 ## Files & addresses
 
