@@ -859,7 +859,48 @@ Fixed `lib/filesystem.js` line 497 by dropping the stray `bufLen` arg. Trace now
 [fs] CreateFile("c:\grdmelon.gif", access=0x80000000, creation=3) → 0xf0000001   ← SUCCESS
 ```
 
-**Post-fix status.** ARCHITEC.SCR `/s` now actually opens at least one texture file. The run then crashes at `EIP=0` after ~9800 API calls; prev EIP `0x744122af` is `mov ecx,[eax]; push eax; call [ecx+8]` — a COM `Release` call through a vtable whose slot 2 is NULL. EBX = `0x7c3e6018` appears repeatedly on the stack — a single object being over-released or whose vtable never got populated. Separate bug; not blocking the same path.
+**Post-fix status.** ARCHITEC.SCR `/s` now actually opens at least one texture file. The run then crashes at `EIP=0` after ~11400 API calls with a C++ exception unwind (no SEH handler catches it, so the unwinder eventually returns through 0). See session (cont.) below for deeper analysis — it is *not* a null-vtable Release; it's a `_com_error` C++ throw from `0x744100f0` whose trigger turns out to be a callee-saved-register corruption in our emulator.
+
+##### Session 2026-04-22 (cont.) — EIP=0 is a C++ throw, rooted in EDI/ESI corruption across `0x744113a0`
+
+**What actually crashes.** `prev_eip=0x7448e31f` is MSVC's `_CxxThrowException` → `RaiseException(0xe06d7363, ...)` with throwInfo `0x744c06f0` (types `[.?AV_com_error@@]`). The throw is fired explicitly by app code at `0x744100f0` (`push eax; call _com_issue_error`) inside a fn at `0x7440ffa0`.
+
+Path that reaches the throw:
+```
+744100d7  call 0x74412250         ; IDirectDrawSurface QI wrapper (ok, returns 0)
+744100dc  cmp eax, edi            ; <-- EDI should be 0 here
+744100de  jge 0x7441056d          ; SUCCEEDED -> skip throw
+744100e4  cmp eax, 0x80004002     ; E_NOINTERFACE -> skip throw
+744100ef  push eax
+744100f0  call 0x7448d250         ; _com_issue_error(hr=0)
+```
+
+`--break=0x744100dc` prints `EAX=0, EDI=0x77fff650`. Because EDI is non-zero, `jge` evaluates `0 >= 0x77fff650` → false, and we fall into the throw with HRESULT=0 (!).
+
+EDI starts this fn at 0 (`xor edi, edi` at `0x7440ffc5`) and is used throughout as a zero register for SUCCEEDED checks. Trace-at block entries show EDI still 0 at `0x7441000a` and `0x74410046`, but already `0x77fff650` at `0x7441005e` — the value gets corrupted across the single `call 0x744113a0` at `0x74410059`. ESI also flips from `0x74a1c558` → `0` across the same call.
+
+**The callee `0x744113a0` is a sizable diagnostic/logging fn** (MSVC-SEH prologue at `push ebp; sub esp, 0x294; push ebx/esi/edi`). It properly saves/restores EDI/ESI/EBX at the normal exit paths (`pop edi; pop esi; pop ebx; mov esp, ebp; pop ebp; ret` at `0x744114cd` and `0x74411510`). So either:
+
+1. Execution does not reach the normal exit — it unwinds via SEH. Handler at `[ebp-0x8] = 0x744abd59` is MSVC's scope-table handler; on unwind, register state could be sourced from the exception frame.
+2. Stack memory at `[0x77fff3c4]` (where the caller's EDI was saved by `push edi` at `0x744113c6`) gets overwritten by the body of the function before `pop edi` reads it.
+
+`--watch=0x77fff3c4 --watch-log` shows the saved-EDI slot being written repeatedly during normal stack use — inconclusive without filtering by range.
+
+**Why this matters.** The throw is a phantom — our emulator is corrupting a live callee-saved register across a call. That makes the app's "is the HRESULT zero?" test spuriously false, even when the HRESULT really is zero. Same bug would affect any function that uses `xor edi, edi; cmp eax, edi; jge` (a standard MSVC SUCCEEDED idiom) around a call through this fn.
+
+**Next investigation steps.**
+1. Check whether `0x744113a0` actually returns via ret or whether an inner `call 0x7448e2e0` throws and unwinds through its `0x744abd59` scope handler. `--trace-at=0x74411703` (the inner `call _CxxThrowException`) and `--trace-at=0x74411595` / other `call 0x7448d250` sites inside the fn would show it.
+2. If it's a raw ret-time corruption (not SEH): narrow to a single block inside the fn. Known block entries with EDI traced:
+   - `0x744113a0` entry: EDI=0
+   - `0x74411517`: EDI=1 (set by `mov edi, 1` at `0x744113e5`)
+   - `0x74411583`: EDI=`0x77fff49c` (set by `lea edi, [ebp-0x1d8]` at `0x7441152d` before `rep stosd`)
+   - `0x74411656`: EDI=`0x77fff49c`
+   - `0x7441005e` (after return): EDI=`0x77fff650`
+3. If it's SEH: look at our MSVC scope-table unwinder. Does it restore edi/esi/ebx from the push slots (at ebp-0x2b0..-0x2a8), or does it leave them undefined?
+
+The `0x77fff650` value is suggestive: it is `ebp - 0x24` from the callee's frame. `[ebp-0x24]` is a local the callee uses to receive a COM QueryInterface out-pointer (`lea edx, [ebp-0x24]; ...; call [ecx]` at `0x7441159c`). If something is writing `edi = &[ebp-0x24]` somewhere and our emulator fails to restore EDI on function exit, that matches the observation.
+
+**Regression check.** Notepad, calc, mspaint, pinball, FreeCell all still run clean after the TIB/SearchPath fixes — the EDI-corruption bug is hit only by this specific MSVC throw idiom in d3drm client code.
 
 **Why cont.3 was wrong.** The "Grapple-198 string at 0x74a16421" observation was a disasm-time guess, not a runtime confirmation. At runtime, with TLS broken, the string the app tried to pass was never constructed. cont.3's call chain (LoadMesh → worker → loader B → MeshBuilder::Load) is still correct; what flows through it was wrong. The lesson ([memory note](feedback_verify_runtime_call_site.md) already applies): disasm hints where a string *should* come from but can't tell you what it *is* at call time.
 
