@@ -1371,6 +1371,10 @@
     (local.set $src_dib (i32.load (i32.add (local.get $src_entry) (i32.const 20))))
     (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
     (local.set $trans (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; dwTrans (6th arg)
+    (call $host_dx_trace (i32.const 11) (call $dx_slot_of (local.get $dst_entry))
+      (call $dx_slot_of (local.get $src_entry))
+      (i32.load (i32.add (local.get $src_entry) (i32.const 24)))
+      (local.get $trans))
     ;; Parse source rect
     (if (local.get $arg4)
       (then
