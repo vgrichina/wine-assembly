@@ -530,6 +530,10 @@
   (func $stub_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
@@ -548,12 +552,15 @@
       (local.get $title_wa)
       (i32.const 260) (i32.const 140)
       (i32.const 1))   ;; isAboutDialog modal flag
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (local.get $title_wa)
+      (call $strlen (local.get $title_wa)))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 13) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     ;; "Not implemented yet" static
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 20) (i32.const 236) (i32.const 20)
@@ -590,6 +597,10 @@
     (local $size_sel i32) (local $size_buf_g i32) (local $size_buf_w i32)
     (local $size_val i32) (local $i i32) (local $c i32)
 
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
@@ -648,12 +659,14 @@
       (i32.const 0x258)   ;; "Font"
       (i32.const 420) (i32.const 260)
       (i32.const 1))
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (i32.const 0x258) (i32.const 4))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 14) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cf)))
 
     ;; Face label + listbox
@@ -873,6 +886,10 @@
     (local $cmd i32) (local $cc i32) (local $cc_w i32) (local $grid i32)
     (local $sw i32) (local $idx i32)
 
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
@@ -910,12 +927,14 @@
       (i32.const 0x252)   ;; "Color"
       (i32.const 260) (i32.const 160)
       (i32.const 1))
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (i32.const 0x252) (i32.const 5))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 15) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cc)))
     ;; Swatch grid: 8 cols * 24px = 192, 3 rows * 20px = 60
     (local.set $grid (call $ctrl_create_child (local.get $dlg) (i32.const 6) (i32.const 0x460)
@@ -1051,6 +1070,11 @@
     (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
     (local $text_len i32) (local $text_src_w i32)
     (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
 
     ;; ---- WM_CLOSE → Cancel ----
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
@@ -1331,12 +1355,15 @@
       (local.get $title_wa)
       (local.get $w) (local.get $h)
       (i32.const 1))  ;; isAboutDialog flag (modal indicator) — reused for now
-    (call $dlg_fill_bkgnd (local.get $dlg))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (local.get $title_wa)
+      (call $strlen (local.get $title_wa)))
     (call $wnd_set_parent (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 12) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
     ;; Stash OFN ptr for the OK handler.
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $ofn)))
 
