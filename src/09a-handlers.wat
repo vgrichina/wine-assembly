@@ -4563,8 +4563,21 @@
   )
 
   ;; 403: IsRectEmpty — STUB: unimplemented
+  ;; IsRectEmpty(lpRect=arg0) → BOOL. Empty iff right<=left OR bottom<=top.
   (func $handle_IsRectEmpty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $r i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+            (return)))
+    (local.set $r (call $g2w (local.get $arg0)))
+    (global.set $eax
+      (i32.or
+        (i32.le_s (i32.load (i32.add (local.get $r) (i32.const 8)))   ;; right
+                  (i32.load (local.get $r)))                             ;; left
+        (i32.le_s (i32.load (i32.add (local.get $r) (i32.const 12)))  ;; bottom
+                  (i32.load (i32.add (local.get $r) (i32.const 4))))))  ;; top
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 404: EqualRect(lprc1, lprc2) → BOOL. Compares 4 LONGs (16 bytes).
@@ -7273,7 +7286,9 @@
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    ;; lParam = &CREATESTRUCT (built in $handle_CreateWindowExA).
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+                (i32.add (global.get $image_base) (i32.const 0x100)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver child WM_SIZE after child WM_CREATE
@@ -7431,8 +7446,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 654: SetParent — STUB: unimplemented
+  ;; SetParent(hWndChild=arg0, hWndNewParent=arg1) — returns previous parent (0 if none).
   (func $handle_SetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+    (call $wnd_set_parent (local.get $arg0) (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 655: AppendMenuW — STUB: unimplemented

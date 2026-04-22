@@ -218,15 +218,26 @@
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
     ;; Child-CreateWindow CBT hook continuation (marker 0xCACA0026)
-    ;; Unlike CACA0002, this does NOT dispatch WM_CREATE — it just returns
-    ;; the child hwnd to the CreateWindowEx caller. Child WM_CREATE/WM_SIZE
-    ;; are still delivered via the pending_child queue in GetMessageA.
+    ;; After CBT hook returns (potentially after SetWindowLongA subclass),
+    ;; dispatch WM_CREATE synchronously so lpCreateParams (which for MFC SDI
+    ;; is a CCreateContext* on the caller's stack) is still live when
+    ;; CView::OnCreate calls CDocument::AddView. CACA0027 is the post-WM_CREATE
+    ;; continuation that hands the hwnd back to the CreateWindowEx caller.
     (global.set $child_cbt_ret_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                (global.get $GUEST_BASE))
       (global.get $image_base)))
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA0026))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Child-WM_CREATE post-dispatch continuation (marker 0xCACA0027)
+    (global.set $child_create_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA0027))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
     ;; Allocate modal dialog pump thunk (marker 0xCACA0006). Used by

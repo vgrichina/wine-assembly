@@ -353,6 +353,23 @@
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
     (call $paint_queue_push (global.get $next_hwnd))
+    ;; Build CREATESTRUCT at image_base+0x100 for this child. Must run BEFORE
+    ;; frame cleanup — needs [esp+24..esp+48]. MFC SDI passes a CCreateContext*
+    ;; as lpParam (arg 12) so CView::OnCreate can call CDocument::AddView.
+    ;; Without this, lParam would be delivered as 0 and the view never attaches
+    ;; to the document.
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (call $gl32 (i32.add (global.get $esp) (i32.const 32)))) ;; cy (nHeight)
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; cx (nWidth)
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c)) (local.get $arg4))                                       ;; x
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (local.get $arg3))                                       ;; style
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
     ;; If a CBT hook is installed, fire HCBT_CREATEWND for this child so MFC
     ;; (and anything else using per-hwnd subclassing) can swap in its real
     ;; wndproc via SetWindowLongA before we start delivering messages.
@@ -623,7 +640,11 @@
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    ;; lParam = &CREATESTRUCT (built at image_base+0x100 during CreateWindowExA).
+    ;; MFC's CView::OnCreate reads lpcs->lpCreateParams as a CCreateContext* to
+    ;; call CDocument::AddView; delivering lParam=0 breaks SDI doc/view attach.
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+                (i32.add (global.get $image_base) (i32.const 0x100)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver child WM_SIZE after child WM_CREATE
