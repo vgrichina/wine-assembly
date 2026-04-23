@@ -1,16 +1,79 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: CHROME COMPLETE — title bar, menu bar, palettes all render
+## Status: CHROME RENDERS but layout is broken — toolbars overlap canvas
 
-After commits 02b5521 (BI_RLE4 + mask-ROP), 0fe2e37 (menu handle tag),
-and 6cd71d5 (child erase offset), the full Win98 mspaint chrome paints:
+Chrome paints (title bar, menu, Tools + Colors palettes, status bar),
+but overall layout is wrong:
+
+- Main frame restores to 275×400 (too small — toolbars overlap canvas)
+- MDI client (`0x10002`) fills the full client area (0,0,269,332)
+- Tool palette (`0x10009`) and Color palette (`0x1001a`) paint **on top**
+  of the canvas rather than occupying reserved dock-bar strips
+- Status bar does paint at y=332 but is clipped off the 275×400 frame
+
+### Layout-bug root cause (2026-04-22 session)
+
+**Symptom:** `CFrameWnd::RepositionBars` runs, sends
+`SendMessageA(dockbar, 0x361=WM_SIZEPARENT, 0, &rect)` to each of the 4
+dock bars (`0x10005..0x10008`). Each returns "I need 0 thickness"
+(`CDockBar::OnSizeParent` iterates `m_arrBars`, finds it empty). MFC
+then tells MDI client to take the whole area via `DeferWindowPos(MDI,
+0, 0, 0x10d, 0x14c)` — which is exactly what we see.
+
+**Why `m_arrBars` is empty:** the toolbars were never registered with
+any dock bar. Evidence: **zero `SetParent` calls in the entire trace.**
+Normal MFC `CDockBar::DockControlBar` reparents the toolbar before
+adding it to `m_arrBars`. None of that ran.
+
+**CPBFrame::OnCreate is a stub** — 14 insns at `0x0101cf3a`: calls base
+`CFrameWnd::OnCreate` via IAT (→ `0x102ebf4` → jmp `[0x1001478]`), then
+saves three member pointers (`+0xd8 → 0x103c744`, `+0x17c → 0x103d180`,
+`+0x298 → 0x103c808`) and returns. No `EnableDocking`, no
+`DockControlBar`, no toolbar creation.
+
+So mspaint's toolbars are **standalone child windows**, not MFC-managed
+dock bars. MFC42 does still create the 4 dock-bar hwnds (via
+`CFrameWnd::OnCreate`) — they just stay empty. The toolbars 0x10009 /
+0x1001a get `SetWindowPos(-2,-2, 0, 0, SWP_NOSIZE|...)` at APIs
+#2347/#2410 — someone is positioning them at dock-bar-relative (-2,-2),
+but without SetParent, they're at (-2,-2) on the **frame**, not
+inside a dock bar. That the PNG shows them at plausibly-docked positions
+is incidental — the renderer walks parent/child geometry and happens to
+land them on top of the client area in roughly the right place.
+
+**Where to resume next session:**
+1. Dump `CPBFrame` vtable at `0x010043a4` slot-by-slot; compare against
+   base `CFrameWnd` vtable to find overrides (`OnSize`, `RecalcLayout`,
+   `OnCreateClient` etc). Custom layout likely lives in one of those.
+2. Break on `SetWindowPos(0x10009, ..., -2, -2, ...)` at API #2347 and
+   walk the call stack back through mfc42 to identify the docking path
+   that runs partially (enough to position at -2,-2) but skips
+   `SetParent` / `m_arrBars.Add`.
+3. `CFrameWnd::DockControlBar` in mfc42 — find its runtime entry,
+   break, confirm it never runs for either toolbar. If it doesn't, the
+   bug is upstream (app never calls it). If it does, trace internal
+   short-circuit.
+
+**Not the bug (ruled out this session):**
+- `DeferWindowPos` handler (src/09a-handlers.wat:6829) — applies moves
+  immediately with correct stack args. MFC itself passes cx=0/cy=0 for
+  empty dock bars. Values are right given MFC's state; the problem is
+  upstream of the API boundary.
+- `EndDeferWindowPos` — trivial no-op, safe because DeferWindowPos
+  already applied everything.
+
+### Original "chrome complete" session fixes (kept for context)
+
+Commits 02b5521 (BI_RLE4 + mask-ROP), 0fe2e37 (menu handle tag),
+6cd71d5 (child erase offset) got us from "solid teal" to the current
+layout-broken-but-everything-paints state:
 
 - Blue title bar gradient + "untitled - Paint" + min/max/close ✓
 - Menu bar: File / Edit / View / Image / Colors / Help ✓
 - Tools palette (16 glyphs) ✓
 - 28-color palette ✓
-- White canvas client area ✓
-- Status bar ✓
+- White canvas client area ✓ (but fills too much — see above)
+- Status bar ✓ (but clipped — frame too small)
 - Drawing (mouse-drag on canvas) still untested
 
 ### Session fixes
