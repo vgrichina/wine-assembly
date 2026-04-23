@@ -968,6 +968,27 @@ So the app walks a collection of wrapper objects (EDI changes, EBP-derived "this
 
 **Regression check:** notepad, calc, mspaint (Win98), pinball all run clean after the TLS change — no API behavior depends on TIB+0x2c being zero.
 
+##### Session 2026-04-22 (cont.6) — SEH walker fix: frame_ebp=seh_rec+0x10 (was +0xC), plus steps=0 on unwind
+
+Took the (b) lead from cont.5. Dumped the outer SEH frame at throw time (`--trace-at=0x7448e31f --trace-at-dump=0x77ffffec:32`) and confirmed the MSVC `__SEH_prolog4` 5-dword layout:
+
+```
+0x77ffffec  ff ff ff ff 58 ff 48 74  e0 50 4b 74 00 00 00 00   ; next=-1, handler, scopetable, trylevel=0
+0x77fffffc  00 00 00 00 ...                                    ; saved_ebp=0
+```
+
+Scope entry 0 at `0x744b50e0`: enclosingLevel=-1, filter=`0x744923ed` (non-trivial — reads ExceptionCode from `[ebp-0x14]` and calls an MFC filter decider), handler=`0x74492402` (restores ESP, calls MFC exception reporter, `pop ebp; ret`).
+
+**Two bugs in `$raise_exception` (`src/11-seh.wat`):**
+1. `frame_ebp = seh_rec + 0xC` was wrong for the 5-dword MSVC layout. Fix: `+ 0x10`. With the old offset, `[frame_ebp-8]` landed on the handler field (not scopetable), so trylevel/scopetable were read from wrong slots and no scope ever matched.
+2. Handler-match paths set `$eip` but not `$steps`. The caller (`$th_call` in `src/05-alu.wat:545`) resets `$eip` to the fall-through when `$steps != 0`, silently clobbering the unwind target. Fix: add `(global.set $steps (i32.const 0))` to all three return-points (C++ catch, trivial filter, non-trivial filter).
+
+**Behavior change on ARCHITEC.** Before: EIP falls through to `host_exit` at `0xDE00|0xe06d7363`, no cleanup. After: the app's MFC `__except` handler runs — calls SystemParametersInfoA (restores screen saver state) then ExitProcess(1), clean exit. Same for FALLINGL. Still doesn't render — that blocker is the app-internal slot-16 E_NOINTERFACE on the second CD3DDeviceInfo wrapper (cont.5), unrelated to SEH.
+
+**Regression check:** notepad (80k calls), calc (103k), Win98 mspaint (555k — identical to baseline), Space Cadet pinball (249k), pinball-plus95 (61k), WIN98.SCR /s (10k — renders). All clean.
+
+**Next step.** SEH now delivers cleanly for apps whose top-level handler filter returns EXECUTE_HANDLER (the common case — our walker assumes this for non-trivial filters). If some app installs a filter that would return EXCEPTION_CONTINUE_SEARCH, we'd incorrectly execute its handler; worth revisiting if that pattern shows up. For ARCHITEC specifically, the remaining path is RE'ing CD3DDeviceInfo to understand why iter-2 slot-16 returns E_NOINTERFACE.
+
 ## Completed
 
 ### InSendMessage / EnumWindows + ESP cleanup (6 DDraw screensavers)

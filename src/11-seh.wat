@@ -13,12 +13,14 @@
   ;; On match: unwind chain (FS:[0] = frame->next), restore EBP, jump to except body.
   ;; If no match: host_exit as last resort.
   ;;
-  ;; Stack frame layout for __except_handler3 frames:
-  ;;   [EBP+0]   old_ebp
-  ;;   [EBP-4]   trylevel (index into scopetable, -1 = none)
-  ;;   [EBP-8]   scopetable ptr (or __ehhandler addr)
-  ;;   [EBP-C]   SEH record: {next, handler}
-  ;;   EBP = seh_rec + 0xC
+  ;; Stack frame layout for __except_handler3 / __CxxFrameHandler3 frames
+  ;; (MSVC __SEH_prolog4 / _EH_prolog3): 5-dword extended registration record.
+  ;;   [EBP+0]   saved_ebp
+  ;;   [EBP-4]   trylevel / EH state  (= seh_rec+0xC)
+  ;;   [EBP-8]   scopetable ptr / FuncInfo*  (= seh_rec+8)
+  ;;   [EBP-C]   handler (_except_handler3 or __ehhandler stub) (= seh_rec+4)
+  ;;   [EBP-10]  prev SEH record (= seh_rec+0) — FS:[0] points here
+  ;;   ⇒ EBP = seh_rec + 0x10
   ;;
   ;; ScopeTableEntry (12 bytes each):
   ;;   [+0]  enclosingLevel (-1 = top)
@@ -38,8 +40,9 @@
       (br_if $unhandled (i32.eqz (local.get $seh_rec)))
       ;; Handler address
       (local.set $handler (call $gl32 (i32.add (local.get $seh_rec) (i32.const 4))))
-      ;; Derive frame EBP: _EH_prolog puts SEH record at EBP-C → EBP = seh_rec + 0xC
-      (local.set $frame_ebp (i32.add (local.get $seh_rec) (i32.const 0xC)))
+      ;; Derive frame EBP: MSVC __SEH_prolog4 installs 5-dword record at EBP-0x10
+      ;; (next, handler, scopetable, trylevel, saved_ebp). EBP = seh_rec + 0x10.
+      (local.set $frame_ebp (i32.add (local.get $seh_rec) (i32.const 0x10)))
       ;; Check if handler is a C++ __ehhandler stub (starts with 0xB8 = MOV EAX, imm)
       (local.set $first_byte (i32.load8_u (call $g2w (local.get $handler))))
       (if (i32.eq (local.get $first_byte) (i32.const 0xB8))
@@ -79,6 +82,7 @@
                       (call $gs32 (i32.sub (local.get $frame_ebp) (i32.const 4))
                         (call $gl32 (call $g2w (i32.add (i32.add (local.get $filter) (i32.mul (local.get $entry) (i32.const 20))) (i32.const 8)))))
                       (global.set $eip (local.get $except_body))
+                      (global.set $steps (i32.const 0))
                       (return)))
                   (local.set $entry (i32.add (local.get $entry) (i32.const 1)))
                   (br $try_scan)))))
@@ -134,6 +138,7 @@
                   (call $gl32 (local.get $entry))) ;; entry[+0] = enclosingLevel
                 ;; Jump to __except block body
                 (global.set $eip (local.get $except_body))
+                (global.set $steps (i32.const 0))
                 (return)))
             ;; Non-trivial filter: call it via guest execution.
             ;; Set up: EBP = frame_ebp, call filter, it returns result in EAX.
@@ -145,6 +150,7 @@
             (call $gs32 (i32.sub (local.get $frame_ebp) (i32.const 4))
               (call $gl32 (local.get $entry)))
             (global.set $eip (local.get $except_body))
+            (global.set $steps (i32.const 0))
             (return)))
         ;; No filter or filter==0: move to enclosing scope
         (local.set $trylevel (call $gl32 (local.get $entry))) ;; enclosingLevel
