@@ -315,21 +315,22 @@
     (global.set $eax (i32.const 0)))
 
   ;; ── Viewport rect get/set ─────────────────────────────────────
-  ;; SetViewport(lpD3DVIEWPORT) — D3DVIEWPORT2 is 60 bytes; first 16 are
-  ;; dwSize, dwX, dwY, dwWidth (i32 each). We just memcpy 16 bytes into
-  ;; the viewport rect slot. SetViewport2 uses the same field layout for
-  ;; the rect, so they share this code.
+  ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2) — first 20
+  ;; bytes are identical in both: dwSize, dwX, dwY, dwWidth, dwHeight.
+  ;; We stash those 5 dwords in DX_OBJECTS entry+12..+28. entry+8 is already
+  ;; used by SetCurrentViewport to stash the parent device pointer, so we
+  ;; can't touch it here. Remaining D3DVIEWPORT fields (dvScale/Max or
+  ;; dvClip/dvMinZ/MaxZ) are returned zero — callers that care about them
+  ;; should SetViewport with complete data first (we only persist the rect).
   (func $d3dim_viewport_set (param $this i32) (param $lpVp i32)
-    (local $entry i32) (local $vp_slot_state i32)
+    (local $entry i32)
     (if (i32.eqz (local.get $lpVp)) (then (global.set $eax (i32.const 0)) (return)))
-    ;; The viewport's "extra state" goes on the device's state block; here
-    ;; we simply store the raw lpD3DVIEWPORT-style struct on the viewport
-    ;; DX_OBJECTS entry's scratch (entry+12). 16 bytes for now.
     (local.set $entry (call $dx_from_this (local.get $this)))
     (i32.store          (i32.add (local.get $entry) (i32.const 12)) (call $gl32 (local.get $lpVp)))
     (i32.store          (i32.add (local.get $entry) (i32.const 16)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 4))))
     (i32.store          (i32.add (local.get $entry) (i32.const 20)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 8))))
     (i32.store          (i32.add (local.get $entry) (i32.const 24)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 12))))
+    (i32.store          (i32.add (local.get $entry) (i32.const 28)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 16))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_viewport_get (param $this i32) (param $lpVp i32)
@@ -340,6 +341,7 @@
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 20))))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (i32.load (i32.add (local.get $entry) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (i32.load (i32.add (local.get $entry) (i32.const 28))))
     (global.set $eax (i32.const 0)))
 
   ;; ============================================================
