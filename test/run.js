@@ -42,6 +42,8 @@ let BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
+const TRACE_API_COUNTS = hasFlag('trace-api-counts'); // --trace-api-counts: print histogram of API call names at end
+const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -122,6 +124,7 @@ async function main() {
   const logs = [];
   let stopped = false;
   let apiCount = 0;
+  const apiCounts = TRACE_API_COUNTS ? new Map() : null;
   let lastApiName = null;  // track last API name for return value correlation
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let inputEvent = null;   // pending input event to inject via check_input
@@ -402,6 +405,7 @@ async function main() {
     let t = '';
     for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
     apiCount++;
+    if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
 
     // Check API breakpoints
     if (breakApis.length && breakApis.some(name => t.includes(name))) {
@@ -862,6 +866,7 @@ async function main() {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
       let t = '';
       for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
+      if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
       if (TRACE_API) logs.push(`[API T${tid}] ${t}`);
     };
     wh.log_i32 = (val) => {
@@ -1988,6 +1993,16 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  if (apiCounts) {
+    const sorted = [...apiCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const shown = sorted.slice(0, API_COUNTS_TOP);
+    const rest = sorted.slice(API_COUNTS_TOP).reduce((s, [, n]) => s + n, 0);
+    console.log(`\nAPI call counts (top ${shown.length} of ${sorted.length} unique):`);
+    const pad = String(shown[0]?.[1] ?? 0).length;
+    for (const [name, n] of shown) console.log(`  ${String(n).padStart(pad)}  ${name}`);
+    if (rest) console.log(`  ${String(rest).padStart(pad)}  (${sorted.length - API_COUNTS_TOP} others)`);
+  }
 
   if (countAddrs.length && instance.exports.get_count) {
     console.log('Hit counts:');
