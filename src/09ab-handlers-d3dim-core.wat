@@ -128,8 +128,22 @@
       (local.set $obj_wa (call $g2w (local.get $this)))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
     (if (i32.eq (local.get $family) (i32.const 5)) (then
-      (local.set $obj_wa (call $g2w (local.get $this)))
-      (local.set $vtbl (i32.load (local.get $obj_wa)))))
+      ;; Texture family — recognize Texture IIDs and DDSurface IIDs
+      ;; (the texture wraps a DDSurface; QI'ing back for a surface IID is a
+      ;; common d3drm pattern).
+      (if (i32.eq (local.get $iid0) (i32.const 0x2cdcd9e0)) (then (local.set $vtbl (global.get $DX_VTBL_D3DTEX))))
+      (if (i32.eq (local.get $iid0) (i32.const 0x93281502)) (then (local.set $vtbl (global.get $DX_VTBL_D3DTEX2))))
+      ;; IID_IDirectDrawSurface/2/3/4 all map to DDSURF2 (superset that covers
+      ;; their v1..v3 method ranges — we don't expose DDSurface3/4-specific
+      ;; methods, so v2 vtable is what callers actually use).
+      (if (i32.eq (local.get $iid0) (i32.const 0x6c14db81)) (then (local.set $vtbl (global.get $DX_VTBL_DDSURF2))))
+      (if (i32.eq (local.get $iid0) (i32.const 0x57805885)) (then (local.set $vtbl (global.get $DX_VTBL_DDSURF2))))
+      (if (i32.eq (local.get $iid0) (i32.const 0xda044e00)) (then (local.set $vtbl (global.get $DX_VTBL_DDSURF2))))
+      (if (i32.eq (local.get $iid0) (i32.const 0x0b2b8630)) (then (local.set $vtbl (global.get $DX_VTBL_DDSURF2))))
+      (if (i32.eqz (local.get $vtbl)) (then
+        ;; Fallback: keep current vtable.
+        (local.set $obj_wa (call $g2w (local.get $this)))
+        (local.set $vtbl (i32.load (local.get $obj_wa)))))))
     (if (i32.eq (local.get $family) (i32.const 6)) (then
       (local.set $obj_wa (call $g2w (local.get $this)))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))

@@ -928,6 +928,25 @@ Our handler at `src/09a8-handlers-directx.wat:1770` was doing `esp += 8` instead
 
 **Regression check.** Notepad, calc, mspaint (Win98), WIN98.SCR all still run clean after the fix.
 
+##### Session 2026-04-22 (cont.4) — QI for Texture2 / DDSurface must upgrade vtable
+
+Continued from cont.2. The next "EIP=0 prev_eip=0x744215e4" crash was not a null vtable — it was another ESP drift, root-caused to QueryInterface not upgrading the vtable on the returned interface pointer.
+
+The crashing callee at 0x744214ef takes a DDraw-surface this-pointer and, in its happy path:
+1. QIs the surface for `IID_IDirect3DTexture2` (via an earlier call, from ret=0x74412285). Our `IDirectDrawSurface_QueryInterface` returned the *same* primary wrapper with the DDSurface vtable still attached ("DX3 compat: return same object for any QI").
+2. Calls what the app thinks is `IDirect3DTexture2::GetHandle(lpDevice, out_handle)` via `call [ecx+0xc]` (vtable slot 3, 2 args besides this). Because the wrapper still reported the DDSurface vtable, our dispatch routed slot 3 to `IDirectDrawSurface_AddAttachedSurface` — which only pops 12 (ret+1 arg). Caller had pushed 2 args, so ESP ended 4 bytes low.
+3. Downstream code decoded its stack frame one slot off; `pop edi` in an epilogue read the wrong slot; `mov ecx, [eax]` then dereferenced a stack address as a COM `this`, giving ECX=0, and `call [ecx+0x8]` → EIP=0.
+
+Same class of bug as cont.2 (ESP drift across a COM call caused by a handler / interface mismatch), but the culprit was the QI returning a pointer with the wrong vtable, not a handler with the wrong `esp += N`.
+
+**Fix.** Two-part:
+- `IDirectDrawSurface_QueryInterface` (09a8): when IID is `IID_IDirect3DTexture` (iid0=0x2cdcd9e0) or `IID_IDirect3DTexture2` (iid0=0x93281502), return an auxiliary wrapper backed by the same DX_OBJECTS slot but with `DX_VTBL_D3DTEX` / `DX_VTBL_D3DTEX2` — via `dx_get_wrapper_for_vtbl`. Other IIDs keep the DX3-compat same-vtable behavior.
+- `d3dim_qi` family=5 (09ab): recognize the symmetric case — a Texture wrapper QI'd back for `IID_IDirectDrawSurface{,2,3,4}` returns a DDSURF2 wrapper for the same slot. Previously family=5 just read `[this]` and echoed whatever vtable happened to be bound, so Texture2→Surface3 roundtrips landed on the Texture2 vtable and crashed the first time the caller tried slot 29 (SetColorKey).
+
+After the fix, ARCHITEC advances from ~11 400 API calls to ~28 770 before stopping cleanly at an unhandled C++ throw (`RaiseException(0xe06d7363)`, prev_eip=0x7448e31f) — the only SEH frame on the stack is `__except_handler3`-shaped at 0x7448ff58, so our `$raise_exception` walks past it and falls through to `host_exit`. That's a legitimate app-level unhandled exception (or an unmet SEH shape we don't parse yet), not a stack-drift artifact.
+
+**Regression check.** Notepad, calc, mspaint (Win98), WIN98.SCR all still run clean.
+
 **Why cont.3 was wrong.** The "Grapple-198 string at 0x74a16421" observation was a disasm-time guess, not a runtime confirmation. At runtime, with TLS broken, the string the app tried to pass was never constructed. cont.3's call chain (LoadMesh → worker → loader B → MeshBuilder::Load) is still correct; what flows through it was wrong. The lesson ([memory note](feedback_verify_runtime_call_site.md) already applies): disasm hints where a string *should* come from but can't tell you what it *is* at call time.
 
 **Regression check:** notepad, calc, mspaint (Win98), pinball all run clean after the TLS change — no API behavior depends on TIB+0x2c being zero.

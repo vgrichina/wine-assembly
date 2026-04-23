@@ -1193,11 +1193,32 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectDrawSurface_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    ;; Return same object for any QI (DX3 compat)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    ;; COM rule: QI must AddRef the returned interface
+    (local $entry i32) (local $iid0 i32) (local $vtbl i32) (local $wrapper i32)
+    ;; Upgrade IID_IDirect3DTexture / IID_IDirect3DTexture2 to their own vtables —
+    ;; the app needs correct per-method arg counts (GetHandle takes 2 args, while
+    ;; DDSurface's slot 3 AddAttachedSurface takes 1, so a same-vtable alias
+    ;; leaves ESP 4 bytes low across the call). Other IIDs (IDirectDrawSurface,
+    ;; ...2/3/4 variants, IID_IUnknown) keep the DX3-compat same-vtable behavior.
+    (local.set $iid0 (if (result i32) (local.get $arg1)
+      (then (call $gl32 (local.get $arg1)))
+      (else (i32.const 0))))
+    (local.set $vtbl (i32.const 0))
+    ;; IID_IDirect3DTexture  {2cdcd9e0-25a0-11cf-a31a-00aa00b93356}
+    (if (i32.eq (local.get $iid0) (i32.const 0x2cdcd9e0)) (then
+      (local.set $vtbl (global.get $DX_VTBL_D3DTEX))))
+    ;; IID_IDirect3DTexture2 {93281502-8cf8-11d0-89ab-00a0c9054129}
+    (if (i32.eq (local.get $iid0) (i32.const 0x93281502)) (then
+      (local.set $vtbl (global.get $DX_VTBL_D3DTEX2))))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (local.get $vtbl)
+      (then
+        (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+          (call $dx_slot_of (local.get $entry)) (local.get $vtbl)))
+        (call $gs32 (local.get $arg2) (local.get $wrapper)))
+      (else
+        ;; Return same object for any other QI (DX3 compat)
+        (call $gs32 (local.get $arg2) (local.get $arg0))))
+    ;; COM rule: QI must AddRef the returned interface
     (i32.store (i32.add (local.get $entry) (i32.const 4))
       (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (global.set $eax (i32.const 0))
