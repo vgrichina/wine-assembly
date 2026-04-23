@@ -947,6 +947,23 @@ After the fix, ARCHITEC advances from ~11 400 API calls to ~28 770 before stoppi
 
 **Regression check.** Notepad, calc, mspaint (Win98), WIN98.SCR all still run clean.
 
+##### Session 2026-04-22 (cont.5) — throw identified as `CA::DXException("pD3DDev->GetCaps(...)" failed)`, not emulation-side
+
+Dumped the MSVC throw descriptor at RaiseException entry:
+`ThrowInfo*=0x744b93d8` → `CatchableType=0x744b93b0` → type name `.?AVDXException@CA@@` (`class CA::DXException`). Object payload at `0x744c3798` holds the message: `"pD3DDev->GetCaps(&D3DHWDeviceDesc, &D3DHELDeviceDesc)" failed` from `E:\PolyFormGrow\Mark\D3DDeviceInfo.cpp`.
+
+Walked the stack to find who called `__CxxThrowException` — ret=0x74418c40, so the throw site is inside the function at **0x74418aa0** (`CD3DDeviceInfo::Initialize`-ish). Disasm showed the real failing check is not the direct `call [vtbl+0xC]=GetCaps` that's obviously wired to our handler — it's a later `call [edx+0x40]` (slot 16) at 0x74418b72 taking 4 args. When ESI (its return) is negative, the app throws with the shared "GetCaps failed" string regardless of what actually failed.
+
+Traced block entry 0x74418bbb (immediately after that call) with `--trace-at`:
+- Iteration 1: ESI=0x00000000 (success), EDI=0x7c3e6038
+- Iteration 2: ESI=**0x80004002** (E_NOINTERFACE), EDI=0x7c3e60e0 → throw
+
+So the app walks a collection of wrapper objects (EDI changes, EBP-derived "this" changes per iteration), calls a 4-arg method on each, and the *second* wrapper's vtable returns `E_NOINTERFACE`. The call target is in guest heap (not one of our THUNKs) — it's app-internal / MFC code, so no `--trace-api` hit covers it. Whatever interface the app is QI'ing, its second device-info wrapper doesn't support it.
+
+**Attempted fix (won't move ARCHITEC).** Our `IDirect3DDevice{,2,3}_GetCaps` stubs returned S_OK but left the output HW/HEL `D3DDEVICEDESC` structs all zero. Added `$d3dim_fill_device_desc` that reuses the existing `$fill_d3d_device_desc` when `dwSize` accommodates the full 252-byte struct, and writes a DX5-compatible subset (correct 56-byte D3DPRIMCAPS, tri at +100, DeviceRenderBitDepth at +156) when `dwSize` is smaller (ARCHITEC uses 0xCC/204). This is a correctness fix (any app that inspects caps gets plausible values instead of garbage), but ARCHITEC still dies at the same `call [edx+0x40]` site — the failing call isn't our GetCaps, it's something the app does later on an internal device-info class. Advanced API-call count unchanged (~28 770); regression-clean on notepad/calc/mspaint/WIN98.SCR.
+
+**Next step (not taken this session).** Further progress on ARCHITEC requires either (a) RE'ing the app's `CD3DDeviceInfo` class to find what slot-16 method is being called on its per-device wrappers, or (b) letting our `$raise_exception` unwind the one-frame `__except_handler3` properly so the app's CRT-installed unhandled-filter runs (would still terminate, but via the app's clean-exit path instead of `host_exit`). The classic `EH3_EXCEPTION_REGISTRATION` layout is `{next, handler, scopetable, trylevel, saved_ebp}` with `frame_ebp = seh_rec + 0x10` — our walker assumes `seh_rec + 0xC` (an 8-byte record) and reads scopetable from the wrong slot.
+
 **Why cont.3 was wrong.** The "Grapple-198 string at 0x74a16421" observation was a disasm-time guess, not a runtime confirmation. At runtime, with TLS broken, the string the app tried to pass was never constructed. cont.3's call chain (LoadMesh → worker → loader B → MeshBuilder::Load) is still correct; what flows through it was wrong. The lesson ([memory note](feedback_verify_runtime_call_site.md) already applies): disasm hints where a string *should* come from but can't tell you what it *is* at call time.
 
 **Regression check:** notepad, calc, mspaint (Win98), pinball all run clean after the TLS change — no API behavior depends on TIB+0x2c being zero.
