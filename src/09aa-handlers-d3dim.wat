@@ -169,8 +169,10 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; IDirect3DDevice_GetCaps — 3 args (incl. this)
+  ;; IDirect3DDevice_GetCaps — 3 args (incl. this): (this, lpHWDesc, lpHELDesc)
   (func $handle_IDirect3DDevice_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_fill_device_desc (local.get $arg1))
+    (call $d3dim_fill_device_desc (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -378,8 +380,10 @@
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; IDirect3DDevice2_GetCaps — 3 args (incl. this)
+  ;; IDirect3DDevice2_GetCaps — 3 args (incl. this): (this, lpHWDesc, lpHELDesc)
   (func $handle_IDirect3DDevice2_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_fill_device_desc (local.get $arg1))
+    (call $d3dim_fill_device_desc (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
