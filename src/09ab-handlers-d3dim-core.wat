@@ -915,78 +915,47 @@
       (br $lp))))
 
   ;; ── D3DDEVICEDESC population (used by IDirect3DDevice{,2,3}_GetCaps) ──
-  ;; Fills a 204-byte (0xCC) D3DDEVICEDESC at guest $desc with plausible
-  ;; software-rasterizer caps. Callers pass the HW or HEL desc pointer;
-  ;; we report identical caps for both (all via the emulator's SW path).
-  ;;
-  ;; We respect the caller's dwSize: if the slot at [desc+0] is non-zero
-  ;; we clamp writes to min(dwSize, 204) to avoid clobbering the caller's
-  ;; stack frame when they pass a smaller pre-DX5 struct.
+  ;; Thin wrapper around $fill_d3d_device_desc that respects the caller's
+  ;; dwSize to avoid clobbering their stack frame. EnumDevices allocates
+  ;; 252-byte heap buffers so it can call the fill directly; GetCaps
+  ;; receives a caller-supplied buffer whose dwSize varies by DX version
+  ;; (DX3=172, DX5=0xCC=204, DX6/7=252).
   (func $d3dim_fill_device_desc (param $desc i32)
-    (local $wa i32) (local $sz i32) (local $limit i32) (local $i i32)
+    (local $wa i32) (local $sz i32)
     (if (i32.eqz (local.get $desc)) (then (return)))
     (local.set $wa (call $g2w (local.get $desc)))
     (local.set $sz (i32.load (local.get $wa)))
-    (local.set $limit (i32.const 0xCC))
-    (if (i32.and (i32.ne (local.get $sz) (i32.const 0))
-                 (i32.lt_u (local.get $sz) (i32.const 0xCC)))
-      (then (local.set $limit (local.get $sz))))
-    ;; Zero-fill span (dword-granular)
-    (local.set $i (i32.const 0))
-    (block $zdone (loop $zlp
-      (br_if $zdone (i32.ge_u (i32.add (local.get $i) (i32.const 4)) (local.get $limit)))
-      (i32.store (i32.add (local.get $wa) (local.get $i)) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 4)))
-      (br $zlp)))
-    (i32.store (local.get $wa) (local.get $limit))
-    ;; +4 dwFlags = all 11 D3DDD_* caps-valid bits
-    (if (i32.ge_u (local.get $limit) (i32.const 8))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x7FF))))
-    ;; +8 dcmColorModel = D3DCOLOR_RGB (2)
-    (if (i32.ge_u (local.get $limit) (i32.const 12))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 2))))
-    ;; +12 dwDevCaps: FLOATTLVERTEX|SORTINCREASINGZ|EXECUTESYSTEMMEMORY|
-    ;;   EXECUTEVIDEOMEMORY|TLVERTEXSYSTEMMEMORY|TLVERTEXVIDEOMEMORY|
-    ;;   TEXTURESYSTEMMEMORY|TEXTUREVIDEOMEMORY|DRAWPRIMTLVERTEX|
-    ;;   CANRENDERAFTERFLIP|TEXTURENONLOCALVIDMEM
-    (if (i32.ge_u (local.get $limit) (i32.const 16))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x1FFF))))
-    ;; +16 D3DTRANSFORMCAPS { dwSize=8, dwCaps=1 (CLIP) }
-    (if (i32.ge_u (local.get $limit) (i32.const 24)) (then
-      (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 8))
-      (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))))
-    ;; +24 bClipping
-    (if (i32.ge_u (local.get $limit) (i32.const 28))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 1))))
-    ;; +28 D3DLIGHTINGCAPS { dwSize=16, dwCaps=0xF, dwLightingModel=1, dwNumLights=8 }
-    (if (i32.ge_u (local.get $limit) (i32.const 44)) (then
-      (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 16))
-      (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 0xF))
-      (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))
-      (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 8))))
-    ;; +44 D3DPRIMCAPS line caps — dwSize=60, rest zero
-    (if (i32.ge_u (local.get $limit) (i32.const 48))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 44)) (i32.const 60))))
-    ;; +104 D3DPRIMCAPS tri caps
-    (if (i32.ge_u (local.get $limit) (i32.const 108))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 60))))
-    ;; +164 dwDeviceRenderBitDepth = D3DBD_16(0x20)|D3DBD_32(0x200)
-    (if (i32.ge_u (local.get $limit) (i32.const 168))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 164)) (i32.const 0x220))))
-    ;; +168 dwDeviceZBufferBitDepth
-    (if (i32.ge_u (local.get $limit) (i32.const 172))
-      (then (i32.store (i32.add (local.get $wa) (i32.const 168)) (i32.const 0x220))))
-    ;; +172 dwMaxBufferSize, +176 dwMaxVertexCount
-    (if (i32.ge_u (local.get $limit) (i32.const 180)) (then
-      (i32.store (i32.add (local.get $wa) (i32.const 172)) (i32.const 0x10000))
-      (i32.store (i32.add (local.get $wa) (i32.const 176)) (i32.const 0x10000))))
-    ;; +180/184 dwMinTextureW/H=1, +188/192 dwMaxTextureW/H=1024
-    (if (i32.ge_u (local.get $limit) (i32.const 196)) (then
-      (i32.store (i32.add (local.get $wa) (i32.const 180)) (i32.const 1))
-      (i32.store (i32.add (local.get $wa) (i32.const 184)) (i32.const 1))
-      (i32.store (i32.add (local.get $wa) (i32.const 188)) (i32.const 1024))
-      (i32.store (i32.add (local.get $wa) (i32.const 192)) (i32.const 1024))))
-    ;; +196/200 stipple widths
-    (if (i32.ge_u (local.get $limit) (i32.const 204)) (then
-      (i32.store (i32.add (local.get $wa) (i32.const 196)) (i32.const 1))
-      (i32.store (i32.add (local.get $wa) (i32.const 200)) (i32.const 1)))))
+    ;; Only populate when dwSize is a plausible D3DDEVICEDESC size.
+    (if (i32.lt_u (local.get $sz) (i32.const 172)) (then (return)))
+    (if (i32.gt_u (local.get $sz) (i32.const 252)) (then (return)))
+    ;; Fill the whole 252 bytes into scratch, then copy back only dwSize bytes.
+    ;; Cheapest safe approach: if dwSize >= 252, fill in place; else use the
+    ;; caller's buffer but only clamp the far end of $fill_d3d_device_desc's
+    ;; writes by not invoking it and falling back to a dwSize-aware stub.
+    (if (i32.ge_u (local.get $sz) (i32.const 252))
+      (then
+        (call $fill_d3d_device_desc (local.get $desc) (i32.const 0))
+        (return)))
+    ;; dwSize 172..251 — write fields that fit, leaving the rest zero.
+    ;; dwFlags, dcmColorModel, dwDevCaps are the minimum for passing the
+    ;; common "has HW color model" check pattern.
+    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x7FF))     ;; dwFlags
+    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 2))          ;; RGB color model
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x02A50))    ;; HEL-style devcaps
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 8))          ;; transform.dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))          ;; transform.dwCaps=CLIP
+    (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 1))          ;; bClipping
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 16))         ;; lighting.dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 7))          ;; POINT|SPOT|DIRECTIONAL
+    (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))          ;; RGB lighting model
+    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 8))          ;; numLights
+    (i32.store (i32.add (local.get $wa) (i32.const 44)) (i32.const 56))         ;; dpcLineCaps.dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 100)) (i32.const 56))        ;; dpcTriCaps.dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 156)) (i32.const 0xD00))     ;; DeviceRenderBitDepth
+    (i32.store (i32.add (local.get $wa) (i32.const 160)) (i32.const 0x500))     ;; DeviceZBufferBitDepth
+    (i32.store (i32.add (local.get $wa) (i32.const 168)) (i32.const 0xFFFF))    ;; dwMaxVertexCount
+    (if (i32.ge_u (local.get $sz) (i32.const 188)) (then
+      (i32.store (i32.add (local.get $wa) (i32.const 172)) (i32.const 1))       ;; dwMinTextureWidth
+      (i32.store (i32.add (local.get $wa) (i32.const 176)) (i32.const 1))
+      (i32.store (i32.add (local.get $wa) (i32.const 180)) (i32.const 2048))
+      (i32.store (i32.add (local.get $wa) (i32.const 184)) (i32.const 2048)))))
