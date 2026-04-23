@@ -12,13 +12,15 @@ const BASE = 0x80000000; // 2^31
 async function setup() {
   const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
   const exeBytes = fs.readFileSync('test/binaries/calc.exe');
-  const memory = new WebAssembly.Memory({ initial: 512 });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   const ctx = { getMemory: () => memory.buffer, onExit: () => {}, trace: new Set() };
   const base = createHostImports(ctx);
   const h = base.host;
   h.memory = memory;
   h.create_thread = () => 0; h.exit_thread = () => {};
   h.create_event = () => 0; h.set_event = () => 1; h.reset_event = () => 1; h.wait_single = () => 0;
+  h.wait_multiple = () => 0;
+  h.com_create_instance = () => 0x80004002;
   h.log = () => {}; h.log_i32 = () => {};
 
   const mod = await WebAssembly.compile(wasmBytes);

@@ -27,7 +27,7 @@ async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
 
   // WAT module imports its memory; create it externally and pass through.
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   const ctx = {
     getMemory: () => memory.buffer,
     renderer: null,
@@ -44,6 +44,7 @@ async function main() {
   base.host.set_event     = () => 0;
   base.host.reset_event   = () => 0;
   base.host.wait_single   = () => 0;
+  base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);

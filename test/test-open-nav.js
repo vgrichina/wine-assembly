@@ -31,10 +31,9 @@ try { createCanvas = require('canvas').createCanvas; } catch (_) {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
 
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   const canvas = createCanvas(640, 480);
   const renderer = new Win98Renderer(canvas);
-  renderer.loadResources({ menus:{}, dialogs:{}, strings:{}, bitmaps:{} });
 
   const vfs = new VirtualFS();
   vfs.files.clear();
@@ -58,6 +57,7 @@ try { createCanvas = require('canvas').createCanvas; } catch (_) {
   base.host.set_event = () => 0;
   base.host.reset_event = () => 0;
   base.host.wait_single = () => 0;
+  base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);

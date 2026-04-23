@@ -21,7 +21,7 @@ async function main() {
 
   const wasmBytes = fs.readFileSync(WASM_PATH);
   const exeBytes = fs.readFileSync(path.join(__dirname, 'binaries', 'notepad.exe'));
-  const memory = new WebAssembly.Memory({ initial: 1024, maximum: 1024, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   const ctx = { exports: null, getMemory: () => memory.buffer };
   const base = createHostImports(ctx);
   const h = base.host;

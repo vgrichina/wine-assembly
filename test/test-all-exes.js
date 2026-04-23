@@ -9,7 +9,7 @@ const { createCanvas, loadImage } = require('canvas');
 
 const ROOT = path.join(__dirname, '..');
 const RUN_JS = path.join(__dirname, 'run.js');
-const PNG_DIR = path.join(ROOT, 'scratch', 'harness-pngs');
+const PNG_DIR = path.join(ROOT, 'test', 'output', 'all-exes');
 const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in PNG
 
 // Return { colors, topShare } for a PNG — colors = unique RGB triples seen,

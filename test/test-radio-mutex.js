@@ -11,10 +11,9 @@ const { Win98Renderer } = require('../lib/renderer');
 (async () => {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   const canvas = createCanvas(640, 480);
   const renderer = new Win98Renderer(canvas);
-  renderer.loadResources({ menus:{}, dialogs:{}, strings:{}, bitmaps:{} });
   const ctx = { getMemory: () => memory.buffer, renderer, resourceJson: { menus:{}, dialogs:{}, strings:{}, bitmaps:{} }, onExit: () => {} };
   const base = createHostImports(ctx);
   base.host.memory = memory;
@@ -24,6 +23,7 @@ const { Win98Renderer } = require('../lib/renderer');
   base.host.set_event = () => 0;
   base.host.reset_event = () => 0;
   base.host.wait_single = () => 0;
+  base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   const e = instance.exports;
@@ -50,9 +50,6 @@ const { Win98Renderer } = require('../lib/renderer');
     e.send_message(h, 0x0202, 0, 0); // WM_LBUTTONUP
   };
   const checked = (h) => e.send_message(h, 0x00F0, 0, 0); // BM_GETCHECK
-
-  // Initially neither should be checked
-  console.log('initial:  up=' + checked(up) + ' down=' + checked(down));
 
   click(up);
   console.log('click up: up=' + checked(up) + ' down=' + checked(down));
