@@ -64,11 +64,25 @@
       (local.set $obj_wa (call $g2w (local.get $this)))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
     ;; D3D family → IID_IDirectDraw (0x6C14DB80): return the parent DDraw.
-    ;; Since we don't track the D3D→DDraw back-reference, scan DX_OBJECTS for
-    ;; the first type=1 (DDraw) entry. d3drm.dll uses this to get the DDraw
-    ;; back from a D3D interface; failing it causes a NULL-vtable Release crash.
+    ;; Priority 1: read the parent DDraw slot linked at entry+8 (set by
+    ;; IDirectDraw::QI when the child D3D was created). This is exact and
+    ;; survives Release cycles that would have zeroed the parent's type field.
+    ;; Priority 2 fallback: scan DX_OBJECTS for any type=1 (DDraw) entry.
     (if (i32.and (i32.eq (local.get $family) (i32.const 1))
                  (i32.eq (local.get $iid0) (i32.const 0x6C14DB80))) (then
+      (local.set $entry (call $dx_from_this (local.get $this)))
+      (local.set $i (i32.load (i32.add (local.get $entry) (i32.const 8))))
+      (if (i32.ne (local.get $i) (i32.const 0)) (then
+        (local.set $ptr (i32.add (global.get $DX_OBJECTS)
+          (i32.mul (local.get $i) (i32.const 32))))
+        (i32.store (i32.add (local.get $ptr) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $ptr) (i32.const 4))) (i32.const 1)))
+        (local.set $ddraw_guest (i32.add
+          (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $i) (i32.const 8)))
+                   (global.get $GUEST_BASE))
+          (global.get $image_base)))
+        (call $gs32 (local.get $ppvObj) (local.get $ddraw_guest))
+        (return (i32.const 0))))
       (local.set $i (i32.const 0))
       (block $done (loop $scan
         (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))

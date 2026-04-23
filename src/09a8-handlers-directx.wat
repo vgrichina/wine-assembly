@@ -478,29 +478,22 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    ;; IDirect3D {3BBA0080-...}
-    (if (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
+    ;; IDirect3D{,2,3} — create a new child entry and link parent DDraw slot at +8
+    ;; so that IDirect3D::QI(IID_IDirectDraw) can find the parent via the link
+    ;; (rather than relying on a scan that misses after Release cycles).
+    (if (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
+        (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
+                (i32.eq (local.get $iid_dword) (i32.const 0xBB223240))))
       (then
-        (local.set $obj (call $dx_create_com_obj (i32.const 8) (global.get $DX_VTBL_D3D)))
-        (call $gs32 (local.get $arg2) (local.get $obj))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    ;; IDirect3D2 {6AAE1EC1-29BD-11D0-8B4E-00A0C905AB10} — uses D3D2 vtable (9 slots,
-    ;; CreateDevice takes 3 COM args, not 4). Previously we returned D3D3 vtable here,
-    ;; which mislabeled CreateDevice thunks and caused a 4-byte stack drift when the
-    ;; caller pushed only IDirect3D2 args (observed in Borland-compiled screensavers).
-    (if (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
-      (then
-        (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D2)))
-        (call $gs32 (local.get $arg2) (local.get $obj))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    ;; IDirect3D3 {BB223240-E72B-11D0-A9B4-00AA00C0993E}
-    (if (i32.eq (local.get $iid_dword) (i32.const 0xBB223240))
-      (then
-        (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D3)))
+        (if (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
+          (then (local.set $obj (call $dx_create_com_obj (i32.const 8) (global.get $DX_VTBL_D3D))))
+          (else (if (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
+            (then (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D2))))
+            (else (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D3)))))))
+        ;; Store parent DDraw slot at child_entry+8.
+        (i32.store
+          (i32.add (call $dx_from_this (local.get $obj)) (i32.const 8))
+          (call $dx_slot_of (call $dx_from_this (local.get $arg0))))
         (call $gs32 (local.get $arg2) (local.get $obj))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
