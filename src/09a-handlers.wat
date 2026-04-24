@@ -4326,11 +4326,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 384: GetWindowDC — STUB: unimplemented
+  ;; 384: GetWindowDC(hwnd) → HDC. Like GetDC but includes non-client area.
+  ;; Use 0xC0000 offset (vs GetDC's 0x40000) so JS can detect whole-window drawing
   (func $handle_GetWindowDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetWindowDC(hwnd) → HDC. Like GetDC but includes non-client area. 1 arg stdcall
-    ;; Use 0xC0000 offset (vs GetDC's 0x40000) so JS can detect whole-window drawing
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 0xC0000)))
+    (local $hdc i32)
+    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0xC0000)))
+    (if (local.get $arg0)
+      (then (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))))
+    (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -4619,9 +4622,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; 402: WindowFromPoint — STUB: unimplemented
+  ;; 402: WindowFromPoint(POINT pt) → HWND. POINT is passed by value as two
+  ;; dwords on the stack, so arg0=x, arg1=y. We don't have a screen-wide
+  ;; top-level window registry, so return main_hwnd as the best-effort
+  ;; answer — mspaint calls this during pencil drags to verify the cursor
+  ;; is still inside the app, and returning 0 would abort the drag.
   (func $handle_WindowFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (global.get $main_hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 403: IsRectEmpty — STUB: unimplemented
@@ -6750,14 +6758,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 611: GetMessagePos — STUB: unimplemented
+  ;; 611: GetMessagePos — returns the cursor position (y<<16 | x) at the
+  ;; time of the last retrieved message. We don't track screen-space mouse
+  ;; coords separately; fall back to the last message's lParam (client
+  ;; coords of the hwnd it was dispatched to). Good enough for mspaint's
+  ;; pencil/tool dispatch which only reads the packed DWORD.
   (func $handle_GetMessagePos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (global.get $pending_input_lparam))
+    (return)
   )
 
-  ;; 612: GetMessageTime — STUB: unimplemented
+  ;; 612: GetMessageTime — return tick count of last message retrieved via
+  ;; GetMessage. We don't track per-message timestamps separately, so return
+  ;; the current tick count; good enough for double-click interval checks
+  ;; and idle-detection logic that compares two GetMessageTime samples.
   (func $handle_GetMessageTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $tick_count (call $host_get_ticks))
+    (global.set $eax (global.get $tick_count))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
   ;; 613: RemovePropW — STUB: unimplemented
