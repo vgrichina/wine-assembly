@@ -1,5 +1,17 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-04-24): I4 FIXED — pencil drag now draws (31053 px diff in test)
+
+Root cause was not TLS-related. `$handle_GetMessagePos` in
+`09a-handlers.wat` was missing the `esp += 4` retaddr pop, violating
+the "handlers must pop ESP" invariant. mfc42 ord 3021 calls
+GetMessagePos → GetMessageTime; the skipped pop shifted ESP by 4, so
+ord 3021's later `ret` popped saved-esi (0x0158c58c) as retaddr and
+jumped into CPBView data. Fix: one-line add of the ESP pop in the
+GetMessagePos handler. test-mspaint-draw.js now 7/7.
+
+I1/I2/I3 layout bugs remain open below.
+
 ## Status (2026-04-23 evening): REGRESSED + new open bugs
 
 Visual (see screenshot): main window is cramped 275×400, Colors palette

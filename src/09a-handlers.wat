@@ -6765,7 +6765,7 @@
   ;; pencil/tool dispatch which only reads the packed DWORD.
   (func $handle_GetMessagePos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (global.get $pending_input_lparam))
-    (return)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
   ;; 612: GetMessageTime — return tick count of last message retrieved via
