@@ -216,6 +216,14 @@
     (if (local.get $is_dialog)
       (then (return (local.get $cap_h))))
 
+    ;; Re-fetch style bits for min/max presence — `$flags` only carries
+    ;; active/dialog/maxed/has_caption. Callers whose style lacks
+    ;; WS_MAXIMIZEBOX / WS_MINIMIZEBOX should not see those glyphs.
+    (block $skip_max
+      (if (i32.eqz (i32.and
+            (call $wnd_get_style (local.get $hwnd))
+            (i32.const 0x00010000)))
+        (then (br $skip_max)))
     ;; --- Max / Restore button ---
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $max_x) (local.get $btn_y)
@@ -274,8 +282,13 @@
                 (i32.add (local.get $cy) (i32.const 3))
                 (i32.add (local.get $cx) (i32.const 12))
                 (i32.add (local.get $cy) (i32.const 11))
-                (i32.const 0x05) (i32.const 0x0F)))))
+                (i32.const 0x05) (i32.const 0x0F))))))  ;; close $skip_max
 
+    (block $skip_min
+      (if (i32.eqz (i32.and
+            (call $wnd_get_style (local.get $hwnd))
+            (i32.const 0x00020000)))
+        (then (br $skip_min)))
     ;; --- Min button: 7x2 horizontal bar near the bottom ---
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $min_x) (local.get $btn_y)
@@ -294,7 +307,7 @@
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 5))) (local.get $off))
             (i32.add (i32.add (local.get $min_x) (i32.const 11)) (local.get $off))
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
-            (i32.const 0x30014)))
+            (i32.const 0x30014))))  ;; close $skip_min
 
     ;; Reset the DC clip so persistent 0xC0000 state doesn't leak.
     (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
@@ -383,13 +396,17 @@
   ;; chrome. Returns a HT* code. Button geometry matches
   ;; $defwndproc_ncpaint exactly — single source of truth.
   ;;
-  ;; HT codes: HTNOWHERE=0 HTCLIENT=1 HTCAPTION=2 HTSYSMENU=3 HTBORDER=18
-  ;;           HTCLOSE=20 HTMINBUTTON=8 HTMAXBUTTON=9
+  ;; HT codes: HTNOWHERE=0 HTCLIENT=1 HTCAPTION=2 HTSYSMENU=3
+  ;;           HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13 HTTOPRIGHT=14
+  ;;           HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
+  ;;           HTBORDER=18 HTCLOSE=20 HTMINBUTTON=8 HTMAXBUTTON=9
   (func $defwndproc_do_nchittest
         (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
     (local $rect i32) (local $wx i32) (local $wy i32)
     (local $w i32) (local $h i32) (local $lx i32) (local $ly i32)
     (local $style i32) (local $has_cap i32) (local $is_dialog i32)
+    (local $has_thick i32) (local $has_min i32) (local $has_max i32)
+    (local $corner i32) (local $border i32)
     (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
     (local $btn_y i32) (local $btn_bot i32)
     (local $close_x i32) (local $max_x i32) (local $min_x i32)
@@ -410,7 +427,10 @@
                          (i32.ge_s (local.get $ly) (local.get $h))))
       (then (return (i32.const 0))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (local.set $has_cap (i32.and (local.get $style) (i32.const 0x00C00000)))
+    (local.set $has_cap   (i32.and (local.get $style) (i32.const 0x00C00000)))
+    (local.set $has_thick (i32.and (local.get $style) (i32.const 0x00040000)))
+    (local.set $has_min   (i32.and (local.get $style) (i32.const 0x00020000)))
+    (local.set $has_max   (i32.and (local.get $style) (i32.const 0x00010000)))
     ;; Title bar region: (3, 3)-(w-3, 3+18); button strip (3+2)..(3+16) high.
     (if (local.get $has_cap)
       (then
@@ -446,23 +466,62 @@
               (then (return (i32.const 20)))) ;; HTCLOSE
             (if (i32.eqz (local.get $is_dialog))
               (then
-                (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
-                                      (i32.lt_s (local.get $ly) (local.get $btn_bot)))
-                              (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
-                                       (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw)))))
-                  (then (return (i32.const 9)))) ;; HTMAXBUTTON
-                (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
-                                      (i32.lt_s (local.get $ly) (local.get $btn_bot)))
-                              (i32.and (i32.ge_s (local.get $lx) (local.get $min_x))
-                                       (i32.lt_s (local.get $lx) (i32.add (local.get $min_x) (local.get $bw)))))
-                  (then (return (i32.const 8)))))) ;; HTMINBUTTON
+                (if (local.get $has_max)
+                  (then
+                    (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                          (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                                  (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
+                                           (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw)))))
+                      (then (return (i32.const 9)))))) ;; HTMAXBUTTON
+                (if (local.get $has_min)
+                  (then
+                    (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                          (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                                  (i32.and (i32.ge_s (local.get $lx) (local.get $min_x))
+                                           (i32.lt_s (local.get $lx) (i32.add (local.get $min_x) (local.get $bw)))))
+                      (then (return (i32.const 8))))))))  ;; HTMINBUTTON
             (return (i32.const 2)))))) ;; HTCAPTION
-    ;; 3px border
-    (if (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 3))
-                        (i32.lt_s (local.get $ly) (i32.const 3)))
-                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (i32.const 3)))
-                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3)))))
-      (then (return (i32.const 18)))) ;; HTBORDER
+    ;; Border band. 3 px thick for detection; thick-frame windows get
+    ;; resize codes (corners win over edges within a 12 px zone).
+    (local.set $border (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 3))
+                                        (i32.lt_s (local.get $ly) (i32.const 3)))
+                                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (i32.const 3)))
+                                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3))))))
+    (if (local.get $border)
+      (then
+        (if (i32.eqz (local.get $has_thick))
+          (then (return (i32.const 18)))) ;; HTBORDER — non-resizable
+        (local.set $corner (i32.const 12))
+        ;; Top edges
+        (if (i32.lt_s (local.get $ly) (i32.const 3))
+          (then
+            (if (i32.lt_s (local.get $lx) (local.get $corner))
+              (then (return (i32.const 13))))                              ;; HTTOPLEFT
+            (if (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $corner)))
+              (then (return (i32.const 14))))                              ;; HTTOPRIGHT
+            (return (i32.const 12))))                                      ;; HTTOP
+        ;; Bottom edges
+        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3)))
+          (then
+            (if (i32.lt_s (local.get $lx) (local.get $corner))
+              (then (return (i32.const 16))))                              ;; HTBOTTOMLEFT
+            (if (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $corner)))
+              (then (return (i32.const 17))))                              ;; HTBOTTOMRIGHT
+            (return (i32.const 15))))                                      ;; HTBOTTOM
+        ;; Left / right edges (corner-y check too, in case the top/bottom
+        ;; branches didn't fire because ly was in [3, h-3)).
+        (if (i32.lt_s (local.get $lx) (i32.const 3))
+          (then
+            (if (i32.lt_s (local.get $ly) (local.get $corner))
+              (then (return (i32.const 13))))                              ;; HTTOPLEFT
+            (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $corner)))
+              (then (return (i32.const 16))))                              ;; HTBOTTOMLEFT
+            (return (i32.const 10))))                                      ;; HTLEFT
+        (if (i32.lt_s (local.get $ly) (local.get $corner))
+          (then (return (i32.const 14))))                                  ;; HTTOPRIGHT
+        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $corner)))
+          (then (return (i32.const 17))))                                  ;; HTBOTTOMRIGHT
+        (return (i32.const 11))))                                          ;; HTRIGHT
     (i32.const 1))                    ;; HTCLIENT
 
   ;; Default WM_SETCURSOR handler.
@@ -479,6 +538,21 @@
   (func $defwndproc_do_setcursor (param $hwnd i32) (param $hit i32) (result i32)
     (if (i32.eq (local.get $hit) (i32.const 1))
       (then (return (i32.const 1)))) ;; HTCLIENT — leave cursor alone
+    ;; Resize edges get the appropriate sizing cursor.
+    ;; HTLEFT/HTRIGHT → SIZEWE, HTTOP/HTBOTTOM → SIZENS,
+    ;; HTTOPLEFT/HTBOTTOMRIGHT → SIZENWSE, HTTOPRIGHT/HTBOTTOMLEFT → SIZENESW.
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 10))
+                (i32.eq (local.get $hit) (i32.const 11)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F84))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 12))
+                (i32.eq (local.get $hit) (i32.const 15)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F85))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 13))
+                (i32.eq (local.get $hit) (i32.const 17)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F82))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 14))
+                (i32.eq (local.get $hit) (i32.const 16)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F83))) (return (i32.const 1))))
     (drop (call $set_cursor_internal (i32.const 0x67F00))) ;; IDC_ARROW
     (i32.const 1))
 

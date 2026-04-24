@@ -160,6 +160,27 @@
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
+  ;; User-initiated resize commit (host mousedrag on edge/corner or SC_MAXIMIZE).
+  ;; Renderer has already updated win.{x,y,w,h}; we recompute CLIENT_RECT
+  ;; and post WM_MOVE + WM_SIZE so the guest wndproc relays out.
+  (func (export "host_resize_commit")
+        (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $cw i32) (local $ch i32)
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (local.set $cw (i32.sub (call $client_rect_get_r (local.get $hwnd))
+                             (call $client_rect_get_l (local.get $hwnd))))
+    (local.set $ch (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                             (call $client_rect_get_t (local.get $hwnd))))
+    (if (i32.lt_s (local.get $cw) (i32.const 0)) (then (local.set $cw (i32.const 0))))
+    (if (i32.lt_s (local.get $ch) (i32.const 0)) (then (local.set $ch (i32.const 0))))
+    (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0003) ;; WM_MOVE
+      (i32.const 0)
+      (i32.or (i32.and (local.get $x) (i32.const 0xFFFF))
+              (i32.shl (local.get $y) (i32.const 16)))))
+    (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0005) ;; WM_SIZE
+      (i32.const 0) ;; SIZE_RESTORED
+      (i32.or (i32.and (local.get $cw) (i32.const 0xFFFF))
+              (i32.shl (local.get $ch) (i32.const 16))))))
   ;; Cursor state readback — for tests / JS to verify SetCursor plumbing.
   (func (export "get_cursor") (result i32) (global.get $current_cursor))
   ;; Synchronous NCHITTEST helper — JS calls before generating mouse

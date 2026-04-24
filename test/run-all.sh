@@ -47,6 +47,9 @@ E2E=(
   test/test-freecell-stats.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
+  test/test-solitaire-maximize.js
+  test/test-solitaire-resize.js
+  test/test-minesweeper-no-resize.js
   test/test-pinball-flipper.js
 )
 
