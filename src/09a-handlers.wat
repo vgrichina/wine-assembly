@@ -7532,6 +7532,7 @@
   (func $handle_SetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $wnd_get_parent (local.get $arg0)))
     (call $wnd_set_parent (local.get $arg0) (local.get $arg1))
+    (call $host_set_parent (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

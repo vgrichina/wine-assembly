@@ -76,6 +76,8 @@
   ;; check_input_hwnd() → hwnd of last check_input event (0 = use main_hwnd)
   (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
   ;; set_window_class(hwnd, class_name_ptr)
+  (import "host" "set_parent" (func $host_set_parent (param i32 i32)))
+  ;; set_parent(hwnd, newParentHwnd) — update renderer's parentHwnd (reparenting)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
   (import "host" "shell_about" (func $host_shell_about (param i32 i32 i32) (result i32)))

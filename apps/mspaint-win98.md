@@ -1,5 +1,49 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-04-24 later): I1 NOT A BUG, I2 + I3 FIXED — Colors now docks at bottom
+
+### I2/I3 root cause: renderer never saw SetParent
+
+`$handle_SetParent` updated WAT's `$wnd_parent` but there was no host
+bridge, so `renderer.windows[child].parentHwnd` stayed at the creation-
+time parent (always `0x10001` = frame) forever. Colors (`0x1001a`) was
+correctly reparented into bot-dock at the MFC level, but the renderer
+still thought its parent was the frame, so `_getDrawTarget` placed it
+at frame-client-origin (top of window) instead of inside bot-dock.
+
+Second bug found in the same path: `_getDrawTarget` only added one
+hop of child-position to the back-canvas offset. For two-level chains
+(Colors → bot-dock → frame) it missed the intermediate dock-bar
+position (`y=283`), so even with parentHwnd fixed the offset was short.
+
+### Fix (3 parts)
+- New `set_parent` host import (`src/01-header.wat`), called from
+  `$handle_SetParent` (`src/09a-handlers.wat`).
+- Host impl updates `renderer.windows[hwnd].parentHwnd` + `isChild`.
+- `_getDrawTarget` (`lib/host-imports.js`) now walks the full
+  renderer-tracked ancestor chain when computing back-canvas offsets,
+  not just one hop.
+
+### I1: not a bug
+
+`cx=0x113=275` / `cy=0x190=400` are **hardcoded literals** in the
+`CPBFrame` constructor at `mspaint.exe 0x0101cd3c`:
+
+```
+0101cd3c  mov eax, 0x113     ; 275
+0101cd41  mov ecx, 0x190     ; 400
+0101cd46  mov [esi+0xd0], eax   ; CPBFrame::m_minX
+0101cd4c  mov [esi+0xd4], ecx   ; CPBFrame::m_minY
+```
+
+`CPBFrame::PreCreateWindow` (at `0x0101cde3`) reads a saved-rect at
+`[0x103d000..0x103d00c]` (uninitialised at first run → 0) and falls
+back to `m_minX/m_minY` for `cs.cx/cs.cy`. That's 275×400 by design.
+Earlier note "nothing in mspaint.exe contains push 0x113" was misled
+by looking only at `push`; the values are `mov`-ed. No action needed.
+
+draw test still 7/7 after the fix.
+
 ## Status (2026-04-24): I4 FIXED — pencil drag now draws (31053 px diff in test)
 
 Root cause was not TLS-related. `$handle_GetMessagePos` in
