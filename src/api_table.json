@@ -10489,5 +10489,33 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 659865628
+  },
+  {
+    "id": 1499,
+    "name": "RegDeleteKeyA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1117720496
+  },
+  {
+    "id": 1500,
+    "name": "RegDeleteKeyW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 949944306
+  },
+  {
+    "id": 1501,
+    "name": "RegDeleteValueA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3972606214
+  },
+  {
+    "id": 1502,
+    "name": "RegDeleteValueW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4274603356
   }
 ]

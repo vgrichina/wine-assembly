@@ -266,6 +266,10 @@
   ;; reg_close_key(hKey) → 0
   (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_key(hKey, dwIndex, lpNameWA, cchName, isWide) → error code
+  (import "host" "reg_delete_key" (func $host_reg_delete_key (param i32 i32 i32) (result i32)))
+  ;; reg_delete_key(hKey, subKeyWA, isWide) → error code (removes key + subkeys)
+  (import "host" "reg_delete_value" (func $host_reg_delete_value (param i32 i32 i32) (result i32)))
+  ;; reg_delete_value(hKey, valueNameWA, isWide) → error code
 
   ;; Audio host imports
   (import "host" "message_beep" (func $host_message_beep (param i32)))
