@@ -530,6 +530,15 @@
             (local.get $arg0) (i32.const 0x0018)
             (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 0)))
     (local.set $client_size (call $host_show_window (local.get $arg0) (local.get $arg1)))
+    ;; Sync WS_VISIBLE into the stored GWL_STYLE. MFC (e.g. CDockBar::OnSizeParent)
+    ;; skips toolbars whose GetStyle() lacks WS_VISIBLE — without this sync, any
+    ;; control bar that relies on CreateWindow-without-WS_VISIBLE + ShowWindow
+    ;; (mspaint's Tools/Colors palettes) is filtered out of dock layout.
+    (if (local.get $arg1)
+      (then (drop (call $wnd_set_style (local.get $arg0)
+              (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))))
+      (else (drop (call $wnd_set_style (local.get $arg0)
+              (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))))
     ;; Showing a window should trigger WM_PAINT — invalidate it
     ;; cmd != SW_HIDE (0) → mark for paint
     (if (local.get $arg1)
