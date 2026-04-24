@@ -86,6 +86,31 @@ function writePng(canvas, name) {
   return out;
 }
 
+// Drive WM_NCPAINT for top-level windows and WM_PAINT for every WAT-managed
+// child slot, so chrome + control visuals land on the back-canvas before we
+// composite. In a real run this is driven by the dialog message pump
+// (09b-dispatch.wat); the headless harness has no pump, so we simulate it.
+function flushPendingPaints(harness) {
+  const r = harness.renderer;
+  const e = harness.exports;
+  if (!r || !e || !e.send_message || !e.wnd_slot_hwnd) return;
+  for (const win of Object.values(r.windows)) {
+    if (win.isChild || !win.visible || !(win.w > 0 && win.h > 0)) continue;
+    if (typeof r._defwndprocNcpaint === 'function') {
+      r._defwndprocNcpaint(win, win.x, win.y, win.w, win.h);
+    }
+  }
+  // Walk every slot; deliver WM_PAINT to children of any registered window.
+  const topSet = new Set(Object.keys(r.windows).map(k => Number(k)));
+  for (let s = 0; s < 256; s++) {
+    const hw = e.wnd_slot_hwnd(s);
+    if (!hw || topSet.has(hw)) continue;
+    const parent = e.wnd_get_parent ? e.wnd_get_parent(hw) : 0;
+    if (!parent || !topSet.has(parent)) continue;
+    e.send_message(hw, 0x000F, 0, 0); // WM_PAINT
+  }
+}
+
 // Convenience runner: each test exposes a (harness) => Promise<void> body
 // and a name. We boot the harness, run the body, count colors, write the
 // PNG, and exit non-zero on assertion failures.
@@ -98,6 +123,8 @@ async function runRenderTest(name, body, { minColors = 8 } = {}) {
   try {
     const harness = await bootRenderHarness();
     await body(harness, check);
+    flushPendingPaints(harness);
+    harness.renderer.repaint();
     const colors = countUniqueColors(harness.canvas);
     check(`canvas has ≥${minColors} distinct colors after repaint`,
       colors >= minColors, `${colors} colors`);
