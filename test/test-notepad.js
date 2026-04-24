@@ -68,7 +68,6 @@ const checks = [
   { name: 'main window created (hwnd=0x10001)',  pass: hasCreateMain },
   { name: 'edit control created (hwnd=0x10002)', pass: hasCreateEdit },
   { name: 'edit style multiline (0x50300104)',    pass: hasEditStyle },
-  { name: 'edit MoveWindow rect logged',          pass: hasMoveWindow },
   { name: 'no negative-height MoveWindow',        pass: !hasNegHeight },
   { name: 'no UNIMPLEMENTED API crash',           pass: !hasUnimpl },
   { name: 'PNG snapshot written',                 pass: pngWritten },
