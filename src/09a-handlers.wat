@@ -1215,10 +1215,10 @@
   ;; 90: GetSystemMetrics (actual slot used by imports)
   (func $handle_GetSystemMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eq (local.get $arg0) (i32.const 0))  ;; SM_CXSCREEN
-    (then (global.set $eax (i32.const 640))
+    (then (global.set $eax (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 1))  ;; SM_CYSCREEN
-    (then (global.set $eax (i32.const 480))
+    (then (global.set $eax (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 4))  ;; SM_CYCAPTION
     (then (global.set $eax (i32.const 19))
@@ -1239,10 +1239,10 @@
     (then (global.set $eax (i32.const 19))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 16)) ;; SM_CXFULLSCREEN
-    (then (global.set $eax (i32.const 640))
+    (then (global.set $eax (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 17)) ;; SM_CYFULLSCREEN
-    (then (global.set $eax (i32.const 434))
+    (then (global.set $eax (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16)) (i32.const 46)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 32)) ;; SM_CXFRAME
     (then (global.set $eax (i32.const 4))
@@ -1251,10 +1251,10 @@
     (then (global.set $eax (i32.const 4))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
-    (then (global.set $eax (i32.const 648))
+    (then (global.set $eax (i32.add (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)) (i32.const 8)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
-    (then (global.set $eax (i32.const 488))
+    (then (global.set $eax (i32.add (i32.shr_u (call $host_get_screen_size) (i32.const 16)) (i32.const 8)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
