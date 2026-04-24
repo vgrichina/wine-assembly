@@ -1,5 +1,38 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-04-24 later²): I5 OPEN — canvas paint wipes sibling palettes
+
+### I5. Mouse-down in canvas wipes Tools/Colors palettes from back-canvas
+
+`test/test-mspaint-draw.js` now asserts both palettes survive a pencil
+drag (`countNonBgPixels` in TOOLS_BBOX and COLORS_BBOX). Fresh run goes
+`7/9` — the 2 new checks fail: `tools=827→0` and `colors=3168→0`.
+
+Root cause: on WM_LBUTTONDOWN the canvas view repaints via full-client
+fills + `StretchDIBits` on hdc=0xd0003 (CPBView whole-window DC,
+geometrically 269×373 = full frame-client size). The fills land on the
+shared top-level back-canvas and overwrite sibling palettes that live
+outside the MDI subtree.
+
+Partial mitigation in this session: `_excludeChildrenClip` now also
+excludes *cousin* windows (same top-level, higher zOrder, neither
+ancestor nor descendant) — coords: sum of child-local offsets up the
+chain plus the top-level's client origin, minus t.ox/t.oy. That
+protects any draw routed through `_drawWithClip`. Verified the clip
+applies during the big `gdi_fill_rect(hdc=0xd0003, 0,0,269,373)` calls
+post-mousedown, but the after PNG still shows the palette areas filled
+grey. So at least one paint path bypasses `_drawWithClip` — candidates:
+
+- `gdi_stretch_dib_bits` (line 3964: raw `t.ctx.drawImage` with no clip)
+- `gdi_bitblt` non-source-less ROPs (SRCCOPY et al — direct `drawImage`)
+- Menu / border drawing in `_drawWatChildren`
+
+Next step: grep every `t.ctx.fillRect` / `t.ctx.drawImage` in
+`lib/host-imports.js`, wrap the remaining ones in `_drawWithClip(hdc, t
+=> { ... })` so the cousin exclusion kicks in everywhere. Alternative
+(heavier): give each child window its own offscreen back-canvas so
+parent paints physically cannot clobber siblings.
+
 ## Status (2026-04-24 later): I1 NOT A BUG, I2 + I3 FIXED — Colors now docks at bottom
 
 ### I2/I3 root cause: renderer never saw SetParent
