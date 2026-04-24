@@ -10482,5 +10482,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3761877705
+  },
+  {
+    "id": 1498,
+    "name": "CoLockObjectExternal",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 659865628
   }
 ]

@@ -7553,6 +7553,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; CoLockObjectExternal(pUnk, fLock, fLastUnlockReleases) — return S_OK.
+  ;; mspaint probes this via GetProcAddress at startup and bails with a fatal
+  ;; MessageBox if unresolved. No real OOP server lifetime to manage.
+  (func $handle_CoLockObjectExternal (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 656: DeleteMenu — STUB: unimplemented
   (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
