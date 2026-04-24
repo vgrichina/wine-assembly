@@ -1792,6 +1792,7 @@
     (local $cx i32) (local $cy i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (call $defwndproc_do_nccalcsize (local.get $arg0))
     ;; For non-main windows, record pending WM_SIZE for delivery by ShowWindow
     (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
     (then
@@ -2137,6 +2138,7 @@
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (call $defwndproc_do_nccalcsize (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
