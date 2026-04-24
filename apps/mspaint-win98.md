@@ -54,26 +54,48 @@ the "top" slot, bot-dock has zero content but still reserved strip
 height. Or canvas max size is clamped by an old Image/Attributes
 default (e.g. 212×283) that doesn't auto-stretch to client size.
 
-#### I4. Pencil drag produces 0 pixels inside canvas bbox
+#### I4. Pencil drag produces 0 pixels — guest STUCK after WM_LBUTTONDOWN to MDI client
 
-`test/test-mspaint-draw.js` 6/7. After click on pencil-tool at
-`(39,146)` → `0x10010`, then mousedown at canvas `(140,170)`:
+`test/test-mspaint-draw.js` 6/7. Click pencil `(39,146)` → `0x10010`,
+mouseup → `0x10009` (`SetCapture`/`ReleaseCapture` pair is clean).
+Then mousedown canvas `(140,170)` → `0x10003` (MDI client). After
+that, **EIP jumps into data at `0x0158c58c`** (inside CPBFrame, not
+code). STUCK detection fires; all subsequent `check_input` polls stop,
+so queued mousemoves never drain. Same regardless of whether
+mousemoves are sent.
 
-- `[check_input] msg=0x201 hwnd=0x10003` delivered.
-- **No further `check_input` calls** for the rest of the run — 3
-  total, matches only the three button-state events.
-- Meanwhile `PeekMessage`/`GetMessage` fire 27k+ times; guest is
-  busy dispatching its own synthetic messages.
-- No `SetCapture` after canvas click (unlike palette click which
-  set capture to `0x10009`).
+Call site: `mspaint.exe 0x01018bb7 call 0x0102ea80` which is
+`jmp [0x1001370]` — IAT entry for **mfc42.dll ordinal 3021**.
+At the break, `ECX=0x0158c58c` (bogus `this`), `prev_eip=0x010116cf`.
+The call is inside mspaint's WM_LBUTTONDOWN path for the view/doc.
+Something computed `this` as an address inside CPBFrame's own data,
+then mfc42 ord 3021 presumably did a `jmp ecx`-style operation (or
+its own vtable load landed on data that happens to equal ecx).
 
-Mouse move queues into `renderer.inputQueue` (DBG_MM confirms
-qlen grows 0→1→2) but `host_check_input` is never called.
-Hypothesis: WM_LBUTTONDOWN delivered to MDI client `0x10003`
-(not a document window) — no wndproc consumes it; DefWindowProc
-handles it silently; post-queue has self-generated user messages
-(SendMessage 0x1001b WM_USER+1) that keep `GetMessageA` busy in
-phase 4 (post queue) before phase 7 (`host_check_input`).
+mfc42 ord 3021 resolves to a real export at RVA=0x13fbd
+(runtime `0x01069fbd`). Disasm shows a thread-state accessor that
+starts with `push esi / push 0x5f406dee / mov ecx, 0x5f4cbe28 /
+call 0x5f401000`. The inner `call 0x5f401000` reads a TLS-backed
+thread-state pointer via `[0x5f4cf32c]` (TlsGetValue thunk); if the
+TLS slot is 0/garbage, the subsequent `mov esi, [eax+N]` /
+`mov [esi+0x44], eax` chain scribbles into random memory and ord 3021
+returns a bogus pointer. Current hypothesis: our TlsGetValue/TlsSetValue
+doesn't retain whatever MFC stowed at thread init for the main thread,
+so the first time this accessor runs (during WM_LBUTTONDOWN dispatch
+on the MDI client) it corrupts state.
+
+Next steps: (a) break at `0x01018bb7` and single-step into
+`0x0102ea80 → IAT[0x1001370] → 0x01069fbd`, dumping `[0x5f4cbe28]`
+and the TlsGetValue result to see if it's zero; (b) walk back to the
+TlsSetValue(s) that should have populated MFC's thread-state during
+DllMain / CWinApp init; (c) if the slot never got set, implement the
+AFX_MODULE_STATE seeding (`AfxGetModuleState` / `_afxBaseModuleState`).
+I1/I2/I3 remain ahead of I4 — fixing layout is orthogonal to the TLS
+issue and may also shrink the repro once the canvas is the right
+size.
+
+Old hypothesis (messages starved by post-queue) is wrong — host
+polling halts because the guest is STUCK, not busy.
 
 Actual image diff between before/after PNG: 1330 pixels in bbox
 `(24,62)-(187,306)` — outside canvas bbox `(80,38)-(292,321)` on
