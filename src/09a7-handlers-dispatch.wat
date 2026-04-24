@@ -263,13 +263,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 741: QueryPerformanceCounter(lpPerformanceCount) — write monotonic counter
+  ;; 741: QueryPerformanceCounter(lpPerformanceCount) — tie to wall clock.
+  ;; Frequency is 1MHz (see below), so one tick = 1µs. host_get_ticks() is ms,
+  ;; multiply by 1000. Also advance by $perf_counter_lo so consecutive calls
+  ;; within the same ms still differ (some apps busy-wait on QPC). The global
+  ;; increment keeps monotonicity even when the wall clock doesn't move.
   (func $handle_QueryPerformanceCounter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $val i32)
     (local.set $wa (call $g2w (local.get $arg0)))
-    (i32.store (local.get $wa) (global.get $perf_counter_lo))
+    (local.set $val
+      (i32.add (i32.mul (call $host_get_ticks) (i32.const 1000))
+               (global.get $perf_counter_lo)))
+    (i32.store (local.get $wa) (local.get $val))
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
-    (global.set $perf_counter_lo (i32.add (global.get $perf_counter_lo) (i32.const 1000)))
+    (global.set $perf_counter_lo (i32.add (global.get $perf_counter_lo) (i32.const 1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
