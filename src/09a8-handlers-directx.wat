@@ -2947,14 +2947,14 @@
     (if (i32.eqz (local.get $obj_guest))
       (then
         (global.set $eax (i32.const 0x80004005))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; this + 6 args
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32))) ;; ret + this + 6 args
         (return)))
     ;; Stash hWnd in misc0 (DDraw entry layout: +8 = hwnd)
     (local.set $entry_wa (call $dx_from_this (local.get $obj_guest)))
     (i32.store (i32.add (local.get $entry_wa) (i32.const 8)) (local.get $arg2))
     (call $gs32 (local.get $pp_dd) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DD_OK
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   ;; DirectDrawEnumerate(this, lpCallback, lpContext) — 2 args
   ;; Same payload as the standalone DirectDrawEnumerateA — fires once for the primary driver.
