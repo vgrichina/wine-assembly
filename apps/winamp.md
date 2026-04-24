@@ -1317,6 +1317,13 @@ So the real cap isn't T4's FPU throughput (it completes 17 writes briskly and id
 3. Optimize or host-accelerate the in_mp3 synthesis filter at 0x5bd470 — only becomes the new ceiling once (1) is fixed.
 4. Trace T4 → in_mp3 call path (return addr = 0 on stack suggests thunk/tail-call) to understand whether the filter can be fast-pathed in the decoder vs. replaced wholesale.
 
+## Automated Tests
+
+| Test | What it checks |
+|------|----------------|
+| `test/test-winamp.js` | Skin renders — main hwnd 275×116, back-canvas has >100 unique colors, no crashes in 200 batches |
+| `test/test-winamp-audio.js` | Audio plays — drives survey-dismiss + IPC playback, captures `--audio-out` PCM, asserts ≥8KB of non-silent stereo 16-bit @ 22050Hz within 30s |
+
 ## Difficulty: Medium-Hard
 
 The skin bitmap loading and GDI double-buffered drawing pipeline is the main challenge. Winamp doesn't use standard Win32 controls for its main UI — everything is custom-drawn via GDI onto a borderless window.
