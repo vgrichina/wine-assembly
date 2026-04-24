@@ -219,6 +219,7 @@
   (func $handle_IDirect3DDevice_Execute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
     (local $wa i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
+    (local $branch i32) (local $handled i32)
     (if (local.get $arg1) (then
       (local.set $eb_entry (call $dx_from_this (local.get $arg1)))
       (local.set $buf       (i32.load (i32.add (local.get $eb_entry) (i32.const 8))))
@@ -235,41 +236,77 @@
           (local.set $op  (i32.load8_u (local.get $wa)))
           (local.set $sz  (i32.load8_u (i32.add (local.get $wa) (i32.const 1))))
           (local.set $cnt (i32.load16_u (i32.add (local.get $wa) (i32.const 2))))
+          (local.set $handled (i32.const 0))
           ;; kind=7 → Execute instruction trace
           (call $host_dx_trace (i32.const 7) (local.get $op) (local.get $sz) (local.get $cnt)
             (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
-          ;; D3DOP_EXIT (11): stop walking
+          ;; D3DOP_EXIT (11)
           (br_if $done (i32.eq (local.get $op) (i32.const 11)))
           ;; ── Opcode dispatch ──────────────────────────────────────
-          ;; 3 = D3DOP_TRIANGLE    (8-byte records)
+          ;; 1 = D3DOP_POINT        (4-byte records)
+          (if (i32.eq (local.get $op) (i32.const 1)) (then
+            (call $d3dim_exec_points (local.get $arg0) (local.get $buf)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 2 = D3DOP_LINE         (4-byte records)
+          (if (i32.eq (local.get $op) (i32.const 2)) (then
+            (call $d3dim_exec_lines (local.get $arg0) (local.get $buf)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 3 = D3DOP_TRIANGLE     (8-byte records)
           (if (i32.eq (local.get $op) (i32.const 3)) (then
             (call $d3dim_exec_triangles (local.get $arg0) (local.get $buf)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 4 = D3DOP_MATRIXLOAD   (8-byte records)
+          (if (i32.eq (local.get $op) (i32.const 4)) (then
+            (call $d3dim_exec_matrix_load
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 5 = D3DOP_MATRIXMULTIPLY (12-byte records)
+          (if (i32.eq (local.get $op) (i32.const 5)) (then
+            (call $d3dim_exec_matrix_multiply
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 6 = D3DOP_STATETRANSFORM  (8-byte D3DSTATE records)
+          (if (i32.eq (local.get $op) (i32.const 6)) (then
+            (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 6)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
           ;; 7 = D3DOP_STATELIGHT   (8-byte D3DSTATE records)
           (if (i32.eq (local.get $op) (i32.const 7)) (then
             (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 7)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
           ;; 8 = D3DOP_STATERENDER  (8-byte D3DSTATE records)
           (if (i32.eq (local.get $op) (i32.const 8)) (then
             (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 8)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
-          ;; 6 = D3DOP_STATETRANSFORM  (same {type,value} layout as STATE*)
-          (if (i32.eq (local.get $op) (i32.const 6)) (then
-            (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 6)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))))
-          ;; Any opcode outside {3,6,7,8,11} is unhandled. Crash with the name
-          ;; + opcode in the log so we know exactly what to implement next.
-          ;; Known-but-unimplemented: 1=POINT 2=LINE 4=MATRIXLOAD 5=MATRIXMULT
-          ;; 9=PROCESSVERTICES 10=TEXTURELOAD 12=BRANCH 13=SPAN 14=SETSTATUS.
-          (if (i32.and
-                 (i32.ne (local.get $op) (i32.const 3))
-                 (i32.and
-                   (i32.ne (local.get $op) (i32.const 6))
-                   (i32.and
-                     (i32.ne (local.get $op) (i32.const 7))
-                     (i32.ne (local.get $op) (i32.const 8)))))
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 9 = D3DOP_PROCESSVERTICES (16-byte records)
+          (if (i32.eq (local.get $op) (i32.const 9)) (then
+            (call $d3dim_exec_process_vertices (local.get $arg0) (local.get $buf)
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+            (local.set $handled (i32.const 1))))
+          ;; 12 = D3DOP_BRANCHFORWARD (16-byte record; cnt is always 1 in practice)
+          (if (i32.eq (local.get $op) (i32.const 12)) (then
+            (local.set $branch (call $d3dim_exec_branch
+              (i32.add (local.get $wa) (i32.const 4)) (local.get $wa)))
+            (if (i32.eqz (local.get $branch))
+              (then (br $done)))
+            (if (i32.ne (local.get $branch) (i32.const -1))
+              (then
+                (local.set $wa (local.get $branch))
+                (br $lp)))
+            (local.set $handled (i32.const 1))))
+          ;; 14 = D3DOP_SETSTATUS  (24-byte D3DSTATUS record)
+          ;; Status tracking not wired into BRANCHFORWARD yet; trace and advance.
+          (if (i32.eq (local.get $op) (i32.const 14)) (then
+            (local.set $handled (i32.const 1))))
+          ;; Known-but-unimplemented: 10=TEXTURELOAD, 13=SPAN. Anything else
+          ;; is malformed — log + crash so we can see what hit us.
+          (if (i32.eqz (local.get $handled))
             (then
-              ;; kind=9 unimpl-opcode: op, size, count, ins_offset
               (call $host_dx_trace (i32.const 9) (local.get $op) (local.get $sz)
                 (local.get $cnt) (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
               (call $crash_unimplemented (global.get $D3DIM_UNIMPL_EXEC_OP))))
