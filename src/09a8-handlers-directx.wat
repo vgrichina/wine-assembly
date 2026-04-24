@@ -1350,21 +1350,77 @@
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
         (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
         (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
-    ;; Row-copy (no stretch, no color key for now — simple case)
-    (local.set $row (i32.const 0))
-    (block $blit_done (loop $blit_row
-      (br_if $blit_done (i32.ge_u (local.get $row) (local.get $dh)))
-      (if (i32.lt_u (local.get $row) (local.get $sh)) (then
-        (call $memcpy
-          (i32.add (local.get $dst_dib)
-            (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
-                     (i32.mul (local.get $dx) (local.get $bps))))
-          (i32.add (local.get $src_dib)
-            (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
-                     (i32.mul (local.get $sx) (local.get $bps))))
-          (i32.mul (local.get $dw) (local.get $bps)))))
-      (local.set $row (i32.add (local.get $row) (i32.const 1)))
-      (br $blit_row)))
+    ;; If dst rect == src rect, fast row-copy; otherwise nearest-neighbor stretch.
+    (if (i32.and (i32.eq (local.get $dw) (local.get $sw))
+                 (i32.eq (local.get $dh) (local.get $sh)))
+      (then
+        (local.set $row (i32.const 0))
+        (block $blit_done (loop $blit_row
+          (br_if $blit_done (i32.ge_u (local.get $row) (local.get $dh)))
+          (call $memcpy
+            (i32.add (local.get $dst_dib)
+              (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                       (i32.mul (local.get $dx) (local.get $bps))))
+            (i32.add (local.get $src_dib)
+              (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
+                       (i32.mul (local.get $sx) (local.get $bps))))
+            (i32.mul (local.get $dw) (local.get $bps)))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $blit_row))))
+      (else
+        ;; Nearest-neighbor stretch. Reuses $row as dst-row; uses $src_w/$src_h as scratch
+        ;; dst-col / src-col / src-row. Guard against zero dims.
+        (if (i32.and (i32.and (i32.gt_u (local.get $dw) (i32.const 0))
+                              (i32.gt_u (local.get $dh) (i32.const 0)))
+                     (i32.and (i32.gt_u (local.get $sw) (i32.const 0))
+                              (i32.gt_u (local.get $sh) (i32.const 0))))
+          (then
+            (local.set $row (i32.const 0))
+            (block $str_done (loop $str_row
+              (br_if $str_done (i32.ge_u (local.get $row) (local.get $dh)))
+              ;; src row Y = sy + row * sh / dh
+              (local.set $src_h
+                (i32.add (local.get $sy)
+                  (i32.div_u (i32.mul (local.get $row) (local.get $sh)) (local.get $dh))))
+              (local.set $src_w (i32.const 0)) ;; dst col index
+              (block $str_col_done (loop $str_col
+                (br_if $str_col_done (i32.ge_u (local.get $src_w) (local.get $dw)))
+                ;; src col X = sx + col * sw / dw (held in $bpp — $src_pitch/$bps still needed below)
+                (local.set $bpp
+                  (i32.add (local.get $sx)
+                    (i32.div_u (i32.mul (local.get $src_w) (local.get $sw)) (local.get $dw))))
+                ;; src addr = src_dib + src_h*src_pitch + bpp*bps
+                ;; dst addr = dst_dib + (dy+row)*dst_pitch + (dx+col)*bps
+                (if (i32.eq (local.get $bps) (i32.const 1))
+                  (then (i32.store8
+                    (i32.add (local.get $dst_dib)
+                      (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                               (i32.add (local.get $dx) (local.get $src_w))))
+                    (i32.load8_u
+                      (i32.add (local.get $src_dib)
+                        (i32.add (i32.mul (local.get $src_h) (local.get $src_pitch))
+                                 (local.get $bpp))))))
+                  (else (if (i32.eq (local.get $bps) (i32.const 2))
+                    (then (i32.store16
+                      (i32.add (local.get $dst_dib)
+                        (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                                 (i32.mul (i32.add (local.get $dx) (local.get $src_w)) (i32.const 2))))
+                      (i32.load16_u
+                        (i32.add (local.get $src_dib)
+                          (i32.add (i32.mul (local.get $src_h) (local.get $src_pitch))
+                                   (i32.mul (local.get $bpp) (i32.const 2)))))))
+                    (else (i32.store
+                      (i32.add (local.get $dst_dib)
+                        (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                                 (i32.mul (i32.add (local.get $dx) (local.get $src_w)) (i32.const 4))))
+                      (i32.load
+                        (i32.add (local.get $src_dib)
+                          (i32.add (i32.mul (local.get $src_h) (local.get $src_pitch))
+                                   (i32.mul (local.get $bpp) (i32.const 4))))))))))
+                (local.set $src_w (i32.add (local.get $src_w) (i32.const 1)))
+                (br $str_col)))
+              (local.set $row (i32.add (local.get $row) (i32.const 1)))
+              (br $str_row)))))))
     ;; If dest is primary, present
     (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
       (then (call $dx_present (local.get $dst_entry))))
