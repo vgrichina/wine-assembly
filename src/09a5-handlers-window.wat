@@ -222,7 +222,16 @@
               (i32.add (i32.add (global.get $CONTROL_TABLE)
                                 (i32.mul (local.get $v) (i32.const 16)))
                        (i32.const 4))
-              (call $gl32 (i32.add (global.get $esp) (i32.const 40))))))))
+              (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
+            ;; Record child geometry for ALL child classes (not just the
+            ;; system Edit/Button/Static path above). Needed for
+            ;; CLIPCHILDREN-equivalent child-rect exclusion in the host
+            ;; renderer, since we have no per-child surfaces.
+            (call $ctrl_geom_set (local.get $v)
+              (local.get $arg4)                                          ;; x
+              (call $gl32 (i32.add (global.get $esp) (i32.const 24)))   ;; y
+              (call $gl32 (i32.add (global.get $esp) (i32.const 28)))   ;; cx
+              (call $gl32 (i32.add (global.get $esp) (i32.const 32))))))))
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.

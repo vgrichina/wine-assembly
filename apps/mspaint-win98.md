@@ -1,6 +1,96 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status: LAYOUT FIXED — dock bars reserve proper strips
+## Status (2026-04-23 evening): REGRESSED + new open bugs
+
+Visual (see screenshot): main window is cramped 275×400, Colors palette
+sits *above* the canvas (should be at bottom), canvas doesn't extend to
+the bottom of the frame (grey dead space), and the pencil-drag test
+still reports 0 changed pixels inside the document bbox.
+
+### Open issues (newest first)
+
+#### I1. Main frame too small (275×400)
+
+Confirmed via `--break-api=CreateWindowExA` stack dump for hwnd=0x10001:
+`x=y=CW_USEDEFAULT` but `cx=0x113=275, cy=0x190=400` are **explicit**.
+Our CW_USEDEFAULT fallback at `09a5-handlers-window.wat:267-275` never
+fires — MFC is passing 275×400 directly.
+
+Bumping `SM_CXSCREEN`/`SM_CYSCREEN` from 640×480 to 1024×768 makes
+no difference — Paint is not deriving cx/cy from screen metrics.
+Nothing in mspaint.exe nor mfc42.dll contains a `push 0x113` or
+`push 0x190` constant, so the values are computed at runtime.
+
+Caller is mfc42 `CWnd::CreateEx` at ret=0x0105fdb7; just before the
+CreateWindowExA call it does a virtual call `[eax+0x64]` which is
+`CWnd::PreCreateWindow(CREATESTRUCT& cs)` — CPBFrame's override is
+where cs.cx/cs.cy get substituted. Next step: break at 0x5f409d7e
+(after the vcall, file VA; runtime = mfc42_base + 0x9d7e) and dump cs
+before/after to see which fields PreCreateWindow set.
+
+Side fix committed this session: SM_CXSCREEN/CYSCREEN now read the
+actual renderer canvas via `host_get_screen_size` so `--screen=WxH`
+is honored by metrics-driven apps (commit 9388bb0).
+
+#### I2. Colors palette docks at top instead of bottom
+
+Chrome repaints show Colors palette as a band **above** the canvas
+rather than the bottom (real mspaint's default). The 2026-04-23
+"LAYOUT FIXED" fix (`WS_VISIBLE` OR-in on ShowWindow) made the dock
+bars *reserve space*, but the dock-side assignment for Colors
+(`0x1001a`) is wrong. `SetParent(0x1001a, 0x10006=bot-dock)` is
+called (API #2415) but the canvas layout places it at top.
+
+Likely cause: our MDI client / dock-bar z-ordering or the offset
+computation in `_drawWindowFrame` for the frame's client rect. Also
+possible: `0x10006` isn't actually the bottom dock — MFC picks dock
+sides from CREATESTRUCT order.
+
+#### I3. Dead grey strip at bottom of frame
+
+Canvas ends partway down; ~60 px of background colour between
+canvas bottom and frame bottom. Consistent with I2: if Colors took
+the "top" slot, bot-dock has zero content but still reserved strip
+height. Or canvas max size is clamped by an old Image/Attributes
+default (e.g. 212×283) that doesn't auto-stretch to client size.
+
+#### I4. Pencil drag produces 0 pixels inside canvas bbox
+
+`test/test-mspaint-draw.js` 6/7. After click on pencil-tool at
+`(39,146)` → `0x10010`, then mousedown at canvas `(140,170)`:
+
+- `[check_input] msg=0x201 hwnd=0x10003` delivered.
+- **No further `check_input` calls** for the rest of the run — 3
+  total, matches only the three button-state events.
+- Meanwhile `PeekMessage`/`GetMessage` fire 27k+ times; guest is
+  busy dispatching its own synthetic messages.
+- No `SetCapture` after canvas click (unlike palette click which
+  set capture to `0x10009`).
+
+Mouse move queues into `renderer.inputQueue` (DBG_MM confirms
+qlen grows 0→1→2) but `host_check_input` is never called.
+Hypothesis: WM_LBUTTONDOWN delivered to MDI client `0x10003`
+(not a document window) — no wndproc consumes it; DefWindowProc
+handles it silently; post-queue has self-generated user messages
+(SendMessage 0x1001b WM_USER+1) that keep `GetMessageA` busy in
+phase 4 (post queue) before phase 7 (`host_check_input`).
+
+Actual image diff between before/after PNG: 1330 pixels in bbox
+`(24,62)-(187,306)` — outside canvas bbox `(80,38)-(292,321)` on
+the X axis. Change is in the palette/toolbar strip, not document.
+
+Next steps:
+- Dump the dispatched wndproc for hwnd=0x10003 on LBUTTONDOWN —
+  confirm it's MDI client DefFrameProc and not a document child.
+- Check if mspaint creates a child document window inside
+  `0x10003` (classic MDI child) — may never happen without
+  `File > New` / `OnNewDocument`.
+- If there's no document window, canvas drag has nothing to draw
+  on. Either synthesize the default new-document init (MFC
+  `CSingleDocTemplate::OpenDocumentFile(NULL)`) or route the
+  down/move to the MDI client's active child.
+
+## Earlier status (kept for reference): LAYOUT FIXED — dock bars reserve proper strips
 
 Chrome + dock layout now correct. Tools at left, Colors at bottom,
 MDI canvas inset to 57,0 212×283 with dock bars reserving 57 px / 49 px.
