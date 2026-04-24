@@ -989,6 +989,140 @@ Scope entry 0 at `0x744b50e0`: enclosingLevel=-1, filter=`0x744923ed` (non-trivi
 
 **Next step.** SEH now delivers cleanly for apps whose top-level handler filter returns EXECUTE_HANDLER (the common case — our walker assumes this for non-trivial filters). If some app installs a filter that would return EXCEPTION_CONTINUE_SEARCH, we'd incorrectly execute its handler; worth revisiting if that pattern shows up. For ARCHITEC specifically, the remaining path is RE'ing CD3DDeviceInfo to understand why iter-2 slot-16 returns E_NOINTERFACE.
 
+##### Session 2026-04-24 — d3drm runs as guest PE; Execute buffers come from d3drm itself
+
+Big reframing. Previous notes assumed ROCKROLL / ARCHITEC issue a retained-mode pipeline from their own code. Wrong: **d3drm.dll is loaded as a guest PE (ROCKROLL: at `0x7459b000`, its own image base is `0x64780000`, runtime delta `0xfe1b000`), and its real code runs on our emulator.** Our `$handle_Direct3DRMCreate` is dead code — never invoked when d3drm.dll is in the VFS.
+
+Added `caller=<retAddr>` to the `[dx] ExecIn` trace formatter (lib/host-imports.js:4397). For all Organic Art savers the Execute call lands with `caller=0x745de971` = `d3drm+0x43971` = the tail of a wrapper function starting at `d3drm+0x43905` (file VA `0x647c3905`) that emits `EXIT`, `Unlock`, `SetExecuteData`, then `Execute`. So Execute is entirely driven by d3drm's internal vertex-pipeline, not by app code.
+
+ROCKROLL's static imports from d3drm are ONLY vector-math helpers (`D3DRMVectorRotate/Subtract/Normalize`, `D3DRMCreateColorRGB[A]`, `D3DRMColorGet*`) plus `Direct3DRMCreate`. The retained-mode API (`CreateFrame`, `CreateMesh`, `MeshBuilder`, `AddVisual`, etc.) is accessed via the COM vtable returned by `Direct3DRMCreate` — zero retained-mode entries in the PE import table. This is why "caller=app code" traces never showed retained-mode calls: they're all dispatched via vtable from d3drm's own code. ROCKROLL's two DP2 call sites (`0x74420f28` fade, `0x744217e7` HUD) are HUD overlays only.
+
+**Per-frame COM method mix confirmed (ROCKROLL `/s`, `--trace-dx`, 3000 batches ≈ 10 frames):**
+
+- 90 SetRenderState, 9 SetMatrix, 6 SetLightState, 3 SetCurrentViewport, ~5 Light_SetLight
+- 3 ExecuteBuffer Lock/Unlock/SetExecuteData + 3 `Device_Execute` cycles per frame
+- 1 CreateExecuteBuffer total (reused), 1 Texture2_Load, 1 CreateMaterial, 3 CreateLight
+- **Every Execute buffer contains ONLY a 32-byte `STATETRANSFORM(count=3)` record** — world/view/proj matrices and nothing else. No `PROCESSVERTICES`, `TRIANGLE`, `POINT`, or `LINE` ever appears, in any Organic Art binary, in any frame.
+- 1 DP2 per frame from app HUD (`primType=5 TRIANGLESTRIP, vtxType=3 TLVERTEX, count=6`, `caller=0x744217e7`)
+
+So d3drm is being driven (matrices update, lights update, render state flows, textures load, ExecuteBuffer round-trips), but its internal T&L pipeline never emits geometry opcodes into the Execute buffer.
+
+**Scene-picker is also broken (second independent bug).**
+
+Engine flow on startup:
+1. `CreateFile("C:\OrgSuppList.txt")` → FAIL. This file is **not in PLUS98.CAB** either — likely installer-generated from registry or written at first run. Strings `"Looking for supplist file \"%s\""` / `"%s\\%s"` / `"OrgSuppList.txt"` live at `0x744cfa60 / 0x744cfa84 / 0x744cfa8c`, xref'd only from fn entry `0x74458658`.
+2. Fallback: `FindFirstFile(".\*.scn")` enumerates 32 scene files (architec, ca_*, fallingl, geometry, jazz, rockroll, scifi, win98). The named-binary scenes (`ROCKROLL.SCN`, `ARCHITEC.SCN`, etc.) don't have `Active=1`; only the generic `CA_*.SCN` files do. Picker filters by `Active=1` and picks one.
+3. ROCKROLL ends up loading **`CA_CHROM.SCN`** (Texture1=`Vopcontinent`, produces the only file open: `c:\vopconti.gif` → OK). **Correction to older notes:** previous memory said `CA_DEMIT.SCN` (`io-half.x`) — that was wrong for the current build; `vopconti.gif` is the tell, which is unique to CA_CHROM.
+4. Cheap OrgSuppList.txt experiment: created `test/binaries/screensavers/OrgSuppList.txt` with just `rockroll.scn`. `CreateFile` now succeeds (`0xf0000001`), but scene selection is unchanged — still loads vopconti.gif. So the file's format is not a plain scene list; structure matters (likely section-headed INI or weighted list). Left the file out for now.
+
+**Runtime CPU profile (why API calls appear to stall mid-run).**
+
+After DX init, the app spends most batches inside its own `D3DTexLoadGIF` loop (fn `0x7440f38d` — referenced strings `"pSurface->Lock ... failed"` / `E:\PolyFormGrow\Mark\D3DTexLoadGIF.cpp` / `"reading %d by %d%s GIF image"`). API-call rate drops from ~3/batch to <1/batch because the GIF decoder is doing pure in-memory work (LZW + chroma decode). This is **not** a stall — EIP advances through `0x7440f3xx / 0x7440f4xx / 0x7440f5xx / 0x7440f7xx / 0x7440f8xx / 0x7440fbxx` blocks. It completes and the render loop begins afterwards.
+
+**Next session priorities (in order):**
+
+1. **Cheapest first: confirm scene-picker fix unblocks geometry.** Goal is to force ROCKROLL to load `rockroll.scn`. Options: (a) intercept `CreateFile("C:\OrgSuppList.txt")` in `lib/filesystem.js` to return a synthesized list (try various formats: plain list, `[Active]` section, weighted entries); (b) patch `Active=0` → `Active=1` in `ROCKROLL.SCN` locally — non-invasive test. If the engine picks the right scene and geometry STILL doesn't emit, bug #2 (below) is isolated from bug #1.
+2. **The real bug: why d3drm produces no geometry opcodes.** MeshBuilder::Load is inside d3drm (dll-file VA `0x6478a18f`, runtime VA `0x745a518f`). Previous session fixed TLS/SearchPath bugs that caused `D3DRMERR_FILENOTFOUND`; verify texture-load mesh names actually open under CA_CHROM scene. If `Complex_shape` mesh name isn't resolving to a `.x` file (CA_CHROM uses built-in procedurally-generated meshes based on `Form=Small HOB Upright`?), then d3drm may be trying to render an empty mesh — need to understand how Organic Art meshes are generated. `d3drm` internal vertex-buffer traversal likely lives past `MeshBuilder::Render` → `Frame::Render`; put a breakpoint inside d3drm at the Execute wrapper `0x647c3905` and walk back to find where PROCESSVERTICES should be appended.
+3. **Instrumentation idea:** add a post-Unlock pre-Execute dump of the ExecuteBuffer contents (all instructions, not just the head). Currently `[dx] Exec` only fires from our WAT-side parser of the buffer inside `$handle_IDirect3DDevice_Execute`. If d3drm is writing garbage / truncated instruction streams we could see it — but more likely it's writing a one-record STATETRANSFORM and then a lone `EXIT`, which we already see.
+
+**Files modified this session:** none committed. Diagnostic-only. `caller=` in ExecIn trace formatter (lib/host-imports.js:4388-4397) was added in a prior session and should be kept. The erase-clip change in `_fillRect` / renderer is unrelated to this investigation.
+
+##### Session 2026-04-24 (cont.) — bug #1 vs bug #2 isolated; d3drm buffer-append helpers mapped
+
+Quick follow-on. Appended `Active=1` to local `ROCKROLL.SCN` as the memory-note's cheap test. Result: the scene pool expanded (picker now lands on CA_DEMIT/CA_STAIN in different runs — SearchPath reveals `Io-half-torus.x`→`C:\io-half.x` and `Vopstain11.gif`→`C:\vopstain.gif`). Crucially: `io-half.x` DOES get opened (CreateFile handle `0x70000002`..`0x70000005` across the run, re-opened 4x) — so MeshBuilder reads mesh bytes — yet the per-frame Execute stream is UNCHANGED: still `STATETRANSFORM(count=3)` + `EXIT` only, 32-byte total instruction length. **Bugs #1 and #2 are independent.** ROCKROLL.SCN edit reverted at end of session.
+
+d3drm buffer-append plumbing mapped (all file VAs; runtime delta 0xFE1B000):
+- `0x647c3905` — **flush wrapper**: writes `EXIT` at `[esi+0x4c]`, calls `ExecuteBuffer::Unlock` (vtbl+0x14), builds a `D3DEXECUTEDATA` (0x30 bytes) with `dwInstructionLength = [esi+0x4c] - [esi+0x48]`, calls `SetExecuteData` (vtbl+0x18), then `Device::Execute` (vtbl+0x20). 12 xrefs (all flushers).
+- Wrapper struct layout: `+0x00` device, `+0x04` viewport, `+0x08` ExecuteBuffer, `+0x3c` render-state cache, `+0x44` dirty flag, `+0x48` buffer base, `+0x4c` write ptr, `+0x50` buffer end, `+0x54` current-instruction header ptr.
+- `0x647c3744` — **generic `appendOp(struct, BYTE op, DWORD* data8)`**: lazy-locks the buffer if dirty=0 (vtbl+0x10 = Lock), either starts a new `D3DINSTRUCTION` header (`op`, `bSize=8`, `wCount=0`) at the write ptr or reuses the current header (if op matches) and `wCount++`, then appends 8 bytes of payload. **Fixed bSize=8**, i.e. this helper cannot write TRIANGLE (8B) or POINT/LINE records correctly in mass — and it's NEVER used for PROCESSVERTICES (24B) or TRIANGLE (8B via this exact path). Only 3 callers: wrappers at `0x647c3726`, `0x647c380d`, `0x647c388c`.
+- `0x647c388c` — "append + flush": 10 xrefs, all at `0x6479f7c3..0x6479f8dc` (immediate-operand op IDs push 0x8 = STATERENDER with render-state constants 0x1b/0x29/0x1d etc.). Pure render-state-set path.
+- `0x647c380d` — "append" (no flush): 9 xrefs at `0x647c23ec..0x647c2548` (matrix + transform state flow).
+- `0x647c3726` — thin inline variant, no xrefs (tail code).
+
+**Implication.** d3drm has a SEPARATE emission path for geometry (PROCESSVERTICES, TRIANGLE) that does not go through `0x647c3744`. Most likely it writes vertices directly into `[esi+0x48]..[esi+0x50]` with a specialized writer that advances `[esi+0x4c]` by `4 + bSize*wCount` in one shot. That writer is what's never firing — OR it fires but no mesh ever reaches it (empty vertex list).
+
+Confirmed d3drm imports: ntdll, kernel32, user32, advapi32, gdi32, ddraw, msvfw32, ole32, oleaut32. **No d3dxof** — `.x` parser is internal. So if mesh parsing fails silently, d3drm has no external surface we can trace to see it; need to break inside d3drm itself.
+
+**Next session, cheapest next step.** Add a WAT side-channel that, on every `ExecuteBuffer::Unlock` (or just before Execute), hex-dumps the full instruction stream (not just the walker's parse). That's `--trace-dx-raw` or similar — prints 16-byte rows from `buf+instr_off` for `instr_len` bytes. Even if the walker already confirms one-record buffers, seeing the raw bytes across ALL 3 per-frame Execute cycles will catch (a) whether the buffers share memory / are double-submitted, (b) whether buffer 2 or 3 differs from buffer 1, (c) any non-opcode data that might be there. Implementation: new `host_dx_trace` kind, called from `$handle_IDirect3DExecuteBuffer_Unlock` with `(buf_guest, instr_off, instr_len)`; JS side sampleDwords in lib/host-imports.js.
+
+Parallel track: identify the d3drm geometry emitter by brute force. Set a trace breakpoint INSIDE d3drm at each of the 12 flush-wrapper callers (`0x647c3905` xrefs); whichever caller corresponds to the mesh-render path will be on the hot path. The 3-per-frame flush rate suggests the 3 callers in `0x647c269b / 0x647c37b6 / 0x647c4d10..d77` (which physically cluster near the append helpers) are the state/matrix flushes. The other 9 callers at `0x647989c5 / 0x64798d17 / 0x6479912a..16e / 0x6479f8ea / 0x647af88e / 0x647bc3fe / 0x647c38f4` are prime suspects for "drew a primitive and had to flush". `--break=0x647af88e,0x647bc3fe,0x6479f8ea` + a trace would pinpoint which, if any, fires during the render loop — and if NONE fire, mesh-emission is crashing before submission.
+
+##### Session 2026-04-24 (cont. 2) — bug #2 model was wrong; ROCKROLL renders direct D3D2, not d3drm retained mode
+
+Implemented `--trace-dx-raw` (JS side in `lib/host-imports.js` case 8; WAT already passes `buf,instr_off,instr_len`). Walker+hexdump confirms every Execute buffer is byte-for-byte identical: 28 bytes `STATETRANSFORM` (op=6, bSize=8, wCount=3, payload `01000000 02000000 02000000 03000000 03000000 01000000` = set-world=I, set-view=I, set-proj=I) then 4 bytes `EXIT`. Also walked one stack frame up: every Execute originates from `caller=0x745de971` (INSIDE flush wrapper) and `caller2=0x745dd6a0` (file VA `0x647c26a0`, d3drm-internal state-render-setup routine `entry=0x647c2613` — a render-state cache-flush, NOT mesh geometry). So d3drm's Execute activity is purely initial/repeated render-state priming.
+
+**Real render path discovered:** `[dx] DP2` counts 62 calls in 40k batches (vs 205 ExecIn of the same STATETRANSFORM buffer). Two callers, both in the SCR EXE (image base 0x74400000, well below d3drm base 0x7459b000):
+- `0x744217e7` — primType=5 TRIANGLESTRIP, count=6, TLVERTEX rhw=100, coords `(550,434)-(595,468)`, color `0xFFFFFFFF`. Small white quad in bottom-right — likely HUD/indicator.
+- `0x74420f28` — primType=5 TRIANGLESTRIP, count=4, TLVERTEX rhw=1.01, coords `(0,0)-(640,480)` full-screen, color `0x1F000000` (12% alpha black). Classic fade/trail overlay.
+
+**Bug #2 is not a d3drm emission problem — it's that the SCR never reaches its main 3D render path.** The screensaver is calling D3D2::DrawPrimitive directly (bypassing d3drm retained mode), but only ever for fade-overlay + HUD chrome. No main mesh draw ever fires. PNG rendered at 40k batches shows black because the HUD dot is below the first-64KB sample window and the fade is alpha-blended over nothing.
+
+**Note on nzBytes.** Present traces show `nzBytes=6300` per-frame on the back-buffer dib (consistent with one ~45×34 white quad × 2bpp + some fade bleed). The `firstNonZero=-1` is misleading — the sampler only scans the first 64KB (first 51 rows of a 640×480×2 surface), so anything drawn below y=51 is invisible to it. Trust `nzBytes`, not `firstNonZero`, for "did anything get drawn".
+
+**New direction.** Find why the 3D render path doesn't start. Candidates:
+1. Scene-picker picks a scene whose `.x` is loaded but not rendered (Active=0 originally; even DEMIT/STAIN with io-half.x loaded do not render).
+2. There's a "start rendering" gate — likely driven by WM_TIMER, a specific scene-init completion, or time-elapsed-after-fade.
+3. Fade-overlay is a per-frame step that happens BEFORE the mesh draw, and the mesh draw crashes or early-returns.
+
+Investigate next:
+- Disasm around `0x74420f28` (fade-overlay DP2 site) to find the enclosing render function. What comes AFTER the fade in the same function? That should be the mesh draw.
+- `node tools/find_fn.js <rockroll.scr> 0x20f28` (SCR is loaded at 0x74400000, so file VA ≈ 0x20f28 in the EXE). Then disasm to see post-fade branches.
+- If a mesh draw is gated on something failing silently, add a `--trace-at` dump at the branch.
+- Alternative: this might be `.SCR/s` (preview mode) rather than full fullscreen render — try `--args="/p HWND"` or no args to see if different modes show more.
+
+Raw-buffer dump + frame-walk (caller2) infrastructure is reusable for any future d3dim/d3drm investigation (ARCHITEC etc.).
+
+**Further probe, same session.** Re-ran with `Active=1` appended to ROCKROLL.SCN (picker lands on CA_DEMIT/CA_STAIN with real `io-half.x` mesh loaded): DP2 call-site distribution is BYTE-FOR-BYTE IDENTICAL (54× 0x744217e7, 8× 0x74420f28). No new DP2 caller appears even when a real mesh is loaded. Combined with caller2 evidence (ALL 205 Executes originate from `0x647c26a0` — state-setup only), the hard conclusion is: **d3drm's mesh-render pipeline is never entered.** The engine loads .x meshes, sets up render state, but never asks d3drm to render geometry (no `IDirect3DRMFrame::AddVisual` → `IDirect3DRMViewport::Render` follow-through in the hot path). This is a BIG refinement — previous session spent effort on "why doesn't d3drm emit geometry" when the answer is "d3drm is never asked to".
+
+Disasm of the function containing the fade-DP2 site (0x74420f25 `call [ecx+0x74]` → IDirect3DDevice2 method 29 = DrawPrimitive, ✓). Function body after the fade: chains of SetRenderState (ecx+0x5c, method 23) with states 7,0x17,0xe,0x1b,0x1a,0xf; then free+ret4. `find_fn.js` returned 0x74420d67 but a brute scan found ZERO `E8` rel32 callers into range 0x74420c00..0x74420f30 AND ZERO LE32 literal references to 0x74420d67 in the binary — this function is **only invoked via vtable / indirect dispatch** (MFC-style virtual). Static xref hunting won't find its caller.
+
+**Next cheapest step (to find WHY mesh-render isn't entered).** Need runtime-side caller discovery. Two options:
+1. Instrument `th_call_ind`: log indirect-call targets when EIP steps into a range (e.g. any time target >= 0x74420d00 && target <= 0x74421800, dump prev_eip + caller chain). That captures who dispatches into the fade function.
+2. Simpler: add `--trace-at=0x74420f25` which already logs regs on hit. Also trace-at just before (e.g. at SetRenderTarget/SetCurrentViewport right after to see if a post-fade mesh-submit fn EVER fires).
+3. Look for `IDirect3DRMViewport::Render` call through the vtable. Grep for `call [ecx+0xNN]` where NN is its vtable offset (Viewport::Render is method 19, offset 0x4c in the IDirect3DRMViewport2 vtable). Per-frame this should fire — if not firing, the engine's render-tick is short-circuited.
+
+The ACTIVE question is now structural (why doesn't the engine invoke Viewport::Render?), not about d3drm's internals.
+
+**2026-04-24 cont. 3: hot path lives entirely in guest-space MFC/CRT work; NO DirectDraw COM methods fire.** Ran ROCKROLL with `--trace-api` for 20k batches: 28232 total API calls, of which 11377+11377 are Enter/LeaveCriticalSection pairs, 228 GetPrivateProfileStringA, 251 QueryPerformanceCounter, 2 DirectDrawCreate total, and **zero** IDirectDraw*/IDirectDrawSurface* method calls (zero Blt, Lock, Unlock, Flip, Present, CreateSurface, etc.). Only 1 GetMessageA and 14 PeekMessageA in 20k batches. EIP histogram: 95%+ of batches land in a 0x700-byte hot region 0x7440f500-0x7440fc00 inside the SCR EXE, centered on vtable-entered function 0x7440f38d (no static xrefs, called indirectly).
+
+Initial disasm made me think the `call [ecx+0x64]` at 0x7440f3ef was `IDirectDrawSurface2::Lock` (method 25 — offset 0x64 matches), but the API trace disproves that: if this were Lock, the host WAT handler `$handle_IDirectDrawSurface_Lock` would fire and show in `--trace-api`. It doesn't. So the vtable being dispatched through here is NOT a host COM vtable — it's a guest-internal vtable (an MFC class, a guest-space DDraw-wrapper class defined by the framework at 0x74400000, or similar). Whatever it is, the Lock/software-blit hypothesis for this specific call site is **wrong**.
+
+**Net finding, correctly stated.** ROCKROLL spends 95%+ of its batches in guest-internal MFC/CRT work inside a virtual method at 0x7440f38d. It never touches our DirectDraw host surface once initialized. All our d3drm Execute traces (205 STATETRANSFORM + 62 HUD/fade DP2) come from d3drm.dll's internal state priming and the SCR's chrome overlay, both of which fire infrequently relative to the hot MFC loop. We still don't know what the engine IS doing in the hot loop — may be procedural texture generation into a guest-owned heap buffer that's later uploaded to a DDraw surface via a path our host never sees, or may be MFC framework idle-housekeeping.
+
+**Next investigation pivot (revised).** Three options in rising cost:
+1. **--trace-dc** one frame worth of output to see every surface/DC resolution — which surfaces are even being drawn on.
+2. Instrument the emulator to log every indirect call target outside the EXE's .text section (would expose any host-COM method we're missing). Or simpler: add a `--trace-at=0x7440f3ef` log to dump ecx + [ecx+0x64] to learn what vtable pointer is actually there.
+3. Pivot to a confirmed-d3drm-mesh binary (ARCHITEC.SCR) — the mesh-rendering question is cleaner on a less MFC-heavy screensaver.
+
+**2026-04-24 cont. 4: ARCHITEC.SCR is literally the same binary as ROCKROLL.SCR.** `md5 *.SCR`: ARCHITEC, ROCKROLL, SCIFI, JAZZ, FALLINGL, GEOMETRY, WIN98 are all `fef9ed080d8cbb34df636f9c71b406cd`, all 1,005,056 bytes. They share one PE; scene selection is purely config (basename + .SCN content). Running ARCHITEC.SCR for 40k batches produces the IDENTICAL DP2 distribution (54× 0x744217e7 HUD + 8× 0x74420f28 fade) and IDENTICAL API mix as ROCKROLL. The "pivot to ARCHITEC" plan from the previous note is void — they're equivalent test cases. To exercise a different scene we must make the engine's scene-picker actually select a different one.
+
+**Scene-picker code geography (SCR .text):**
+- `0x74458658` = SuppList-feature init. Reads HKCU value "SuppList" via wrapper `0x74409430` (which checks flag `[0x744b26a0]`, calls registry helper `0x74409d00` with `HKCU=0x80000001`). Builds `"<path>\OrgSuppList.txt"` via sprintf (format `%s\\%s` at 0x744cfa84), fopen("rt"). On fail: logs "Couldn't open supplist - feature disabled" (0x744cfa2c), sets `[0x744f8850]=0`, returns 0. **This is one optional feature, not the scene-picker. Stop chasing OrgSuppList.txt.**
+- `0x74461354` = scene-enumeration helper called from the broader list-builder at `0x74461320`. Uses `[0x744b2180]=FindFirstFileA` + `[0x744b2188]=FindNextFileA` (KERNEL32 IAT from base 0xb2084, indices 63/65) on glob `*.scn` (at `0x744d0588`). For each hit it calls a CString ctor at `0x7445ba50` and scene-record loader at `0x744636d0`, then walks the resulting linked list at `[0x744f88ac]` where each node's first dword is `next`.
+- Active=1 filter: setting `Active=1` on ROCKROLL.SCN has no effect on which scene runs, so the filter has additional criteria (scene "class" / form-factor match? sort-preference? weighted random?). The function that picks from the populated list is the real target for any scene-override intervention.
+- Ideas for scene override (any of):
+  - Write `[0x744f88ac]` list scanner to dump each scene record as it's iterated, to see which fields matter.
+  - Patch the file-glob pattern or FindFirstFile handler so only the desired .SCN shows up in the enumeration.
+  - Intercept the registry lookup at `0x74409d00` — if there's a registered "preferred scene" value, set it via the storage layer.
+
+**2026-04-24 cont. 6 — MAJOR CORRECTION: scene-picker is NOT broken.** `--trace-fs` on ROCKROLL.SCR shows the engine DOES load ROCKROLL's own assets: `ro_pick.x` (matches `Inform0=ro_pick`), `ro_git.x` (`Inform1=ro_git`), `ro_tex01.gif` (`Texture0/1=ro_tex01`), `ro_back.GIF` (`Backdrop=ro_back.GIF`). Before these it preloads several other scenes' textures/meshes (vopstain.gif, io-half.x, octahedr.x, comtor.x, grad_k2.gif, creature.gif) — that's a warm-up/transition pre-cache, not a wrong-scene pick. **Stop chasing scene-picker fixes.** Earlier "lands on CA_CHROM" claim was based on stale/incomplete evidence.
+
+- Active= key distribution: 26 CA_*.SCN have `Active=1`; 7 featured scenes (ARCHITEC/FALLINGL/GEOMETRY/JAZZ/SCIFI/WIN98) have `Active=0`; ROCKROLL.SCN has NO Active key at all — yet it's still loaded. So Active is NOT a gating filter for the exe-basename-matched scene; only for the random CA_* pool.
+- The REAL blocker is d3drm: Execute buffer contains only STATETRANSFORM(count=3), never PROCESSVERTICES/TRIANGLE. Mesh geometry never reaches the rasterizer.
+
+**2026-04-24 cont. 7 — hot-loop is a bump-allocator arena.** `--break=0x7440f38d` confirms the outer fn at 0x7440f38d IS entered; the 95%-of-batches hot region is a nested loop (blocks at 0x7440f500-0x7440fbxx) with monotonic EBX counter. Helper fn `0x7440f844` implements a bump allocator: arena base `0x744deed0` (literal), bump ptr `[0x744deb9c]` (reset at 0x7440f754 and 0x7440f97e), parallel arrays `[0x744daa60+eax*4]`/`[0x744d6a60+eax*4]` sized 4096 entries (cmp at 0x7440f8d4), per-entry size carried in ebp. Almost certainly procedural mesh/vertex construction from SCN `Form=..., Branches=..., Ribs=...` parameters. The Lock at 0x7440f3f2 (`call [ecx+0x64]`, DDSURFACEDESC2 at [esp+0x7c] with dwSize=0x6c, flags=0x11) is into a d3drm-wrapped or framework-wrapped surface — `--trace-api` shows zero Lock calls, so the vtable doesn't route through host DX_OBJECTS.
+
+**Next probes:** (1) hexdump arena `[0x744deed0]` after 10k batches to check for vertex-like float triples; (2) find the CONSUMER of the arena — whatever walks it and submits to d3drm; (3) `--watch=0x744deb9c --watch-log` to correlate arena growth with d3drm Execute events.
+
+**Earlier (now-superseded) scene-list architecture notes kept for reference:**
+
+**2026-04-24 cont. 5: two-list architecture confirmed.** The engine owns TWO MFC-style sentinel-headed doubly-linked lists, both initialized at `0x7445b0e0` (called once at startup):
+- **List A (primary, "scenes"):** sentinel at `[0x744f88ac]`, count at `[0x744f88b0]`, sentinel allocated via `0x7448db40(0xB8)` (=184 bytes, standard MFC CList node), self-links (`[sentinel]=sentinel; [sentinel+4]=sentinel`). 27 xrefs in .text.
+- **List B (secondary, "supplist"?):** sentinel at `[0x744f88c4]`, count at `[0x744f88c8]`, same construction. Only 6 xrefs.
+- Init side-effects: `[0x744f88a8]=cl` (boolean, passed in from caller), `[0x744f88c0]=al` (another boolean from esp+3), `[0x744f88b0]=0`, `[0x744f88c8]=0`. Also installs an atexit-style callback `0x7445b150` via `call 0x7448dae0` (likely `atexit`/`_onexit`).
+- **The function at `0x744616e0` is a LIST MERGE/DEDUPE walker**, not a picker: it iterates both lists in lockstep (`esi` on list A, `edi` on list B), calls stricmp-style compare at `0x744a6c60` on `[node+0x30]` (name pointer, falls back to `[0x744b24a0]` = "(null)" string), and compares byte `[node+0x3c]` (an Active-ish flag). Node layout so far: `+0x00 next`, `+0x04 prev`, `+0x30 name_ptr`, `+0x3c active_byte`, size 0xB8. Debug fmt string at `0x744d05b4` takes two `%s,%d` pairs = "A: name=%s active=%d / B: name=%s active=%d" style.
+- **Next probe:** find the actual picker. Candidates not yet in 0x74461354/0x744616e0: 0x74461ac1, 0x74461b0f, 0x74461b87, 0x74461c2c, 0x74461c5c, 0x74461d49, 0x74461d64, 0x74462137, 0x7446230e, 0x7446287f, 0x744629ac, 0x74462ce9, 0x74462e7c, 0x74462f56, 0x74463030. Pick the one that reads `[0x744f88b0]` (count) near a RNG call — that's the uniform-random "pick one of N" site.
+
 ## Completed
 
 ### InSendMessage / EnumWindows + ESP cleanup (6 DDraw screensavers)
