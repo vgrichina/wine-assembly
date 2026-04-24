@@ -60,6 +60,8 @@
     (local $off i32)         ;; glyph offset (0 or 1) when pressed
     (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
     (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
+    (local $nc_style i32) (local $has_min i32) (local $has_max i32)
+    (local $glyph_brush i32)
 
     ;; Use whole-window DC (0xC0000 offset) so _getDrawTarget returns
     ;; ox=0,oy=0 — ncpaint draws at window-local coords without needing
@@ -217,14 +219,22 @@
       (then (return (local.get $cap_h))))
 
     ;; Re-fetch style bits for min/max presence — `$flags` only carries
-    ;; active/dialog/maxed/has_caption. Callers whose style lacks
-    ;; WS_MAXIMIZEBOX / WS_MINIMIZEBOX should not see those glyphs.
-    (block $skip_max
-      (if (i32.eqz (i32.and
-            (call $wnd_get_style (local.get $hwnd))
-            (i32.const 0x00010000)))
-        (then (br $skip_max)))
+    ;; active/dialog/maxed/has_caption. When the window lacks BOTH
+    ;; WS_MINIMIZEBOX and WS_MAXIMIZEBOX, both buttons are hidden
+    ;; (close-only caption). When one is missing but the other is
+    ;; present (e.g. minesweeper has WS_MINIMIZEBOX only), Win98 renders
+    ;; the missing button's frame normally but draws the glyph in
+    ;; gray (COLOR_GRAYTEXT) so it looks disabled.
+    (local.set $nc_style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $has_max (i32.and (local.get $nc_style) (i32.const 0x00010000)))
+    (local.set $has_min (i32.and (local.get $nc_style) (i32.const 0x00020000)))
+    (if (i32.and (i32.eqz (local.get $has_max)) (i32.eqz (local.get $has_min)))
+      (then
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (return (local.get $cap_h))))
+
     ;; --- Max / Restore button ---
+    (local.set $glyph_brush (select (i32.const 0x30014) (i32.const 0x30012) (local.get $has_max))) ;; black vs gray
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $max_x) (local.get $btn_y)
             (i32.add (local.get $max_x) (local.get $btn_w))
@@ -249,7 +259,7 @@
                 (i32.add (local.get $cy) (i32.const 2))
                 (i32.add (local.get $cx) (i32.const 12))
                 (i32.add (local.get $cy) (i32.const 4))
-                (i32.const 0x30014)))
+                (local.get $glyph_brush)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.add (local.get $cx) (i32.const 5))
                 (i32.add (local.get $cy) (i32.const 2))
@@ -276,20 +286,16 @@
                 (i32.add (local.get $cy) (i32.const 3))
                 (i32.add (local.get $cx) (i32.const 12))
                 (i32.add (local.get $cy) (i32.const 5))
-                (i32.const 0x30014)))
+                (local.get $glyph_brush)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.add (local.get $cx) (i32.const 3))
                 (i32.add (local.get $cy) (i32.const 3))
                 (i32.add (local.get $cx) (i32.const 12))
                 (i32.add (local.get $cy) (i32.const 11))
-                (i32.const 0x05) (i32.const 0x0F))))))  ;; close $skip_max
+                (i32.const 0x05) (i32.const 0x0F)))))
 
-    (block $skip_min
-      (if (i32.eqz (i32.and
-            (call $wnd_get_style (local.get $hwnd))
-            (i32.const 0x00020000)))
-        (then (br $skip_min)))
     ;; --- Min button: 7x2 horizontal bar near the bottom ---
+    (local.set $glyph_brush (select (i32.const 0x30014) (i32.const 0x30012) (local.get $has_min))) ;; black vs gray
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $min_x) (local.get $btn_y)
             (i32.add (local.get $min_x) (local.get $btn_w))
@@ -307,7 +313,7 @@
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 5))) (local.get $off))
             (i32.add (i32.add (local.get $min_x) (i32.const 11)) (local.get $off))
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
-            (i32.const 0x30014))))  ;; close $skip_min
+            (local.get $glyph_brush)))
 
     ;; Reset the DC clip so persistent 0xC0000 state doesn't leak.
     (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
