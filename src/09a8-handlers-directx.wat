@@ -15,6 +15,12 @@
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
   (global $DX_OBJECTS i32 (i32.const 0x07FF0000))
   (global $DX_MAX i32 (i32.const 1024))
+  ;; D3DIM matrix handle table (Immediate Mode): 256 slots × 64 bytes.
+  ;; Handle value = slot_idx + 1 (0 is invalid). A slot whose 64-byte body
+  ;; is entirely zero is considered free; CreateMatrix fills with the 4x4
+  ;; identity so subsequent scans skip it. DeleteMatrix zeroes it again.
+  (global $D3DIM_MATRICES i32 (i32.const 0x07FEC000))
+  (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))

@@ -474,9 +474,10 @@
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  ~3KB    Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
-  ;; 0x07FF0000  8KB     DX_OBJECTS     (256 entries × 32 bytes, ends 0x07FF2000)
-  ;; 0x07FF2000  2KB     COM_WRAPPERS   (256 entries × 8 bytes, ends 0x07FF2800)
-  ;; 0x07FF2800 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FF6800)
+  ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
+  ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
+  ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
+  ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;; 0x03C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x03D12000  1MB     Guest heap

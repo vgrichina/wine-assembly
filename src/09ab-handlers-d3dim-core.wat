@@ -222,15 +222,25 @@
   ;; Mirror IDirect3DDevice3_SetTransform / SetRenderState / SetLightState
   ;; bodies inline (we can't easily call the existing handlers because they
   ;; manage ESP themselves).
-  (func $d3dim_set_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
+  ;; Shared core: copy 64-byte matrix from WASM-addr $src_wa into the device's
+  ;; per-xtype slot of its state block. Used by SetTransform (which passes a
+  ;; guest matrix ptr via $g2w) and the D3DOP_STATETRANSFORM walker (which
+  ;; resolves a matrix handle into D3DIM_MATRICES).
+  (func $d3dim_apply_transform (param $this i32) (param $xtype i32) (param $src_wa i32)
     (local $state i32) (local $slot i32)
+    (if (i32.eqz (local.get $src_wa)) (then (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))
-    (if (i32.and (i32.ne (local.get $state) (i32.const 0)) (local.get $lpmat)) (then
-      (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
-      (call $memcpy
-        (call $g2w (i32.add (local.get $state) (i32.mul (local.get $slot) (i32.const 64))))
-        (call $g2w (local.get $lpmat))
-        (i32.const 64))))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
+    (call $memcpy
+      (call $g2w (i32.add (local.get $state) (i32.mul (local.get $slot) (i32.const 64))))
+      (local.get $src_wa)
+      (i32.const 64)))
+
+  (func $d3dim_set_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
+    (if (local.get $lpmat) (then
+      (call $d3dim_apply_transform (local.get $this) (local.get $xtype)
+        (call $g2w (local.get $lpmat)))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_set_render_state (param $this i32) (param $rs i32) (param $val i32)
@@ -926,6 +936,18 @@
         (then (call $d3dim_set_render_state (local.get $dev_this) (local.get $a) (local.get $v))))
       (if (i32.eq (local.get $kind) (i32.const 7))
         (then (call $d3dim_set_light_state  (local.get $dev_this) (local.get $a) (local.get $v))))
+      ;; D3DOP_STATETRANSFORM: $a = D3DTRANSFORMSTATETYPE, $v = matrix handle.
+      ;; Resolve handle → D3DIM_MATRICES + (v-1)*64 and route through the
+      ;; shared SetTransform core so the per-device state block is the
+      ;; single source of truth for matrices.
+      (if (i32.eq (local.get $kind) (i32.const 6))
+        (then
+          (if (i32.and (i32.ge_u (local.get $v) (i32.const 1))
+                       (i32.le_u (local.get $v) (global.get $D3DIM_MATRIX_MAX)))
+            (then (call $d3dim_apply_transform
+                    (local.get $dev_this) (local.get $a)
+                    (i32.add (global.get $D3DIM_MATRICES)
+                             (i32.mul (i32.sub (local.get $v) (i32.const 1)) (i32.const 64))))))))
       (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))

@@ -295,7 +295,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice_DeleteViewport — 2 args (incl. this)
+  ;; Clears the device-backref that AddViewport wrote to the viewport entry
+  ;; at +8, so subsequent SetCurrentViewport/EndScene don't dereference a
+  ;; stale device pointer if the viewport survives the detach.
   (func $handle_IDirect3DDevice_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vp_entry i32)
+    (if (local.get $arg1) (then
+      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
+      (if (local.get $vp_entry)
+        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (i32.const 0))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -315,27 +323,89 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice_EnumTextureFormats — 3 args (incl. this)
+  ;; Intentional no-op: invoking the guest callback from WAT would require a
+  ;; new stdcall-into-guest trampoline for this single call site. d3drm and
+  ;; d3dim-based apps tolerate zero enumerations and fall back to format
+  ;; defaults, so we return D3D_OK (0) with no callback invocations. If a
+  ;; future app needs actual format enumeration, wire a callback here.
   (func $handle_IDirect3DDevice_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice_CreateMatrix — 2 args (incl. this)
+  ;; IDirect3DDevice_CreateMatrix(this, lpHandle) — 2 args (incl. this)
+  ;; Linear scan for a zero-filled slot in D3DIM_MATRICES, write slot+1 to
+  ;; *lpHandle, and initialize the slot with the 4x4 identity so subsequent
+  ;; scans consider it occupied. d3drm invokes SetMatrix immediately after,
+  ;; but identity is also the correct "just created" semantic for D3D apps.
   (func $handle_IDirect3DDevice_CreateMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $slot_wa i32) (local $found i32)
+    (if (i32.eqz (local.get $arg1)) (then (call $crash_unimplemented (local.get $name_ptr))))
+    (local.set $i (i32.const 0))
+    (local.set $found (i32.const -1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (global.get $D3DIM_MATRIX_MAX)))
+      (local.set $slot_wa
+        (i32.add (global.get $D3DIM_MATRICES) (i32.mul (local.get $i) (i32.const 64))))
+      ;; "Free" = first dword is zero (identity's first dword is 0x3F800000).
+      (if (i32.eqz (i32.load (local.get $slot_wa)))
+        (then (local.set $found (local.get $i)) (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (if (i32.lt_s (local.get $found) (i32.const 0))
+      (then
+        ;; D3DERR_MATRIX_CREATE_FAILED = 0x887602F0
+        (global.set $eax (i32.const 0x887602F0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $slot_wa
+      (i32.add (global.get $D3DIM_MATRICES) (i32.mul (local.get $found) (i32.const 64))))
+    ;; Identity: m00=m11=m22=m33=1.0 (0x3F800000), rest 0.
+    (call $zero_memory (local.get $slot_wa) (i32.const 64))
+    (f32.store (i32.add (local.get $slot_wa) (i32.const 0))  (f32.const 1.0))
+    (f32.store (i32.add (local.get $slot_wa) (i32.const 20)) (f32.const 1.0))
+    (f32.store (i32.add (local.get $slot_wa) (i32.const 40)) (f32.const 1.0))
+    (f32.store (i32.add (local.get $slot_wa) (i32.const 60)) (f32.const 1.0))
+    (call $gs32 (local.get $arg1) (i32.add (local.get $found) (i32.const 1)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DDevice_SetMatrix — 3 args (incl. this)
+  ;; IDirect3DDevice_SetMatrix(this, handle, lpMatrix) — 3 args (incl. this)
   (func $handle_IDirect3DDevice_SetMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg2))
+                (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
+                        (i32.gt_u (local.get $arg1) (global.get $D3DIM_MATRIX_MAX))))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (call $memcpy
+      (i32.add (global.get $D3DIM_MATRICES)
+               (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
+      (call $g2w (local.get $arg2))
+      (i32.const 64))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice_GetMatrix — 3 args (incl. this)
+  ;; IDirect3DDevice_GetMatrix(this, handle, lpOut) — 3 args (incl. this)
   (func $handle_IDirect3DDevice_GetMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg2))
+                (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
+                        (i32.gt_u (local.get $arg1) (global.get $D3DIM_MATRIX_MAX))))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (call $memcpy
+      (call $g2w (local.get $arg2))
+      (i32.add (global.get $D3DIM_MATRICES)
+               (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
+      (i32.const 64))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice_DeleteMatrix — 2 args (incl. this)
+  ;; IDirect3DDevice_DeleteMatrix(this, handle) — 2 args (incl. this)
   (func $handle_IDirect3DDevice_DeleteMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
+                (i32.gt_u (local.get $arg1) (global.get $D3DIM_MATRIX_MAX)))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (call $zero_memory
+      (i32.add (global.get $D3DIM_MATRICES)
+               (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
+      (i32.const 64))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -561,13 +631,32 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 
-  ;; IDirect3DDevice2_SetClipStatus — 2 args (incl. this)
+  ;; D3DCLIPSTATUS round-trip: Set stores 24 bytes (dwFlags, dwStatus, 4 floats)
+  ;; in the per-device state block at offset 4064 (last 32-byte slice of the
+  ;; 4096-byte block). Get reads it back. Not consumed by the rasterizer today
+  ;; but removes a silent data drop so that apps polling Get-after-Set see the
+  ;; value they stored.
   (func $handle_IDirect3DDevice2_SetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $state i32)
+    (if (local.get $arg1) (then
+      (local.set $state (call $d3ddev_state (local.get $arg0)))
+      (if (local.get $state)
+        (then (call $memcpy
+                (call $g2w (i32.add (local.get $state) (i32.const 4064)))
+                (call $g2w (local.get $arg1))
+                (i32.const 24))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DDevice2_GetClipStatus — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_GetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $state i32)
+    (if (local.get $arg1) (then
+      (local.set $state (call $d3ddev_state (local.get $arg0)))
+      (if (local.get $state)
+        (then (call $memcpy
+                (call $g2w (local.get $arg1))
+                (call $g2w (i32.add (local.get $state) (i32.const 4064)))
+                (i32.const 24))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

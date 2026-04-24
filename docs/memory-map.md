@@ -3,10 +3,15 @@
 ## WASM Linear Memory Layout (128 MB)
 
 ```
-0x07FF2800 ┌────────────────────────┐
-           │  COM_WRAPPERS (2KB)    │  256 x 8-byte COM dispatch slots
+0x07FFE000 ┌────────────────────────┐
+           │  COM_WRAPPERS_AUX (16K)│  2048 x 8-byte QI-aux dispatch slots
+0x07FFA000 ├────────────────────────┤
+           │  COM_WRAPPERS (8KB)    │  1024 x 8-byte COM dispatch slots
+0x07FF8000 ├────────────────────────┤
+           │  DX_OBJECTS (32KB)     │  1024 x 32-byte DirectX object records
 0x07FF0000 ├────────────────────────┤
-           │  DX_OBJECTS (8KB)      │  256 x 32-byte DirectX object records
+           │  D3DIM_MATRICES (16KB) │  256 x 64-byte D3D immediate-mode matrix
+0x07FEC000 ├────────────────────────┤  handle table (handle = slot_idx+1)
            │                        │  (high memory — outside g2w bounds)
            ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
            │       ...gap...        │
