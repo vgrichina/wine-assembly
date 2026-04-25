@@ -1317,6 +1317,145 @@ So the real cap isn't T4's FPU throughput (it completes 17 writes briskly and id
 3. Optimize or host-accelerate the in_mp3 synthesis filter at 0x5bd470 — only becomes the new ceiling once (1) is fixed.
 4. Trace T4 → in_mp3 call path (return addr = 0 on stack suggests thunk/tail-call) to understand whether the filter can be fast-pathed in the decoder vs. replaced wholesale.
 
+## SESSION 18 — Audio Ceiling Investigation (no gain)
+
+Goal: stretch test-winamp-audio from ~0.3s floor to ≥1s PCM within 30s wall time.
+Outcome: plateau unmoved. All speculative WAT patches reverted; test committed at the verified floor (27648 bytes ≈ 313ms).
+
+```
+                       +-------------------------+
+  waveOutWrite -->     | pending WHDR @ 0xAD98   | <-- completed on NEXT write
+                       +-------------------------+
+                                  |
+                                  v  tail buffer (write N) never gets a "next"
+                       +-------------------------+
+                       | T4 drain loop waits for |
+                       | WHDR_DONE on last buf   |  <-- deadlock at EOS
+                       +-------------------------+
+
+  Attempts (all reverted):
+    [1] WFSO idle-completion    -> unblocks EOS, but collapses
+                                   [ebp+0x6c] outstanding -> 0
+                                   -> threshold flips to 11025
+                                   -> 4x large writes, not many small
+    [2] depth-2 WHDR queue      -> stays "< 3 outstanding" in theory;
+                                   only ever produced 3x 11520 writes
+    [3] SetEvent keep-alive     -> reset idle counter on T3 signal;
+                                   no net throughput change
+    [4] bigger batches / more   -> --thread-slices=N, max-batches=5000
+        thread slices            -> plateau at same byte count
+```
+
+Real ceiling (per SESSION 14/17): **T3 MP3 synth filter at `in_mp3.dll!0x5bd470`** — x87 FPU-heavy inner loop dominates the instruction budget. Reaching 1s requires host-accelerating that function (replace with native decode, or fast-path the FPU loop in the emulator), not tweaking the WHDR completion policy.
+
+Shipped: `test/test-winamp-audio.js` gates "audio flows end-to-end" with a ≥8KB non-silent PCM lower bound (7/7 checks pass in ~15s).
+
+Next step (unchanged from Session 17): host-accelerate or replace the in_mp3 synth filter — everything else is downstream of that bottleneck.
+
+## SESSION 19 — Real Ceiling: T4 Crashes in Vis Callback (Not FPU)
+
+Sessions 14/17/18 all blamed the in_mp3 synth filter at `0x5bd470`. **Wrong.** Tracing the actual deadlock state with a per-thread post-mortem dump (added to `test/run.js` — prints each thread's final eip/esp/ebp/yield/sleepCount) shows:
+
+```
+Threads (final state):
+  T1 h=0xe0001 state=exited  eip=0x0
+  T2 h=0xe0002 state=active  eip=0x432c87  (timer / vis poll, healthy)
+  T3 h=0xe0003 state=active  eip=0x6bfb73  (in_mp3.dll, decoder spinning)
+  T4 h=0xe0004 state=EXITED  eip=0x40f928  <-- CRASHED, not waiting
+```
+
+Trace search found:
+```
+[ThreadManager] Thread 4 crashed at EIP=0x40f928 ESP=0x7ccdd0:
+  buffer exceeds 2147483647 bytes
+```
+
+T4 is the out_wave.dll buffer-writer thread (entry 0x6eaf28 = out_wave +0x1f28). After waveOutWrite #17 it gets driven into a winamp.exe routine at `0x40f8e4` (entry; crashed at +68) which is the **spectrum/visualization update**:
+
+```
+0040f928  mov eax, [0x450028]    ; vis state ptr / count
+0040f932  push eax
+0040f933  mov eax, 0x26
+0040f938  shl edx, cl             ; CL is some "scale" — uninit/garbage in T4 ctx
+0040f93a  shl eax, cl             ; → enormous width/height
+0040f93c  push edx ; push eax
+0040f943  call [0x446060]         ; GDI BitBlt / StretchBlt thunk
+```
+
+The shift count `CL` is large enough to push absurd dimensions into the GDI call, which our host-side `getImageData/createImageData` rejects with the Node Buffer "exceeds 2147483647 bytes" trap. T4 dies. T3 keeps decoding from the in-memory MP3 buffer (the whole 38KB file is read up front by line 26700, well before any waveOutWrite) and signals the now-dead consumer ~948 times via SetEvent / 855 Sleeps in a polite producer loop, but no one drains the ring → no more writes.
+
+```
+                +-------------------+         +-------------------+
+  T3 (in_mp3) — | decode + SetEvent | ──────▶ | ring buffer       |
+   STILL ALIVE  +-------------------+         +-------------------+
+                                                       │
+                                                       ▼
+                                              +-------------------+
+                                              | T4 (out_wave)     |
+                                              |  CRASHED          |
+                                              |  in vis callback  |
+                                              |  at 0x40f928      |
+                                              +-------------------+
+```
+
+### What this means for prior sessions
+
+- **S14's "FPU synth is the ceiling"**: misread. The synth filter at `0x5bd470` is hot, but T4 makes it through 17 buffers fine; it's killed by an unrelated GDI crash, not throttled.
+- **S17's "T4 deadlocks waiting on WOM_DONE for buffer 17"**: also wrong. T4 doesn't deadlock — it's *exited*. The CS / WaitForSingleObject loop seen in trace-api comes from an active T2 (timer thread), not T4.
+- **S18's four reverted patches** (WHDR completion strategies): none of them could have helped — the consumer is already dead by the time the deferral matters.
+
+### Real next step
+
+Stop chasing FPU acceleration. Fix the T4 vis-callback path:
+1. Identify the caller of `0x40f8e4` — likely an out_wave.dll waveOutProc callback or a SetEvent-triggered notify into winamp.
+2. Either: clamp the CL shift in our emulator (real x86 masks `cl & 0x1f`, which we may not be doing for `shl r/m32, cl`), or guard host-side `getImageData/createImageData` against bogus dimensions and return a no-op.
+3. Once T4 survives, audio length should grow until either the in_mp3 file buffer empties (5.34s of demo.mp3) or the real FPU ceiling kicks in.
+
+## SESSION 20 — Vis BitBlt Fix: Clip to Whole-Window Surface
+
+**Status:** T4 no longer crashes. Run completes 3000 batches with all 4 threads alive (T1=exit normal, T2/T3/T4 active). Audio test 7/7 pass.
+
+### Root cause
+
+Winamp's vis routine at `winamp.exe!0x40e8f0` (entry, body extends past 0x40f928) computes BitBlt dims as `width = 0x26 << cl`, `height = 0x5 << cl`. With `cl ≥ 12` the width exceeds 100K pixels — far outside the actual back-canvas. **Real GDI silently clips dst to the surface;** our `gdi_bitblt` only clipped CLIENT-DC blits (`!_isWholeWindowDC`), letting whole-window-DC blits through with raw dims. Canvas `createImageData(2490368, 327680)` then trapped with `buffer exceeds 2147483647 bytes`, killing T4.
+
+The crash address `0x40f928` is inside this vis function; called via `0x432bae`/`0x432c7b` in winamp's repaint dispatch with args (NULL, 1). The function is reentrancy-locked via `[0x44fd68]`.
+
+### Fix
+
+`lib/host-imports.js` `gdi_bitblt`: after resolving `dstTarget`, clip `dx,dy,w,bh` (and adjust `sx,sy`) against `dstTarget.canvas.width/height` for **all** window DCs. Matches real GDI's silent-clip behavior, applies uniformly to client and whole-window DCs.
+
+Side benefit: 200-batch audio test went from 12.1s → 2.2s (canvas no longer attempts huge `getImageData` allocations).
+
+### What's still capped
+
+Audio output stays at **27 648 bytes (~313 ms)** regardless of batches (200, 1500, 3000 — same). T4 is alive but appears not to issue more `waveOutWrite` calls than the original ~17. The cap is now NOT the vis crash, but something else — maybe a deferred-WOM_DONE refill gate, or the in_mp3 decode thread bottleneck (S14 was right about the FPU loop, just wrong about it being the *only* ceiling).
+
+### Diagnostic tooling added
+
+- `tools/scan_fn_bounds.js <exe> <lo> <hi> [target]` — linear scan for ret/cc boundaries and incoming `call rel32` targets in a range. Use when `find_fn.js`'s `c2/c3` heuristics get fooled (e.g. `e8 ?? c2 ?? ??` call-disp32 looks like retn imm16). Found this function's true entry at 0x40e8f0 after the prologue padding `90 90 90 90`.
+
+### Real next step
+
+1. Trace why T4's `waveOutWrite` count stays at ~17 even with 3000-batch run. Likely a deferred-WHDR_DONE issue (S17 territory) — but now we can investigate without T4 dying first.
+2. If real bottleneck IS the in_mp3 FPU synth, host-accelerate `0x5bd470` (per S14 plan).
+
+### Repro / diagnostic commands
+
+```bash
+# Per-thread post-mortem (added to run.js — printed automatically):
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=400 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,50:poke:0x45caa4:1,60:winamp-play:C:\demo.mp3,100:winamp-start" \
+  --audio-out=test/output/winamp-audio.pcm 2>&1 | tail -20
+
+# Find the crash line:
+node test/run.js ... --trace-api 2>&1 | grep "Thread.*crashed"
+
+# Disasm the crash site:
+node tools/disasm_fn.js test/binaries/winamp.exe 0x40f8e4 120
+```
+
 ## Automated Tests
 
 | Test | What it checks |
