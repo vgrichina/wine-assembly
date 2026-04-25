@@ -3589,7 +3589,10 @@
   ;; invocation; defer that until a consumer actually needs the return.
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $wp i32) (local $slot i32) (local $old_eip i32)
+    (local $wp i32) (local $slot i32)
+    (local $old_eip i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
+    (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     ;; WAT-native (>= 0xFFFF0000)
@@ -3598,25 +3601,43 @@
                       (local.get $hwnd) (local.get $msg)
                       (local.get $wParam) (local.get $lParam)))))
     ;; x86 wndproc — synchronous dispatch via recursive $run.
-    ;; 1. Save current state
+    ;; Save full guest register context: this is invoked between message-pump
+    ;; iterations (often via JS test driver or WAT control-side $wnd_send_message
+    ;; from a WAT child wndproc), so when we resume the pump's EIP must see the
+    ;; same register state it had before the recursive run. The wndproc's EAX
+    ;; return value is extracted separately and returned as the WAT result.
     (local.set $old_eip (global.get $eip))
-    ;; 2. Push args to guest stack (lParam, wParam, msg, hwnd)
+    (local.set $old_eax (global.get $eax))
+    (local.set $old_ecx (global.get $ecx))
+    (local.set $old_edx (global.get $edx))
+    (local.set $old_ebx (global.get $ebx))
+    (local.set $old_esi (global.get $esi))
+    (local.set $old_edi (global.get $edi))
+    (local.set $old_ebp (global.get $ebp))
+    ;; Push args + return thunk on guest stack. Wndproc is stdcall ret 0x10
+    ;; so it pops these on return; ESP returns to its current value.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
     (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $lParam))
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $wParam))
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $msg))
     (call $gs32 (global.get $esp) (local.get $hwnd))
-    ;; 3. Push return thunk
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
-    ;; 4. Set EIP to target WndProc and run
     (global.set $eip (local.get $wp))
     (global.set $steps (i32.const 0))
     (call $run (i32.const 1000000))
-    ;; 5. Restore state and return EAX
+    ;; Capture wndproc result (its EAX) before restoring caller's regs.
+    (local.set $result (global.get $eax))
     (global.set $eip (local.get $old_eip))
+    (global.set $eax (local.get $old_eax))
+    (global.set $ecx (local.get $old_ecx))
+    (global.set $edx (local.get $old_edx))
+    (global.set $ebx (local.get $old_ebx))
+    (global.set $esi (local.get $old_esi))
+    (global.set $edi (local.get $old_edi))
+    (global.set $ebp (local.get $old_ebp))
     (global.set $steps (i32.const 0))
-    (return (global.get $eax))
+    (local.get $result)
   )
 
   ;; Route a client-relative mouse event to the first WAT-managed child
