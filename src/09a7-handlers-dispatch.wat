@@ -929,6 +929,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
+  ;; 1503: VkKeyScanW(WCHAR ch) → SHORT — low byte = vkey, high byte = shift state.
+  ;; ASCII letters/digits map cleanly; uppercase letters set the SHIFT bit (0x100).
+  ;; Anything else returns -1 (0xFFFF), the documented "no translation" sentinel.
+  (func $handle_VkKeyScanW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ch i32)
+    (local.set $ch (i32.and (local.get $arg0) (i32.const 0xFFFF)))
+    (block $done
+      ;; 'a'-'z' → vkey = uppercase, shift=0
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x7A)))
+        (then (global.set $eax (i32.sub (local.get $ch) (i32.const 0x20))) (br $done)))
+      ;; 'A'-'Z' → vkey = char, shift=1 (high byte = 0x01)
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x5A)))
+        (then (global.set $eax (i32.or (local.get $ch) (i32.const 0x0100))) (br $done)))
+      ;; '0'-'9' → vkey = char, shift=0
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
+        (then (global.set $eax (local.get $ch)) (br $done)))
+      ;; Space, Tab, Enter, Escape, Backspace
+      (if (i32.eq (local.get $ch) (i32.const 0x20)) (then (global.set $eax (i32.const 0x20)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x09)) (then (global.set $eax (i32.const 0x09)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x0D)) (then (global.set $eax (i32.const 0x0D)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x1B)) (then (global.set $eax (i32.const 0x1B)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x08)) (then (global.set $eax (i32.const 0x08)) (br $done)))
+      ;; Default: no translation
+      (global.set $eax (i32.const 0xFFFF)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))  ;; stdcall, 1 arg
+
   ;; 785: MapVirtualKeyA — translate between vkeys, scan codes, and characters
   (func $handle_MapVirtualKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $uCode i32)
@@ -1011,6 +1037,12 @@
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
+
+  ;; MapVirtualKeyW(uCode, uMapType) → UINT — same semantics as MapVirtualKeyA
+  ;; for the codepoints we care about, since both ASCII letters/digits and the
+  ;; vkey/scancode tables fit in the BMP. Delegate to keep one implementation.
+  (func $handle_MapVirtualKeyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_MapVirtualKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 786: DisableThreadLibraryCalls(hModule) — no-op, return TRUE
   (func $handle_DisableThreadLibraryCalls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

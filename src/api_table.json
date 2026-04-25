@@ -10517,5 +10517,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4274603356
+  },
+  {
+    "id": 1503,
+    "name": "VkKeyScanW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1975579077
+  },
+  {
+    "id": 1504,
+    "name": "MapVirtualKeyW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3486428232
   }
 ]
