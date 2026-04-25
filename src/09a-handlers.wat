@@ -6231,6 +6231,39 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; VirtualQuery(lpAddress, lpBuffer, dwLength) → SIZE_T
+  ;; Pretend the entire 4GB address space is one committed RW region rooted at
+  ;; image_base. Apps that probe a ptr (e.g. CRT exception filter, MFC heap walker)
+  ;; just want a non-zero return + plausible State/Protect, not real bookkeeping.
+  ;; MEMORY_BASIC_INFORMATION layout (28 bytes):
+  ;;   +0  BaseAddress     PVOID
+  ;;   +4  AllocationBase  PVOID
+  ;;   +8  AllocationProtect DWORD  (PAGE_READWRITE = 0x04)
+  ;;   +12 RegionSize      SIZE_T
+  ;;   +16 State           DWORD   (MEM_COMMIT = 0x1000)
+  ;;   +20 Protect         DWORD   (PAGE_READWRITE = 0x04)
+  ;;   +24 Type            DWORD   (MEM_PRIVATE = 0x20000)
+  (func $handle_VirtualQuery (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+    (if (i32.lt_u (local.get $arg2) (i32.const 28))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+    (local.set $buf (call $g2w (local.get $arg1)))
+    (i32.store (local.get $buf)                            (i32.and (local.get $arg0) (i32.const 0xFFFFF000)))
+    (i32.store (i32.add (local.get $buf) (i32.const 4))    (global.get $image_base))
+    (i32.store (i32.add (local.get $buf) (i32.const 8))    (i32.const 0x04))      ;; AllocationProtect = PAGE_READWRITE
+    (i32.store (i32.add (local.get $buf) (i32.const 12))   (i32.const 0x10000000));; RegionSize = 256MB (huge)
+    (i32.store (i32.add (local.get $buf) (i32.const 16))   (i32.const 0x1000))    ;; State = MEM_COMMIT
+    (i32.store (i32.add (local.get $buf) (i32.const 20))   (i32.const 0x04))      ;; Protect = PAGE_READWRITE
+    (i32.store (i32.add (local.get $buf) (i32.const 24))   (i32.const 0x20000))   ;; Type = MEM_PRIVATE
+    (global.set $eax (i32.const 28))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; 533: FindResourceExW — STUB: unimplemented
   (func $handle_FindResourceExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
