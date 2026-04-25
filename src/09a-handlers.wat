@@ -435,9 +435,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 19: _lcreat — STUB: unimplemented
+  ;; 19: _lcreat(lpPathName, iAttribute) — 2 args stdcall.
+  ;; Equivalent to CreateFile(path, GENERIC_READ|GENERIC_WRITE, 0, NULL,
+  ;; CREATE_ALWAYS, iAttribute, NULL). Returns HFILE or HFILE_ERROR(-1).
   (func $handle__lcreat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $attr i32)
+    ;; iAttribute: 0=normal, 1=readonly, 2=hidden, 3=system. Map low bits to
+    ;; FILE_ATTRIBUTE_*; default to NORMAL when iAttribute=0.
+    (local.set $attr (i32.or (local.get $arg1) (i32.const 0x80)))
+    (global.set $eax (call $host_fs_create_file
+      (call $g2w (local.get $arg0))
+      (i32.const 0xC0000000)  ;; GENERIC_READ | GENERIC_WRITE
+      (i32.const 2)           ;; CREATE_ALWAYS
+      (local.get $attr)
+      (i32.const 0)))         ;; isWide=0
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args + ret
   )
 
   ;; 20: _lopen — STUB: unimplemented
@@ -452,9 +464,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args + ret
   )
 
-  ;; 21: _lwrite — STUB: unimplemented
+  ;; 21: _lwrite(hFile, lpBuffer, uBytes) — 3 args stdcall.
+  ;; Returns bytes written, or HFILE_ERROR(-1) on failure.
   (func $handle__lwrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $bytes_written_ga i32) (local $bytes_written_wa i32)
+    (local.set $bytes_written_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_written_wa (call $g2w (local.get $bytes_written_ga)))
+    (i32.store (local.get $bytes_written_wa) (i32.const 0))
+    (if (call $host_fs_write_file
+          (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $bytes_written_ga))
+      (then (global.set $eax (i32.load (local.get $bytes_written_wa))))
+      (else (global.set $eax (i32.const 0xFFFFFFFF))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
   )
 
   ;; 22: _llseek — STUB: unimplemented
