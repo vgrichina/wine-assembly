@@ -40,6 +40,17 @@ File: `Windows98systemfiles.iso` > `Windows Installer 2.0/instmsi.exe`
 | imagehlp.dll | 106,013 | 2001-08-17 | PE image helpers |
 | usp10.dll | 314,906 | 2001-08-17 | Uniscribe (text shaping) |
 
+## From DirectX 6.0 Runtime (archive.org)
+
+Source: `https://archive.org/details/MS_DirectX`
+File: `Microsoft_DirectX-6_1999Sep.7z` > `directx.cab`
+
+| DLL | Size | Date | Notes |
+|-----|------|------|-------|
+| d3dxof.dll | 107,792 | 1999-01-08 | DirectX File (.x) parser, version 4.06.02.0436 — matches d3drm.dll same build. Required for d3drm `.x` mesh loading (Plus!98 Organic Art screensavers). |
+
+`d3drm.dll` (version 4.06.02.0436, same date/build) ships in this same cab and predates this entry; future re-extractions can pull both from here.
+
 ## Previously collected
 
 | DLL | Notes |
