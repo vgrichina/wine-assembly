@@ -7927,10 +7927,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 681: ShowOwnedPopups — STUB: unimplemented
+  ;; 681: ShowOwnedPopups(hwndOwner, fShow) — single-window model has no popups
+  ;; to enumerate, so the show/hide is a no-op. Return TRUE.
   (func $handle_ShowOwnedPopups (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 682: InsertMenuW — STUB: unimplemented
   (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
