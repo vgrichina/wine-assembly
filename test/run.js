@@ -50,6 +50,7 @@ const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateB
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
@@ -80,6 +81,7 @@ const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via nod
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
+const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
@@ -362,6 +364,7 @@ async function main() {
   if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_DX) traceCategories.add('dx');
+  if (TRACE_DX_RAW) { traceCategories.add('dx'); traceCategories.add('dx-raw'); }
   if (TRACE_FS) traceCategories.add('fs');
   if (TRACE_INI) traceCategories.add('ini');
   if (TRACE_REG) traceCategories.add('reg');
@@ -1905,7 +1908,7 @@ async function main() {
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
-      const slices = installingFiles ? 1000 : 4;
+      const slices = installingFiles ? 1000 : THREAD_SLICES;
       for (let s = 0; s < slices; s++) {
         threadManager.runSlice(BATCH_SIZE);
         // Re-run main thread between worker slices so producer/consumer
@@ -1993,6 +1996,21 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  if (threadManager && threadManager.threads && threadManager.threads.size) {
+    console.log('\nThreads (final state):');
+    for (const [handle, t] of threadManager.threads) {
+      try {
+        const e = t.instance.exports;
+        const eip = e.get_eip ? e.get_eip() : 0;
+        const esp = e.get_esp ? e.get_esp() : 0;
+        const ebp = e.get_ebp ? e.get_ebp() : 0;
+        const yr = e.get_yield_reason ? e.get_yield_reason() : -1;
+        const wh = e.get_wait_handle ? e.get_wait_handle() : 0;
+        console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} eip=0x${eip.toString(16)} esp=0x${esp.toString(16)} ebp=0x${ebp.toString(16)} yield=${yr} waitH=0x${wh.toString(16)} sleepCount=${t.sleepCount||0}`);
+      } catch (ex) { console.log(`  T${t.tid} dump error: ${ex.message}`); }
+    }
+  }
 
   if (apiCounts) {
     const sorted = [...apiCounts.entries()].sort((a, b) => b[1] - a[1]);
