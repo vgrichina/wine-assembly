@@ -45,7 +45,12 @@ async function analyzePng(pngPath) {
 // All test binaries with their expected behavior
 const TEST_CASES = [
   { exe: 'test/binaries/notepad.exe', name: 'Notepad' },
-  { exe: 'test/binaries/calc.exe', name: 'Calculator' },
+  { exe: 'test/binaries/calc.exe', name: 'Calculator',
+    // calc.exe (XP build) spends ~700 batches on msvcrt CRT init (every
+    // critical-section table entry gets InitializeCriticalSection) before
+    // CreateDialog. Default 80 batches doesn't reach the dialog. With
+    // --no-close + 800 batches it renders the full button grid.
+    maxBatches: 800, extraArgs: ['--no-close'], timeoutMs: 10000 },
   { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree' },
   { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell',
     extraArgs: ['--no-close', '--input=5:0x111:102'] },  // Game > New Game (F2)
@@ -216,7 +221,7 @@ function runExe(testCase, pngPath) {
 
   const result = spawnSync('node', args, {
     cwd: ROOT,
-    timeout: 5000,
+    timeout: testCase.timeoutMs || 5000,
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
