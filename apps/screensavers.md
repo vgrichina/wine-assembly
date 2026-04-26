@@ -144,10 +144,42 @@ So match requires both `[entry+0x88]=1` AND `[entry+0x34]!=0`.
 
 **hr_cache `0x647e7afc` is BSS zero-init**, with 440 `and ...,0x0` clears and exactly **one** nonzero writer at `0x64799d32` inside an HRESULT-set helper (`0x64799d29`): `mov [hr_cache], edi` then if (edi<0) call registered error callbacks. So hr_cache is the "last HRESULT" global; in success paths it stays 0. The outer dispatcher's `and eax, hr_cache` epilogue therefore returns 0 even on match — but the caller's `test eax,eax; jz fallback` only matters for the fallback-emit path; the actual draw work happens inside `0x647c5150` BEFORE the dispatcher returns. So this is not a bug — the work is unconditional once the inner walker populates result rows.
 
-**Refined next-session pivot:**
-1. Probe the 3 viewport entries: at scene_walker pre-loop (`0x745b4955`), dump each `[entry+0x84]` and `[entry+0x88]`. Compare `[entry+0x84]` against edi (scene-root) — if none match, no entry gets activated and the entire draw chain no-ops.
-2. If `[entry+0x84]` ≠ scene-root, find what populates `[entry+0x84]`. Likely set during `populate` at `0x647c1c2b` (the realloc-path populator) — re-disasm its arg setup.
-3. Also dump `[entry+0x34]` (predicate's second condition).
+**Runtime confirmation (2026-04-26 follow-up, ROCKROLL.SCR delta `0xfe1b000`, break at `0x745b3903` = scene_walker entry):**
+
+Viewport at `0x7500d6a0`:
+- `[+0x34]` = `0x7500c368` (scene-root back-pointer)
+- `[+0xbc]` = 3 (count) ✓
+- `[+0xc0]` = 3 (capacity)
+- `[+0xc4]` = `0x74e0ef50` (array base — heap-allocated)
+
+Three entries (heap allocations, not d3rm static):
+- entry[0] @ `0x74e100f8`: `[+0x18]` vtable=`0x745fbaa0`, `[+0x34]`=3, `[+0x84]=0`, `[+0x88]=0`
+- entry[1] @ `0x74e0fee0`: similar layout, `[+0x84]=0`, `[+0x88]=0`
+- entry[2] @ `0x74e0fda8`: similar layout, `[+0x84]=0`, `[+0x88]=0`
+
+scene_walker is invoked with `arg2 (edi) = 0x7513d510` (different from `[viewport+0x34]=0x7500c368` — there are two scene-roots in play; arg2 is the "current" scene-root for this Tick). `[edi+0x2f0]=3` (bit 0 set → pre-loop gate passes).
+
+**Diagnosis confirmed:** `[entry+0x84]=0` for all 3 entries. Pre-loop's `cmp [eax+0x84], edi` always fails (edi is nonzero in either case), so `[entry+0x88]=1` never gets set, predicate `0x647ad71e` returns 0, dispatcher returns 0, `0x647c5150` walks 0 result rows, no draws emitted.
+
+**Why is `[entry+0x84]=0`?** Static analysis found 8 writers across 8 fns:
+
+| Writer VA | Fn entry |
+|---|---|
+| `0x6478d9c5` | `0x6478d9bd` |
+| `0x6479c835` | `0x6479c7f0` |
+| `0x6479d1d1` | `0x6479d18d` |
+| `0x647add4d` | `0x647adcef` |
+| `0x647b022d` | `0x647b0190` |
+| `0x647b047f` | `0x647b043e` |
+| `0x647b1fb0` | `0x647b1e53` |
+| `0x647b240e` | `0x647b2309` |
+
+None has fired by the first scene_walker hit. The "right" writer is whichever is meant to set `[entry+0x84] = scene-root` when the entry is bound to a scene-root frame (registration moment).
+
+**Next-session pivot:**
+1. Set `--break-once` on each of the 8 writer-fn entries (relocated by `+0xfe1b000`) to identify which fires for these 3 entries during init. The one that should but doesn't fire — its precondition is the bug surface.
+2. The 3 entry vtables `[+0x18]=0x745fbaa0` (relocated d3rm static — `vtable_dump` it; the slot at +N driving registration is the real init path).
+3. Watchpoint on `0x74e100f8 + 0x84` byte=4 across a longer run: if it never changes, the registration path is dead; if it changes briefly to nonzero then resets to 0, it's a lifecycle bug.
 
 Per-vp render `0x64798e51` flow (cleaned up):
 - entry: `mov esi, [ebp+0x8]` → esi = viewport
