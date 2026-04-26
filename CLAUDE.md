@@ -24,7 +24,9 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 
 | Flag | What it prints |
 |---|---|
-| `--trace-api` | Every Win32 API call with args + return |
+| `--trace-api` (`=Name1,Name2`) | Every Win32 API call with args + return; with `=NAMES` filter, only those APIs. Args/returns are typed via `args:[{name,type[,out:true]}]` / `ret` fields in `src/api_table.json` (LPCSTR, HWND, LPMSG, flags:WS, etc.) — untyped entries fall back to an `nargs`-sized hex dump (or 6 dwords if `nargs` is unknown). Args flagged `out:true` are decoded **after** the handler runs (e.g. `LoadStringA buf=`, `GetMessageA msg=`) on a separate `out:` line. |
+| `--trace-api-dedup` | Collapse N consecutive identical API trace lines into a `(xN)` summary. |
+| `--trace-stack[=DEPTH\|=Name1,Name2\|=Name:DEPTH,...]` | Walk EBP frame chain on each matched API call (default depth 12). `=N` overrides default depth for all; `=Name1,Name2` limits to those APIs; `=Name:N` sets per-API depth. |
 | `--trace-gdi` | Every wrapped GDI primitive: CreateBitmap, BitBlt, StretchBlt, FillRect, DrawEdge, DrawText, TextOut, Rectangle, Ellipse, Polygon, MoveTo/LineTo, Arc, SetPixel, SetTextColor, SetBkColor, SetBkMode, SelectObject, DeleteObject, DeleteDC, GetClipBox, LoadBitmap, CreateSolidBrush, GetObject, PatBlt |
 | `--trace-dc` | Every `_getDrawTarget` resolution: hdc → resolved hwnd, top-level hwnd, canvas ox/oy, canvas size. Logs NO_CANVAS when resolution fails. Use when a draw call fires but nothing appears — shows which surface each DC lands on. |
 | `--trace-reg` | Every registry op (open/query/create/set/enum/close) with key path, value name, and result ("found"/"not found"/actual data). Use to discover which keys an app probes when storage returns empty. |

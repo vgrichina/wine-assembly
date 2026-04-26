@@ -6,6 +6,7 @@ const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString } = require('../lib/mem-utils');
+const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 let createCanvas, Win98Renderer;
 try {
   const canvasMod = require('canvas');
@@ -41,8 +42,30 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 let BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
-const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
+// --trace-api[=Name1,Name2]: log API calls with args + return values; with =NAMES, only those APIs
+const TRACE_API_RAW = args.find(a => a === '--trace-api' || a.startsWith('--trace-api='));
+const TRACE_API = !!TRACE_API_RAW;
+const TRACE_API_FILTER = (TRACE_API_RAW && TRACE_API_RAW.includes('='))
+  ? new Set(TRACE_API_RAW.split('=')[1].split(',').map(s => s.trim()).filter(Boolean))
+  : null;
+const TRACE_API_DEDUP = hasFlag('trace-api-dedup'); // --trace-api-dedup: collapse N consecutive identical lines into "(xN)"
 const TRACE_API_COUNTS = hasFlag('trace-api-counts'); // --trace-api-counts: print histogram of API call names at end
+// --trace-stack[=N|=Name1,Name2|=Name:N,...]: walk EBP chain on matched API calls
+const TRACE_STACK_RAW = args.find(a => a === '--trace-stack' || a.startsWith('--trace-stack='));
+const TRACE_STACK = !!TRACE_STACK_RAW;
+let TRACE_STACK_DEFAULT_DEPTH = 12;
+const TRACE_STACK_FILTER = (() => {
+  if (!TRACE_STACK_RAW || !TRACE_STACK_RAW.includes('=')) return null;
+  const spec = TRACE_STACK_RAW.split('=')[1];
+  // pure number → just override default depth
+  if (/^\d+$/.test(spec)) { TRACE_STACK_DEFAULT_DEPTH = parseInt(spec); return null; }
+  const filter = new Map();
+  for (const part of spec.split(',').map(s => s.trim()).filter(Boolean)) {
+    const [name, depth] = part.split(':');
+    filter.set(name, depth ? parseInt(depth) : TRACE_STACK_DEFAULT_DEPTH);
+  }
+  return filter;
+})();
 const QUIET_API = hasFlag('quiet-api');               // --quiet-api: suppress [API] one-line log spam
 const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
@@ -131,7 +154,21 @@ async function main() {
   let apiCount = 0;
   const apiCounts = TRACE_API_COUNTS ? new Map() : null;
   let lastApiName = null;  // track last API name for return value correlation
+  let lastApiEntry = null; // typed metadata for last API (for return formatting)
+  let lastApiArgs = null;  // raw dword args captured at entry, used for out-param dump on return
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
+  let dedupLast = null;    // {line, count} for --trace-api-dedup
+  const flushDedup = () => {
+    if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
+    dedupLast = null;
+  };
+  const pushApi = line => {
+    if (!TRACE_API_DEDUP) { logs.push(line); return; }
+    if (dedupLast && dedupLast.line === line) { dedupLast.count++; return; }
+    flushDedup();
+    logs.push(line);
+    dedupLast = { line, count: 1 };
+  };
   let inputEvent = null;   // pending input event to inject via check_input
   let inputQueue = null;   // button ID sequence to inject
   let crossThreadMsgs = []; // messages from worker threads to deliver via check_input
@@ -375,6 +412,7 @@ async function main() {
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
+  const apiByName = new Map(apiTable.map(e => [e.name, e]));
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
@@ -453,61 +491,60 @@ async function main() {
       lastApiEsp = instance.exports.get_esp();
     }
 
-    if (TRACE_API) {
+    if (TRACE_API && (!TRACE_API_FILTER || TRACE_API_FILTER.has(t))) {
       const e = instance.exports;
       const esp = e.get_esp();
       const imageBase = e.get_image_base();
       const dv = new DataView(memory.buffer);
       const g2w = addr => addr - imageBase + 0x12000;
-      let argStr = '';
-      try {
-        for (let i = 0; i < 6; i++) {
-          const a = dv.getUint32(g2w(esp + 4 + i * 4), true);
-          argStr += (i ? ', ' : '') + hex(a);
-        }
-      } catch (_) {}
+      const fmtCtx = { dv, g2w, memory: memory.buffer, readStr, hex };
 
-      // Log string content for string APIs
-      let strInfo = '';
-      const matchedApi = STRING_APIS.find(api => t.includes(api));
-      if (matchedApi) {
-        try {
-          const mem = new Uint8Array(memory.buffer);
-          const strPtr = dv.getUint32(g2w(esp + 4), true);
-          const strVal = readStr(g2w(strPtr), 200);
-          if (strVal) strInfo = ` str="${strVal}"`;
-        } catch (_) {}
-      }
-      // Dump both strings for lstrcmp/lstrcmpi
-      if ((t === 'lstrcmpiA' || t === 'lstrcmpA') && !strInfo) {
-        try {
-          const s1 = dv.getUint32(g2w(esp + 4), true);
-          const s2 = dv.getUint32(g2w(esp + 8), true);
-          const v1 = readStr(g2w(s1), 32);
-          const v2 = readStr(g2w(s2), 32);
-          strInfo = ` "${v1}" vs "${v2}"`;
-        } catch (_) {}
-      }
-
+      const entry = apiByName.get(t);
       lastApiName = t;
-      let retInfo = '';
-      if (t === 'MessageBoxA') {
+      lastApiEntry = entry || null;
+      // Snapshot arg dwords at entry so out-param decoding survives stack churn
+      if (entry && Array.isArray(entry.args) && entry.args.some(a => a.out)) {
+        lastApiArgs = [];
         try {
-          const ret = dv.getUint32(g2w(esp), true);
-          retInfo = ` ret=${hex(ret)}`;
-          // Walk EBP frame chain to get caller stack
-          let ebp = e.get_ebp();
-          const chain = [];
-          for (let depth = 0; depth < 12 && ebp; depth++) {
-            const callerRet = dv.getUint32(g2w(ebp + 4), true);
-            const prevEbp = dv.getUint32(g2w(ebp), true);
-            chain.push(`${hex(callerRet)}`);
-            if (prevEbp <= ebp || prevEbp - ebp > 0x10000) break;
-            ebp = prevEbp;
+          for (let i = 0; i < entry.args.length; i++) {
+            lastApiArgs.push(dv.getUint32(g2w(esp + 4 + i * 4), true));
           }
-          retInfo += ` frames=[${chain.join(' <- ')}]`;
-        } catch (_) {}
+        } catch (_) { lastApiArgs = null; }
+      } else {
+        lastApiArgs = null;
       }
+
+      // Typed formatter path
+      let header = fmtApiCall(entry, esp, fmtCtx);
+      // Legacy path: nargs raw dwords (fallback to 6 if unknown) + ad-hoc decoders
+      let strInfo = '';
+      if (!header) {
+        const n = (entry && typeof entry.nargs === 'number') ? entry.nargs : 6;
+        let argStr = '';
+        try {
+          for (let i = 0; i < n; i++) {
+            const a = dv.getUint32(g2w(esp + 4 + i * 4), true);
+            argStr += (i ? ', ' : '') + hex(a);
+          }
+        } catch (_) {}
+        const matchedApi = STRING_APIS.find(api => t.includes(api));
+        if (matchedApi) {
+          try {
+            const strPtr = dv.getUint32(g2w(esp + 4), true);
+            const strVal = readStr(g2w(strPtr), 200);
+            if (strVal) strInfo = ` str="${strVal}"`;
+          } catch (_) {}
+        }
+        if ((t === 'lstrcmpiA' || t === 'lstrcmpA') && !strInfo) {
+          try {
+            const s1 = dv.getUint32(g2w(esp + 4), true);
+            const s2 = dv.getUint32(g2w(esp + 8), true);
+            strInfo = ` "${readStr(g2w(s1), 32)}" vs "${readStr(g2w(s2), 32)}"`;
+          } catch (_) {}
+        }
+        header = `${t}(${argStr})`;
+      }
+
       let dxInfo = '';
       if (TRACE_DX) {
         const isNamedDx = t.startsWith('IDirectDraw') || t.startsWith('IDirectSound') ||
@@ -530,36 +567,47 @@ async function main() {
         const callerRet = dv.getUint32(g2w(esp), true);
         callerInfo = ` [esp=${hex(esp)} ret=${hex(callerRet)}]`;
       } catch (_) {}
-      logs.push(`[API #${apiCount}] ${t}(${argStr})${strInfo}${retInfo}${dxInfo}${callerInfo}`);
-      // Dump MSG struct contents for DispatchMessageA
-      if (t.includes('DispatchMessage') && apiCount <= 100) {
-        try {
-          const msgPtr = dv.getUint32(g2w(esp + 4), true);
-          const msgHwnd = dv.getUint32(g2w(msgPtr), true);
-          const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
-          const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
-          const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
-          logs.push(`  MSG: hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wP=0x${msgWP.toString(16)} lP=0x${msgLP.toString(16)}`);
-        } catch (_) {}
+      pushApi(`[API #${apiCount}] ${header}${strInfo}${dxInfo}${callerInfo}`);
+
+      // --trace-stack: walk EBP chain on matched calls
+      if (TRACE_STACK && (!TRACE_STACK_FILTER || TRACE_STACK_FILTER.has(t))) {
+        const depth = TRACE_STACK_FILTER ? TRACE_STACK_FILTER.get(t) : TRACE_STACK_DEFAULT_DEPTH;
+        const chain = walkFrames(() => e.get_ebp(), dv, g2w, depth);
+        flushDedup();
+        logs.push(`  frames=[${chain.map(hex).join(' <- ')}]`);
       }
 
-      // Dump WNDCLASS struct contents for RegisterClassA/W
-      if (t === 'RegisterClassA' || t === 'RegisterClassW') {
-        try {
-          const wcPtr = dv.getUint32(g2w(esp + 4), true);
-          const wcWa = g2w(wcPtr);
-          const style = dv.getUint32(wcWa, true);
-          const wndProc = dv.getUint32(wcWa + 4, true);
-          const menuName = dv.getUint32(wcWa + 32, true);
-          const className = dv.getUint32(wcWa + 36, true);
-          const menuStr = (menuName > 0 && menuName < 0x10000)
-            ? `MAKEINTRESOURCE(${menuName})`
-            : (menuName ? `"${readStr(g2w(menuName), 32)}" (${hex(menuName)})` : '0');
-          const classStr = (className > 0 && className < 0x10000)
-            ? `MAKEINTATOM(${className})`
-            : (className ? `"${readStr(g2w(className), 32)}" (${hex(className)})` : '0');
-          logs.push(`  WNDCLASS: style=${hex(style)} wndProc=${hex(wndProc)} class=${classStr} menu=${menuStr}`);
-        } catch (_) {}
+      // Legacy struct dumps only fire when API isn't typed (formatter already covers them)
+      if (!entry || !entry.args) {
+        if (t.includes('DispatchMessage') && apiCount <= 100) {
+          try {
+            const msgPtr = dv.getUint32(g2w(esp + 4), true);
+            const msgHwnd = dv.getUint32(g2w(msgPtr), true);
+            const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
+            const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
+            const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
+            flushDedup();
+            logs.push(`  MSG: hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wP=0x${msgWP.toString(16)} lP=0x${msgLP.toString(16)}`);
+          } catch (_) {}
+        }
+        if (t === 'RegisterClassA' || t === 'RegisterClassW') {
+          try {
+            const wcPtr = dv.getUint32(g2w(esp + 4), true);
+            const wcWa = g2w(wcPtr);
+            const style = dv.getUint32(wcWa, true);
+            const wndProc = dv.getUint32(wcWa + 4, true);
+            const menuName = dv.getUint32(wcWa + 32, true);
+            const className = dv.getUint32(wcWa + 36, true);
+            const menuStr = (menuName > 0 && menuName < 0x10000)
+              ? `MAKEINTRESOURCE(${menuName})`
+              : (menuName ? `"${readStr(g2w(menuName), 32)}" (${hex(menuName)})` : '0');
+            const classStr = (className > 0 && className < 0x10000)
+              ? `MAKEINTATOM(${className})`
+              : (className ? `"${readStr(g2w(className), 32)}" (${hex(className)})` : '0');
+            flushDedup();
+            logs.push(`  WNDCLASS: style=${hex(style)} wndProc=${hex(wndProc)} class=${classStr} menu=${menuStr}`);
+          } catch (_) {}
+        }
       }
 
       // SEH tracing for _EH_prolog and _CxxThrowException
@@ -567,6 +615,7 @@ async function main() {
         const fsBase = e.get_fs_base();
         try {
           const sehHead = dv.getUint32(g2w(fsBase), true);
+          flushDedup();
           logs.push(`  [SEH] fs:[0]=${hex(sehHead)} EBP=${hex(e.get_ebp())}`);
         } catch (_) {}
       }
@@ -620,10 +669,16 @@ async function main() {
       if (((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>') {
         const apiId = (val >>> 0) & 0xFFFF;
         const entry = apiTable.find(e => e.id === apiId);
+        flushDedup();
         logs.push(`  [COM api_id=${apiId} => ${entry ? entry.name : '???'}]`);
-      } else {
+      } else if (!lastApiEntry || !lastApiEntry.ret) {
+        // Legacy untyped path. Typed entries are formatted in log_api_exit
+        // using EAX, which is authoritative — skip here to avoid duplicate lines.
+        flushDedup();
         logs.push(`  => ${hex(val)}`);
         lastApiName = null;
+        lastApiEntry = null;
+        lastApiArgs = null;
       }
     } else {
       logs.push('[i32] ' + hex(val));
@@ -644,13 +699,28 @@ async function main() {
     };
   }
 
-  if (ESP_DELTA) {
+  if (ESP_DELTA || TRACE_API) {
     h.log_api_exit = () => {
       if (!lastApiName) return;
-      const espAfter = instance.exports.get_esp();
-      const delta = (espAfter - lastApiEsp) | 0;
-      logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
+      if (ESP_DELTA) {
+        const espAfter = instance.exports.get_esp();
+        const delta = (espAfter - lastApiEsp) | 0;
+        logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
+      }
+      if (TRACE_API && lastApiEntry) {
+        const dv = new DataView(memory.buffer);
+        const imageBase = instance.exports.get_image_base();
+        const fmtCtx = { dv, g2w: addr => addr - imageBase + 0x12000, memory: memory.buffer, readStr, hex };
+        const eax = instance.exports.get_eax();
+        const typedRet = fmtApiRet(lastApiEntry, eax, fmtCtx);
+        const outInfo = lastApiArgs ? fmtApiOutParams(lastApiEntry, lastApiArgs, fmtCtx) : '';
+        if (typedRet || outInfo) flushDedup();
+        if (typedRet) logs.push(`  ${typedRet.trim()}`);
+        if (outInfo) logs.push(outInfo);
+      }
       lastApiName = null;
+      lastApiEntry = null;
+      lastApiArgs = null;
     };
   }
 
