@@ -22,11 +22,14 @@
 
   ;; ---- Per-class state struct layouts ----
   ;;
-  ;; ButtonState (16 bytes, allocated in WM_CREATE)
+  ;; ButtonState (16 bytes, allocated in WM_CREATE — actually 64 bytes
+  ;; because BS_OWNERDRAW embeds DRAWITEMSTRUCT at +16)
   ;;   +0   text_buf_ptr   guest ptr from $heap_alloc (0 = no text)
   ;;   +4   text_len       chars, no NUL
-  ;;   +8   flags          bit0=pressed bit1=checked bit2=default bit3=focused
-  ;;                       bit4..7 = button kind (0=push 1=checkbox 2=radio 3=groupbox)
+  ;;   +8   flags          bit0=pressed   bit1=checked
+  ;;                       bit2=default   (current paint default — flips on focus)
+  ;;                       bit3=focused
+  ;;                       bit8=ownerdraw_drawn (WM_DRAWITEM posted)
   ;;   +12  ctrl_id
   ;;
   ;; StaticState (16 bytes)
@@ -1689,6 +1692,69 @@
       (br $scan)))
   )
 
+  ;; Walk siblings under the same parent and clear bit2 ("default") on any
+  ;; button that has it set. Used when a non-default button gains focus —
+  ;; real Win98 promotes the focused button to the temporary default, so
+  ;; the originally-default button must lose its border.
+  (func $btn_clear_sibling_default (param $hwnd i32) (param $except i32)
+    (local $parent i32) (local $i i32) (local $rec i32)
+    (local $other i32) (local $st i32) (local $stw i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $other (i32.load (local.get $rec)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $other) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+            (i32.ne (local.get $other) (local.get $except)))
+        (then
+          (if (i32.eq (call $ctrl_table_get_class (local.get $other)) (i32.const 1))
+            (then
+              (local.set $st (i32.load offset=20 (local.get $rec)))
+              (if (local.get $st)
+                (then
+                  (local.set $stw (call $g2w (local.get $st)))
+                  (if (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0x04))
+                    (then
+                      (i32.store offset=8 (local.get $stw)
+                        (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0xFFFFFFFB)))
+                      (call $invalidate_hwnd (local.get $other))))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+  )
+
+  ;; Find sibling button under same parent whose style&0xF == 1 (real
+  ;; BS_DEFPUSHBUTTON), set bit2 on it, invalidate. Used on KILLFOCUS so
+  ;; the originally-default button regains its border.
+  (func $btn_restore_real_default (param $hwnd i32)
+    (local $parent i32) (local $i i32) (local $rec i32)
+    (local $other i32) (local $st i32) (local $stw i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $other (i32.load (local.get $rec)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $other) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+            (i32.eq (i32.and (call $wnd_get_style (local.get $other)) (i32.const 0x0F))
+                    (i32.const 1)))
+        (then
+          (local.set $st (i32.load offset=20 (local.get $rec)))
+          (if (local.get $st)
+            (then
+              (local.set $stw (call $g2w (local.get $st)))
+              (i32.store offset=8 (local.get $stw)
+                (i32.or (i32.load offset=8 (local.get $stw)) (i32.const 0x04)))
+              (call $invalidate_hwnd (local.get $other))
+              (return)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+  )
+
   ;; ---- Button WndProc ----
   ;;
   ;; Test path NOT YET WIRED: dialog buttons today receive only BM_GETCHECK
@@ -1722,7 +1788,13 @@
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store        (local.get $state_w) (i32.const 0)) ;; text_buf_ptr
         (i32.store offset=4  (local.get $state_w) (i32.const 0)) ;; text_len
-        (i32.store offset=8  (local.get $state_w) (i32.const 0)) ;; flags
+        ;; flags: bit2=default if BS_DEFPUSHBUTTON (style&0xF == 1).
+        ;; The control's style is already on the WND record via $dlg_load /
+        ;; $ctrl_create_child, so $wnd_get_style returns the right value.
+        (i32.store offset=8  (local.get $state_w)
+          (select (i32.const 0x04) (i32.const 0)
+                  (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
+                          (i32.const 1))))
         (i32.store offset=12 (local.get $state_w) (local.get $hmenu)) ;; ctrl_id
         ;; Copy initial text from CREATESTRUCT.lpszName
         (if (local.get $name_ptr)
@@ -1742,6 +1814,66 @@
             (call $heap_free (i32.load (local.get $state_w))) ;; free text buf
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETFOCUS (0x0007) ----------
+    ;; Mark focused (bit3) and become the temporary default (bit2). If
+    ;; this button isn't the real default, clear bit2 on whichever
+    ;; sibling currently has it.
+    (if (i32.eq (local.get $msg) (i32.const 0x0007))
+      (then
+        (global.set $focus_hwnd (local.get $hwnd))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (call $btn_clear_sibling_default (local.get $hwnd) (local.get $hwnd))
+            (i32.store offset=8 (local.get $state_w)
+              (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x0C))) ;; focused | default
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_KILLFOCUS (0x0008) ----------
+    ;; Clear focused. If this button isn't the real default but currently
+    ;; has bit2 (because it was the temp-default), clear it and restore
+    ;; bit2 on the real default.
+    (if (i32.eq (local.get $msg) (i32.const 0x0008))
+      (then
+        (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+          (then (global.set $focus_hwnd (i32.const 0))))
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            ;; Always clear focused bit3.
+            (i32.store offset=8 (local.get $state_w)
+              (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0xFFFFFFF7)))
+            ;; If we aren't the real default, drop bit2 and restore the
+            ;; real default's border. wnd style&0xF == 1 means real
+            ;; BS_DEFPUSHBUTTON.
+            (if (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
+                        (i32.const 1))
+              (then
+                (i32.store offset=8 (local.get $state_w)
+                  (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0xFFFFFFFB)))
+                (call $btn_restore_real_default (local.get $hwnd))))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_KEYDOWN (0x0100) ----------
+    ;; Space/Enter activate the button — post WM_COMMAND(BN_CLICKED) to
+    ;; the parent dialog. Mirrors WM_LBUTTONUP's parent-notify path.
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        (if (i32.or (i32.eq (local.get $wParam) (i32.const 0x20))   ;; VK_SPACE
+                    (i32.eq (local.get $wParam) (i32.const 0x0D)))  ;; VK_RETURN
+          (then
+            (if (local.get $state)
+              (then
+                (local.set $state_w (call $g2w (local.get $state)))
+                (drop (call $wnd_send_message
+                  (call $wnd_get_parent (local.get $hwnd))
+                  (i32.const 0x0111)
+                  (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
+                  (local.get $hwnd)))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_SETTEXT (0x000C) ----------
@@ -1873,16 +2005,40 @@
         ;; ---- Push button (kinds 0, 1) ----
         (if (i32.lt_u (local.get $kind) (i32.const 2))
           (then
+            ;; If currently the default (bit2), draw a 1px black border
+            ;; around the outer edge and inset the bevel by 1 px.
+            (local.set $box_y (i32.and (local.get $flags) (i32.const 0x04))) ;; reuse $box_y as "is default"
+            (if (local.get $box_y)
+              (then
+                ;; 1px black frame via 4 fill_rect strokes (BLACK_BRUSH=0x30014).
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (i32.const 1) (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.sub (local.get $h) (i32.const 1))
+                        (local.get $w) (local.get $h) (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (i32.const 1) (local.get $h) (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.sub (local.get $w) (i32.const 1)) (i32.const 0)
+                        (local.get $w) (local.get $h) (i32.const 0x30014)))))
             ;; Fill face with LTGRAY_BRUSH (stock object 1 = 0x30011)
             (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (select (i32.const 1) (i32.const 0) (local.get $box_y))
+                    (select (i32.const 1) (i32.const 0) (local.get $box_y))
+                    (select (i32.sub (local.get $w) (i32.const 1)) (local.get $w) (local.get $box_y))
+                    (select (i32.sub (local.get $h) (i32.const 1)) (local.get $h) (local.get $box_y))
                     (i32.const 0x30011)))
             ;; Bevel: BF_RECT(0x0F) | BDR_RAISEDOUTER(0x01)|BDR_RAISEDINNER(0x04) = 0x05
             ;;        or pressed: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A
             (local.set $edge_flags (select (i32.const 0x0A) (i32.const 0x05)
                                            (i32.and (local.get $flags) (i32.const 0x01))))
             (drop (call $host_gdi_draw_edge (local.get $hdc)
-                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (select (i32.const 1) (i32.const 0) (local.get $box_y))
+                    (select (i32.const 1) (i32.const 0) (local.get $box_y))
+                    (select (i32.sub (local.get $w) (i32.const 1)) (local.get $w) (local.get $box_y))
+                    (select (i32.sub (local.get $h) (i32.const 1)) (local.get $h) (local.get $box_y))
                     (local.get $edge_flags) (i32.const 0x0F)))
             (if (local.get $text_w)
               (then
@@ -1895,6 +2051,13 @@
                         (local.get $text_w) (local.get $text_len)
                         (global.get $PAINT_SCRATCH)
                         (i32.const 0x25) (i32.const 0)))))
+            ;; Focus rect (bit3): inset 4px from outer edge.
+            (if (i32.and (local.get $flags) (i32.const 0x08))
+              (then
+                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                        (i32.const 4) (i32.const 4)
+                        (i32.sub (local.get $w) (i32.const 4))
+                        (i32.sub (local.get $h) (i32.const 4))))))
             (return (i32.const 0))))
 
         ;; ---- Checkbox-style (kinds 2, 3, 5, 6) ----
@@ -1948,6 +2111,13 @@
                         (local.get $text_w) (local.get $text_len)
                         (global.get $PAINT_SCRATCH)
                         (i32.const 0x24) (i32.const 0)))))
+            ;; Focus rect (bit3) around the label.
+            (if (i32.and (local.get $flags) (i32.const 0x08))
+              (then
+                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                        (i32.const 14) (i32.const 1)
+                        (i32.sub (local.get $w) (i32.const 1))
+                        (i32.sub (local.get $h) (i32.const 1))))))
             (return (i32.const 0))))
 
         ;; ---- Radio-style (kinds 4, 9) ----
@@ -1980,6 +2150,13 @@
                         (local.get $text_w) (local.get $text_len)
                         (global.get $PAINT_SCRATCH)
                         (i32.const 0x24) (i32.const 0)))))
+            ;; Focus rect (bit3) around the label.
+            (if (i32.and (local.get $flags) (i32.const 0x08))
+              (then
+                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                        (i32.const 14) (i32.const 1)
+                        (i32.sub (local.get $w) (i32.const 1))
+                        (i32.sub (local.get $h) (i32.const 1))))))
             (return (i32.const 0))))
 
         ;; ---- Groupbox (kind 7) ----
@@ -2030,14 +2207,16 @@
         ;; DRAWITEMSTRUCT (48 bytes) is embedded at ButtonState+16.
         (if (i32.eq (local.get $kind) (i32.const 0x0B))
           (then
-            ;; Skip if already drawn (flags bit 2) or queue full
-            (if (i32.and (local.get $flags) (i32.const 0x04))
+            ;; Skip if already drawn (flags bit 8 = 0x100) or queue full.
+            ;; bit2 is reserved for "current default" (paint flag); use a
+            ;; distinct bit for ownerdraw "WM_DRAWITEM already posted".
+            (if (i32.and (local.get $flags) (i32.const 0x100))
               (then (return (i32.const 0))))
             (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
               (then (return (i32.const 0))))
-            ;; Set drawn flag
+            ;; Set drawn flag (bit 8)
             (i32.store offset=8 (local.get $state_w)
-              (i32.or (local.get $flags) (i32.const 0x04)))
+              (i32.or (local.get $flags) (i32.const 0x100)))
             ;; Fill DRAWITEMSTRUCT at ButtonState+16
             ;; Reuse $edge_flags as WASM address of the struct
             (local.set $edge_flags (call $g2w (i32.add (local.get $state) (i32.const 16))))
@@ -2111,6 +2290,17 @@
     (local $tx_r i32) (local $tx_b i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    ;; ---------- WM_SETFOCUS (0x0007) / WM_KILLFOCUS (0x0008) ----------
+    ;; Statics aren't tabstops, but if focus lands here (e.g. an app calls
+    ;; SetFocus on a label) keep the global $focus_hwnd consistent.
+    (if (i32.eq (local.get $msg) (i32.const 0x0007))
+      (then (global.set $focus_hwnd (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0008))
+      (then
+        (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+          (then (global.set $focus_hwnd (i32.const 0))))
+        (return (i32.const 0))))
 
     ;; ---------- WM_CREATE (0x0001) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0001))

@@ -4597,9 +4597,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 394: DrawFocusRect — STUB: unimplemented
+  ;; 121: DrawFocusRect(hdc, lprc) — 1px dotted black rect via host primitive.
   (func $handle_DrawFocusRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $rc i32)
+    (local.set $rc (call $g2w (local.get $arg1)))
+    (drop (call $host_gdi_draw_focus_rect (local.get $arg0)
+            (i32.load (local.get $rc))
+            (i32.load offset=4 (local.get $rc))
+            (i32.load offset=8 (local.get $rc))
+            (i32.load offset=12 (local.get $rc))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; ret + 2 args
   )
 
   ;; 395: PtInRect(lprc, pt.x, pt.y) -> BOOL — 3 args stdcall

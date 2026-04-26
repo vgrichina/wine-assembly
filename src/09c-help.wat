@@ -398,6 +398,23 @@
     (call $help_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
   )
 
+  ;; ---- Focus management ----
+  ;;
+  ;; $set_focus(new_hwnd) is the single entry point for focus changes.
+  ;; Sends WM_KILLFOCUS to the previously focused hwnd (if any) and
+  ;; WM_SETFOCUS to the new one. Each control's wndproc updates its
+  ;; per-class focus bit and invalidates itself; the global $focus_hwnd
+  ;; is also updated by those handlers.
+  (func $set_focus (param $new_hwnd i32)
+    (local $old i32)
+    (local.set $old (global.get $focus_hwnd))
+    (if (i32.eq (local.get $old) (local.get $new_hwnd)) (then (return)))
+    (if (local.get $old)
+      (then (drop (call $wnd_send_message (local.get $old) (i32.const 0x0008) (local.get $new_hwnd) (i32.const 0)))))
+    (if (local.get $new_hwnd)
+      (then (drop (call $wnd_send_message (local.get $new_hwnd) (i32.const 0x0007) (local.get $old) (i32.const 0)))))
+  )
+
   ;; ---- Help system ----
 
   ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0

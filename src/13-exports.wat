@@ -446,6 +446,64 @@
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "get_capture_hwnd")     (result i32) (global.get $capture_hwnd))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
+  ;; Set focus via the proper SETFOCUS/KILLFOCUS message round-trip so
+  ;; per-class focus bits + default-button flip + invalidates fire.
+  (func (export "set_focus") (param $hwnd i32) (call $set_focus (local.get $hwnd)))
+
+  ;; Find the current default button under $dlg (any child with bit2 of
+  ;; ButtonState+8 set). Returns 0 if none.
+  (func (export "dlg_get_default_btn") (param $dlg i32) (result i32)
+    (local $i i32) (local $rec i32) (local $h i32) (local $st i32) (local $stw i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $h (i32.load (local.get $rec)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $h) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $dlg)))
+            (i32.eq (call $ctrl_table_get_class (local.get $h)) (i32.const 1)))
+        (then
+          (local.set $st (i32.load offset=20 (local.get $rec)))
+          (if (local.get $st)
+            (then
+              (local.set $stw (call $g2w (local.get $st)))
+              (if (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0x04))
+                (then (return (local.get $h))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Move focus within a radio group. $hwnd is the currently-focused
+  ;; BS_AUTORADIOBUTTON; $dir is +1 (next) or -1 (prev). Walks contiguous
+  ;; sibling slots looking for another autoradio under the same parent.
+  ;; Returns the new focus hwnd, or 0 if no peer found.
+  (func (export "radio_group_step") (param $hwnd i32) (param $dir i32) (result i32)
+    (local $parent i32) (local $idx i32) (local $start i32) (local $i i32)
+    (local $rec i32) (local $h i32) (local $count i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return (i32.const 0))))
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $i (local.get $idx))
+    (local.set $count (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $count) (global.get $MAX_WINDOWS)))
+      (local.set $i (i32.add (local.get $i) (local.get $dir)))
+      (if (i32.lt_s (local.get $i) (i32.const 0))
+        (then (local.set $i (i32.sub (global.get $MAX_WINDOWS) (i32.const 1)))))
+      (if (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS))
+        (then (local.set $i (i32.const 0))))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $h (i32.load (local.get $rec)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $h) (i32.const 0))
+                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+            (i32.eq (i32.and (call $wnd_get_style (local.get $h)) (i32.const 0x0F))
+                    (i32.const 9)))
+        (then (return (local.get $h))))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
 
   ;; Count occupied WND_RECORDS slots (hwnd != 0). Used by the find dialog
   ;; cancel/leak regression test to verify $wnd_destroy_tree actually

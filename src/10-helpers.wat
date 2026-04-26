@@ -1201,6 +1201,22 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $ctrl_loop)))
     (call $heap_free (local.get $cs))
+    ;; Initial focus: first child with WS_VISIBLE+WS_TABSTOP+!WS_DISABLED.
+    ;; Children allocated contiguously from $dlg_hwnd+1 (see $ctrl_create_child).
+    (local.set $i (i32.const 0))
+    (block $focus_done (loop $focus_scan
+      (br_if $focus_done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
+      (local.set $ctrl_hwnd (i32.add (local.get $dlg_hwnd) (i32.add (local.get $i) (i32.const 1))))
+      (local.set $ctrl_style (call $wnd_get_style (local.get $ctrl_hwnd)))
+      (if (i32.and
+            (i32.and (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x10000000)) (i32.const 0))   ;; WS_VISIBLE
+                     (i32.eqz (i32.and (local.get $ctrl_style) (i32.const 0x08000000))))             ;; !WS_DISABLED
+            (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x00010000)) (i32.const 0)))         ;; WS_TABSTOP
+        (then
+          (call $set_focus (local.get $ctrl_hwnd))
+          (br $focus_done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $focus_scan)))
     (local.get $ctrl_count))
 
 

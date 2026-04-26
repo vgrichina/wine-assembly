@@ -148,6 +148,8 @@
   ;; gdi_rectangle(hdc, left, top, right, bottom)
   (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_draw_edge" (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_draw_focus_rect(hdc, left, top, right, bottom) — 1px dotted black rect.
+  (import "host" "gdi_draw_focus_rect" (func $host_gdi_draw_focus_rect (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_gradient_fill_h(hdc, l, t, r, b, colorL, colorR) — horizontal linear gradient.
   ;; Win32 equivalent: GdiGradientFill(GRADIENT_FILL_RECT_H). Used by defwndproc_ncpaint.
   (import "host" "gdi_gradient_fill_h" (func $host_gdi_gradient_fill_h (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
