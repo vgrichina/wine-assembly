@@ -33,6 +33,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace` | Every decoded block's EIP |
 | `--trace-seh` | SEH chain operations |
 | `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
+| `--break-once` | Don't re-arm WASM bp after first hit. Plus prints `bp_first_caller` (sticky `dbg_prev_eip` snapshot from the very first time `$eip == $bp_addr`) — recovers the true caller when the bp lands inside a tight self-loop that would otherwise overwrite `dbg_prev_eip` with the bp address itself. |
 | `--trace-at=0xADDR` (`--trace-at-dump=0xADDR:LEN[,...]`) | Log regs + optional hexdump of given regions each time EIP hits addr (no stop). Add `--trace-at-watch` to diff each hexdump vs previous hit (bytes marked `*`). |
 | `--watch=0xADDR` / `--watch-byte=ADDR` / `--watch-word=ADDR` (`--watch-value=0xVAL`, `--watch-log`) | Break when memory at ADDR changes. Size: dword/byte/word. `--watch-log` logs every change without stopping into debug prompt (essential for non-interactive runs). `--watch-value` filters to a specific target value. |
 | `--show-cstring=0xADDR[,...]` | On every `--trace-at` hit and debug prompt, decode 1-byte-refcount + ASCII-at-+1 CString layout. Prints `[CString@ADDR] rc=N len=M "text"` — great for MFC/Borland apps where strings are packed this way. |

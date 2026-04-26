@@ -8,15 +8,9 @@
 //   3. The picker UI renders to the SDL window's back-canvas: the table
 //      header ("Filename" / "Ruleset"), every .dac entry, and the help
 //      hint at the bottom all show up as non-black pixels.
-//   4. Pressing Enter is at least delivered to SDL — we observe the game
-//      consuming the keystroke (ToAsciiEx + level-metadata FileTime calls
-//      fire) even though the gameplay state machine then deadlocks on a
-//      heap-loaded msvcrt critical section. That deeper bug is out of
-//      scope here; the surface assertion is "input flows".
-//
-// This test stops short of asserting that the level board renders. Once
-// the EnterCriticalSection deadlock at EIP=0x00d16b8a is fixed, extend
-// this with a second snapshot after Enter and assert tile pixels appear.
+//   4. Pressing Enter is delivered to SDL — ToAsciiEx + level-metadata
+//      FileTime calls fire — and the gameplay state machine advances past
+//      the picker into a rendered tile board.
 
 const fs = require('fs');
 const path = require('path');

@@ -11,7 +11,7 @@
       (br_if $halt (i32.eqz (global.get $eip)))
       (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
-      (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 4096)))
+      (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
@@ -32,6 +32,12 @@
       ;; JS-driven re-arm (e.g. --trace-at) spins halting at the same address.
       (if (i32.eq (global.get $eip) (global.get $bp_addr))
         (then
+          ;; Capture caller eip on FIRST hit only (sticky — never overwritten).
+          ;; Reading get_bp_first_caller from JS returns the true prev_eip
+          ;; from the iteration before bp first matched, even if subsequent
+          ;; halts overwrite $dbg_prev_eip with the bp address itself.
+          (if (i32.eqz (global.get $bp_first_caller))
+            (then (global.set $bp_first_caller (global.get $dbg_prev_eip))))
           (if (global.get $bp_skip_once)
             (then (global.set $bp_skip_once (i32.const 0)))
             (else (global.set $bp_skip_once (i32.const 1)) (br $halt)))))
@@ -216,6 +222,7 @@
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
     (global.set $THREAD_BASE (i32.add (i32.const 0x03E52000)
       (i32.mul (local.get $tid) (i32.const 0x80000))))
+    (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x80000)))
     (global.set $CACHE_INDEX (i32.add (i32.const 0x04252000)
       (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
@@ -268,8 +275,9 @@
   (func (export "get_hwnd_base") (result i32) (global.get $next_hwnd))
 
   ;; Watchpoint exports
-  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)))
+  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+  (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
   ;; upper bound; pass flag=0 to turn off tracing.

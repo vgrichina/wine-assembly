@@ -563,7 +563,7 @@
     ;; address, and $cache_store at the end would record a stale offset pointing
     ;; into reused thread storage. Headroom of 16KB is far larger than any
     ;; single block needs.
-    (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $CACHE_INDEX) (i32.const 16384)))
+    (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 16384)))
       (then
         (call $host_log_i32 (i32.const 0xCA00F10F))
         (global.set $thread_alloc (global.get $THREAD_BASE))
@@ -656,8 +656,16 @@
           (br $decode)))
 
       ;; ---- CALL far (0x9A ptr16:32) ----
+      ;; Flat-mode emulation: ignore the selector, treat as near CALL to offset.
+      ;; Real x86 would push (CS, EIP) but Win32 user-mode code that uses 0x9A
+      ;; in flat memory just round-trips CS=0x1B, so the selector word is dead.
       (if (i32.eq (local.get $op) (i32.const 0x9A))
-        (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode)))
+        (then
+          (local.set $disp (call $d_fetch32))   ;; offset
+          (drop (call $d_fetch16))              ;; selector — ignored
+          (call $te (i32.const 39) (global.get $d_pc)) ;; ret_addr = next_eip
+          (call $te_raw (local.get $disp))
+          (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- ALU r/m32, r32 (0x00-0x3F even: ADD=00,OR=08,ADC=10,SBB=18,AND=20,SUB=28,XOR=30,CMP=38) ----
       ;; Opcodes 0x00/0x01: ADD r/m, r (byte/dword)
@@ -1147,8 +1155,14 @@
               (call $te (i32.const 43) (i32.const 0)) (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
               (local.set $done (i32.const 1)) (br $decode)))
       ;; ---- JMP far (0xEA ptr16:32) ----
+      ;; Flat-mode emulation: ignore the selector, treat as near JMP to offset.
       (if (i32.eq (local.get $op) (i32.const 0xEA))
-        (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode)))
+        (then
+          (local.set $disp (call $d_fetch32))   ;; offset
+          (drop (call $d_fetch16))              ;; selector — ignored
+          (call $te (i32.const 43) (i32.const 0))
+          (call $te_raw (local.get $disp))
+          (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- Jcc rel8 (0x70-0x7F) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x70)) (i32.le_u (local.get $op) (i32.const 0x7F)))

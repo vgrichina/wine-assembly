@@ -58,6 +58,7 @@ const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Q
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
+const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
 const TRACE_AT_DUMP = getArg('trace-at-dump', null); // --trace-at-dump=0xADDR:LEN[,0xADDR:LEN,...]: hexdump these regions on each --trace-at hit
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
@@ -857,6 +858,7 @@ async function main() {
       renderer,
       onExit: () => {},
       trace: traceCategories,
+      traceHost: traceHostNames,
       vfs: ctx.vfs,  // share filesystem with main thread
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
@@ -1786,10 +1788,11 @@ async function main() {
       if (breakAddrs.length && breakAddrs.includes(eipNow) && eipNow !== eipBefore) {
         console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
         if (instance.exports.get_dbg_prev_eip) console.log('  dbg_prev_eip=' + hex(instance.exports.get_dbg_prev_eip()));
+        if (instance.exports.get_bp_first_caller) console.log('  bp_first_caller=' + hex(instance.exports.get_bp_first_caller()));
         console.log('  ' + regs());
         dumpStack();
-        // Re-arm WASM bp so subsequent hits also fire
-        if (instance.exports.set_bp) instance.exports.set_bp(breakAddrs[0]);
+        // Re-arm WASM bp so subsequent hits also fire (skip if --break-once)
+        if (instance.exports.set_bp && !BREAK_ONCE) instance.exports.set_bp(breakAddrs[0]);
       }
       // --trace-at: one-line register dump per hit, no stop
       if (traceAtAddr && eipNow === traceAtAddr) {
@@ -1932,6 +1935,14 @@ async function main() {
         if (s < slices - 1 && !stopped) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
+      }
+    }
+    {
+      const eipPostThreads = instance.exports.get_eip();
+      if (breakAddrs.length && breakAddrs.includes(eipPostThreads) && !breakAddrs.includes(eipBefore)) {
+        console.log(`\n*** BREAKPOINT (POST-THREADS) hit at ${hex(eipPostThreads)} (batch ${batch}, eipBefore=${hex(eipBefore)})`);
+        if (instance.exports.get_dbg_prev_eip) console.log('  dbg_prev_eip=' + hex(instance.exports.get_dbg_prev_eip()));
+        if (instance.exports.get_bp_first_caller) console.log('  bp_first_caller=' + hex(instance.exports.get_bp_first_caller()));
       }
     }
     // Check if main thread is waiting on an event

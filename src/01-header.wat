@@ -506,6 +506,10 @@
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (i32.const 0x03E52000))
+  ;; THREAD_END = THREAD_BASE + 0x80000. Per-thread partition limit; overflow
+  ;; checks use this instead of CACHE_INDEX so main (tid=0) doesn't trample
+  ;; T1's thread cache region. Updated in $init_thread per tid.
+  (global $THREAD_END   (mut i32) (i32.const 0x03ED2000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x04252000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
@@ -960,6 +964,7 @@
   ;; instead of halting again without making progress.
   (global $bp_addr (mut i32) (i32.const 0))
   (global $bp_skip_once (mut i32) (i32.const 0))
+  (global $bp_first_caller (mut i32) (i32.const 0))
 
   ;; --trace-esp: when flag=1, the run loop calls $host_log_block(eip, esp)
   ;; at each block boundary whose EIP falls inside [lo, hi]. hi=0 means
