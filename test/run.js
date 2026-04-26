@@ -81,6 +81,13 @@ const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileS
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
+const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
+const TRACE_THREAD = hasFlag('trace-thread'); // --trace-thread: log per-thread state transitions
+const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
+const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--audio-stats=')); // --audio-stats[=N]: heartbeat every N waveOutWrites
+const AUDIO_STATS = !!AUDIO_STATS_RAW;
+const AUDIO_STATS_STRIDE = (AUDIO_STATS_RAW && AUDIO_STATS_RAW.includes('=')) ? parseInt(AUDIO_STATS_RAW.split('=')[1]) || 50 : 50;
+const BREAK_THREAD = getArg('break-thread', null); // --break-thread=Tn: only halt when bp/trace-at hits in given thread (T0=main)
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -116,7 +123,18 @@ const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) 
 if (breakAddrs.length > 1) {
   BATCH_SIZE = 1; // WASM set_bp holds only one addr; JS check must see every block
 }
-const traceAtAddr = TRACE_AT ? parseInt(TRACE_AT, 16) : 0; // set_bp supports only one addr
+const traceAtAddrs = TRACE_AT ? TRACE_AT.split(',').map(s => parseInt(s, 16) >>> 0) : [];
+const traceAtAddr = traceAtAddrs[0] || 0; // set_bp supports only one addr; JS checks all
+if (traceAtAddrs.length > 1) {
+  BATCH_SIZE = 1;
+}
+// --watch / --watch-byte / --watch-word can be comma-separated (multi-addr fan-out via JS)
+const parseWatchSpec = (spec) => spec ? spec.split(',').map(s => parseInt(s.split(':')[0], 16) >>> 0) : [];
+const watchAddrsArg = parseWatchSpec(WATCH_SPEC).concat(parseWatchSpec(WATCH_BYTE)).concat(parseWatchSpec(WATCH_WORD));
+if (watchAddrsArg.length > 1) {
+  BATCH_SIZE = 1;
+}
+const breakThreadFilter = BREAK_THREAD ? parseInt(BREAK_THREAD.replace(/^T/i, ''), 10) : null;
 let traceAtHits = 0;
 const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
@@ -409,6 +427,8 @@ async function main() {
   if (TRACE_FS) traceCategories.add('fs');
   if (TRACE_INI) traceCategories.add('ini');
   if (TRACE_REG) traceCategories.add('reg');
+  if (TRACE_WAVE) traceCategories.add('wave');
+  if (AUDIO_STATS) traceCategories.add('audio-stats');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
@@ -423,6 +443,7 @@ async function main() {
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
+    audioStatsStride: AUDIO_STATS ? AUDIO_STATS_STRIDE : 0,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
     _sharedAudio: {},  // shared waveOut state across threads
@@ -968,7 +989,11 @@ async function main() {
     return { host: wh };
   };
 
-  threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports);
+  threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
+    traceThread: TRACE_THREAD,
+    traceYield: TRACE_YIELD,
+    breakThreadFilter: breakThreadFilter,
+  });
 
   const mem = new Uint8Array(memory.buffer);
   mem.set(exeBytes, instance.exports.get_staging());
@@ -1326,19 +1351,35 @@ async function main() {
 
   // Watchpoint: WASM-level per-block memory watch (1/2/4 byte granularity)
   let watchAddr = 0, watchPrevVal = 0, watchSize = 4;
+  let extraWatchAddrs = []; // additional addrs beyond watchAddr (JS-side fan-out)
+  let extraWatchPrev = []; // prev values for extras
   if (WATCH_BYTE) {
-    watchAddr = parseInt(WATCH_BYTE.split(':')[0], 16);
+    const all = WATCH_BYTE.split(',').map(s => parseInt(s.split(':')[0], 16) >>> 0);
+    watchAddr = all[0]; extraWatchAddrs = all.slice(1);
     watchSize = 1;
   } else if (WATCH_WORD) {
-    watchAddr = parseInt(WATCH_WORD.split(':')[0], 16);
+    const all = WATCH_WORD.split(',').map(s => parseInt(s.split(':')[0], 16) >>> 0);
+    watchAddr = all[0]; extraWatchAddrs = all.slice(1);
     watchSize = 2;
   } else if (WATCH_SPEC) {
-    watchAddr = parseInt(WATCH_SPEC.split(':')[0], 16);
+    const all = WATCH_SPEC.split(',').map(s => parseInt(s.split(':')[0], 16) >>> 0);
+    watchAddr = all[0]; extraWatchAddrs = all.slice(1);
     watchSize = 4;
   }
   if (watchAddr) {
     const sizeName = { 1: 'byte', 2: 'word', 4: 'dword' }[watchSize];
-    console.log(`Watchpoint set: ${hex(watchAddr)} (${sizeName}, checked every block)`);
+    const extra = extraWatchAddrs.length ? ` +${extraWatchAddrs.length} more (JS fan-out)` : '';
+    console.log(`Watchpoint set: ${hex(watchAddr)} (${sizeName}, checked every block)${extra}`);
+  }
+  const readGuestSized = (addr) => {
+    const wa = g2w(addr);
+    const u8 = new Uint8Array(memory.buffer);
+    if (watchSize === 1) return u8[wa];
+    if (watchSize === 2) return u8[wa] | (u8[wa+1] << 8);
+    return new DataView(memory.buffer).getUint32(wa, true);
+  };
+  if (extraWatchAddrs.length) {
+    extraWatchPrev = extraWatchAddrs.map(a => readGuestSized(a) >>> 0);
   }
 
   const activateWatchpoint = () => {
@@ -1353,16 +1394,31 @@ async function main() {
 
   const checkWatchpoint = (batch) => {
     if (!watchAddr) return false;
+    let hit = false;
     const newVal = instance.exports.get_watch_val();
-    if (newVal === watchPrevVal) return false;
-    if (watchFilterVal !== null && (newVal >>> 0) !== (watchFilterVal >>> 0)) {
+    if (newVal !== watchPrevVal) {
+      const filtered = watchFilterVal !== null && (newVal >>> 0) !== (watchFilterVal >>> 0);
+      if (!filtered) {
+        console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
+        console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
+        hit = true;
+      }
       watchPrevVal = newVal;
-      return false;
     }
-    console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
-    console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
-    watchPrevVal = newVal;
-    return true;
+    // JS-side fan-out for additional watch addresses
+    for (let i = 0; i < extraWatchAddrs.length; i++) {
+      const a = extraWatchAddrs[i];
+      const v = readGuestSized(a) >>> 0;
+      if (v !== extraWatchPrev[i]) {
+        if (watchFilterVal === null || v === (watchFilterVal >>> 0)) {
+          console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(a)}] changed`);
+          console.log(`  Old: ${hex(extraWatchPrev[i])}  New: ${hex(v)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
+          hit = true;
+        }
+        extraWatchPrev[i] = v;
+      }
+    }
+    return hit;
   };
 
   const debugPrompt = async (reason) => {
@@ -1780,9 +1836,13 @@ async function main() {
     }
     // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
-      console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
-      stepping = true;
-      await debugPrompt('Break');
+      if (breakThreadFilter !== null && breakThreadFilter !== 0) {
+        // --break-thread filter excludes main; skip silently
+      } else {
+        console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
+        stepping = true;
+        await debugPrompt('Break');
+      }
     }
 
     // Single-step mode
@@ -1858,16 +1918,21 @@ async function main() {
     {
       const eipNow = instance.exports.get_eip();
       if (breakAddrs.length && breakAddrs.includes(eipNow) && eipNow !== eipBefore) {
-        console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
-        if (instance.exports.get_dbg_prev_eip) console.log('  dbg_prev_eip=' + hex(instance.exports.get_dbg_prev_eip()));
-        if (instance.exports.get_bp_first_caller) console.log('  bp_first_caller=' + hex(instance.exports.get_bp_first_caller()));
-        console.log('  ' + regs());
-        dumpStack();
-        // Re-arm WASM bp so subsequent hits also fire (skip if --break-once)
-        if (instance.exports.set_bp && !BREAK_ONCE) instance.exports.set_bp(breakAddrs[0]);
+        if (breakThreadFilter !== null && breakThreadFilter !== 0) {
+          // --break-thread filter excludes main; just re-arm and continue
+          if (instance.exports.set_bp && !BREAK_ONCE) instance.exports.set_bp(breakAddrs[0]);
+        } else {
+          console.log(`\n*** BREAKPOINT hit at ${hex(eipNow)} (batch ${batch}, WASM bp)`);
+          if (instance.exports.get_dbg_prev_eip) console.log('  dbg_prev_eip=' + hex(instance.exports.get_dbg_prev_eip()));
+          if (instance.exports.get_bp_first_caller) console.log('  bp_first_caller=' + hex(instance.exports.get_bp_first_caller()));
+          console.log('  ' + regs());
+          dumpStack();
+          // Re-arm WASM bp so subsequent hits also fire (skip if --break-once)
+          if (instance.exports.set_bp && !BREAK_ONCE) instance.exports.set_bp(breakAddrs[0]);
+        }
       }
-      // --trace-at: one-line register dump per hit, no stop
-      if (traceAtAddr && eipNow === traceAtAddr) {
+      // --trace-at: one-line register dump per hit, no stop (matches any addr in traceAtAddrs)
+      if (traceAtAddrs.length && traceAtAddrs.includes(eipNow >>> 0)) {
         traceAtHits++;
         const e = instance.exports;
         const esp = e.get_esp() >>> 0;
@@ -2093,6 +2158,8 @@ if (VERBOSE) {
       console.log(line.trim());
     }
   }
+
+  if (ctx._finalizeWaveTrace) ctx._finalizeWaveTrace();
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
 
