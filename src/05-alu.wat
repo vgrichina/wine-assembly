@@ -301,6 +301,21 @@
   ;; ============================================================
 
   ;; 0: nop
+  ;; Shadow call-stack helpers (gated by $cs_enabled). Stores ret_addrs
+  ;; in a 64-slot ring at $CS_RING; depth saturates so deep recursion
+  ;; just overwrites oldest entries.
+  (func $cs_push (param $ret i32)
+    (if (i32.eqz (global.get $cs_enabled)) (then (return)))
+    (i32.store
+      (i32.add (global.get $CS_RING)
+               (i32.shl (i32.and (global.get $cs_depth) (global.get $CS_MASK)) (i32.const 2)))
+      (local.get $ret))
+    (global.set $cs_depth (i32.add (global.get $cs_depth) (i32.const 1))))
+  (func $cs_pop
+    (if (i32.eqz (global.get $cs_enabled)) (then (return)))
+    (if (i32.gt_s (global.get $cs_depth) (i32.const 0))
+      (then (global.set $cs_depth (i32.sub (global.get $cs_depth) (i32.const 1))))))
+
   (func $th_nop (param $op i32) (return_call $next))
   ;; 1: skip next word
   (func $th_next_word (param $op i32) (drop (call $read_thread_word)) (return_call $next))
@@ -529,6 +544,7 @@
         (call $host_log_i32 (local.get $op))))   ;; ret addr (caller post-call)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $op))
+    (call $cs_push (local.get $op))
     (global.set $eip (local.get $target)))
   (func $th_call_ind (param $op i32)
     (local $mem_addr i32) (local $target i32)
@@ -547,13 +563,16 @@
     ;; Regular indirect call
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $op))
+    (call $cs_push (local.get $op))
     (global.set $eip (local.get $target)))
   (func $th_ret (param $op i32)
     (global.set $eip (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (call $cs_pop))
   (func $th_ret_imm (param $op i32)
     (global.set $eip (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op))))
+    (call $cs_pop))
   (func $th_jmp (param $op i32) (global.set $eip (call $read_thread_word)))
   (func $th_jcc (param $op i32)
     (local $fall i32) (local $target i32) (local $taken i32)

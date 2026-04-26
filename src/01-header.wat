@@ -487,7 +487,8 @@
   ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
   ;; 0x00010670  400B    Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
-  ;; 0x00010900  ~3KB    Free (up to GUEST_BASE)
+  ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
+  ;; 0x00010A00  ~2.7KB  Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -683,6 +684,13 @@
   (global $dbg_last_push1 (mut i32) (i32.const 0))
   (global $dbg_prev_eip (mut i32) (i32.const 0))
   (global $dbg_counter (mut i32) (i32.const -1))
+  ;; Shadow call-stack for --trace-callstack: ring buffer of ret_addrs.
+  ;; Push on CALL, pop on RET. JS reads via get_cs_depth/get_cs_entry.
+  ;; cs_enabled gates the push/pop hot path so non-debug runs pay zero cost.
+  (global $CS_RING i32 (i32.const 0x00010900))
+  (global $CS_MASK i32 (i32.const 63))   ;; 64 slots, power-of-two for cheap mask
+  (global $cs_depth (mut i32) (i32.const 0))
+  (global $cs_enabled (mut i32) (i32.const 0))
 
   ;; Direction flag for string ops (0=up, 1=down)
   (global $df (mut i32) (i32.const 0))

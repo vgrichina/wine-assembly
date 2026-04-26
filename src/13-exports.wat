@@ -323,6 +323,17 @@
   (func (export "get_watch_addr") (result i32) (global.get $watch_addr))
   (func (export "get_watch_size") (result i32) (global.get $watch_size))
 
+  ;; --- Shadow call-stack (--trace-callstack) ---
+  (func (export "set_callstack_enabled") (param $on i32) (global.set $cs_enabled (local.get $on)))
+  (func (export "get_callstack_depth") (result i32) (global.get $cs_depth))
+  ;; entry i=0 → most recent ret_addr, i=1 → caller's, etc. up to 64 entries.
+  (func (export "get_callstack_entry") (param $i i32) (result i32)
+    (local $idx i32)
+    (if (i32.ge_u (local.get $i) (i32.const 64)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $i) (global.get $cs_depth)) (then (return (i32.const 0))))
+    (local.set $idx (i32.and (i32.sub (i32.sub (global.get $cs_depth) (i32.const 1)) (local.get $i)) (global.get $CS_MASK)))
+    (i32.load (i32.add (global.get $CS_RING) (i32.shl (local.get $idx) (i32.const 2)))))
+
   ;; call_func(addr, arg0, arg1, arg2, arg3): push args right-to-left + halt
   ;; return addr, set EIP, then caller uses run() to execute. Result in EAX.
   (func (export "call_func") (param $addr i32) (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32)

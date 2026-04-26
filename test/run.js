@@ -88,6 +88,10 @@ const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--
 const AUDIO_STATS = !!AUDIO_STATS_RAW;
 const AUDIO_STATS_STRIDE = (AUDIO_STATS_RAW && AUDIO_STATS_RAW.includes('=')) ? parseInt(AUDIO_STATS_RAW.split('=')[1]) || 50 : 50;
 const BREAK_THREAD = getArg('break-thread', null); // --break-thread=Tn: only halt when bp/trace-at hits in given thread (T0=main)
+const TRACE_CALLSTACK_RAW = args.find(a => a === '--trace-callstack' || a.startsWith('--trace-callstack='));
+const TRACE_CALLSTACK = !!TRACE_CALLSTACK_RAW;
+const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.includes('=')
+  ? Math.min(64, parseInt(TRACE_CALLSTACK_RAW.split('=')[1]) || 16) : 16;
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -504,6 +508,13 @@ async function main() {
         console.log(`  esp=${hex(esp)}  ret=${hex(ret)}`);
         console.log(`  stack: ${stackVals.join(' ')}`);
         console.log(`  ebp chain: ${chain.join(' -> ')}`);
+        if (TRACE_CALLSTACK && ctx.exports && ctx.exports.get_callstack_depth) {
+          const e = ctx.exports;
+          const d = e.get_callstack_depth() | 0;
+          const n = Math.min(d, TRACE_CALLSTACK_DEPTH);
+          console.log(`  [stack T0 depth=${d}]`);
+          for (let i = 0; i < n; i++) console.log(`    #${i} ret=${hex(e.get_callstack_entry(i))}`);
+        }
       } catch (_) {}
     }
 
@@ -993,6 +1004,8 @@ async function main() {
     traceThread: TRACE_THREAD,
     traceYield: TRACE_YIELD,
     breakThreadFilter: breakThreadFilter,
+    traceCallstack: TRACE_CALLSTACK,
+    traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
   });
 
   const mem = new Uint8Array(memory.buffer);
@@ -1389,6 +1402,23 @@ async function main() {
     watchPrevVal = instance.exports.get_watch_val();
   };
   activateWatchpoint();
+
+  // Arm shadow call-stack (--trace-callstack). Gated WAT-side so off-runs pay
+  // zero cost in the hot path.
+  if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
+    instance.exports.set_callstack_enabled(1);
+  }
+  const dumpCallstack = (label, e) => {
+    if (!TRACE_CALLSTACK || !e || !e.get_callstack_depth) return;
+    const depth = e.get_callstack_depth() | 0;
+    const n = Math.min(depth, TRACE_CALLSTACK_DEPTH);
+    if (!n) { console.log(`  [stack ${label}] (empty)`); return; }
+    console.log(`  [stack ${label} depth=${depth}]`);
+    for (let i = 0; i < n; i++) {
+      const ra = e.get_callstack_entry(i) >>> 0;
+      console.log(`    #${i} ret=${hex(ra)}`);
+    }
+  };
 
   const watchFilterVal = WATCH_VALUE !== null ? parseInt(WATCH_VALUE, 16) : null;
 
@@ -1840,6 +1870,7 @@ async function main() {
         // --break-thread filter excludes main; skip silently
       } else {
         console.log(`\n*** BREAKPOINT hit at ${hex(eipBefore)} (batch ${batch})`);
+        dumpCallstack('T0', instance.exports);
         stepping = true;
         await debugPrompt('Break');
       }
@@ -1927,6 +1958,7 @@ async function main() {
           if (instance.exports.get_bp_first_caller) console.log('  bp_first_caller=' + hex(instance.exports.get_bp_first_caller()));
           console.log('  ' + regs());
           dumpStack();
+          dumpCallstack('T0', instance.exports);
           // Re-arm WASM bp so subsequent hits also fire (skip if --break-once)
           if (instance.exports.set_bp && !BREAK_ONCE) instance.exports.set_bp(breakAddrs[0]);
         }
@@ -1941,6 +1973,7 @@ async function main() {
         let stk = '';
         for (let i = 0; i < 6; i++) stk += hex(mem32[(wEsp >> 2) + i]) + ' ';
         console.log(`[TRACE-AT #${traceAtHits}] ${regs()} [esp..]=${stk}`);
+        dumpCallstack('T0', e);
         for (const d of traceAtDumps) {
           if (TRACE_AT_WATCH && d.prev) {
             d.prev = hexdumpDiff(d.addr, d.len, d.prev);

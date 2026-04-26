@@ -1181,6 +1181,7 @@
         (return)))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $op))
+    (call $cs_push (local.get $op))
     (global.set $eip (local.get $target)))
   ;; 141: jmp [base+disp]. op=0, w1=base, w2=disp.
   (func $th_jmp_ind_ro (param $op i32)
