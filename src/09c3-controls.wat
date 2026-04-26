@@ -4322,6 +4322,16 @@
     ;; Stash FR struct ptr in dialog userdata for a future $wndproc_dialog.
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
+    ;; Publish ctrl_count in WND_DLG_RECORDS so renderer-input.js's Tab
+    ;; traversal (gated on dlg_get_ctrl_count > 0) recognises this hwnd as
+    ;; a dialog. $dlg_load writes this for resource dialogs; WAT-built
+    ;; dialogs must do it themselves. 8 = static + edit + match-case +
+    ;; group-box + 2 radios + Find Next + Cancel.
+    (i32.store offset=28 (call $dlg_record_for_hwnd (local.get $dlg))
+               (i32.const 8))
+    ;; Seed initial focus on the first tabstop child (the "Find what" edit)
+    ;; so Tab/Shift+Tab traversal works without a prior click.
+    (call $dlg_seed_focus (local.get $dlg))
   )
 
   ;; Draw a scrollbar arrow button: edge box + 4-row triangle glyph.

@@ -1008,6 +1008,28 @@
     ;; Fall through to string handling — reuse $dlg_read_text
     (call $dlg_read_text (local.get $wa)))
 
+  ;; Seed initial focus to the first WS_VISIBLE+WS_TABSTOP+!WS_DISABLED child
+  ;; of $dlg_hwnd. Walks WND_RECORDS via $wnd_next_child_slot so the caller
+  ;; doesn't need to know whether children were allocated contiguously.
+  ;; Used by both resource-driven $dlg_load and WAT-built dialogs like
+  ;; $create_findreplace_dialog so Tab/Shift+Tab works without a prior click.
+  (func $dlg_seed_focus (param $dlg_hwnd i32)
+    (local $slot i32) (local $ch i32) (local $style i32)
+    (block $done (loop $walk
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg_hwnd) (local.get $slot)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.and
+            (i32.and (i32.ne (i32.and (local.get $style) (i32.const 0x10000000)) (i32.const 0))   ;; WS_VISIBLE
+                     (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000))))             ;; !WS_DISABLED
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00010000)) (i32.const 0)))         ;; WS_TABSTOP
+        (then
+          (call $set_focus (local.get $ch))
+          (return)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $walk))))
+
   ;; $dlg_load(dlg_hwnd, dlg_id) → ctrl_count
   ;;
   ;; Single entry point for building a dialog from an RT_DIALOG template.
@@ -1201,22 +1223,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $ctrl_loop)))
     (call $heap_free (local.get $cs))
-    ;; Initial focus: first child with WS_VISIBLE+WS_TABSTOP+!WS_DISABLED.
-    ;; Children allocated contiguously from $dlg_hwnd+1 (see $ctrl_create_child).
-    (local.set $i (i32.const 0))
-    (block $focus_done (loop $focus_scan
-      (br_if $focus_done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
-      (local.set $ctrl_hwnd (i32.add (local.get $dlg_hwnd) (i32.add (local.get $i) (i32.const 1))))
-      (local.set $ctrl_style (call $wnd_get_style (local.get $ctrl_hwnd)))
-      (if (i32.and
-            (i32.and (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x10000000)) (i32.const 0))   ;; WS_VISIBLE
-                     (i32.eqz (i32.and (local.get $ctrl_style) (i32.const 0x08000000))))             ;; !WS_DISABLED
-            (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x00010000)) (i32.const 0)))         ;; WS_TABSTOP
-        (then
-          (call $set_focus (local.get $ctrl_hwnd))
-          (br $focus_done)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $focus_scan)))
+    (call $dlg_seed_focus (local.get $dlg_hwnd))
     (local.get $ctrl_count))
 
 
