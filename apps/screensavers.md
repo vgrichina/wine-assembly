@@ -1153,6 +1153,34 @@ Caller `0x647bc3db test eax,eax; jz fallback` treats 0 as "no handler found." So
 
 **Concrete next-session probe:** `find_field d3drm.dll 0xc4 --op=write` shows only **4 writer instructions** for `[+0xc4]` across all of d3rm — a tractable surface. Identify which one writes the viewport's list (vs. unrelated classes that happen to have a +0xc4 field) by tracing each fn's caller and matching against the IDirect3DRMViewport vtable / construction site. Distinguishing requires runtime data (count value at the moment of dispatch failure) — needs a debug bp at `0x647c52f9` that dumps `[viewport+0xbc]/[viewport+0xc4]`.
 
+##### 2026-04-26 cont. — corrected ownership: list belongs to scene root (Frame), not viewport; no nonzero writers exist
+
+Walked all 4 `[+0xc4]` writers and their enclosing functions:
+
+| Writer VA | Fn entry | What it writes | Role |
+|---|---|---|---|
+| `0x647a3069` | `0x647a2f6d` | copies `[src+0xc4]` → `[dst+0xc4]` | **Clone/copy-ctor** (also copies +0xb8/+0xbc/+0xc0/+0xc8/+0xcc/+0x114 plus 3-dword runs at +0xf0 and +0xfc) |
+| `0x647a5cde` | `0x647a5c8d` | `0` (ecx=0) | Init for object class with +0xa4..+0x114 |
+| `0x647aed61` | `0x647aed3b` | `0` (edi=0) | Another init for similar class |
+| `0x647c13f4` | `0x647c1377` | `0` (edi=0) | Viewport zero-init (already known) |
+
+**Across all of d3rm.dll, no instruction ever stores a nonzero value into `[reg+0xc4]`** — only zero-inits and a clone that propagates whatever the source already had. The list is born empty and stays empty unless the *caller* (the app) hands d3rm a populated source object to clone, OR the population happens via heap writes through a different alias (e.g., realloc-grow loop indexing `[base + i*4]` directly without naming `+0xc4` in the immediate).
+
+**Re-read of inner walker `0x647c534f` corrects two earlier misreads:**
+1. Loop stride is **4 bytes** (`add [ebp-8], 0x4`), not 0x50. The list is a **plain pointer-array** of `count` entries; `+0x50` was the stride of the *output accumulator* `[ebx+0xa0]`, a different struct.
+2. The 0x14*4=0x50-byte fill (`rep stosd ecx=0x14`) writes to the accumulator slot, not to a list entry.
+
+**Ownership corrected — `[+0xbc]/[+0xc4]` belong to the scene root, not the viewport.** Re-read of scene walker `0x64798903` (lines 0x64798955-0x64798981) shows it iterates `[ebx+0xbc]` entries at `[ebx+0xc4]`, where `ebx = scene_walker arg0`. Cross-checked against dispatcher `0x647c52f9`: arg3 = caller's `[esp+0xc]` = `ebx` from emit-fn `0x647bc390`'s call site at `0x64798ac9` (`push ebx; push edi; push esi; call [eax+0x38]`) → ebx is propagated all the way through. So both readers agree: the list owner is the scene-walker's `arg0`, which is the **scene root frame**, not the viewport (which is `edi`/`arg2`).
+
+**Field offset `+0xbc` is overloaded across object classes** — example: at `0x647acb4d` inside `0x647acace` (likely an AddVisual/Detach-style fn), `[eax+0xbc]` is a *doubly-linked-list `next` pointer*, not a count. So pure offset-grep across d3rm conflates classes; only writers that touch `+0xbc` *and* `+0xc4` together (with realloc semantics) are candidates for the populator we want — and there are none.
+
+**Concrete next-session pivot — switch from static to runtime:**
+1. `--break=0x647c52f9 --break-once` and dump `[ebx+0xbc]/[ebx+0xc4]` *and* `[edi+0xbc]/[edi+0xc4]` (in case the prior viewport-owns-list theory had something to it) at first hit.
+2. `--break-api=Direct3DRMCreate` and walk the engine to see if the app constructs frames via the IDirect3DRMFrame interface or feeds it ready-made object trees (e.g., via `LoadFromFile`/`Load` paths that may be unimplemented in our COM stubs).
+3. `node tools/xrefs.js d3drm.dll 0x647c534f` confirmed only 1 caller (`0x647c532a`); chase its callers similarly to find any "AddVisual"-named entry point — if zero entries reach this scene-root population code, the bug is upstream in our COM dispatch (a method that should funnel into d3rm's list-grow path is being stubbed to no-op).
+
+**Why the static surface is exhausted here:** absence of any nonzero writer means either (a) the population is upstream of d3rm in a host/DLL we haven't loaded, or (b) it's via a more obscure addressing pattern (e.g., `mov [reg], val` with reg = base+0xc4 computed as `lea reg, [obj+0xc4]` earlier — `find_field` only matches the literal `[reg+disp]` form). Worth one re-scan with a `lea`+`mov [reg]` two-instruction window before fully pivoting to runtime.
+
 **Earlier (now-superseded) scene-list architecture notes kept for reference:**
 
 **2026-04-24 cont. 5: two-list architecture confirmed.** The engine owns TWO MFC-style sentinel-headed doubly-linked lists, both initialized at `0x7445b0e0` (called once at startup):
