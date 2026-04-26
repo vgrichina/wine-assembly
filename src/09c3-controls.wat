@@ -2176,13 +2176,25 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
+        ;; Erase the static's rect for label types. Parent's WM_ERASEBKGND
+        ;; ran once at create time, but subsequent SetWindowText invalidates
+        ;; only the static — without this fill, new text composites on top of
+        ;; the previous text (visible in calc's display as digit pile-up).
+        ;; SS_BLACKRECT(4)/SS_GRAYRECT(5)/SS_WHITERECT(6) and the matching
+        ;; FRAME variants own their fill color, so skip those.
+        (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
+                    (i32.gt_u (local.get $style) (i32.const 9)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE (stock obj 1)
         ;; Select DEFAULT_GUI_FONT (8pt MS Sans Serif) for the dialog look.
-        ;; TRANSPARENT bk mode so the label glyphs let the parent's face
-        ;; color show through instead of painting an opaque white box
-        ;; behind every word.
+        ;; TRANSPARENT bk mode so the label glyphs let the fill color show
+        ;; through instead of painting an opaque white box behind every word.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
         ;; SS_ICON(3), SS_BITMAP(0x0E): skip text — these display images, not labels
         (if (i32.and
               (i32.ne (local.get $style) (i32.const 3))
