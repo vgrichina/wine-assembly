@@ -639,10 +639,25 @@ Resource-aware Win98 emulator
         if (e.altKey && vk === 115) return true;             // Alt+F4
         return false;
       };
+      // Keys that would generate a printable character via the keypress
+      // event (no Ctrl/Alt modifiers, VK in the typing range). Calling
+      // preventDefault() on keydown suppresses the subsequent keypress in
+      // browsers, which would break WM_CHAR delivery — so leave those
+      // alone and let keypress fire naturally.
+      const isPrintableKey = (e) => {
+        if (e.ctrlKey || e.altKey || e.metaKey) return false;
+        const vk = e.keyCode;
+        if (vk >= 0x30 && vk <= 0x5A) return true;           // 0-9, A-Z
+        if (vk >= 0x60 && vk <= 0x6F) return true;           // numpad
+        if (vk >= 0xBA && vk <= 0xC0) return true;           // ;=,-./` etc.
+        if (vk >= 0xDB && vk <= 0xDE) return true;           // [\]'
+        if (vk === 32) return true;                          // space
+        return false;
+      };
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
         renderer.handleKeyDown(vk);
-        if (!keepForBrowser(e)) e.preventDefault();
+        if (!keepForBrowser(e) && !isPrintableKey(e)) e.preventDefault();
       });
       canvas.addEventListener('keyup', e => {
         renderer.handleKeyUp(e.keyCode);
