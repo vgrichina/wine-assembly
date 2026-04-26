@@ -223,6 +223,132 @@
     (else
       (f64.load (call $g2w (local.get $addr))))))))))))
 
+  ;; ── FNSTENV / FLDENV / FNSAVE / FRSTOR / FBLD / FBSTP helpers ─────
+  ;; 32-bit protected-mode env block (28 bytes): CW, SW (with TOP packed),
+  ;; Tag word (2 bits/reg: 00=valid, 11=empty), FIP, FCS:opcode, FDP, FDS.
+  ;; We collapse all "valid" subtypes to 00 since our tag global is 1-bit/reg.
+  (func $fpu_pack_tag_word (result i32)
+    (local $i i32) (local $w i32)
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (if (i32.eqz (i32.and (i32.shr_u (global.get $fpu_tag) (local.get $i)) (i32.const 1)))
+        (then (local.set $w (i32.or (local.get $w)
+          (i32.shl (i32.const 3) (i32.shl (local.get $i) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (local.get $w))
+
+  (func $fpu_unpack_tag_word (param $tw i32)
+    (local $i i32) (local $t i32)
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (if (i32.ne
+            (i32.and (i32.shr_u (local.get $tw) (i32.shl (local.get $i) (i32.const 1))) (i32.const 3))
+            (i32.const 3))
+        (then (local.set $t (i32.or (local.get $t) (i32.shl (i32.const 1) (local.get $i))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $fpu_tag (local.get $t)))
+
+  (func $fpu_store_env (param $addr i32)
+    (local $w i32)
+    (local.set $w (call $g2w (local.get $addr)))
+    (i32.store (local.get $w) (global.get $fpu_cw))
+    (i32.store (i32.add (local.get $w) (i32.const 4))
+      (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+              (i32.shl (global.get $fpu_top) (i32.const 11))))
+    (i32.store (i32.add (local.get $w) (i32.const 8)) (call $fpu_pack_tag_word))
+    (i32.store (i32.add (local.get $w) (i32.const 12)) (i32.const 0))
+    (i32.store (i32.add (local.get $w) (i32.const 16)) (i32.const 0))
+    (i32.store (i32.add (local.get $w) (i32.const 20)) (i32.const 0))
+    (i32.store (i32.add (local.get $w) (i32.const 24)) (i32.const 0)))
+
+  (func $fpu_load_env (param $addr i32)
+    (local $w i32) (local $sw i32)
+    (local.set $w (call $g2w (local.get $addr)))
+    (global.set $fpu_cw (i32.and (i32.load (local.get $w)) (i32.const 0xFFFF)))
+    (local.set $sw (i32.and (i32.load (i32.add (local.get $w) (i32.const 4))) (i32.const 0xFFFF)))
+    (global.set $fpu_top (i32.and (i32.shr_u (local.get $sw) (i32.const 11)) (i32.const 7)))
+    (global.set $fpu_sw (i32.and (local.get $sw) (i32.const 0xC7FF)))
+    (call $fpu_unpack_tag_word
+      (i32.and (i32.load (i32.add (local.get $w) (i32.const 8))) (i32.const 0xFFFF))))
+
+  ;; FNSAVE/FRSTOR ST area: 8 × 10-byte slots in PHYSICAL order. We store the
+  ;; f64 payload + 2 zero bytes (matches our existing FLD/FSTP m80 convention).
+  (func $fpu_store_regs (param $addr i32)
+    (local $i i32) (local $base i32) (local $slot i32)
+    (local.set $base (call $g2w (local.get $addr)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $slot (i32.add (local.get $base)
+        (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
+      (f64.store (local.get $slot)
+        (f64.load (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))))
+      (i32.store16 (i32.add (local.get $slot) (i32.const 8)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  (func $fpu_load_regs (param $addr i32)
+    (local $i i32) (local $base i32) (local $slot i32)
+    (local.set $base (call $g2w (local.get $addr)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $slot (i32.add (local.get $base)
+        (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
+      (f64.store (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))
+        (f64.load (local.get $slot)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  ;; FBLD: 80-bit packed BCD → ST(0). 18 BCD digits in low 9 bytes
+  ;; (low nibble = lower digit), sign byte at offset 9 (bit 7 = negative).
+  (func $fpu_bld (param $addr i32)
+    (local $i i32) (local $w i32) (local $b i32) (local $val f64) (local $mult f64)
+    (local.set $w (call $g2w (local.get $addr)))
+    (local.set $mult (f64.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 9)))
+      (local.set $b (i32.load8_u (i32.add (local.get $w) (local.get $i))))
+      (local.set $val (f64.add (local.get $val)
+        (f64.mul (f64.convert_i32_u (i32.and (local.get $b) (i32.const 0x0F)))
+                 (local.get $mult))))
+      (local.set $mult (f64.mul (local.get $mult) (f64.const 10)))
+      (local.set $val (f64.add (local.get $val)
+        (f64.mul (f64.convert_i32_u (i32.and (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 0x0F)))
+                 (local.get $mult))))
+      (local.set $mult (f64.mul (local.get $mult) (f64.const 10)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (if (i32.and (i32.load8_u (i32.add (local.get $w) (i32.const 9))) (i32.const 0x80))
+      (then (local.set $val (f64.neg (local.get $val)))))
+    (call $fpu_push (local.get $val)))
+
+  ;; FBSTP: ST(0) → 80-bit packed BCD, then pop.
+  (func $fpu_bstp (param $addr i32)
+    (local $i i32) (local $w i32) (local $sign i32) (local $val f64) (local $vi i64)
+    (local $rem i32) (local $tens i32) (local $ones i32)
+    (local.set $w (call $g2w (local.get $addr)))
+    (local.set $val (call $fpu_pop))
+    (if (f64.lt (local.get $val) (f64.const 0))
+      (then (local.set $sign (i32.const 0x80)) (local.set $val (f64.neg (local.get $val)))))
+    (local.set $val (f64.nearest (local.get $val)))
+    ;; BCD max is 10^18 - 1; clamp out-of-range and NaN to zero (i64.trunc traps otherwise).
+    (if (i32.or (f64.ne (local.get $val) (local.get $val))
+                (f64.ge (local.get $val) (f64.const 1e18)))
+      (then (local.set $val (f64.const 0))))
+    (local.set $vi (i64.trunc_f64_u (local.get $val)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 9)))
+      (local.set $rem (i32.wrap_i64 (i64.rem_u (local.get $vi) (i64.const 100))))
+      (local.set $vi  (i64.div_u (local.get $vi) (i64.const 100)))
+      (local.set $ones (i32.rem_u (local.get $rem) (i32.const 10)))
+      (local.set $tens (i32.div_u (local.get $rem) (i32.const 10)))
+      (i32.store8 (i32.add (local.get $w) (local.get $i))
+        (i32.or (i32.shl (local.get $tens) (i32.const 4)) (local.get $ones)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.store8 (i32.add (local.get $w) (i32.const 9)) (local.get $sign)))
+
   (func $fpu_exec_mem (param $group i32) (param $reg i32) (param $addr i32)
     (local $val f64)
     ;; Group 0 (D8) / Group 4 (DC): arithmetic with float32/float64
@@ -258,7 +384,14 @@
           (then (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_cw)) (return)))
-        ;; reg=4 FLDENV, reg=6 FNSTENV — 28-byte environment block, not implemented.
+        ;; reg=4 FLDENV, reg=6 FNSTENV — 28-byte 32-bit protected-mode env block.
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (call $fpu_load_env (local.get $addr)) (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_store_env (local.get $addr))
+                ;; Real FNSTENV masks all exceptions in CW after save.
+                (global.set $fpu_cw (i32.or (global.get $fpu_cw) (i32.const 0x3F)))
+                (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 5 (DD): FLD/FST/FSTP float64, FRSTOR, FNSAVE, FNSTSW m16
     (if (i32.eq (local.get $group) (i32.const 5))
@@ -274,7 +407,18 @@
             (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
               (i32.shl (global.get $fpu_top) (i32.const 11))))
             (i32.store16 (call $g2w (local.get $addr)) (global.get $fpu_sw)) (return)))
-        ;; reg=4 FRSTOR, reg=6 FNSAVE — 108-byte state, not implemented.
+        ;; reg=4 FRSTOR, reg=6 FNSAVE — 108-byte: 28-byte env + 8×10-byte STs.
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (call $fpu_load_env (local.get $addr))
+                (call $fpu_load_regs (i32.add (local.get $addr) (i32.const 28)))
+                (return)))
+        (if (i32.eq (local.get $reg) (i32.const 6))
+          (then (call $fpu_store_env (local.get $addr))
+                (call $fpu_store_regs (i32.add (local.get $addr) (i32.const 28)))
+                ;; Post-FNSAVE: reinit to power-on state (matches real x87).
+                (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F))
+                (global.set $fpu_sw (i32.const 0)) (global.set $fpu_tag (i32.const 0))
+                (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 3 (DB): FILD/FIST/FISTP int32, FLD/FSTP m80
     (if (i32.eq (local.get $group) (i32.const 3))
@@ -304,13 +448,11 @@
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then (i32.store16 (call $g2w (local.get $addr)) (call $fpu_to_i16 (call $fpu_pop))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 4))
-          ;; FBLD m80 (BCD load) — not implemented.
-          (then (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
+          (then (call $fpu_bld (local.get $addr)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
           (then (call $fpu_push (f64.convert_i64_s (i64.load (call $g2w (local.get $addr))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 6))
-          ;; FBSTP m80 (BCD store) — not implemented.
-          (then (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
+          (then (call $fpu_bstp (local.get $addr)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop))) (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))

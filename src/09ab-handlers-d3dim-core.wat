@@ -1151,7 +1151,8 @@
 
   ;; ── D3DSTATE walker ────────────────────────────────────────────
   ;; Apply `wCount` consecutive 8-byte D3DSTATE records (dwArg, dwValue) through
-  ;; the supplied per-state forwarder. kind: 7=render, 8=light, 6=transform.
+  ;; the supplied per-state forwarder. kind: 7=light, 8=render, 6=transform
+  ;; (matches D3DOP_LIGHTSTATE/RENDERSTATE/STATETRANSFORM opcode values).
   (func $d3dim_exec_state_walk
     (param $dev_this i32) (param $kind i32) (param $rec_wa i32) (param $wCount i32)
     (local $i i32) (local $a i32) (local $v i32)
