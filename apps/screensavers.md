@@ -303,6 +303,32 @@ Ran 15K batches with `--break=0x745ACDA1,0x745AD6D4,0x745A6C6F --break-once` —
 2. Break on each IDirect3DRM creation method to see which path the SCR uses to build the scene.
 3. Trace through whichever Load/Create path fires to find where mesh data is dropped.
 
+**2026-04-26 fourth probe — IDirect3DRM v1 vtable mapped from Direct3DRMCreate.** `Direct3DRMCreate` (orig VA `0x6478f112`, RVA `0xf112`) allocates a 0x428-byte object and writes 3 vtables at offsets +0x8/+0x14/+0x20 (v1/v2/v3 of IDirect3DRM). Returns `obj+0x8` (v1 interface ptr) to the caller. Per Wine d3drm.h, IDirect3DRM v1 layout slot→method (orig VAs at base 0x647e01f8):
+
+| slot | method | impl VA |
+|------|--------|---------|
+| 3 | CreateObject | 0x6478f81b |
+| **4** | **CreateFrame** | **0x6478fa90** |
+| 5 | CreateMesh | 0x6478fc12 |
+| **6** | **CreateMeshBuilder** | **0x6478fcf4** |
+| 7 | CreateFace | 0x6478fe2b |
+| 8 | CreateAnimation | 0x6478feff |
+| 9 | CreateAnimationSet | 0x6478ffd3 |
+| 10 | CreateTexture | 0x647900a7 |
+| **11** | **CreateLight** | **0x647901ea** |
+| 12 | CreateLightRGB | 0x64790ba6 |
+| 13 | CreateMaterial | 0x6479025c |
+| **14** | **CreateDevice** | **0x64790340** |
+| 20 | CreateViewport | 0x64790ed6 |
+| 23 | LoadTexture | 0x647910ee |
+| **33** | **Load** | **0x64791751** |
+| 34 | Tick | 0x647914b5 |
+
+Direct3DRMCreate is exported (RVA 0xf112, hint=20) — set break on it before any of the vtable methods to confirm the SCR actually reaches it. Tested 30K batches with breaks on CreateFrame/CreateMeshBuilder/CreateLight/Load at relocated `0x745A****` — no break appears to fire and EIP is still spinning in the SCR's own .text (`0x74497***`), which suggests the SCR is stuck in an early init loop (not yet at scene construction) OR d3drm loaded at a different base than we calculated. Need to:
+1. First break on `Direct3DRMCreate` itself (orig `0x6478f112`) — confirm whether the SCR reaches it at all in 30K batches.
+2. If yes, capture the actual relocated d3drm base from `dbg_prev_eip` at break and recompute the v1 vtable method VAs.
+3. If no, the SCR's `winmain` likely hangs in our env on something earlier — verify with `--trace-api` what it's actually doing in those 30K batches.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
