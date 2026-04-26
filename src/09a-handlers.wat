@@ -5849,6 +5849,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; CreateIconFromResourceEx(presbits, dwResSize, fIcon, dwVer, cx, cy, Flags) — 7 args.
+  ;; Return a dummy non-zero HICON; SDL only uses it for SetClassLong/WM_SETICON which we ignore.
+  (func $handle_CreateIconFromResourceEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0xCAFE0001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; LoadKeyboardLayoutA(pwszKLID, Flags) — pretend the requested layout was activated.
+  (func $handle_LoadKeyboardLayoutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x04090409))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetKeyboardLayoutNameA(pwszKLID) — write 9-byte ASCIIZ "00000409" (US English) and return TRUE.
+  (func $handle_GetKeyboardLayoutNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (local.set $p (call $g2w (local.get $arg0)))
+    (i32.store (local.get $p) (i32.const 0x30303030))         ;; "0000"
+    (i32.store offset=4 (local.get $p) (i32.const 0x39303430)) ;; "0409"
+    (i32.store8 offset=8 (local.get $p) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; GetKeyboardLayoutList(nBuff, lpList) — report one layout (US English).
   ;; If lpList non-NULL and nBuff>=1, write HKL 0x04090409. Return total count (1).
   (func $handle_GetKeyboardLayoutList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6141,15 +6168,18 @@
     (global.set $eax (i32.const 0x0409))  ;; MAKELCID(LANG_ENGLISH, SUBLANG_ENGLISH_US)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; 522: CreateSemaphoreW — STUB: unimplemented
+  ;; 522: CreateSemaphoreW(lpAttr, lInit, lMax, lpName) → real counted semaphore via host.
   (func $handle_CreateSemaphoreW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_create_semaphore (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; 523: ReleaseSemaphore — STUB: unimplemented
+  ;; 523: ReleaseSemaphore(hSem, lReleaseCount, lpPrevCount) → host increments and writes back prior count.
   (func $handle_ReleaseSemaphore (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_release_semaphore
+      (local.get $arg0)
+      (local.get $arg1)
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 524: CreateMutexW(lpMutexAttributes, bInitialOwner, lpName) → HANDLE
   ;; Returns a unique handle for the mutex. Single-threaded, so always succeeds.
@@ -6175,6 +6205,11 @@
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $eax (global.get $next_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; CreateSemaphoreA(lpAttr, lInit, lMax, lpName) → real counted semaphore via host.
+  (func $handle_CreateSemaphoreA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_create_semaphore (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6263,6 +6298,12 @@
     (i32.store (i32.add (local.get $buf) (i32.const 24))   (i32.const 0x20000))   ;; Type = MEM_PRIVATE
     (global.set $eax (i32.const 28))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; GetDeviceGammaRamp(hdc, lpRamp) — gamma not supported, return FALSE.
+  ;; SDL probes this at startup and falls back to software gamma when it fails.
+  (func $handle_GetDeviceGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 533: FindResourceExW — STUB: unimplemented
   (func $handle_FindResourceExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -470,6 +470,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; EnumDisplaySettingsA(lpszDeviceName, iModeNum, lpDevMode) — 3 args stdcall.
+  ;; Report current desktop mode for ENUM_CURRENT_SETTINGS (-1) and mode 0; FALSE otherwise.
+  ;; dmFields bits: PELSWIDTH=0x80000, PELSHEIGHT=0x100000, BITSPERPEL=0x40000, DISPLAYFREQUENCY=0x400000.
+  (func $handle_EnumDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $screen i32)
+    (if (i32.and
+          (i32.ne (local.get $arg1) (i32.const -1))
+          (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $buf (call $g2w (local.get $arg2)))
+    (local.set $screen (call $host_get_screen_size))
+    (i32.store offset=40 (local.get $buf) (i32.const 0x5C0000))  ;; dmFields
+    (i32.store offset=104 (local.get $buf) (i32.const 32))       ;; dmBitsPerPel
+    (i32.store offset=108 (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))  ;; dmPelsWidth
+    (i32.store offset=112 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))   ;; dmPelsHeight
+    (i32.store offset=120 (local.get $buf) (i32.const 60))       ;; dmDisplayFrequency
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
   (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))  ;; 1 device

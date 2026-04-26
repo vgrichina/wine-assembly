@@ -241,6 +241,7 @@
           <option value="cwordzap">CWordZap</option>
           <option value="bricks">Bricks (Klotski)</option>
           <option value="empipe">EmPipe (Pipe Dream)</option>
+          <option value="tworld">Tile World (Chip's Challenge)</option>
         </optgroup>
         <optgroup label="Plus! 98">
           <option value="spider">Spider</option>
@@ -462,6 +463,28 @@ Resource-aware Win98 emulator
       fourstones: { exe: 'binaries/wep32-community/Funpack/FourStones.exe', dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
       cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
       bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      dlls: ['binaries/wep32-community/Bricks/brk1.dll'] },
+      tworld: {
+        exe: 'binaries/wep32-community/TWorld/tworld.exe',
+        dlls: ['binaries/wep32-community/TWorld/SDL.dll'],
+        files: [
+          // Level packs (.dac descriptors live in sets/, .dat level data in data/)
+          { url: 'binaries/wep32-community/TWorld/sets/cc-ms.dac',     vfsPath: 'c:\\sets\\cc-ms.dac' },
+          { url: 'binaries/wep32-community/TWorld/sets/CCLP1-MS.dac',  vfsPath: 'c:\\sets\\cclp1-ms.dac' },
+          { url: 'binaries/wep32-community/TWorld/sets/CCLP2-MS.dac',  vfsPath: 'c:\\sets\\cclp2-ms.dac' },
+          { url: 'binaries/wep32-community/TWorld/sets/CCLP3-MS.dac',  vfsPath: 'c:\\sets\\cclp3-ms.dac' },
+          { url: 'binaries/wep32-community/TWorld/sets/intro-ms.dac',  vfsPath: 'c:\\sets\\intro-ms.dac' },
+          { url: 'binaries/wep32-community/TWorld/data/CHIPS.DAT',     vfsPath: 'c:\\data\\chips.dat' },
+          { url: 'binaries/wep32-community/TWorld/data/CCLP1.dat',     vfsPath: 'c:\\data\\cclp1.dat' },
+          { url: 'binaries/wep32-community/TWorld/data/CCLP2.dat',     vfsPath: 'c:\\data\\cclp2.dat' },
+          { url: 'binaries/wep32-community/TWorld/data/CCLP3.dat',     vfsPath: 'c:\\data\\cclp3.dat' },
+          { url: 'binaries/wep32-community/TWorld/data/intro.dat',     vfsPath: 'c:\\data\\intro.dat' },
+          // Resources (font/tiles + ruleset config + sound effects)
+          { url: 'binaries/wep32-community/TWorld/res/rc',             vfsPath: 'c:\\res\\rc' },
+          { url: 'binaries/wep32-community/TWorld/res/font.bmp',       vfsPath: 'c:\\res\\font.bmp' },
+          { url: 'binaries/wep32-community/TWorld/res/tiles.bmp',      vfsPath: 'c:\\res\\tiles.bmp' },
+          { url: 'binaries/wep32-community/TWorld/res/unslist.txt',    vfsPath: 'c:\\res\\unslist.txt' },
+        ],
+      },
       empipe:     { exe: 'binaries/wep32-community/EmPipe/EMPIPE.EXE', files: [
         'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
         'binaries/wep32-community/EmPipe/EMPCLEAR.MID', 'binaries/wep32-community/EmPipe/EMPGMOV.MID',

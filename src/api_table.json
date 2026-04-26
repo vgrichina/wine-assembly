@@ -10538,5 +10538,47 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3192741624
+  },
+  {
+    "id": 1506,
+    "name": "GetDeviceGammaRamp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2175164542
+  },
+  {
+    "id": 1507,
+    "name": "EnumDisplaySettingsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3782596270
+  },
+  {
+    "id": 1508,
+    "name": "GetKeyboardLayoutNameA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1789657574
+  },
+  {
+    "id": 1509,
+    "name": "LoadKeyboardLayoutA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3356268293
+  },
+  {
+    "id": 1510,
+    "name": "CreateIconFromResourceEx",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3000191017
+  },
+  {
+    "id": 1511,
+    "name": "CreateSemaphoreA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3896222620
   }
 ]

@@ -43,6 +43,7 @@ const VERBOSE = hasFlag('verbose');
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 const TRACE_API = hasFlag('trace-api');   // --trace-api: log all API calls with args + return values
 const TRACE_API_COUNTS = hasFlag('trace-api-counts'); // --trace-api-counts: print histogram of API call names at end
+const QUIET_API = hasFlag('quiet-api');               // --quiet-api: suppress [API] one-line log spam
 const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
@@ -597,7 +598,7 @@ async function main() {
           }
         } catch (ex) { logs.push(`  [C++ throw] decode error: ${ex.message}`); }
       }
-    } else {
+    } else if (!QUIET_API) {
       logs.push('[API] ' + t);
     }
   };
@@ -797,6 +798,8 @@ async function main() {
   h.reset_event = (handle) => threadManager.resetEvent(handle);
   h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
   h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
+  h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);
+  h.release_semaphore = (handle, releaseCount, lpPrevCountWA) => threadManager.releaseSemaphore(handle, releaseCount, lpPrevCountWA);
   h.com_create_instance = (rclsid, pUnkOuter, dwClsCtx, riid, ppv) => 0x80004002; // E_NOINTERFACE
 
   // Check if a DLL file exists in VFS or host filesystem
@@ -864,6 +867,8 @@ async function main() {
     wh.reset_event = h.reset_event;
     wh.wait_single = h.wait_single;
     wh.wait_multiple = h.wait_multiple;
+    wh.create_semaphore = h.create_semaphore;
+    wh.release_semaphore = h.release_semaphore;
     // Worker logging
     wh.log = (ptr, len) => {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
@@ -932,7 +937,7 @@ async function main() {
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
       'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',
-      'd3drm.dll', 'kvdd.dll']);
+      'd3drm.dll', 'kvdd.dll', 'sdl.dll']);
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,
@@ -1005,6 +1010,7 @@ async function main() {
           } else if (stat.isDirectory() && f !== '.' && f !== '..') {
             const subDir = vfsPrefix + f.toLowerCase() + '\\';
             ctx.vfs.dirs.add(subDir);
+            ctx.vfs.dirs.add(subDir.replace(/\\$/, ''));
             loadDir(fpath, subDir);
           }
         } catch (_) {}
@@ -1025,6 +1031,7 @@ async function main() {
               const vfsDir = 'c:\\' + f.toLowerCase() + '\\';
               if (!ctx.vfs.dirs.has(vfsDir)) {
                 ctx.vfs.dirs.add(vfsDir);
+                ctx.vfs.dirs.add(vfsDir.replace(/\\$/, ''));
                 loadDir(fpath, vfsDir);
               }
             }

@@ -375,13 +375,30 @@ class WineAssembly {
   async loadFiles(urls) {
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
-    for (const url of urls) {
+    for (const item of urls) {
+      // Accept plain string (flat → c:\basename) or {url, vfsPath} for nested layouts.
+      const url = (typeof item === 'string') ? item : item.url;
+      const explicit = (typeof item === 'object') ? item.vfsPath : null;
       try {
         const resp = await fetch(url);
         if (!resp.ok) continue;
         const data = new Uint8Array(await resp.arrayBuffer());
-        const name = url.replace(/^.*[\\\/]/, '').toLowerCase();
-        vfs.files.set('c:\\' + name, { data, attrs: 0x20 });
+        let vfsPath;
+        if (explicit) {
+          vfsPath = explicit.toLowerCase().replace(/\//g, '\\');
+          if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+          // Also register every parent directory so GetFileAttributes(dir) returns FILE_ATTRIBUTE_DIRECTORY.
+          let p = vfsPath;
+          while (true) {
+            const idx = p.lastIndexOf('\\');
+            if (idx <= 2) break;
+            p = p.slice(0, idx);
+            vfs.dirs.add(p);
+          }
+        } else {
+          vfsPath = 'c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase();
+        }
+        vfs.files.set(vfsPath, { data, attrs: 0x20 });
       } catch (_) {}
     }
   }
