@@ -118,10 +118,36 @@ Object identification (corrected from earlier static analysis):
 
 **So the prior "list is empty" diagnosis was wrong twice over:** (a) the viewport's list IS populated, and (b) the inner walker DOES read viewport's list (not scene-root's). The 3 entries are being iterated per dispatcher call.
 
-**New question:** what does predicate `0x647ad71e(*entry, 0, scene-root)` return for the 3 entries, and what is `[hr_cache]=0x647e7afc` at dispatcher return? Possible failure modes:
-1. Predicate returns 0 for all entries → inner returns 0 → outer returns 0 → caller takes fallback path (no draw).
-2. Predicate returns nonzero, AddRef/invoke writes result row, but `hr_cache` is 0 → outer dispatcher's `and eax, hr_cache` zeroes out → caller still takes fallback.
-3. Predicate matches and `hr_cache` nonzero → success → result row drives downstream geometry emit (if it exists).
+**New question:** does predicate `0x647ad71e(entry, _, scene-root)` match any of viewport's 3 entries? Predicate (statically read):
+
+```
+0x647ad71e: cmp [entry+0x88], 0
+0x647ad72c: jnz match
+0x647ad72e: xor eax,eax; ret           ; NO MATCH if [entry+0x88]==0
+match: copy [entry+0x38].xform fields ([+0x11c..+0x134]) into [entry+0x6c..+0x80]
+       return [entry+0x34] != 0
+```
+
+So match requires both `[entry+0x88]=1` AND `[entry+0x34]!=0`.
+
+**Where `[entry+0x88]` gets set:** scene_walker's own pre-loop at `0x64798955` walks viewport's 3 entries and sets `[entry+0x88]=1` ONLY for entries whose `[entry+0x84]==scene-root` (`edi`):
+
+```
+0x6479895f: mov eax, [ebx+0xc4]      ; ebx=viewport
+0x64798965: mov eax, [eax+ecx*4]      ; entry = viewport.array[i]
+0x64798968: cmp [eax+0x84], edi       ; edi = scene-root
+0x6479896e: jnz skip
+0x64798970: mov dword [eax+0x88], 1
+```
+
+**The actual draw consumer is `0x647c5150`**, called from trampoline `0x647c531c` AFTER the inner walker. It walks `visual.[0x9c]/[0xa0]` result rows (populated by inner walker on match) and invokes `[entry.vtable+0x10]` per row — that is the polymorphic "render this entry into the viewport" call. So if the inner walker matched 0 entries, `[+0x9c]=0` and no draws happen.
+
+**hr_cache `0x647e7afc` is BSS zero-init**, with 440 `and ...,0x0` clears and exactly **one** nonzero writer at `0x64799d32` inside an HRESULT-set helper (`0x64799d29`): `mov [hr_cache], edi` then if (edi<0) call registered error callbacks. So hr_cache is the "last HRESULT" global; in success paths it stays 0. The outer dispatcher's `and eax, hr_cache` epilogue therefore returns 0 even on match — but the caller's `test eax,eax; jz fallback` only matters for the fallback-emit path; the actual draw work happens inside `0x647c5150` BEFORE the dispatcher returns. So this is not a bug — the work is unconditional once the inner walker populates result rows.
+
+**Refined next-session pivot:**
+1. Probe the 3 viewport entries: at scene_walker pre-loop (`0x745b4955`), dump each `[entry+0x84]` and `[entry+0x88]`. Compare `[entry+0x84]` against edi (scene-root) — if none match, no entry gets activated and the entire draw chain no-ops.
+2. If `[entry+0x84]` ≠ scene-root, find what populates `[entry+0x84]`. Likely set during `populate` at `0x647c1c2b` (the realloc-path populator) — re-disasm its arg setup.
+3. Also dump `[entry+0x34]` (predicate's second condition).
 
 Per-vp render `0x64798e51` flow (cleaned up):
 - entry: `mov esi, [ebp+0x8]` → esi = viewport
