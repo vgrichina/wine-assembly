@@ -85,11 +85,48 @@ Caller `0x647bc3db test eax,eax; jz fallback` treats 0 as "no handler found." `0
 
 Field offset `+0xbc` is overloaded across object classes (count in some structs, doubly-linked-list `next` in others — e.g. `0x647acb4d` inside `0x647acace`), so pure offset-grep is noisy.
 
-**Next-session pivot — switch from static to runtime:**
-1. `--break=0x647c52f9 --break-once` and dump `[ebx+0xbc]/[ebx+0xc4]` *and* `[edi+0xbc]/[edi+0xc4]` at first hit.
-2. `--break-api=Direct3DRMCreate` and walk the engine's COM construction sequence; check whether AddVisual / Frame-attach paths reach our COM dispatch or get silently no-op'd.
-3. Re-scan for the populator with a `lea reg,[obj+0xc4]` + later `mov [reg],...` two-instruction window — `find_field` only matches the literal `[reg+disp]` form.
-4. Identify d3rm's separate geometry-emission path: `0x647c3744` (the generic `appendOp` helper) only writes 8-byte payloads via 3 callers (`0x647c3726`, `0x647c380d`, `0x647c388c`) — none of them emit PROCESSVERTICES / TRIANGLE. That writer must exist elsewhere; finding it tells us what guards mesh emission.
+**Runtime probe (2026-04-26, ROCKROLL.SCR, runtime delta `0xfe1b000`):**
+
+Object identification (corrected from earlier static analysis):
+- `0x7500d6a0` = **viewport** (vtable `0x74e0fa58`; +0x3c/+0x40 = 640/480 = screen dims; +0x34 = scene-root back-pointer)
+- `0x7500c368` = **scene-root frame** (vtable `0x74e0fc60`)
+
+**Found the populator the static scan missed: `0x647c1c2b`.** Confirms field semantics: `+0xbc=count`, `+0xc0=capacity`, `+0xc4=array base`. `find_field --op=write` missed it because writes go through realloc helper + indexed store:
+
+```
+0x647c1ca1: mov eax,[esi+0xc0]       ; capacity
+0x647c1cad: cmp [esi+0xbc],eax        ; if count==capacity:
+0x647c1cb5:   add eax,3               ;   capacity += 3
+0x647c1cb8:   mov [ecx],eax
+0x647c1cbd:   push eax / shl eax,2 first
+0x647c1cbe:   lea eax,[esi+0xc4]      ;   &array
+0x647c1cc5:   call 0x6479c5f0         ;   realloc(&array, new_size_bytes)
+0x647c1cdb: mov ecx,[esi+0xc4]        ; base
+0x647c1ce1: mov [ecx+eax*4],edi       ; array[count] = entry
+0x647c1ce4: inc [esi+0xbc]            ; count++
+```
+
+**Populator runtime behavior (trace-at on fn entry `0x745dcc2b`):** fires 6+ times per per-vp-render invocation (1 from `0x6479902f`, then recursive walks via `0x647c1d08` over `[ebx+0xa8]` sibling chain). Destination ESI = `0x7500d6a0` (viewport, NOT scene-root). At dispatcher hit, viewport `+0xbc=3, +0xc0=3, +0xc4=0x74e0ef50` (3 populated entries). Scene-root frame `0x7500c368` has `+0xbc=0xc0=0xc4=0` — it's a **separate, legitimately empty per-frame list**. (Initial `--break=0x745b402f --break-once` hit zero times because that VA is mid-block; trace-at on the populator's entry block instead.)
+
+**So the prior "list is empty" diagnosis was probing the wrong object.** The viewport's draw list IS built each frame. The actual question is now: why does the dispatcher get called with `EBX=0x7500c368` (scene-root, empty by design) instead of with the viewport (which has 3 entries)?
+
+Per-vp render `0x64798e51` flow (cleaned up):
+- entry: `mov esi, [ebp+0x8]` → esi = viewport
+- `mov edi, [esi+0x34]` → edi = scene-root frame
+- gate `0x64798e9a: call 0x647c2792(esi)` — predicate; runtime returns 0 → continue (verified)
+- `0x64798eca: and dword [esi+0xbc], 0` — zero viewport count for new frame
+- `0x64798f35: call 0x647c1d30` — initial setup
+- `0x64798fb6: mov eax,[ebx]; ... call [eax+0x40]` — vtable call (slot 0x40 of `[edi+0x5b8]`'s class)
+- `0x6479901d: call 0x6479b235` — pre-populator hook
+- `0x64799027: call 0x647c11f7` — produces source list
+- `0x6479902f: call 0x647c1c2b` — populator (dest=viewport, src=eax of prev call) — **fires**
+
+So the populator builds the viewport's draw list. Then per-vp render presumably issues the dispatcher walks afterwards. The dispatcher gets EBX=scene-root because scene-root IS the natural "walk root" for the scene_walker (`0x64798903`), but the dispatcher's inner walker `0x647c534f` looks at `[arg+0xbc]/[arg+0xc4]` of THIS arg (scene-root) — which is empty. The viewport's populated list is read from a different code path we haven't traced yet.
+
+**Next-session pivot:**
+1. Map who reads the viewport's `[+0xc4]` array. `find_field test/binaries/dlls/d3drm.dll 0xc4 --op=read` — the consumers are the actual draw-emission path. They must read from viewport (or from `[edi+0x5b8]` style indirection), not from scene-root.
+2. Determine if scene_walker `0x64798903` is the right caller for the dispatcher in this code path, or if the viewport-list iteration is a different walker entirely. Look at fn `0x64798903` — does it iterate `[ebx+0xc4]` or call a vtable that does?
+3. Identify d3rm's separate geometry-emission path: `0x647c3744` (generic `appendOp`) only writes 8-byte payloads via 3 callers — none emit PROCESSVERTICES / TRIANGLE. That writer must exist elsewhere; finding it tells us what guards mesh emission.
 
 ### 4. MFC screensavers — full DirectAnimation (DEFERRED)
 
