@@ -199,6 +199,55 @@ Called only by trampoline `0x6478ba43` (lock + COM-wrapper unwrap `arg.[+0x8].[+
 - **Bind semantics decoded:** writer fn `0x647adcef` takes (arg0=Light, arg1=Frame), QIs both, then writes `[Light+0x84] = Frame`. Semantically this is **`IDirect3DRMFrame::AddLight(IDirect3DRMLight*)`** — `[Light+0x84]` is the back-pointer from a Light to the Frame that owns it. Conventionally this is the "frame" field of a light, set when a frame adopts it.
 - **Earlier "vtable 0x647dfcc0" claim was wrong.** Slot 0 of that table (`0x6478b8e1`) ends with `ret 0x4` and uses `fld/fstp` — that is *not* a QI signature (QI is 2-arg, ret 0x8). The address `0x647dfcc0` also appears nowhere as raw bytes in the file (grepped little-endian) and has no xrefs — it's not actually a public COM vtable. It's some internal dispatch / float-method table whose role is unclear.
 
+**Architecture note (matters for diagnosis):** d3rm.dll is loaded as a guest DLL (1188 thunks). `Direct3DRMCreate` is our only registered API entry — *all* IDirect3DRM* COM method calls run guest→guest entirely inside d3rm.dll's own code. There is no missing host-side COM handler for AddLight; the bind logic ships intact in the guest DLL. So the failure mode is necessarily one of:
+- **(A) Mis-execution:** our x86 emulator runs the bind path but a bug (e.g. bad ModRM decode, lazy-flag glitch) corrupts the write. **Ruled out:** the trampoline `0x745d5a43` and all 8 candidate writer instructions fire 0 times — the path is never *reached*, not mis-run.
+- **(B) Missing upstream call:** the SCR / SCN-loader takes a different code path (e.g. `Load()` ingest, or programmatic construction without explicit AddLight) and our impl of *that* path is incomplete enough that the bind step is skipped. The scene_walker firing means scene-init *did* run far enough to register entries — but they were never bound to a frame.
+- **(C) Wrong-scene-loaded:** ROCKROLL.SCR ran a fallback or internal default scene, not its real scene file. **CONFIRMED via `--trace-fs` (2026-04-26):** ROCKROLL probes `.\Backdrop`, `.\Informs`, `.\Textures`, `.\Scenes` (all INVALID — flat dir layout, no subdirs), tries `C:\OrgSuppList.txt` (FAIL — file isn't shipped in PLUS98.CAB; it's runtime-generated state from a separate Plus!98 user app), then falls back to `FindFirstFile(".\\*.scn") → "architec.scn"`. So ROCKROLL.SCR is actually rendering **ARCHITEC.SCN**, which is precisely the same scene & code path documented in `project_architec_texturemap.md` and `project_architec_vertex_zeros.md` — geometry never fires because scene_walker rejects entries with `[Light+0x84]=0`. **All Plus!98 Organic-Art SCRs share this root cause.** The bind-AddLight gap is one symptom of the upstream picker landing on architec.scn (which has Active=0 in its header — should be skipped, but our impl runs it anyway because there's no other Active=1 alternative being matched).
+
+**Strings extracted from ROCKROLL.SCR (`.data` segment) confirming picker logic:**
+- `0x744cfa8c` "OrgSuppList.txt"  ← suppress-list file path
+- `0x744cfa9c` "SuppList"          ← used as registry/INI key suffix
+- `0x744cfaac` "Initialising Suppressor..."  ← log/diag string
+- `0x744d0588` "*.scn"             ← directory enum pattern
+- `0x744d0598` "   Scene %s has changed - saving"
+- `0x744d05b8` "   Testing Original"
+The literal "ROCKROLL.SCN" does NOT appear — there's no hardcoded scene name; it's purely picker-driven from `*.scn` enum + Active-flag filter + suppress-list.
+
+**Next concrete actions (re-prioritized):**
+1. **Fix the picker before chasing AddLight.** Either (a) implement Active-flag parsing so architec.scn (Active=0) is skipped, (b) generate a synthetic `C:\OrgSuppList.txt` that suppresses every .SCN except ROCKROLL.SCN before launching the SCR, or (c) reorder `FindFirstFile(*.scn)` results so ROCKROLL.SCN sorts first. (a) is the right fix; (b)/(c) are diagnostic shortcuts to verify rockroll's geometry path independently.
+2. After ROCKROLL.SCN actually loads, re-run the writer-fn break-once probe. If `0x745d5a43` *now* fires, the AddLight binding works for legitimate scenes and the original "all Plus!98 SCRs are unbound" diagnosis was just architec-specific. If it still doesn't fire, the bind gap is deeper than the scene file.
+
+**ROCKROLL.SCR actual scene loaded — `--trace-fs` files opened:** `vopstain.gif`, `io-half.x`, `calogo.gif`, `spot_br.gif`, `octahedr.x`, `grad_k2.gif`, etc. — these are **CA_2001 assets** (2001 Space Odyssey-themed Computer Artworks scene), not RockRoll. Confirmed: the `architec.scn` from `FindFirstFile` is just a probe; the actual scene loaded is whatever DefaultScene says, which is `"CA_2001"` (set in `lib/storage.js:101`). ROCKROLL.SCR runs the wrong scene.
+
+**Why every SCR runs CA_2001:** `lib/storage.js` registers a single `HKCU\Software\Computer Artworks\Organic Art\Plus\DefaultScene = "CA_2001"` for *all* Plus!98 SCRs. Each per-theme SCR (ARCHITEC, ROCKROLL, JAZZ, etc.) reads from this *same* registry path — there's no per-SCR override. The real Plus!98 installer sets DefaultScene per the user-selected theme (or writes the active theme to OrgSuppList.txt). Our default of `"CA_2001"` gives identical behavior across all theme SCRs.
+
+**Embedded picker logic in SCR (strings):**
+- `"   Loaded scene Name %s, Active %d. from ...\\%s"`
+- `"FileName: %s, Name: %s, Active %d, Loaded %d"`
+- `"   Set "%s" active"` / `"   Set "%s" inactive"`
+- `"There were no active scenes in the play list - using 'current scene' anyway"`
+The picker enumerates `*.scn`, parses `Active=` from each, builds a play-list of Active=1 scenes, then picks DefaultScene if it's in the list — else falls back to current/first.
+
+**Active-flag survey (2026-04-26):** all .SCN files in test/binaries/screensavers/, grepped for `^Active=`:
+- `ARCHITEC.SCN`: Active=0
+- `JAZZ.SCN`: Active=0
+- `CA_DIAGR.SCN`: Active=1   ← only one with Active=1
+- `GEOMETRY.SCN`: Active=0
+- `ROCKROLL.SCN`: **no Active= line at all**
+- (others not surveyed)
+
+Implication: a "skip if Active=0" picker would land on `CA_DIAGR.SCN` regardless of which SCR is launched — matching the existing `project_architec_texturemap.md` finding ("scene-picker skips architec.scn (Active=0), runs ca_diagr wanting built-in 'Granite' tex"). Our current run picks ARCHITEC because the Active filter is unimplemented. Even fixing Active wouldn't help ROCKROLL specifically — `ROCKROLL.SCN` has no Active= line so the picker's default behavior on missing-key determines whether it's eligible. The intended Plus!98 selection mechanism must be: SCR-name → OrgSuppList entry → eligibility, with Active= as a global on/off flag. Without OrgSuppList, no per-SCR scene mapping exists.
+
+**PLS98THM.INF install layout (extracted from PLUS98.CAB):** each theme installs to `%THEMES_DIR%\<ThemeName>\` (e.g. `C:\Program Files\Plus!\Themes\RockRoll\`). The SCR itself lands in `C:\Windows\System\`. `HKLM\Software\...\KEY_OA\ResourceDir` holds a semicolon-list of all Theme dirs as a search path. **Per-theme install is flat — no `Backdrop\Informs\Textures\Scenes` subdirs.** The `.\Backdrop` etc. probes our trace shows are feature-detect fallbacks; the SCR copes when they're absent.
+
+**Real Plus!98 selection mechanism (uncovered):** each theme's `*.SCN` file ships with `Active=0` *in the CAB* — themes are inactive by default. When the user picks RockRoll in Themes control panel, the installer either (a) edits `ROCKROLL.SCN` to `Active=1`, or (b) writes the theme name to a state file. Without that step, no theme scene is "active" for the picker. Only the `CA_*.SCN` core scenes ship with `Active=1` — these are what every Plus!98 SCR falls back to.
+
+**Concrete next-session VFS work (2026-04-26 plan):**
+1. Per-SCR DefaultScene override in `lib/storage.js`: keyed off the SCR's filename stem (e.g. `ROCKROLL.SCR` → `DefaultScene="RockRoll"`, `JAZZ.SCR` → `DefaultScene="Jazz"`, etc.). Or set this dynamically at SCR launch time in `test/run.js` based on `--exe=` basename.
+2. Patch each theme's `*.SCN` in the VFS to set `Active=1` when its corresponding SCR is launched (RockRoll for ROCKROLL.SCR, etc.).
+3. Verify: re-trace `--trace-fs` and confirm the SCR opens `RO_GIT.X`, `RO_TEX01.GIF`, `RO_BACK.GIF` etc. (RockRoll-specific assets) instead of CA_2001's Io/octahedron/calogo set.
+4. **Only then** is the AddLight gap a meaningful follow-up — until the right scene loads, every diagnosis about "[Light+0x84]=0" applies to the wrong content.
+
 **Next concrete action:** the question is now "where, in the SCR's guest code, is the call to `IDirect3DRMFrame::AddLight` that should fire and isn't?" Two probe paths:
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
