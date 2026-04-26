@@ -174,12 +174,22 @@ scene_walker is invoked with `arg2 (edi) = 0x7513d510` (different from `[viewpor
 | `0x647b1fb0` | `0x647b1e53` |
 | `0x647b240e` | `0x647b2309` |
 
-None has fired by the first scene_walker hit. The "right" writer is whichever is meant to set `[entry+0x84] = scene-root` when the entry is bound to a scene-root frame (registration moment).
+**Runtime confirmation (2026-04-26 follow-up): all 8 writer instructions fired 0 times** across a 200k-batch run on the most-likely candidate (`0x745a89c5`) and 50k-batch runs on the other 7 (`0x745b7835 / 0x745b81d1 / 0x745c8d4d / 0x745cb22d / 0x745cb47f / 0x745ccfb0 / 0x745cd40e`). `[entry+0x84]` is therefore never written — the bind path is entirely dead.
+
+**Best candidate among the 8 (still 0 hits): `0x647adcef`.** Disasm shows the structural match for "bind a visual to a parent frame":
+- arg0 QI'd against vtable `0x647e0aa0` (the entry's class metadata — same `[+0x18]=0x647e0aa0` we see on the 3 viewport entries at runtime)
+- arg1 QI'd against `0x647e0f18` (a different class, presumably "frame")
+- if `[arg0+0x84]` already set, Release old value via `0x647ddb08`
+- write `[arg0+0x84] = QI(arg1)`
+- register via `0x64797f39(new_val, arg0)`; on failure undo
+- ret 0x8 — stdcall(2 args)
+
+Called only by trampoline `0x6478ba43` (lock + COM-wrapper unwrap `arg.[+0x8].[+0x10]` for both args + call inner + unlock + ret 0x8). That trampoline is slot **6** of the vtable starting at `0x647dfcc0` (full layout dumped — slot 0=`0x6478b8e1`, slots 0–7 in `0x6478b8e1..0x6478ba8f`, slots 8+ jump into a different range). This is the public COM method that's never being called.
 
 **Next-session pivot:**
-1. Set `--break-once` on each of the 8 writer-fn entries (relocated by `+0xfe1b000`) to identify which fires for these 3 entries during init. The one that should but doesn't fire — its precondition is the bug surface.
-2. The 3 entry vtables `[+0x18]=0x745fbaa0` (relocated d3rm static — `vtable_dump` it; the slot at +N driving registration is the real init path).
-3. Watchpoint on `0x74e100f8 + 0x84` byte=4 across a longer run: if it never changes, the registration path is dead; if it changes briefly to nonzero then resets to 0, it's a lifecycle bug.
+1. Identify which `IDirect3DRM*` interface vtable `0x647dfcc0` is, and which method slot 6 is. Check d3rm's `Direct3DRMCreate`/`QueryInterface` paths and the IID checks against `0x647e0aa0` / `0x647e0f18` (these are class-descriptor blobs containing the IID). Likely candidates: `IDirect3DRMFrame::AddVisual` or `IDirect3DRMVisual::AddDestination`.
+2. Once identified, search the SCR EXE (or the d3rm Load() path that ingests `.SCN` files) for the call site that should invoke that slot. The SCR's `.SCN` parser presumably walks `Children=`/`Visuals=` keys and binds via this method.
+3. **Confirmed dead at the public boundary too:** trampoline `0x745d5a43` (= `0x6478ba43 + 0xfe1b000`) fires 0 times in 50k batches. So the SCR/SCN-loader never even reaches the public COM method — the call is missing entirely, not failing inside guest code. Look upstream: which IDirect3DRMFrame/Visual API is the SCN loader supposed to use to attach the 3 entries it created? Possibilities: (a) the SCN parser uses a different API (e.g. `Load`-style block that binds internally without going through this vtable slot), and our impl of that API is incomplete; (b) the SCN parser does walk `Children=`, but its dispatch table maps the keyword to a stubbed handler. Grep d3rm.dll for refs to slot-6's surrounding vtable to find what data structure indexes into it.
 
 Per-vp render `0x64798e51` flow (cleaned up):
 - entry: `mov esi, [ebp+0x8]` → esi = viewport
