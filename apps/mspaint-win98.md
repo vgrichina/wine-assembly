@@ -1,8 +1,51 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status (2026-04-26 later): 8/9 — Colors palette survives, Tools glyphs missing at startup
+## Status (2026-04-26 later²): 8/9 — Tools glyphs render again, tool-click still wipes them
 
-`test/test-mspaint-draw.js` now `8/9`: `colors=3168→2736` ✓, `tools=116→0` ✗.
+`test/test-mspaint-draw.js` 8/9: `colors=3168→2736` ✓ (survives canvas
+mousedown), `tools=811→17` ✗ (renders at startup, but tool-click wipes).
+
+### What landed this session
+
+1. `gdi_bitblt` (sourceless / SRCCOPY / complex / 1:1 stretched / scaled
+   stretched) and `gdi_stretch_blt` (all paths) now wrap their final
+   `_clippedPut`/`fillRect` calls in `_drawWithClip(dstDC, t => …)`.
+2. `_excludeChildrenClip` now gates child exclusion on the parent's
+   `WS_CLIPCHILDREN` (0x02000000) style bit. Without it (e.g. mspaint's
+   CToolBar), the parent is allowed to paint into its children's screen
+   area — required for the toolbar's per-button icon blits.
+3. `isDescendantOf` now walks the WAT-side parent chain
+   (`wnd_get_parent`) instead of `r.windows[].isChild`. The renderer
+   only marks `isChild=true` for top-level + owner-draw windows, so
+   plain child controls were classified as non-descendants and got
+   added by the cousin walk as higher-z occluders, clipping out the
+   parent's blits to them.
+
+After (1)+(2)+(3): Tools palette renders 811 of original 827 non-bg
+pixels at startup (vs 116 broken state in the previous commit).
+
+### Remaining: tool-click wipes 794 of 811 glyph pixels
+
+Mousedown(39,146) on the pencil tool → after-tool snapshot has
+`tools=17`. Only the clicked button should change state; the other 15
+should be untouched. Likely paths:
+
+- The clicked button's owner-draw repaints with WHITENESS/PATCOPY
+  before redrawing the glyph in pressed state, but cover-clip still
+  carves out sibling buttons → fine. Yet siblings are also losing
+  their glyphs.
+- More likely: a Tools-palette-wide WM_PAINT fires (button click sends
+  parent-notify, MFC redraws toolbar bg). Tools doesn't have
+  WS_CLIPCHILDREN, so its fillRect IS now allowed to paint over button
+  areas — this is technically correct GDI behavior (no clip-children
+  ⇒ parent can scribble), but the buttons should then receive their
+  own WM_PAINT to redraw glyphs. Either WM_PAINT isn't fired for
+  siblings or the redraw goes to the wrong DC.
+
+Next step: run `--trace-gdi` from frame 50 to 60 and grep for blits
+to button DCs (`0x4000xx`) vs Tools DC (`0x50009`). If only Tools' DC
+is touched and no per-button WM_PAINT fires, the issue is missing
+invalidation of sibling buttons after the parent erases their bg.
 
 ### What landed this session
 
