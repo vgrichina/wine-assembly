@@ -250,6 +250,15 @@
       (br $lp)))
     (global.set $fpu_tag (local.get $t)))
 
+  ;; FIP (+12) / FCS:FOP (+16) / FDP (+20) / FDS (+24): on real x87 these
+  ;; record the linear address + selector + opcode of the last non-control
+  ;; FPU instruction and its memory operand, so an #MF handler can identify
+  ;; the faulting op. We never deliver #MF (masked exceptions only set SW
+  ;; flags and continue), nothing in our test corpus reads these fields,
+  ;; we have no segment selectors to report, and computing a real FIP would
+  ;; require stashing EIP in every FPU thread handler. We write zeros and
+  ;; document the gap. If a guest ever does parse them it sees a null
+  ;; selector — easy to spot if it ever matters.
   (func $fpu_store_env (param $addr i32)
     (local $w i32)
     (local.set $w (call $g2w (local.get $addr)))
@@ -258,10 +267,10 @@
       (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
               (i32.shl (global.get $fpu_top) (i32.const 11))))
     (i32.store (i32.add (local.get $w) (i32.const 8)) (call $fpu_pack_tag_word))
-    (i32.store (i32.add (local.get $w) (i32.const 12)) (i32.const 0))
-    (i32.store (i32.add (local.get $w) (i32.const 16)) (i32.const 0))
-    (i32.store (i32.add (local.get $w) (i32.const 20)) (i32.const 0))
-    (i32.store (i32.add (local.get $w) (i32.const 24)) (i32.const 0)))
+    (i32.store (i32.add (local.get $w) (i32.const 12)) (i32.const 0))   ;; FIP
+    (i32.store (i32.add (local.get $w) (i32.const 16)) (i32.const 0))   ;; FCS:FOP
+    (i32.store (i32.add (local.get $w) (i32.const 20)) (i32.const 0))   ;; FDP
+    (i32.store (i32.add (local.get $w) (i32.const 24)) (i32.const 0)))  ;; FDS
 
   (func $fpu_load_env (param $addr i32)
     (local $w i32) (local $sw i32)
