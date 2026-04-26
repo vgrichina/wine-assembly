@@ -617,14 +617,32 @@ Resource-aware Win98 emulator
       }, { passive: false });
       canvas.setAttribute('tabindex', '0');
       canvas.focus();
+      // Default-claim keys when canvas is focused: the guest gets every
+      // keystroke except those reserved for the browser/OS (close tab,
+      // reload, devtools, fullscreen, OS keys). This matches Win98 feel
+      // — Ctrl+S/F/P etc. land in the app instead of the browser.
+      const keepForBrowser = (e) => {
+        const vk = e.keyCode;
+        if (e.metaKey) return true;                          // Cmd/Win
+        if (vk === 44) return true;                          // PrintScreen
+        if (vk === 122 || vk === 123) return true;           // F11, F12
+        if (vk === 116) return true;                         // F5 (reload)
+        if (e.ctrlKey && vk === 82) return true;             // Ctrl+R
+        if (e.ctrlKey && vk === 87) return true;             // Ctrl+W
+        if (e.ctrlKey && vk === 84) return true;             // Ctrl+T
+        if (e.ctrlKey && vk === 9)  return true;             // Ctrl+Tab
+        if (e.ctrlKey && vk === 33) return true;             // Ctrl+PgUp
+        if (e.ctrlKey && vk === 34) return true;             // Ctrl+PgDn
+        if (e.ctrlKey && vk === 27) return true;             // Ctrl+Esc
+        if (e.ctrlKey && e.shiftKey && (vk === 73 || vk === 74 || vk === 67)) return true; // devtools
+        if (e.ctrlKey && (vk === 187 || vk === 189 || vk === 48)) return true; // zoom
+        if (e.altKey && vk === 115) return true;             // Alt+F4
+        return false;
+      };
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
         renderer.handleKeyDown(vk);
-        if (vk === 8 || vk === 9 || vk === 37 || vk === 38 || vk === 39 || vk === 40 || vk === 36 || vk === 35 || vk === 46 || (vk >= 112 && vk <= 123)) {
-          e.preventDefault();
-        }
-        if (e.ctrlKey && (vk === 65 || vk === 67 || vk === 88 || vk === 86)) e.preventDefault();
-        if (e.altKey) e.preventDefault();
+        if (!keepForBrowser(e)) e.preventDefault();
       });
       canvas.addEventListener('keyup', e => {
         renderer.handleKeyUp(e.keyCode);
