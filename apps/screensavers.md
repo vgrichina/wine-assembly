@@ -72,7 +72,15 @@ Caller `0x647bc3db test eax,eax; jz fallback` treats 0 as "no handler found." `0
 
 **Inner walker `0x647c534f`** iterates `[arg3+0xbc]` entries (count) at base `[arg3+0xc4]`, stride **4 bytes** (pointer-array). Calls predicate `0x647ad71e(*entry, 0, ctx)` per entry; if nonzero, AddRef+invoke and writes a 0x50-byte result row into `[ebx+0xa0]`. Returns 0 if no entry matched.
 
-**List ownership:** `[+0xbc]/[+0xc4]` belong to the **scene root frame** (scene_walker `arg0` → `ebx`), not the viewport. Confirmed by cross-checking dispatcher arg propagation from emit-fn call site `0x64798ac9` (`push ebx; push edi; push esi; call [eax+0x38]`) and by the in-walker pre-check at `0x64798955` reading `[ebx+0xbc]/[ebx+0xc4]` directly.
+**List ownership (corrected 2026-04-26):** `[+0xbc]/[+0xc4]` on the inner walker's `edi` belong to the **viewport**, NOT scene-root. Earlier doc claim was based on wrong arg-mapping. Full chain re-verified:
+
+- scene_walker `0x64798903` entry: `mov ebx, [ebp+0x8]` → ebx = arg0 = **viewport** (not scene-root). The local rename `mov [ebp+0x8], eax` (scene-root) at `0x64798924` only overwrites the stack slot, not the register; ebx stays = viewport for the rest of the function.
+- Dispatcher call site `0x64798ac9: push ebx; push edi; push esi; call [eax+0x38]` passes (visual=esi, scene-root=edi, **viewport=ebx**) to outer dispatcher `0x647c52f9`.
+- Outer dispatcher trampolines (visual, scene-root, viewport) → (visual, scene-root, `[viewport+0x34]`=scene-root, viewport) into `0x647c531c`.
+- `0x647c531c` then calls inner walker `0x647c534f` with (visual=arg0, scene-root=arg1, **viewport=arg2**).
+- Inner walker `0x647c534f`: `mov edi, [ebp+0x10]` → edi = arg2 = viewport. Reads `[viewport+0xbc]` (count=3) and `[viewport+0xc4]` (base = 0x74e0ef50, populated array of 3 entries).
+
+So the inner walker IS iterating the viewport's populated list — 3 iterations per dispatcher call.
 
 **The bug surface (current state):** across all of d3rm.dll, `find_field --op=write` shows **no instruction stores a nonzero value into `[reg+0xc4]`** — only zero-inits and one clone (copy-ctor at `0x647a3069` in fn `0x647a2f6d`):
 
@@ -108,7 +116,12 @@ Object identification (corrected from earlier static analysis):
 
 **Populator runtime behavior (trace-at on fn entry `0x745dcc2b`):** fires 6+ times per per-vp-render invocation (1 from `0x6479902f`, then recursive walks via `0x647c1d08` over `[ebx+0xa8]` sibling chain). Destination ESI = `0x7500d6a0` (viewport, NOT scene-root). At dispatcher hit, viewport `+0xbc=3, +0xc0=3, +0xc4=0x74e0ef50` (3 populated entries). Scene-root frame `0x7500c368` has `+0xbc=0xc0=0xc4=0` — it's a **separate, legitimately empty per-frame list**. (Initial `--break=0x745b402f --break-once` hit zero times because that VA is mid-block; trace-at on the populator's entry block instead.)
 
-**So the prior "list is empty" diagnosis was probing the wrong object.** The viewport's draw list IS built each frame. The actual question is now: why does the dispatcher get called with `EBX=0x7500c368` (scene-root, empty by design) instead of with the viewport (which has 3 entries)?
+**So the prior "list is empty" diagnosis was wrong twice over:** (a) the viewport's list IS populated, and (b) the inner walker DOES read viewport's list (not scene-root's). The 3 entries are being iterated per dispatcher call.
+
+**New question:** what does predicate `0x647ad71e(*entry, 0, scene-root)` return for the 3 entries, and what is `[hr_cache]=0x647e7afc` at dispatcher return? Possible failure modes:
+1. Predicate returns 0 for all entries → inner returns 0 → outer returns 0 → caller takes fallback path (no draw).
+2. Predicate returns nonzero, AddRef/invoke writes result row, but `hr_cache` is 0 → outer dispatcher's `and eax, hr_cache` zeroes out → caller still takes fallback.
+3. Predicate matches and `hr_cache` nonzero → success → result row drives downstream geometry emit (if it exists).
 
 Per-vp render `0x64798e51` flow (cleaned up):
 - entry: `mov esi, [ebp+0x8]` → esi = viewport
@@ -124,9 +137,9 @@ Per-vp render `0x64798e51` flow (cleaned up):
 So the populator builds the viewport's draw list. Then per-vp render presumably issues the dispatcher walks afterwards. The dispatcher gets EBX=scene-root because scene-root IS the natural "walk root" for the scene_walker (`0x64798903`), but the dispatcher's inner walker `0x647c534f` looks at `[arg+0xbc]/[arg+0xc4]` of THIS arg (scene-root) — which is empty. The viewport's populated list is read from a different code path we haven't traced yet.
 
 **Next-session pivot:**
-1. Map who reads the viewport's `[+0xc4]` array. `find_field test/binaries/dlls/d3drm.dll 0xc4 --op=read` — the consumers are the actual draw-emission path. They must read from viewport (or from `[edi+0x5b8]` style indirection), not from scene-root.
-2. Determine if scene_walker `0x64798903` is the right caller for the dispatcher in this code path, or if the viewport-list iteration is a different walker entirely. Look at fn `0x64798903` — does it iterate `[ebx+0xc4]` or call a vtable that does?
-3. Identify d3rm's separate geometry-emission path: `0x647c3744` (generic `appendOp`) only writes 8-byte payloads via 3 callers — none emit PROCESSVERTICES / TRIANGLE. That writer must exist elsewhere; finding it tells us what guards mesh emission.
+1. Probe predicate `0x647ad71e` (relocated `0x745c871e`) on each of the 3 viewport entries — what does it test, what does it return? `--break=0x745c871e --break-once` then dump `[esp+4]` (entry), `[esp+0xc]` (scene-root), step to ret, dump eax.
+2. Read `hr_cache` at `0x647e7afc` (relocated `0x7500_2afc` — verify) at dispatcher entry/exit. If 0, the success path is masked by the `and eax, hr_cache` epilogue.
+3. If predicate succeeds and hr_cache is nonzero, follow the result row at `[ebx+0xa0] + i*0x50`. The 0x50-byte rows are the dispatcher's output — they must be consumed by a downstream geometry-emit pass that writes PROCESSVERTICES/TRIANGLE. `find_field` for `+0xa0 --op=read` should narrow that consumer down.
 
 ### 4. MFC screensavers — full DirectAnimation (DEFERRED)
 
