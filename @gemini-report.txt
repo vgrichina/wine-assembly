@@ -1,28 +1,23 @@
 # Wine-Assembly: Codebase Review Report (2026-04-25)
 
-## 1. CPU Emulator & ALU Bugs (src/05-alu.wat, src/07-decoder.wat)
+## 1. Resolved Issues (Audit 2026-04-25)
 
-### Missing Flag Updates in SHLD/SHRD
-*   **Issue:** Handlers for `SHLD` and `SHRD` (indices 103, 104, 258-261) update the destination register but do not update the EFLAGS register (SF, ZF, PF, and CF).
-*   **Impact:** Code that performs multi-precision shifts and then branches based on the result will behave incorrectly.
+### CPU Emulator & ALU
+*   **SHLD/SHRD Flag Updates:** [FIXED] 16-bit and 32-bit versions now correctly call `set_flags_shift`.
+*   **BT/BTS/BTR/BTC Flagging:** [FIXED] Now correctly calls `set_cf_bit` to set Carry Flag based on original bit value.
+*   **Far Call/Jump Support (0x9A, 0xEA):** [FIXED] Decoder now handles these as near CALL/JMP to offset (flat-mode), ignoring the selector.
+*   **Inconsistent #DE Exception Codes:** [FIXED] Division errors now consistently raise `STATUS_INTEGER_DIVIDE_BY_ZERO` (0xC0000094).
 
-### Incomplete BT/BTS/BTR/BTC Flagging
-*   **Issue:** While `th_bt_r_i8` correctly sets the Carry Flag (CF), the variants `th_bts_r_i8`, `th_btr_r_i8`, and `th_btc_r_i8` do not set CF to the original bit value before modification.
-*   **Impact:** Applications relying on the "Test" part of these instructions for logic flow will fail.
+## 2. Pending CPU/ALU Gaps (src/05-alu.wat, src/07-decoder.wat)
 
-### Far Call/Jump Support (0x9A, 0xEA)
-*   **Issue:** The decoder handles these by calling `crash_unimplemented`.
-*   **Impact:** Any application that uses far pointers (common in installers or code interacting with certain legacy structures) will crash immediately.
+### MOVSX/MOVZX Coverage
+*   **Issue:** Some variants use generic decoder patterns that might be less efficient than dedicated handlers.
 
-### Inconsistent #DE Exception Codes
-*   **Issue:** `th_idiv32` uses exception code 1, `th_div_m32` uses code 2, and `th_idiv_m32` uses code 3.
-*   **Impact:** On real x86, all division errors (divide by zero or overflow) should trigger Exception 0. SEH handlers expecting standard x86 exception codes will not catch these.
-
-## 2. Direct3D Immediate Mode (src/09aa-handlers-d3dim.wat, src/09ab-handlers-d3dim-core.wat)
+## 3. Direct3D Immediate Mode (src/09aa-handlers-d3dim.wat, src/09ab-handlers-d3dim-core.wat)
 
 ### State Kind Opcode Swap
 *   **Issue:** Line 724 of `src/09ab-handlers-d3dim-core.wat` has a comment swap: `7=render, 8=light` vs actual code `7=light, 8=render`.
-*   **Impact:** Minor developer confusion, though the code logic matches the D3D spec.
+*   **Impact:** Minor developer confusion.
 
 ### Limited Vertex Support
 *   **Issue:** `d3dim_draw_primitive` only supports `D3DVT_TLVERTEX` (transformed and lit).
@@ -31,45 +26,31 @@
 ### Missing D3D Lighting
 *   **Issue:** `d3dim_exec_process_vertices` supports transformation but lighting logic is currently a no-op stub.
 
-## 3. FPU Implementation Gaps (src/06-fpu.wat)
+## 4. FPU Implementation Gaps (src/06-fpu.wat)
 
 ### Missing State Management
 *   **Issue:** `FLDENV`, `FNSTENV`, `FRSTOR`, and `FNSAVE` (Groups 1 and 5 in `fpu_exec_mem`) call `fpu_crash_op`.
-*   **Impact:** Applications that save/restore FPU state during context switches or complex math routines will crash.
+*   **Impact:** Applications that save/restore FPU state will crash.
 
 ### No BCD Support
 *   **Issue:** `FBLD` and `FBSTP` (BCD load/store) are unimplemented.
-
-## 4. Windows Subsystems & API
-
-### DirectInput / Mouse Delta
-*   **Issue:** Mouse deltas for relative movement are not tracked in the message loop (TODO in `src/09a8-handlers-directx.wat`).
-*   **Impact:** 3D games or applications using DirectInput for mouse control will have non-functional camera/cursor movement.
-
-### CRT Character Sets
-*   **Issue:** `_isctype` and related functions in `src/09a6-handlers-crt.wat` lack lead-byte support for DBCS.
-
-### DefWindowProc Focus Awareness
-*   **Issue:** `WM_SETFOCUS` / `WM_KILLFOCUS` handling in `src/09c4-defwndproc.wat` is missing logic to update internal focus state.
 
 ## 5. JavaScript Framework & Host Imports
 
 ### VirtualFS Handle Leak
 *   **Issue:** In `lib/filesystem.js`, `closeHandle` marks file handles as `closed: true` but never deletes them from the `this.handles` Map.
-*   **Impact:** Long-running sessions or applications that open/close many files (like installers) will leak memory and eventually exhaust the handle namespace.
+*   **Impact:** Potential memory leak in long-running sessions.
 
 ### Clipping Even-Odd Bug
-*   **Issue:** `lib/host-imports.js` (line 923) uses a simple even-odd rule for child window clipping. It explicitly lacks support for partial overlaps (non-containing).
-*   **Impact:** When child windows partially overlap (e.g., complex UI layouts), the "even-odd" logic will incorrectly clear or draw in areas that should be clipped, causing visual artifacts.
+*   **Issue:** `lib/host-imports.js` (line 923) uses a simple even-odd rule for child window clipping, lacking support for partial overlaps.
+*   **Impact:** Visual artifacts in complex overlapping UI layouts.
 
 ### StretchDIBits Positioning/Clearing Bug
 *   **Issue:** A debug override `SDB_FULL_BLIT` exists because of an unresolved bug where sub-rect blits or canvas clearing between calls produces incorrect output.
-*   **Impact:** Likely causes flickering or "trails" in games (like Pinball or Solitaire) that perform partial screen updates.
 
 ### DllMain Trap Masking
-*   **Issue:** `lib/dll-loader.js` masks certain traps in `DllMain`. If the guest code triggers a trap but `EAX` is 1, the loader assumes success and continues.
-*   **Impact:** May hide legitimate crashes during initialization, leading to more complex "delayed" crashes that are harder to debug.
+*   **Issue:** `lib/dll-loader.js` masks certain traps in `DllMain`. If the guest code triggers a trap but `EAX` is 1, the loader assumes success.
+*   **Impact:** May hide legitimate initialization crashes.
 
 ### Incomplete CRT Locale/Char Support
 *   **Issue:** `lib/host-imports.js` and `src/09a6-handlers-crt.wat` lack full support for DBCS lead bytes and multiple locales.
-*   **Impact:** Non-English (specifically CJK) applications will likely fail to process strings or display text correctly.
