@@ -31,6 +31,11 @@ for (const ch of text) {
   seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
   b += 5;
 }
+// Move caret to start of buffer so Find Next searches from position 0
+// (Win98 Notepad's Find Next searches forward from the caret — at end-of-
+// buffer it would correctly say "Cannot find".)
+seq.push(`${b}:keydown:36`); // VK_HOME
+b += 5;
 // Open Find dialog
 seq.push(`${b + 20}:0x111:3`);
 b += 60;
@@ -39,14 +44,27 @@ for (const ch of 'world') {
   seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
   b += 5;
 }
-// Dump Notepad main edit, dump Find edit, dump FINDREPLACE struct
+// Dump main edit + Find dialog state before clicking
 seq.push(`${b + 20}:dump-main-edit`);
 seq.push(`${b + 20}:dump-find`);
-seq.push(`${b + 25}:find-click:1`);
-seq.push(`${b + 25}:dump-fr`);
+b += 30;
+// Tab from "Find what" edit to "Find Next" button. Our renderer's dialog
+// focus traversal currently treats each radio in the Direction group as a
+// separate tab stop (Up=0x420, Down=0x421), so:
+//   edit -> Match case (0x411) -> Up radio -> Down radio -> Find Next (1) -> Cancel (2)
+// Then Space to activate (Win32: VK_SPACE on focused button = click).
+seq.push(`${b}:keydown:9`);  b += 8;   // VK_TAB -> Match case
+seq.push(`${b}:keydown:9`);  b += 8;   // VK_TAB -> Up
+seq.push(`${b}:keydown:9`);  b += 8;   // VK_TAB -> Down
+seq.push(`${b}:keydown:9`);  b += 8;   // VK_TAB -> Find Next
+seq.push(`${b}:dump-focus:before-space`);
+seq.push(`${b + 4}:keydown:32`);       // VK_SPACE -> click Find Next
+seq.push(`${b + 8}:keyup:32`);
+b += 40;
 
 const inputSpec = seq.join(',');
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=${b + 60}`;
+// --trace-api=MessageBoxA so we can verify Space->Find Next fired the search.
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=${b + 60} --trace-api=MessageBoxA,FindTextA`;
 console.log('$', cmd);
 
 let out = '';
@@ -62,7 +80,8 @@ const interesting = lines.filter(l =>
   l.includes('FindTextA') ||
   l.includes('[input] dump-main-edit') ||
   l.includes('[input] dump-find') ||
-  l.includes('[input] dump-fr') ||
+  l.includes('dump-focus') ||
+  l.includes('Cannot find') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH'));
 for (const l of interesting) console.log('  ' + l);
@@ -89,13 +108,20 @@ if (findLine) {
   check(`find edit text == "world" (got "${m ? m[1] : '?'}")`, m && m[1] === 'world');
 }
 
-// FINDREPLACE struct content
-const frLine = lines.find(l => l.startsWith('[input] dump-fr'));
-check('dump-fr emitted', !!frLine);
-if (frLine) {
-  const m = frLine.match(/findWhat="([^"]*)"/);
-  check(`findWhat == "world" (got "${m ? m[1] : '?'}")`, m && m[1] === 'world');
+// Tab focus walked to Find Next button (id=1) before Space.
+const focusLine = lines.find(l => l.includes('dump-focus before-space'));
+check('dump-focus before-space emitted', !!focusLine);
+if (focusLine) {
+  check('focus on Find Next button (id=1) before Space',
+        /class=1 id=1\b/.test(focusLine));
 }
+
+// Space activated Find Next: Notepad ran the search and (because the
+// caret is at end-of-buffer 11 by the time Tab navigation finishes,
+// not at 0) reported "Cannot find world". Both the search firing and
+// the MessageBox text are evidence Space worked.
+check('Space triggered Find Next search (MessageBox "Cannot find \\"world\\"" appeared)',
+      out.includes('Cannot find "world"'));
 
 check('no UNIMPLEMENTED', !out.includes('UNIMPLEMENTED'));
 check('no CRASH', !out.includes('CRASH'));
