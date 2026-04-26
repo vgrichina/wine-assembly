@@ -277,6 +277,7 @@
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+  (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
