@@ -1114,6 +1114,45 @@ Initial disasm made me think the `call [ecx+0x64]` at 0x7440f3ef was `IDirectDra
 
 **Next probes:** (1) hexdump arena `[0x744deed0]` after 10k batches to check for vertex-like float triples; (2) find the CONSUMER of the arena — whatever walks it and submits to d3drm; (3) `--watch=0x744deb9c --watch-log` to correlate arena growth with d3drm Execute events.
 
+##### 2026-04-26 — d3rm Tick path fully mapped; bug isolated to empty per-viewport handler list
+
+Built two new tools to compress static PE/DLL inspection:
+- `tools/dump_va.js <pe> 0xVA[,...] [len]` — peek bytes at VA, explicitly tags BSS (zero-init) ranges so a zeroed sentinel doesn't masquerade as initialized data.
+- `tools/vtable_dump.js <pe> 0xVTBL_VA [n]` — enumerate N consecutive vtable slots with first-instruction disasm of each target.
+
+These collapsed the prior "trace-at-dump just to peek static .data" workflow and the "manual disasm_fn loop to walk vtables" workflow into one-shot CLI calls. Used them to map the entire d3rm `Tick` rendering path in one session:
+
+**Pipeline (all working):**
+```
+IDirect3DRM3::Tick (slot 34) → 0x647bc46a (inner Tick)
+  → enum frames + Move callbacks
+  → enum devices → for each viewport:
+      → 0x64798e51 (per-vp render)
+        → 0x64798903 SCENE WALKER     [177 hits / 86 Flips]
+            → visual-loop entry        [177]
+              → non-Frame emit branch  [177]  visual ESI=0x75281d38
+                → emit fn 0x647bc390   [177]  descriptor=0x647e0e78
+                  → up-call [parent+0x38] = 0x647c52f9 → returns 0
+                → fallback 0x745d73e6  [177]  no draw
+```
+
+**Class chain proven intact** (via `vtable_dump`): `0x647e0e78 → 0x647e0fe8 → 0x647e0fa0 → 0x647e0de0`. All visual descriptors (Mesh `0x647e0ec8`, MeshBuilder `0x647e0e28`, our `0x647e0e78`) share parent `0x647e0fe8`. Slot 14 of parent = `0x647c52f9` confirmed via `dump_va 0x647e1020`.
+
+**`0x647e7afc` is NOT a sentinel** (initial guess wrong). `dump_va` tagged it BSS, but `xrefs` shows 35+ `and dword [0x647e7afc], 0x0` clears at function entries plus 4+ loads — it's an **HRESULT accumulator** that gets cleared on entry and OR'd with errors.
+
+**Polymorphic dispatcher semantics inverted from HRESULT:**
+```
+0x647c52f9: call inner → neg eax; sbb eax, eax; and eax, [hr_cache]; ret
+   = inner_returned_nonzero ? hr_cache : 0
+```
+Caller `0x647bc3db test eax,eax; jz fallback` treats 0 as "no handler found." So inner returning 0 = list walker found no match.
+
+**Inner walker** `0x647c534f` iterates `[viewport+0xbc]` (count) at base `[viewport+0xc4]`. For each entry, calls `0x647ad71e` (class-match predicate) — if zero, skip; if nonzero, AddRef+invoke. Returns the matched entry or 0.
+
+**Viewport zero-init `0x647c1377` deliberately sets `[viewport+0xbc]=[viewport+0xc4]=0`.** The handler list starts empty by design. Some other call must populate it later — likely an internal install-default-renderers chain that runs from `Direct3DRMCreate` or first-`SetCamera` / `SetQuality` / `SetShades` / `SetTextureQuality`, which we're not making (or stubbing past).
+
+**Concrete next-session probe:** `find_field d3drm.dll 0xc4 --op=write` shows only **4 writer instructions** for `[+0xc4]` across all of d3rm — a tractable surface. Identify which one writes the viewport's list (vs. unrelated classes that happen to have a +0xc4 field) by tracing each fn's caller and matching against the IDirect3DRMViewport vtable / construction site. Distinguishing requires runtime data (count value at the moment of dispatch failure) — needs a debug bp at `0x647c52f9` that dumps `[viewport+0xbc]/[viewport+0xc4]`.
+
 **Earlier (now-superseded) scene-list architecture notes kept for reference:**
 
 **2026-04-24 cont. 5: two-list architecture confirmed.** The engine owns TWO MFC-style sentinel-headed doubly-linked lists, both initialized at `0x7445b0e0` (called once at startup):
