@@ -211,7 +211,7 @@ async function main() {
       const parts = spec.split(':');
       const batch = parseInt(parts[0]);
       const kind = parts[1];
-      if (kind === 'focus-find' || kind === 'dump-find') {
+      if (kind === 'focus-find' || kind === 'dump-find' || kind === 'dump-main-edit') {
         scheduledInput.push({ batch, action: kind });
       } else if (kind === 'find-click') {
         // B:find-click:CTRL_ID — click a find dialog button by ctrl id
@@ -1565,6 +1565,28 @@ async function main() {
           logs.push(`[input] focus-find: hwnd=0x${watDlg.toString(16)} editText=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] focus-find: NO FIND DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-main-edit' && renderer) {
+        // Find the first WAT EditState (class==2) attached to main_hwnd or
+        // its descendants and dump its text. Notepad's main edit is its
+        // sole child class-2 control, so first match is enough.
+        const we = instance.exports;
+        let found = 0;
+        if (we.ctrl_get_class && we.get_edit_text && we.guest_alloc) {
+          // Walk WND_RECORDS via renderer.windows; cheaper than exporting an iterator.
+          for (const w of Object.values(renderer.windows || {})) {
+            if (we.ctrl_get_class(w.hwnd) === 2 && w.visible) { found = w.hwnd; break; }
+          }
+        }
+        if (found) {
+          const scratchG = we.guest_alloc(4096);
+          const n = we.get_edit_text(found, scratchG, 4095);
+          const dv = new DataView(memory.buffer);
+          let txt = '';
+          for (let i = 0; i < n; i++) txt += String.fromCharCode(dv.getUint8(g2w(scratchG) + i));
+          logs.push(`[input] dump-main-edit: hwnd=0x${found.toString(16)} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-main-edit: NO EDIT at batch ${batch}`);
         }
       } else if (ev.action === 'dump-find' && renderer) {
         // Read EditState text directly from WAT — find dialog has no JS
