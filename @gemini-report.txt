@@ -1,56 +1,38 @@
-# Wine-Assembly: Codebase Review Report (2026-04-25)
+# Wine-Assembly: Deep Codebase Audit Report (2026-04-25)
 
 ## 1. Resolved Issues (Audit 2026-04-25)
+*   **SHLD/SHRD Flag Updates:** Fixed in 16-bit and 32-bit versions.
+*   **BT/BTS/BTR/BTC Flagging:** Fixed; now correctly sets Carry Flag.
+*   **Far Call/Jump Support:** Fixed; decoded as flat-mode near ops.
+*   **Exception Codes:** Division errors now use standard NT status codes (0xC0000094).
 
-### CPU Emulator & ALU
-*   **SHLD/SHRD Flag Updates:** [FIXED] 16-bit and 32-bit versions now correctly call `set_flags_shift`.
-*   **BT/BTS/BTR/BTC Flagging:** [FIXED] Now correctly calls `set_cf_bit` to set Carry Flag based on original bit value.
-*   **Far Call/Jump Support (0x9A, 0xEA):** [FIXED] Decoder now handles these as near CALL/JMP to offset (flat-mode), ignoring the selector.
-*   **Inconsistent #DE Exception Codes:** [FIXED] Division errors now consistently raise `STATUS_INTEGER_DIVIDE_BY_ZERO` (0xC0000094).
+## 2. Deep Dive: Pending Implementation Gaps
 
-## 2. Pending CPU/ALU Gaps (src/05-alu.wat, src/07-decoder.wat)
+### Direct3D Immediate Mode (src/09ab-handlers-d3dim-core.wat)
+*   **Vertex Pipeline Limitation:** `d3dim_draw_primitive` only supports `vtxType == 3` (TLVERTEX). If an app uses `D3DVT_VERTEX` or `D3DVT_LVERTEX`, the emulator crashes.
+*   **Lighting Stub:** `d3dim_exec_process_vertices` transformation works, but lighting is a no-op (hardcoded white).
+*   **DirectDraw Gaps:** `EnumSurfaces` and `DuplicateSurface` are stubs that call `crash_unimplemented`.
 
-### MOVSX/MOVZX Coverage
-*   **Issue:** Some variants use generic decoder patterns that might be less efficient than dedicated handlers.
+### x87 FPU (src/06-fpu.wat)
+*   **Stub Density:** 23 distinct calls to `fpu_crash_op`.
+*   **Critical Missing Ops:** `FLDENV`, `FNSTENV`, `FRSTOR`, and `FNSAVE` (state management) are unimplemented.
+*   **Data Types:** No BCD support (`FBLD`/`FBSTP`).
 
-## 3. Direct3D Immediate Mode (src/09aa-handlers-d3dim.wat, src/09ab-handlers-d3dim-core.wat)
+### Windows UI & Controls (src/09c3-controls.wat, src/09a5-handlers-window.wat)
+*   **Scrollbar Limitations:** `scrollbar_ctrl_wndproc` only handles arrow button clicks. **Thumb dragging and page-up/page-down regions are unimplemented.**
+*   **DefWndProc Focus:** `WM_SETFOCUS` / `WM_KILLFOCUS` handling is a TODO; doesn't currently track internal focus state.
+*   **SetWindowLong Gaps:** Subclassing via `GWL_WNDPROC` is partially implemented, but many other indices (like `GWL_EXSTYLE`) are not fully functional.
+*   **LineDDA Stub:** In `src/09a7-handlers-dispatch.wat`, `LineDDA` returns without invoking the caller's callback.
 
-### State Kind Opcode Swap
-*   **Issue:** Line 724 of `src/09ab-handlers-d3dim-core.wat` has a comment swap: `7=render, 8=light` vs actual code `7=light, 8=render`.
-*   **Impact:** Minor developer confusion.
+### Virtual Filesystem (lib/filesystem.js)
+*   **Handle Leak:** `closeHandle` intentionally leaks memory by not deleting handle IDs from `this.handles` to avoid race conditions.
 
-### Limited Vertex Support
-*   **Issue:** `d3dim_draw_primitive` only supports `D3DVT_TLVERTEX` (transformed and lit).
-*   **Impact:** Most games that rely on the pipeline to transform or light vertices (`D3DVT_VERTEX`, `D3DVT_LVERTEX`) will not render.
+### GDI & Rendering (lib/host-imports.js)
+*   **Partial Overlap:** Window clipping for partially overlapping child windows (non-containing) is prone to visual artifacts and generates many sub-rects.
+*   **StretchDIBits Corruption:** Debug workaround `SDB_FULL_BLIT` remains due to unresolved sub-rect blitting bugs.
 
-### Missing D3D Lighting
-*   **Issue:** `d3dim_exec_process_vertices` supports transformation but lighting logic is currently a no-op stub.
+### CRT & Locale (src/09a6-handlers-crt.wat)
+*   **DBCS/MBCS Gaps:** Lead-byte logic for multi-byte character sets (CJK) is missing in `_mbsinc` and related functions.
 
-## 4. FPU Implementation Gaps (src/06-fpu.wat)
-
-### Missing State Management
-*   **Issue:** `FLDENV`, `FNSTENV`, `FRSTOR`, and `FNSAVE` (Groups 1 and 5 in `fpu_exec_mem`) call `fpu_crash_op`.
-*   **Impact:** Applications that save/restore FPU state will crash.
-
-### No BCD Support
-*   **Issue:** `FBLD` and `FBSTP` (BCD load/store) are unimplemented.
-
-## 5. JavaScript Framework & Host Imports
-
-### VirtualFS Handle Leak
-*   **Issue:** In `lib/filesystem.js`, `closeHandle` marks file handles as `closed: true` but never deletes them from the `this.handles` Map.
-*   **Impact:** Potential memory leak in long-running sessions.
-
-### Clipping Even-Odd Bug
-*   **Issue:** `lib/host-imports.js` (line 923) uses a simple even-odd rule for child window clipping, lacking support for partial overlaps.
-*   **Impact:** Visual artifacts in complex overlapping UI layouts.
-
-### StretchDIBits Positioning/Clearing Bug
-*   **Issue:** A debug override `SDB_FULL_BLIT` exists because of an unresolved bug where sub-rect blits or canvas clearing between calls produces incorrect output.
-
-### DllMain Trap Masking
-*   **Issue:** `lib/dll-loader.js` masks certain traps in `DllMain`. If the guest code triggers a trap but `EAX` is 1, the loader assumes success.
-*   **Impact:** May hide legitimate initialization crashes.
-
-### Incomplete CRT Locale/Char Support
-*   **Issue:** `lib/host-imports.js` and `src/09a6-handlers-crt.wat` lack full support for DBCS lead bytes and multiple locales.
+### DLL Loader (lib/dll-loader.js)
+*   **Trap Masking:** `DllMain` entry traps are potentially masked if `EAX=1` and `EIP` is near 0.
