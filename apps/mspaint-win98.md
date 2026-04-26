@@ -1,37 +1,72 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status (2026-04-24 later²): I5 OPEN — canvas paint wipes sibling palettes
+## Status (2026-04-26): I5 STILL OPEN — wipe path narrowed to gdi_bitblt
 
-### I5. Mouse-down in canvas wipes Tools/Colors palettes from back-canvas
+`test/test-mspaint-draw.js` still 7/9 (`tools=827→0`, `colors=3168→0`).
 
-`test/test-mspaint-draw.js` now asserts both palettes survive a pencil
-drag (`countNonBgPixels` in TOOLS_BBOX and COLORS_BBOX). Fresh run goes
-`7/9` — the 2 new checks fail: `tools=827→0` and `colors=3168→0`.
+### Progress this session
 
-Root cause: on WM_LBUTTONDOWN the canvas view repaints via full-client
-fills + `StretchDIBits` on hdc=0xd0003 (CPBView whole-window DC,
-geometrically 269×373 = full frame-client size). The fills land on the
-shared top-level back-canvas and overwrite sibling palettes that live
-outside the MDI subtree.
+**Two real fixes to `_excludeChildrenClip` (lib/host-imports.js):**
 
-Partial mitigation in this session: `_excludeChildrenClip` now also
-excludes *cousin* windows (same top-level, higher zOrder, neither
-ancestor nor descendant) — coords: sum of child-local offsets up the
-chain plus the top-level's client origin, minus t.ox/t.oy. That
-protects any draw routed through `_drawWithClip`. Verified the clip
-applies during the big `gdi_fill_rect(hdc=0xd0003, 0,0,269,373)` calls
-post-mousedown, but the after PNG still shows the palette areas filled
-grey. So at least one paint path bypasses `_drawWithClip` — candidates:
+1. **Descendants are clipped regardless of zOrder.** Old code used
+   `if (cw.zOrder <= myZ) continue` which dropped a brought-to-front
+   parent's children (frame got `zOrder=46` from a focus event, above
+   all kids → cousin walk found nothing → frame fills had no clip,
+   wiping everything). Children of `hwnd` are now always added; only
+   sibling/cousin candidates require a higher zOrder. Same dropped
+   the old `isDescendantOf` skip that was also wrong for WS_CLIPCHILDREN.
+2. **`--trace-clip` flag added** (test/run.js + host-imports.js): logs
+   per-invocation hwnd/zOrder, raw kids list (children + cousins in
+   t-local), and the final non-overlapping cover. Also dumps WND_RECORDS
+   walk1 result to expose `(0,0,0x0)` controls — the dock bars,
+   status bar, and MDI client all come back from `wnd_next_child_slot`
+   with empty CONTROL_GEOM (only buttons/edits/statics get
+   `$ctrl_geom_set`) so walk1 is effectively useless for non-control
+   children. The cousin walk2 via `r.windows` is what carries the load.
 
-- `gdi_stretch_dib_bits` (line 3964: raw `t.ctx.drawImage` with no clip)
-- `gdi_bitblt` non-source-less ROPs (SRCCOPY et al — direct `drawImage`)
-- Menu / border drawing in `_drawWatChildren`
+Confirmed via trace: `_drawWithClip` callers on the frame and MDI client
+now produce a correct cover that excludes Tools `(3,41,57x283)` and
+Colors `(3,324,269x49)`. Big `gdi_fill_rect(0xd0003, 0,0,269,373)` and
+`gdi_fill_rect(0xd0001, 0,0,275,400)` no longer wipe palettes.
 
-Next step: grep every `t.ctx.fillRect` / `t.ctx.drawImage` in
-`lib/host-imports.js`, wrap the remaining ones in `_drawWithClip(hdc, t
-=> { ... })` so the cousin exclusion kicks in everywhere. Alternative
-(heavier): give each child window its own offscreen back-canvas so
-parent paints physically cannot clobber siblings.
+### Remaining wipe path: `gdi_bitblt` bypasses `_drawWithClip`
+
+After mousedown(140,170), 19 `[API] BitBlt` calls fire with **0**
+matching `[gdi] BitBlt` formatter lines — they reach `host.gdi_bitblt`
+in lib/host-imports.js but that function never wraps its draws in
+`_drawWithClip`. Sample (captured via temporary `BLT_TRACE=1`
+console.log at function entry):
+
+```
+dst=0x50003 src=0x0       269x130@(0,243) rop=0xf00021  PATCOPY
+dst=0x50003 src=0x400008  266x240@(3,3)   rop=0xcc0020  SRCCOPY
+dst=0x50003 src=0x0       320x3@(3,243)   rop=0xf00021  PATCOPY
+...
+```
+
+`0x50003` = client DC for hwnd `0x10003` (MDI client). MDI client's
+bounds are 269×373 at frame-client (57,0) — they overlap the Colors
+palette region on the shared back-canvas. The PATCOPY/SRCCOPY paths
+do `c.fillRect(...)` and `_clippedPut` (putImageData) directly on
+`dstTarget.ctx` with no cousin/child clip → palettes wiped.
+
+### Next step
+
+Wrap the actual draw calls inside `gdi_bitblt` (and likely
+`gdi_stretch_blt` / `gdi_stretch_dib_bits`) so they go through
+`_excludeChildrenClip`. Two complications:
+
+1. **putImageData ignores canvas clip.** `_clippedPut` would have to
+   composite via `drawImage(tmpCanvas, ...)` instead of putImageData
+   when a clip is active, or do the rect subtraction manually and
+   only putImageData inside each cover-rect.
+2. **Source-less ROPs** (`PATCOPY`, `WHITENESS`, `BLACKNESS`,
+   `DSTINVERT`) take separate code paths — each needs the wrap too.
+
+Cleanest plan: add a `_blitWithClip(hdc, drawFn)` helper that mirrors
+`_drawWithClip` but switches `_clippedPut` → `drawImage` of an
+offscreen for the SRCCOPY/complex-ROP paths. The source-less PATCOPY
+fillRect can use `_drawWithClip` directly.
 
 ## Status (2026-04-24 later): I1 NOT A BUG, I2 + I3 FIXED — Colors now docks at bottom
 
