@@ -250,7 +250,26 @@ Implication: a "skip if Active=0" picker would land on `CA_DIAGR.SCN` regardless
 
 **VFS-side fix landed (2026-04-26, after the plan above):** `test/run.js` now detects `*.SCR` exes with a sibling `*.SCN`, flips that SCN to `Active=1` and *every other* SCN in the VFS to `Active=0`, then sets `HKCU\...\Plus\DefaultScene` to the matching SCN's `Name=` field via the new `setRegValue` export from `lib/storage.js`. Confirmed via `--trace-fs`: `ROCKROLL.SCR /s` now opens `ro_back.gif`, `ro_pick.x`, `ro_git.x`, `ro_tex01.gif`; `ARCHITEC.SCR /s` opens `ar_textu.gif`, `ar_mesh.x`, `ar_wallp.gif`. The "deactivate everything else" half is essential — the picker's playlist rotates through *all* Active=1 scenes, so a single Active=1 flip on the target wasn't enough. Output PNG is still black because the d3drm engine's STATETRANSFORM-only Execute-buffer gap is unchanged; this turn was purely VFS-side.
 
-**Next concrete action:** the question is now "where, in the SCR's guest code, is the call to `IDirect3DRMFrame::AddLight` that should fire and isn't?" Two probe paths:
+**2026-04-26 follow-up — d3drm IS being used, just not via SCR import table.** `--trace-api` on ROCKROLL.SCR shows zero d3drm-named calls because the SCR talks to d3drm through COM vtables (no name traceable from imports). Distinct COM IDs that fire: pure DirectDraw + D3DIM (`IDirect3DDevice_CreateExecuteBuffer/Execute/BeginScene/EndScene`, `CreateMatrix/SetMatrix`, viewports, materials, render/light state). d3drm emits these *internally* — confirmed by `--trace-dx-raw`: every Execute buffer the device receives is identical and minimal:
+
+```
+[dx-raw] @+0 op=6(STATETRANSFORM) bSize=8 wCount=3 payload=24 |
+        01 00 00 00 02 00 00 00   (WORLD = matrix 2)
+        02 00 00 00 03 00 00 00   (VIEW = matrix 3)
+        03 00 00 00 01 00 00 00   (PROJECTION = matrix 1)
+[dx-raw] @+28 op=11(EXIT)
+```
+
+Caller is `0x745de971` (d3drm @ 0x7459b000 → original VA `0x647c3971`), which is the tail of the buffer-flush function `0x647c3905` — it sets the EXIT byte, calls `vtable[5] Unlock`, `vtable[6] SetExecuteData`, then `vtable[8] Execute`. The flush *runs* every frame. The dirty-flag at `[esi+0x44]` is being set by something — but only the STATETRANSFORM emitter is feeding the buffer. **No PROCESSVERTICES, no TRIANGLE, no LINE, no POINT ever queued.**
+
+So the d3drm side IS reaching its rasterization plumbing, the matrices flow through, but the geometry-emission code path that would queue ops 1/2/3/9 into the same buffer (then trigger the flush) never fires. That's the real gap — somewhere in d3drm's mesh-traversal-during-render, the call that would translate Frame's visuals into Execute opcodes is being short-circuited. Memory `project_d3dim_matrix_table.md` was wrong about "d3drm dropping geometry before Execute" — d3drm IS calling Execute, just empty-of-geometry.
+
+**Concrete next probes:**
+1. Find d3drm's per-frame-render walker: it must read mesh data and emit op=9 PROCESSVERTICES and op=3 TRIANGLE into the same buffer the flush uses. Search d3drm.dll for byte-immediate writes of `0x09` and `0x03` into a `[reg+N]` to find the geometry emitters, then xref their callers up to the scene-traversal entry.
+2. Check whether `IDirect3DRMFrame::AddVisual` is ever called by the SCR (would set up the mesh→frame attachment that the renderer walks). Set break on the relocated AddVisual thunk (vtable slot 18 in standard order; need to find by walking Frame vtable like we did for AddLight at slot 10).
+3. If AddVisual *is* called but rendering still empty, the bug is in d3drm's traversal seeing an empty visual list — likely a list-pointer never updated (storage emu or alignment bug).
+
+**Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
 
