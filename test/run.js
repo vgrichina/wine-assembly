@@ -223,6 +223,9 @@ async function main() {
       } else if (kind === 'slot-count') {
         // B:slot-count[:LABEL] — log live WND_RECORDS slot count.
         scheduledInput.push({ batch, action: 'slot-count', label: parts[2] || '' });
+      } else if (kind === 'dump-focus') {
+        // B:dump-focus[:LABEL] — log get_focus_hwnd + ctrl class/id.
+        scheduledInput.push({ batch, action: 'dump-focus', label: parts[2] || '' });
       } else if (kind === 'class-cmd') {
         // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
         // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
@@ -1576,6 +1579,13 @@ async function main() {
         const used = we.wnd_count_used ? we.wnd_count_used() : -1;
         const tag = ev.label ? ` ${ev.label}` : '';
         logs.push(`[input] slot-count${tag}: used=${used} dlg=0x${(dlg||0).toString(16)} at batch ${batch}`);
+      } else if (ev.action === 'dump-focus') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        logs.push(`[input] dump-focus${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} at batch ${batch}`);
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its
         // filename edit child (ctrl id 0x442), WM_SETTEXT a heap-alloc'd
