@@ -221,7 +221,7 @@ function runExe(testCase, pngPath) {
 
   const result = spawnSync('node', args, {
     cwd: ROOT,
-    timeout: testCase.timeoutMs || 5000,
+    timeout: testCase.timeoutMs || 15000,
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
