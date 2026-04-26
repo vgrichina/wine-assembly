@@ -1142,6 +1142,51 @@ async function main() {
     };
     loadDir(exeDir, 'c:\\');
 
+    // Plus!98 Organic Art theme SCRs: each theme ships a sibling .SCN with
+    // Active=0 (the real installer flips it to 1 when the user picks the
+    // theme). All SCRs read HKCU\...\Plus\DefaultScene from the same path,
+    // so without per-SCR override every theme falls back to CA_2001.
+    // Detect SCR + matching .SCN by basename, patch Active=1, and set
+    // DefaultScene to the SCN's [Description] Name= value.
+    const exeStem = exeName.replace(/\.scr$/i, '');
+    if (exeName.endsWith('.scr')) {
+      const targetScnKey = 'c:\\' + exeStem + '.scn';
+      const targetScn = ctx.vfs.files.get(targetScnKey);
+      if (targetScn) {
+        // The Plus!98 picker enumerates *.scn, builds a play-list of Active=1
+        // scenes, then rotates through them. To force a single theme SCR to
+        // play its own scene, we (a) flip the matching SCN to Active=1 and
+        // (b) flip every other SCN to Active=0 in the VFS only.
+        const patchScn = (key, makeActive) => {
+          const f = ctx.vfs.files.get(key);
+          if (!f) return null;
+          let t = Buffer.from(f.data).toString('latin1');
+          const want = makeActive ? '1' : '0';
+          if (/^Active=[01]\s*$/m.test(t)) {
+            t = t.replace(/^Active=[01]\s*$/m, 'Active=' + want);
+          } else if (/^\[Description\]\s*\r?\n/m.test(t)) {
+            t = t.replace(/^\[Description\]\s*\r?\n/m, (m) => m + 'Active=' + want + '\r\n');
+          }
+          ctx.vfs.files.set(key, { data: new Uint8Array(Buffer.from(t, 'latin1')), attrs: 0x20 });
+          return t;
+        };
+        let patched = 0, deactivated = 0;
+        for (const k of ctx.vfs.files.keys()) {
+          if (!/\.scn$/i.test(k)) continue;
+          if (k === targetScnKey) { patchScn(k, true); patched++; }
+          else { patchScn(k, false); deactivated++; }
+        }
+        const text = Buffer.from(ctx.vfs.files.get(targetScnKey).data).toString('latin1');
+        const nameMatch = text.match(/^Name=(.*)$/m);
+        const sceneName = nameMatch ? nameMatch[1].trim() : exeStem.toUpperCase();
+        try {
+          const { setRegValue } = require('../lib/storage');
+          setRegValue('HKCU\\Software\\Computer Artworks\\Organic Art\\Plus', 'DefaultScene', 1, sceneName);
+          if (VERBOSE) console.log(`[plus98] ${exeName} → DefaultScene="${sceneName}", Active=1 on ${exeStem}.scn, Active=0 on ${deactivated} others`);
+        } catch (_) {}
+      }
+    }
+
     // Also load sibling directories from parent — games like RCT have the exe
     // in a subdirectory (English/) but data in a sibling (Data/).
     const parentDir = path.dirname(exeDir);
