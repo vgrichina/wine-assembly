@@ -345,6 +345,14 @@ This matches `project_organic_art_engine` exactly: d3drm internally drives d3dim
 2. From the d3drm caller, find where it picks up vertex data — that's the function that's seeing an empty visuals list (per the existing organic-art notes).
 3. Then trace upward: who was supposed to populate that visuals list? Either Frame::AddVisual was never called (file load path broken) or it was called and our impl drops the input.
 
+**2026-04-26 sixth probe — stack walk via --trace-stack doesn't apply to COM tracer.** Tried `--trace-api=IDirect3DExecuteBuffer_Lock --trace-stack=IDirect3DExecuteBuffer_Lock:8` over 80K batches — 0 events captured. The `--trace-api=NAME` filter applies only to the regular api tracer, not the COM tracer (`[COM api_id=N => Name]`), so passing a COM method name to that filter silently suppresses everything.
+
+Two viable instrumentation paths for the next session:
+- **WAT-side, no JS edits:** add a one-line `(call $log_caller (i32.load (global.get $esp)))` near the top of the IDirect3DExecuteBuffer Lock handler in `09a-handlers.wat`. The d3drm-internal return address pinpoints the d3drm caller for `tools/find_fn.js` → entry, then disasm to see what builds the buffer.
+- **JS-side via `--trace-host`:** find which host import the Lock handler eventually calls and add `--trace-host=<name>` — that already prints raw args. But the d3drm caller VA isn't in the args; would still need a wat-side `console.log(eip_at_call_site)`.
+
+Both paths converge to the same finding: who called Lock, did SetExecuteData get a populated buffer, and where does the geometry get dropped (matching org-art's STATETRANSFORM-only observation).
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
