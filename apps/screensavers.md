@@ -269,6 +269,22 @@ So the d3drm side IS reaching its rasterization plumbing, the matrices flow thro
 2. Check whether `IDirect3DRMFrame::AddVisual` is ever called by the SCR (would set up the mesh→frame attachment that the renderer walks). Set break on the relocated AddVisual thunk (vtable slot 18 in standard order; need to find by walking Frame vtable like we did for AddLight at slot 10).
 3. If AddVisual *is* called but rendering still empty, the bug is in d3drm's traversal seeing an empty visual list — likely a list-pointer never updated (storage emu or alignment bug).
 
+**2026-04-26 second probe — Frame public vtable identified, but SCR doesn't call AddLight or AddVisual.** Walked the IDirect3DRMFrame vtable at orig VA `0x647dfcb0`:
+- slot 10 @ `0x6478ba43` → AddLight (calls helper `0x647adcef` with frame_inner+light_inner)
+- slot 11 @ `0x6478ba8f` → likely AddVisual (helper `0x647add81`, similar Add* family signature)
+- slot 12-22 @ `0x64791d**` block — likely AddChild/AddTransform/AddTranslation/AddScale/AddRotation/AddMoveCallback/Get*
+
+Ran ROCKROLL.SCR with `--break=0x745a6a43,0x745a6a8f --break-once` (relocated AddLight + slot 11) for 15000 batches. **Neither breakpoint ever fires.** Yet buffer flush fires 778 times during that run. So the SCR does NOT call Frame::AddLight or Frame::AddVisual directly through this vtable.
+
+That means one of:
+- d3drm's `D3DRMLoadFromFile` / `Load` family auto-creates frames+visuals from the .X file internally, never going through public AddVisual. The SCR likely calls `IDirect3DRMFrame::Load` (some slot >22 in the vtable) or `IDirect3DRM::Load` to slurp `ro_pick.x` and `ro_git.x` in one shot.
+- OR the d3drm wrapper version d3drm uses an alternate "internal" vtable for its own bookkeeping that *doesn't* hit the public-vtable thunks we're watching, and the public vtable is only for the SCR's direct calls.
+
+**Concrete next probes:**
+1. Find d3drm exports `Direct3DRMCreate`, `D3DRMLoadFromFile` etc.; `node tools/pe-imports.js test/binaries/screensavers/ROCKROLL.SCR --dll=d3drm.dll` to list which d3drm imports the SCR actually pulls in.
+2. Check vtable slots 23+ (the `0x6478bb*` range) — these include Load, AddChild variants. Set breaks across slots 11-30 in batch to find which Frame methods *do* fire.
+3. Once we know which Frame methods fire, walk into them to see whether they're populating the visuals list — and if not, why our impl drops the relevant input (likely a file-IO read returns wrong size, or a callback never invokes).
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
