@@ -285,6 +285,24 @@ That means one of:
 2. Check vtable slots 23+ (the `0x6478bb*` range) — these include Load, AddChild variants. Set breaks across slots 11-30 in batch to find which Frame methods *do* fire.
 3. Once we know which Frame methods fire, walk into them to see whether they're populating the visuals list — and if not, why our impl drops the relevant input (likely a file-IO read returns wrong size, or a callback never invokes).
 
+**2026-04-26 third probe — slot mapping was wrong; corrected via Wine d3drmobj.h.** The earlier "neither bp fires" test was hitting the wrong slots. Per the IDirect3DRMFrame public vtable (IUnknown 0-2, IDirect3DRMObject 3-10, then Frame methods):
+- slot 10 = `GetClassName` (NOT AddLight)
+- slot 11 = `AddChild`
+- slot 12 = `AddLight` → orig `0x64791da1` (relocated `0x745ACDA1` in last run)
+- slot 18 = `AddVisual` → orig `0x647926d4` (relocated `0x745AD6D4`)
+- slot 35 = `Load` → orig `0x6478bc6f` (relocated `0x745A6C6F`), `ret 0xc` (3 args: filename, options, callback?)
+
+Helpers `0x647adcef` and `0x647add81` that I previously saw at slots 10/11 are for GetClassName/AddChild internals, not AddLight/AddVisual.
+
+**SCR d3drm import surface (only 9 fns):** Direct3DRMCreate, D3DRMVectorRotate/Subtract/Normalize, D3DRMCreateColorRGBA/RGB, D3DRMColorGetRed/Green/Blue. **No QueryInterface, no Load helper.** All scene construction happens through COM vtables of objects returned by `Direct3DRMCreate`.
+
+Ran 15K batches with `--break=0x745ACDA1,0x745AD6D4,0x745A6C6F --break-once` — none fired in that window. Need either longer run, or break on `Direct3DRMCreate` first to see when scene init starts, then break on the IDirect3DRM root vtable's CreateMeshBuilder / CreateFrame / Load slots (different vtable from Frame's).
+
+**Next probes:**
+1. Find IDirect3DRM root object vtable — break on `Direct3DRMCreate` exit, dereference returned ptr, dump its vtable. Map slots via `IDirect3DRM` declaration in d3drmobj.h (CreateMeshBuilder, CreateFrame, CreateLight, Load).
+2. Break on each IDirect3DRM creation method to see which path the SCR uses to build the scene.
+3. Trace through whichever Load/Create path fires to find where mesh data is dropped.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
