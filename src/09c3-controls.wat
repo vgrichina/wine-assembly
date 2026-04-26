@@ -119,8 +119,27 @@
     (i32.store (local.get $addr) (local.get $class))
     (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $ctrl_id))
     (i32.store (i32.add (local.get $addr) (i32.const 8)) (i32.const 0))  ;; check_state = 0
-    (i32.store (i32.add (local.get $addr) (i32.const 12)) (i32.const 0)) ;; reserved
+    (i32.store (i32.add (local.get $addr) (i32.const 12)) (i32.const 0)) ;; ex_style
   )
+
+  ;; Per-control WS_EX_* flags. Stored in CONTROL_TABLE+12 by $dlg_load
+  ;; so static_wndproc / button_wndproc can render WS_EX_CLIENTEDGE etc.
+  (func $ctrl_set_ex_style (param $hwnd i32) (param $ex i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store (i32.add (i32.add (global.get $CONTROL_TABLE)
+                              (i32.mul (local.get $idx) (i32.const 16)))
+                            (i32.const 12))
+          (local.get $ex)))))
+  (func $ctrl_get_ex_style (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (global.get $CONTROL_TABLE)
+                                  (i32.mul (local.get $idx) (i32.const 16)))
+                              (i32.const 12))))
 
   ;; Get control class for a hwnd (returns 0 if not a control)
   (func $ctrl_table_get_class (param $hwnd i32) (result i32)
@@ -2088,7 +2107,8 @@
     (local $state i32) (local $state_w i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
-    (local $fmt i32)
+    (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
+    (local $tx_r i32) (local $tx_b i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2177,19 +2197,43 @@
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
-        ;; Erase the static's rect for label types. Parent's WM_ERASEBKGND
-        ;; ran once at create time, but subsequent SetWindowText invalidates
-        ;; only the static — without this fill, new text composites on top of
-        ;; the previous text (visible in calc's display as digit pile-up).
-        ;; SS_BLACKRECT(4)/SS_GRAYRECT(5)/SS_WHITERECT(6) and the matching
-        ;; FRAME variants own their fill color, so skip those.
-        (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
-                    (i32.gt_u (local.get $style) (i32.const 9)))
+        (local.set $ex (call $ctrl_get_ex_style (local.get $hwnd)))
+        ;; Default text rect = full client.
+        (local.set $tx_l (i32.const 0))
+        (local.set $tx_t (i32.const 0))
+        (local.set $tx_r (local.get $w))
+        (local.set $tx_b (local.get $h))
+        ;; WS_EX_CLIENTEDGE (0x200): paint white interior + sunken edge
+        ;; (calc's display "0." field + memory indicator both use this).
+        ;; Inset the text rect by 2px so glyphs don't touch the sunken edge.
+        (if (i32.and (local.get $ex) (i32.const 0x200))
           (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
-                    (i32.const 0x30011)))))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE (stock obj 1)
+                    (i32.const 0x30010)))  ;; WHITE_BRUSH
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x0A) (i32.const 0x0F)))  ;; EDGE_SUNKEN | BF_RECT
+            (local.set $tx_l (i32.const 2))
+            (local.set $tx_t (i32.const 2))
+            (local.set $tx_r (i32.sub (local.get $w) (i32.const 2)))
+            (local.set $tx_b (i32.sub (local.get $h) (i32.const 2))))
+          (else
+            ;; Erase the static's rect for label types. Parent's WM_ERASEBKGND
+            ;; ran once at create time, but subsequent SetWindowText invalidates
+            ;; only the static — without this fill, new text composites on top of
+            ;; the previous text (visible in calc's display as digit pile-up).
+            ;; SS_BLACKRECT(4)/SS_GRAYRECT(5)/SS_WHITERECT(6) and the matching
+            ;; FRAME variants own their fill color, so skip those.
+            (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
+                        (i32.gt_u (local.get $style) (i32.const 9)))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x30011)))))))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE (stock obj 1)
         ;; Select DEFAULT_GUI_FONT (8pt MS Sans Serif) for the dialog look.
         ;; TRANSPARENT bk mode so the label glyphs let the fill color show
         ;; through instead of painting an opaque white box behind every word.
@@ -2211,10 +2255,10 @@
                 (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x01))))) ;; DT_CENTER
               (if (i32.eq (local.get $style) (i32.const 2))
                 (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x02))))) ;; DT_RIGHT
-              (i32.store        (global.get $PAINT_SCRATCH) (i32.const 2))
-              (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-              (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-              (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
+              (i32.store        (global.get $PAINT_SCRATCH) (local.get $tx_l))
+              (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $tx_t))
+              (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $tx_r))
+              (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $tx_b))
               (drop (call $host_gdi_draw_text (local.get $hdc)
                       (call $g2w (i32.load (local.get $state_w)))
                       (i32.load offset=4 (local.get $state_w))

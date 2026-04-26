@@ -1014,7 +1014,7 @@
     (local $dlg_slot i32) (local $dlg_rec i32) (local $dlg_key i32)
     (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
-    (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_id i32)
+    (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_ex i32) (local $ctrl_id i32)
     (local $class_val i32) (local $class_enum i32)
     (local $text_ptr i32) (local $cs i32)
     ;; Find the dialog slot — caller must have inserted it already
@@ -1102,6 +1102,7 @@
       (if (local.get $is_ex)
         (then
           ;; helpId(4) + exStyle(4) + style(4) + x,y,cx,cy + id(4)
+          (local.set $ctrl_ex    (i32.load (i32.add (local.get $p) (i32.const 4))))
           (local.set $ctrl_style (i32.load (i32.add (local.get $p) (i32.const 8))))
           (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 12))))
           (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 14))))
@@ -1112,6 +1113,7 @@
         (else
           ;; style(4) + exStyle(4) + x,y,cx,cy + id(2)
           (local.set $ctrl_style (i32.load (local.get $p)))
+          (local.set $ctrl_ex    (i32.load (i32.add (local.get $p) (i32.const 4))))
           (local.set $cx (i32.load16_s (i32.add (local.get $p) (i32.const 8))))
           (local.set $cy (i32.load16_s (i32.add (local.get $p) (i32.const 10))))
           (local.set $cw (i32.load16_s (i32.add (local.get $p) (i32.const 12))))
@@ -1150,6 +1152,7 @@
         (then
           (call $ctrl_table_set (local.get $ctrl_slot)
             (local.get $class_enum) (local.get $ctrl_id))
+          (call $ctrl_set_ex_style (local.get $ctrl_hwnd) (local.get $ctrl_ex))
           ;; Per-control text is owned by each wndproc's state struct
           ;; (ButtonState.text_buf_ptr etc.) — populated from
           ;; CREATESTRUCT.lpszName in WM_CREATE below. Renderer reads
