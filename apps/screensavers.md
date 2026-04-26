@@ -329,6 +329,22 @@ Direct3DRMCreate is exported (RVA 0xf112, hint=20) — set break on it before an
 2. If yes, capture the actual relocated d3drm base from `dbg_prev_eip` at break and recompute the v1 vtable method VAs.
 3. If no, the SCR's `winmain` likely hangs in our env on something earlier — verify with `--trace-api` what it's actually doing in those 30K batches.
 
+**2026-04-26 fifth probe — Direct3DRMCreate fires; v1 vtable methods don't; SCR drives D3DIM ExecuteBuffer.** Verified d3drm relocates to base `0x7459B000` (delta 0xFE1B000), and `Direct3DRMCreate` at relocated `0x745AA112` does fire — confirmed by --break-once. But 60K batches with breaks on slot 4/6/11/33 (CreateFrame/CreateMeshBuilder/CreateLight/Load) at `0x745AAA90/CF4/B1EA/AC751` produce **zero hits**.
+
+`--trace-api` reveals why: the SCR's COM surface is **D3DIM (immediate mode)**, not D3DRM:
+- `IDirectDrawSurface_*` (CreateSurface, Lock, Flip, Blt) — DDraw
+- `IDirect3DTexture2_*` (QueryInterface, Release)
+- `IDirect3DExecuteBuffer_Lock / Unlock / SetExecuteData` — **fired repeatedly**
+
+So the SCR does call Direct3DRMCreate (just to bring up d3drm's machinery), then talks directly to D3DIM ExecuteBuffers. The d3drm vtable methods (CreateFrame, etc.) likely run during `Direct3DRMCreate` itself or during a later Load that happens via internal helper functions — but the SCR's main loop submits geometry via D3DIM execute buffers, not via the d3drm public vtable.
+
+This matches `project_organic_art_engine` exactly: d3drm internally drives d3dim, our d3dim emulation receives the STATETRANSFORM ops but never any TRIANGLE/PROCESSVERTICES ops — so the screen stays empty. The chase target is therefore inside **d3drm's mesh-walker → d3dim ExecuteBuffer fill path**, not the SCR-facing vtable surface.
+
+**Pivot for next session:**
+1. Walk what d3drm does between Direct3DRMCreate and the first ExecuteBuffer.Lock — likely an internal Render loop calling visual.Draw → d3dim. Set break on the relocated ExecuteBuffer.Lock thunk and walk EBP backward to find the d3drm internal caller.
+2. From the d3drm caller, find where it picks up vertex data — that's the function that's seeing an empty visuals list (per the existing organic-art notes).
+3. Then trace upward: who was supposed to populate that visuals list? Either Frame::AddVisual was never called (file load path broken) or it was called and our impl drops the input.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
