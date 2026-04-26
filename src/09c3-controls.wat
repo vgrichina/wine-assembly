@@ -251,6 +251,9 @@
     ;; Class 15 = Color (ChooseColor) dialog parent
     (if (i32.eq (local.get $class) (i32.const 15))
       (then (return (call $colordlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 16 = MessageBox modal dialog
+    (if (i32.eq (local.get $class) (i32.const 16))
+      (then (return (call $msgbox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -576,6 +579,189 @@
             (i32.const 148) (i32.const 68) (i32.const 72) (i32.const 24)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+
+  ;; ============================================================
+  ;; MessageBox dialog — control class 15 ($msgbox_wndproc)
+  ;; ============================================================
+  ;;
+  ;; $msgbox_wndproc is its own class because it needs to map every
+  ;; WM_COMMAND id (1=IDOK ... 11=IDCONTINUE) directly into modal_done's
+  ;; result. The stub_wndproc only knows IDOK/IDCANCEL.
+  (func $msgbox_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))   ;; WM_CLOSE
+      (then (call $modal_done (i32.const 2)) (return (i32.const 0))))  ;; IDCANCEL
+    (if (i32.ne (local.get $msg) (i32.const 0x0111)) (then (return (i32.const 0))))
+    (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+    ;; Any of IDOK..IDCONTINUE: report the id verbatim. Unknown cmds drop.
+    (if (i32.and (i32.ge_u (local.get $cmd) (i32.const 1))
+                 (i32.le_u (local.get $cmd) (i32.const 11)))
+      (then (call $modal_done (local.get $cmd)) (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Append a button at $bx,$by, recording it in the dialog so the row
+  ;; can be centered after all buttons are placed.
+  (func $msgbox_btn (param $dlg i32) (param $id i32) (param $x i32) (param $y i32)
+                    (param $label_wa i32) (param $label_len i32) (param $is_default i32)
+    (local $style i32)
+    ;; BS_PUSHBUTTON=0, BS_DEFPUSHBUTTON=1; WS_TABSTOP|WS_VISIBLE|WS_CHILD
+    (local.set $style (i32.const 0x50010000))
+    (if (local.get $is_default)
+      (then (local.set $style (i32.or (local.get $style) (i32.const 1)))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (local.get $id)
+            (local.get $x) (local.get $y) (i32.const 72) (i32.const 24)
+            (local.get $style)
+            (call $wat_str_to_heap (local.get $label_wa) (local.get $label_len)))))
+
+  ;; Builds a dialog whose static text is the caller's message string and
+  ;; whose title is the caller's caption. Decodes the MB_* button mask
+  ;; (low nibble of $uType) into the matching button row. NULL caption
+  ;; is tolerated (renders empty).
+  ;; $text_wa / $caption_wa are WASM linear addresses (already $g2w'd).
+  (func $create_msgbox_dialog
+    (param $dlg i32) (param $owner i32) (param $caption_wa i32) (param $text_wa i32)
+    (param $uType i32)
+    (local $text_len i32) (local $cap_len i32)
+    (local $text_g i32) (local $w i32) (local $h i32)
+    (local $btn_kind i32) (local $n_btn i32) (local $row_w i32)
+    (local $bx i32) (local $by i32) (local $longest i32)
+    (local.set $text_len (call $strlen (local.get $text_wa)))
+    (if (i32.eqz (local.get $caption_wa))
+      (then (local.set $cap_len (i32.const 0)))
+      (else (local.set $cap_len (call $strlen (local.get $caption_wa)))))
+    (local.set $btn_kind (i32.and (local.get $uType) (i32.const 0xF)))
+    ;; Decide button count up front so we can size the dialog.
+    (local.set $n_btn
+      (select (i32.const 1)                                    ;; default
+        (select (i32.const 2)                                  ;; OKCANCEL/RETRYCANCEL/YESNO
+          (select (i32.const 3)                                ;; ABORTRETRYIGNORE/YESNOCANCEL/CANCELTRYCONTINUE
+            (i32.const 0)
+            (i32.or (i32.or
+              (i32.eq (local.get $btn_kind) (i32.const 2))
+              (i32.eq (local.get $btn_kind) (i32.const 3)))
+              (i32.eq (local.get $btn_kind) (i32.const 6))))
+          (i32.or (i32.or
+            (i32.eq (local.get $btn_kind) (i32.const 1))
+            (i32.eq (local.get $btn_kind) (i32.const 4)))
+            (i32.eq (local.get $btn_kind) (i32.const 5))))
+        (i32.eqz (local.get $btn_kind))))
+    (if (i32.eqz (local.get $n_btn)) (then (local.set $n_btn (i32.const 1))))
+    (local.set $row_w (i32.add
+      (i32.mul (local.get $n_btn) (i32.const 76))
+      (i32.const 8)))
+    ;; Pick width: max of (longer string * 6 + 60), button row + 32, 220 floor.
+    (local.set $longest (select (local.get $text_len) (local.get $cap_len)
+      (i32.gt_u (local.get $text_len) (local.get $cap_len))))
+    (local.set $w (i32.add (i32.mul (local.get $longest) (i32.const 6)) (i32.const 60)))
+    (if (i32.lt_u (local.get $w) (i32.add (local.get $row_w) (i32.const 32)))
+      (then (local.set $w (i32.add (local.get $row_w) (i32.const 32)))))
+    (if (i32.lt_u (local.get $w) (i32.const 220)) (then (local.set $w (i32.const 220))))
+    (if (i32.gt_u (local.get $w) (i32.const 420)) (then (local.set $w (i32.const 420))))
+    (local.set $h (i32.const 140))
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner)
+      (local.get $caption_wa)
+      (local.get $w) (local.get $h)
+      (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (if (local.get $caption_wa)
+      (then (call $title_table_set (local.get $dlg) (local.get $caption_wa)
+              (local.get $cap_len))))
+    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 16) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
+    ;; Message text static.
+    (local.set $text_g (call $wat_str_to_heap (local.get $text_wa) (local.get $text_len)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 16) (i32.const 24)
+            (i32.sub (local.get $w) (i32.const 32)) (i32.const 60)
+            (i32.const 0x50000000)
+            (local.get $text_g)))
+    ;; Button row, left edge centered around dialog midpoint.
+    (local.set $bx (i32.div_u (i32.sub (local.get $w) (local.get $row_w)) (i32.const 2)))
+    (local.set $by (i32.sub (local.get $h) (i32.const 36)))
+    ;; Layout per MB_* mask. IDs match winuser.h.
+    (block $done
+      ;; MB_OK (0)
+      (if (i32.eqz (local.get $btn_kind))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 1)
+            (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1))
+          (br $done)))
+      ;; MB_OKCANCEL (1)
+      (if (i32.eq (local.get $btn_kind) (i32.const 1))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 1)
+            (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 2)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x1D2) (i32.const 6) (i32.const 0))
+          (br $done)))
+      ;; MB_ABORTRETRYIGNORE (2)
+      (if (i32.eq (local.get $btn_kind) (i32.const 2))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 3)
+            (local.get $bx) (local.get $by) (i32.const 0x340) (i32.const 5) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 4)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x346) (i32.const 5) (i32.const 0))
+          (call $msgbox_btn (local.get $dlg) (i32.const 5)
+            (i32.add (local.get $bx) (i32.const 152)) (local.get $by)
+            (i32.const 0x34C) (i32.const 6) (i32.const 0))
+          (br $done)))
+      ;; MB_YESNOCANCEL (3)
+      (if (i32.eq (local.get $btn_kind) (i32.const 3))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 6)
+            (local.get $bx) (local.get $by) (i32.const 0x353) (i32.const 3) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 7)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x357) (i32.const 2) (i32.const 0))
+          (call $msgbox_btn (local.get $dlg) (i32.const 2)
+            (i32.add (local.get $bx) (i32.const 152)) (local.get $by)
+            (i32.const 0x1D2) (i32.const 6) (i32.const 0))
+          (br $done)))
+      ;; MB_YESNO (4)
+      (if (i32.eq (local.get $btn_kind) (i32.const 4))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 6)
+            (local.get $bx) (local.get $by) (i32.const 0x353) (i32.const 3) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 7)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x357) (i32.const 2) (i32.const 0))
+          (br $done)))
+      ;; MB_RETRYCANCEL (5)
+      (if (i32.eq (local.get $btn_kind) (i32.const 5))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 4)
+            (local.get $bx) (local.get $by) (i32.const 0x346) (i32.const 5) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 2)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x1D2) (i32.const 6) (i32.const 0))
+          (br $done)))
+      ;; MB_CANCELTRYCONTINUE (6)
+      (if (i32.eq (local.get $btn_kind) (i32.const 6))
+        (then
+          (call $msgbox_btn (local.get $dlg) (i32.const 2)
+            (local.get $bx) (local.get $by) (i32.const 0x1D2) (i32.const 6) (i32.const 1))
+          (call $msgbox_btn (local.get $dlg) (i32.const 10)
+            (i32.add (local.get $bx) (i32.const 76)) (local.get $by)
+            (i32.const 0x35A) (i32.const 9) (i32.const 0))
+          (call $msgbox_btn (local.get $dlg) (i32.const 11)
+            (i32.add (local.get $bx) (i32.const 152)) (local.get $by)
+            (i32.const 0x364) (i32.const 8) (i32.const 0))
+          (br $done)))
+      ;; Fallback: lone OK.
+      (call $msgbox_btn (local.get $dlg) (i32.const 1)
+        (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1))))
 
   ;; ============================================================
   ;; Font (ChooseFont) dialog — control class 14

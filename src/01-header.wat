@@ -453,6 +453,15 @@
   ;; version/copyright lines). 52 bytes including NUL.
   (data (i32.const 0x300) "Version 4.10\nCopyright (C) 1985-1998 Microsoft Corp.\00")
 
+  ;; MessageBox button labels — referenced by $create_msgbox_dialog.
+  (data (i32.const 0x340) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
+  (data (i32.const 0x346) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL
+  (data (i32.const 0x34C) "Ignore\00")       ;; len 6  — MB_ABORTRETRYIGNORE
+  (data (i32.const 0x353) "Yes\00")          ;; len 3  — MB_YESNO / MB_YESNOCANCEL
+  (data (i32.const 0x357) "No\00")           ;; len 2  — MB_YESNO / MB_YESNOCANCEL
+  (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
+  (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================

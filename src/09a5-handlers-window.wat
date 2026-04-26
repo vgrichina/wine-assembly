@@ -507,21 +507,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 69: MessageBoxA
+  ;; 69: MessageBoxA(hWnd, lpText, lpCaption, uType) — build a real modal
+  ;; via $create_msgbox_dialog + $modal_begin. Result code (IDOK/IDCANCEL/...)
+  ;; is delivered into EAX through the CACA0006 modal pump when the user
+  ;; (or a test driver) clicks a button.
   (func $handle_MessageBoxA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $w1 i32)
-    ;; Disambiguate MessageBoxA vs MessageBeep
-    (if (i32.eq (local.get $w1) (i32.const 0x42656761)) ;; "ageB" — MessageB...
-    (then
-    (if (i32.eq (i32.load8_u (i32.add (local.get $name_ptr) (i32.const 8))) (i32.const 0x65)) ;; "e" — MessageBe(ep)
-    (then ;; MessageBeep(1)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))))
-    ;; MessageBoxA(4)
-    (global.set $eax (call $host_message_box (local.get $arg0)
-    (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
+    (local $dlg i32) (local $cap_wa i32)
+    ;; Log via existing host hook so traces still show the text.
+    (drop (call $host_message_box (local.get $arg0)
+      (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $cap_wa
+      (select (call $g2w (local.get $arg2)) (i32.const 0) (local.get $arg2)))
+    (call $create_msgbox_dialog
+      (local.get $dlg) (local.get $arg0)
+      (local.get $cap_wa) (call $g2w (local.get $arg1))
+      (local.get $arg3))
+    (call $modal_begin (local.get $dlg) (i32.const 20)))
 
   ;; 70: MessageBeep(uType) — play system sound via host
   (func $handle_MessageBeep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

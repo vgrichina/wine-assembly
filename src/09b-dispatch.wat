@@ -378,6 +378,12 @@
     ;;     "returned" with the chosen result.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0006))
       (then
+        ;; This thunk re-enters itself on every pump iteration. Mark it so
+        ;; $run's thunk-zone auto-pop doesn't misread the unchanged EIP as
+        ;; "handler left EIP alone" and pop [esp] — that would splice the
+        ;; pump out and let execution fall through to the post-MessageBox
+        ;; instruction (LocalFree/ExitProcess) on the very next batch.
+        (global.set $handler_set_eip (i32.const 1))
         (if (global.get $modal_dlg_hwnd)
           (then
             ;; Drain nc_flags for the dialog hwnd only (filter out child
