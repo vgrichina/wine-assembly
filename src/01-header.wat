@@ -837,9 +837,11 @@
   (global $sleep_yielded (mut i32) (i32.const 0))  ;; Set by Sleep handler; NOT cleared by run() — JS reads+clears
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
-  ;; Paint queue: 64-entry ring at 0xB200 (256 bytes), head/count globals
-  (global $paint_queue_count (mut i32) (i32.const 0))
-  (global $PAINT_QUEUE i32 (i32.const 0x0000B200))
+  ;; Paint flags: 1 byte per WND slot (parallel to WND_RECORDS / NC_FLAGS).
+  ;; Win32-style — InvalidateRect just sets a per-window pending bit; there
+  ;; is no fixed-size queue to overflow. GetMessageA's child-paint phase
+  ;; scans this table for the first set bit. 256 slots = 256 bytes total.
+  (global $PAINT_FLAGS i32 (i32.const 0x0000B200))
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
   (global $pending_child_size_hwnd (mut i32) (i32.const 0)) ;; Child hwnd for pending WM_SIZE

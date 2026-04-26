@@ -590,8 +590,9 @@
 
   ;; $invalidate_hwnd(hwnd): mark $hwnd dirty so a WM_PAINT gets delivered on
   ;; the next GetMessageA cycle. For the main top-level, GetMessageA reads
-  ;; $paint_pending directly; for child controls we push the hwnd onto
-  ;; PAINT_QUEUE so GetMessageA can pop it. Call $host_invalidate too so the
+  ;; $paint_pending directly; for child controls we set the slot's PAINT_FLAGS
+  ;; byte so GetMessageA's child-paint phase picks it up. Call $host_invalidate
+  ;; too so the
   ;; JS-side renderer schedules a repaint composite. This mirrors what
   ;; $handle_InvalidateRect does, but as a helper for WAT-internal paint
   ;; triggers (WM_CHAR, button clicks, etc.) that don't go through the
@@ -600,45 +601,60 @@
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
-      (else (call $paint_queue_push (local.get $hwnd))))
+      (else (call $paint_flag_set (local.get $hwnd))))
     (call $host_invalidate (local.get $hwnd)))
 
-  ;; Paint queue: 64-entry array at PAINT_QUEUE, count in $paint_queue_count
-  ;; $paint_queue_push(hwnd): add hwnd if not already in queue and queue not full
-  (func $paint_queue_push (param $hwnd i32)
-    (local $i i32) (local $addr i32)
-    ;; Skip if already in queue
-    (local.set $i (i32.const 0))
+  ;; Paint flags table — 1 byte per WND slot at $PAINT_FLAGS. This mirrors
+  ;; how real Win32 tracks paint state: a per-window pending bit, not a
+  ;; central queue. No fixed capacity to overflow; CreateDialogParamA can
+  ;; mark hundreds of children dirty without losing any.
+
+  ;; $paint_flag_set(hwnd): mark slot dirty.
+  (func $paint_flag_set (param $hwnd i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 1)))
+
+  ;; $paint_flag_first() → hwnd of first dirty slot (0 if none), no clear.
+  (func $paint_flag_first (result i32)
+    (local $i i32)
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $paint_queue_count)))
-      (if (i32.eq (i32.load (i32.add (global.get $PAINT_QUEUE) (i32.mul (local.get $i) (i32.const 4))))
-                  (local.get $hwnd))
-        (then (return)))
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+        (then (return (i32.load (call $wnd_record_addr (local.get $i))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    ;; Add if room (max 64, at 0xB200 after WND_DLG_RECORDS)
-    (if (i32.lt_u (global.get $paint_queue_count) (i32.const 64))
-      (then
-        (i32.store (i32.add (global.get $PAINT_QUEUE) (i32.mul (global.get $paint_queue_count) (i32.const 4)))
-          (local.get $hwnd))
-        (global.set $paint_queue_count (i32.add (global.get $paint_queue_count) (i32.const 1))))))
+    (i32.const 0))
 
-  ;; $paint_queue_pop() → hwnd (0 if empty)
-  (func $paint_queue_pop (result i32)
-    (local $hwnd i32) (local $i i32)
-    (if (i32.eqz (global.get $paint_queue_count)) (then (return (i32.const 0))))
-    ;; Take first entry
-    (local.set $hwnd (i32.load (global.get $PAINT_QUEUE)))
-    ;; Shift remaining entries down
-    (global.set $paint_queue_count (i32.sub (global.get $paint_queue_count) (i32.const 1)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $shift
-      (br_if $done (i32.ge_u (local.get $i) (global.get $paint_queue_count)))
-      (i32.store (i32.add (global.get $PAINT_QUEUE) (i32.mul (local.get $i) (i32.const 4)))
-        (i32.load (i32.add (global.get $PAINT_QUEUE) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
+  ;; $paint_flag_take() → hwnd of first dirty slot (0 if none), clears it.
+  (func $paint_flag_take (result i32)
+    (local $i i32) (local $hwnd i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+        (then
+          (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $i)) (i32.const 0))
+          (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+          (return (local.get $hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $shift)))
-    (local.get $hwnd))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; $paint_flag_any() → 1 if any slot dirty, else 0.
+  (func $paint_flag_any (result i32)
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Called from $wnd_table_remove and slot-recycle paths.
+  (func $paint_flag_reset_slot (param $slot i32)
+    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $slot)) (i32.const 0)))
 
   ;; ---- NC_FLAGS / TITLE_TABLE / CLIENT_RECT (parallel to WND_RECORDS) ----
   ;; All three are indexed by the WND_RECORDS slot (0..MAX_WINDOWS-1).

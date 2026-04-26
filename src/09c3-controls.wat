@@ -4053,7 +4053,7 @@
     ;; Queue an initial WM_PAINT so the control draws on next GetMessage
     ;; cycle — same path CreateWindowExA takes for guest-created children.
     (if (i32.and (local.get $style) (i32.const 0x10000000))  ;; WS_VISIBLE
-      (then (call $paint_queue_push (local.get $hwnd))))
+      (then (call $paint_flag_set (local.get $hwnd))))
     (local.get $hwnd)
   )
 

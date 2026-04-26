@@ -256,9 +256,9 @@
         ;; nested CreateDialogParamA calls inside WM_INITDIALOG) never
         ;; render while the dialog is modal — the outer frame draws via
         ;; synchronous NC paint but the client area stays blank.
-        (if (i32.gt_u (global.get $paint_queue_count) (i32.const 0))
+        (if (call $paint_flag_any)
           (then
-            (local.set $arg0 (call $paint_queue_pop))  ;; hwnd
+            (local.set $arg0 (call $paint_flag_take))  ;; hwnd
             (local.set $arg1 (i32.const 0x000F))       ;; WM_PAINT
             (local.set $arg2 (i32.const 0))            ;; wParam
             (local.set $arg3 (i32.const 0))            ;; lParam
@@ -411,9 +411,9 @@
             ;; Drain paint queue — WM_PAINT for child controls. Only
             ;; WAT-native wndprocs are valid targets in this modal
             ;; (dialog was built from WAT ctrls, no x86 dlg_proc).
-            (if (i32.gt_u (global.get $paint_queue_count) (i32.const 0))
+            (if (call $paint_flag_any)
               (then
-                (local.set $arg0 (call $paint_queue_pop))
+                (local.set $arg0 (call $paint_flag_take))
                 (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
                 (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
                   (then

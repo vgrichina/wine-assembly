@@ -361,7 +361,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_queue_push (global.get $next_hwnd))
+    (call $paint_flag_set (global.get $next_hwnd))
     ;; Build CREATESTRUCT at image_base+0x100 for this child. Must run BEFORE
     ;; frame cleanup — needs [esp+24..esp+48]. MFC SDI passes a CCreateContext*
     ;; as lpParam (arg 12) so CView::OnCreate can call CDocument::AddView.
@@ -471,7 +471,7 @@
         (block $done (loop $push_loop
           (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
           (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
-          (call $paint_queue_push (local.get $ctrl_hwnd))
+          (call $paint_flag_set (local.get $ctrl_hwnd))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $push_loop)))))
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
@@ -557,7 +557,7 @@
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
-          (else (call $paint_queue_push (local.get $arg0))))))
+          (else (call $paint_flag_set (local.get $arg0))))))
     ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
     ;; with the new client dimensions so GetMessageA delivers correct values.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
@@ -792,7 +792,7 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver WM_PAINT to child window from paint queue
-    (local.set $tmp (call $paint_queue_pop))
+    (local.set $tmp (call $paint_flag_take))
     (if (local.get $tmp)
     (then
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
@@ -998,11 +998,11 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; Child paint pending (from paint queue)
-    (if (global.get $paint_queue_count)
+    (if (call $paint_flag_any)
     (then
     (local.set $tmp (if (result i32) (i32.and (local.get $arg4) (i32.const 1))
-      (then (call $paint_queue_pop))
-      (else (i32.load (global.get $PAINT_QUEUE)))))))  ;; peek without removing if PM_NOREMOVE
+      (then (call $paint_flag_take))
+      (else (call $paint_flag_first))))))  ;; peek without removing if PM_NOREMOVE
     (if (local.get $tmp)
     (then
     (call $gs32 (local.get $arg0) (local.get $tmp))
@@ -1457,6 +1457,6 @@
     (call $host_invalidate (local.get $arg0))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
-      (else (call $paint_queue_push (local.get $arg0))))
+      (else (call $paint_flag_set (local.get $arg0))))
     (global.set $eax (local.get $prev))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))

@@ -1753,7 +1753,7 @@
     (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (local.get $arg2))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
-      (else (call $paint_queue_push (local.get $arg0))))
+      (else (call $paint_flag_set (local.get $arg0))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -2042,7 +2042,7 @@
         (block $done (loop $push_loop
           (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
           (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
-          (call $paint_queue_push (local.get $ctrl_hwnd))
+          (call $paint_flag_set (local.get $ctrl_hwnd))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $push_loop)))))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
@@ -3365,7 +3365,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_queue_push (global.get $next_hwnd))
+    (call $paint_flag_set (global.get $next_hwnd))
     ))
     ;; Store parent hwnd (hWndParent = [esp+36])
     (call $wnd_set_parent (global.get $next_hwnd)
@@ -4417,7 +4417,7 @@
         (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (i32.and (local.get $arg3) (i32.const 0x4)))
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
-          (else (call $paint_queue_push (local.get $arg0))))
+          (else (call $paint_flag_set (local.get $arg0))))
         (call $host_invalidate (local.get $arg0))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
@@ -5427,7 +5427,7 @@
         (local.set $rv (call $host_get_update_rect (local.get $arg0) (local.get $wa)))
         (if (i32.eqz (local.get $rv))
           (then
-            ;; Empty updateRgn. If paint_pending (main) or in paint_queue (child),
+            ;; Empty updateRgn. If paint_pending (main) or paint flag set (child),
             ;; the caller will paint full client — hand them the full client rect.
             (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
             (i32.store (local.get $wa) (i32.const 0))
@@ -7092,7 +7092,7 @@
     ;; DefWindowProc, so queuing the message alone doesn't update our table),
     ;; and queue a paint so the moved child redraws.
     (call $defwndproc_do_nccalcsize (local.get $arg1))
-    (call $paint_queue_push (local.get $arg1))
+    (call $paint_flag_set (local.get $arg1))
     (global.set $eax (local.get $arg0))  ;; return same HDWP handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
@@ -8177,7 +8177,7 @@
           (local.get $arg2))))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
-      (else (call $paint_queue_push (local.get $arg0))))
+      (else (call $paint_flag_set (local.get $arg0))))
     (call $host_invalidate (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)

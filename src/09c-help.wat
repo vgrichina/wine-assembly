@@ -51,7 +51,8 @@
         ;; Clear parallel-table state for the recycled slot.
         (call $nc_flags_reset_slot (local.get $empty))
         (call $title_table_reset_slot (local.get $empty))
-        (call $client_rect_reset_slot (local.get $empty))))
+        (call $client_rect_reset_slot (local.get $empty))
+        (call $paint_flag_reset_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -84,6 +85,7 @@
           (call $nc_flags_reset_slot (local.get $i))
           (call $title_table_reset_slot (local.get $i))
           (call $client_rect_reset_slot (local.get $i))
+          (call $paint_flag_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
