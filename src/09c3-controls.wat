@@ -2258,8 +2258,17 @@
         (return (call $ctrl_get_check_state (local.get $hwnd)))))
 
     ;; ---------- BM_SETCHECK (0x00F1) ----------
+    ;; For BS_AUTORADIOBUTTON (kind 9) with wParam=1, enforce radio mutex
+    ;; by clearing sibling autoradios first — arrow-key navigation in
+    ;; renderer-input.js posts BM_SETCHECK directly without going through
+    ;; the click path, so without this two radios end up "checked".
     (if (i32.eq (local.get $msg) (i32.const 0x00F1))
       (then
+        (if (i32.and
+              (i32.ne (local.get $wParam) (i32.const 0))
+              (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
+                      (i32.const 9)))
+          (then (call $autoradio_clear_siblings (local.get $hwnd))))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
