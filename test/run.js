@@ -50,6 +50,7 @@ const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (ei
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
+const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
@@ -365,6 +366,7 @@ async function main() {
   if (TRACE_GDI) traceCategories.add('gdi');
   if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
+  if (TRACE_CLIP) traceCategories.add('clip');
   if (TRACE_DX) traceCategories.add('dx');
   if (TRACE_DX_RAW) { traceCategories.add('dx'); traceCategories.add('dx-raw'); }
   if (TRACE_FS) traceCategories.add('fs');
