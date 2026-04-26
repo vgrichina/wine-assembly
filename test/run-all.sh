@@ -51,6 +51,7 @@ E2E=(
   test/test-solitaire-resize.js
   test/test-minesweeper-no-resize.js
   test/test-pinball-flipper.js
+  test/test-tworld-launch.js
 )
 
 SMOKE=(

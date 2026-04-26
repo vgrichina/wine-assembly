@@ -69,6 +69,9 @@ const extra = [
   { name: 'ImmReleaseContext', nargs: 2 },
   { name: 'VkKeyScanW', nargs: 1 },
   { name: 'MapVirtualKeyW', nargs: 2 },
+  { name: 'MapVirtualKeyExA', nargs: 3 },
+  { name: 'GetKeyboardState', nargs: 1 },
+  { name: 'ToAsciiEx', nargs: 6 },
   { name: 'VirtualQuery', nargs: 3 },
   // Wide-char CRT APIs
   { name: '__wgetmainargs', nargs: 5 },

@@ -1044,6 +1044,13 @@
   (func $handle_MapVirtualKeyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_MapVirtualKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
+  ;; MapVirtualKeyExA(uCode, uMapType, dwhkl) → UINT — ignore the locale handle
+  ;; and delegate. MapVirtualKeyA pops 12 bytes (ret+2 args); we need 16 (ret+3),
+  ;; so add the extra 4 after.
+  (func $handle_MapVirtualKeyExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_MapVirtualKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
   ;; 786: DisableThreadLibraryCalls(hModule) — no-op, return TRUE
   (func $handle_DisableThreadLibraryCalls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))

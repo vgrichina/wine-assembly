@@ -3518,6 +3518,65 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; ToAsciiEx(uVirtKey, uScanCode, lpKeyState, lpChar, uFlags, hkl) → int.
+  ;; 6-arg stdcall. Translate vkey + Shift state to up to one ASCII char in
+  ;; *lpChar. Returns 1 on success, 0 if no translation, -1 for dead keys.
+  ;; Minimal: handle letters/digits with Shift, and a handful of punctuation
+  ;; that SDL apps rely on (Space, Enter, Esc, Tab).
+  (func $handle_ToAsciiEx
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vk i32) (local $ks i32) (local $out i32) (local $shift i32) (local $ch i32)
+    (local.set $vk (local.get $arg0))
+    (local.set $ks (call $g2w (local.get $arg2)))
+    (local.set $out (call $g2w (local.get $arg3)))
+    (local.set $shift (i32.and (i32.load8_u (i32.add (local.get $ks) (i32.const 0x10))) (i32.const 0x80)))
+    (local.set $ch (i32.const 0))
+    ;; A-Z (0x41-0x5A): lowercase unless Shift held
+    (if (i32.and (i32.ge_u (local.get $vk) (i32.const 0x41)) (i32.le_u (local.get $vk) (i32.const 0x5A)))
+      (then (local.set $ch
+        (select (local.get $vk) (i32.add (local.get $vk) (i32.const 0x20)) (local.get $shift)))))
+    ;; 0-9 (0x30-0x39): direct ASCII when no Shift; ignored with Shift here.
+    (if (i32.eqz (local.get $ch))
+      (then (if (i32.and (i32.ge_u (local.get $vk) (i32.const 0x30)) (i32.le_u (local.get $vk) (i32.const 0x39)))
+        (then (if (i32.eqz (local.get $shift))
+          (then (local.set $ch (local.get $vk))))))))
+    ;; Space=0x20, Enter=0x0D, Esc=0x1B, Tab=0x09, Back=0x08
+    (if (i32.eqz (local.get $ch))
+      (then
+        (if (i32.eq (local.get $vk) (i32.const 0x20)) (then (local.set $ch (i32.const 0x20))))
+        (if (i32.eq (local.get $vk) (i32.const 0x0D)) (then (local.set $ch (i32.const 0x0D))))
+        (if (i32.eq (local.get $vk) (i32.const 0x1B)) (then (local.set $ch (i32.const 0x1B))))
+        (if (i32.eq (local.get $vk) (i32.const 0x09)) (then (local.set $ch (i32.const 0x09))))
+        (if (i32.eq (local.get $vk) (i32.const 0x08)) (then (local.set $ch (i32.const 0x08))))))
+    (if (local.get $ch)
+      (then
+        (i32.store16 (local.get $out) (local.get $ch))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
+  ;; GetKeyboardState(LPBYTE lpKeyState[256]) → BOOL — 1 arg stdcall.
+  ;; SDL polls this every frame to build its keyboard snapshot. Fill the 256-byte
+  ;; buffer from $host_get_async_key_state so currently-held keys show up there.
+  (func $handle_GetKeyboardState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $w i32) (local $s i32)
+    (local.set $w (call $g2w (local.get $arg0)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
+      (local.set $s (call $host_get_async_key_state (local.get $i)))
+      ;; GetAsyncKeyState returns 0x8000 in high bit if down. Translate to
+      ;; GetKeyboardState's high-bit-set byte (0x80) when down, else 0.
+      (i32.store8 (i32.add (local.get $w) (local.get $i))
+        (select (i32.const 0x80) (i32.const 0)
+          (i32.and (local.get $s) (i32.const 0x8000))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 303: GetParent — STUB: unimplemented
   ;; GetParent(hwnd) — 1 arg stdcall, return parent hwnd or 0
   (func $handle_GetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4805,9 +4864,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
-  ;; 415: FileTimeToLocalFileTime — STUB: unimplemented
+  ;; 415: FileTimeToLocalFileTime(const FILETIME *src, LPFILETIME dst) → BOOL.
+  ;; 2-arg stdcall. We don't model timezones — just copy the 8 bytes.
   (func $handle_FileTimeToLocalFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $s i32) (local $d i32)
+    (local.set $s (call $g2w (local.get $arg0)))
+    (local.set $d (call $g2w (local.get $arg1)))
+    (i32.store (local.get $d) (i32.load (local.get $s)))
+    (i32.store (i32.add (local.get $d) (i32.const 4)) (i32.load (i32.add (local.get $s) (i32.const 4))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 416: GetCurrentDirectoryW — STUB: unimplemented

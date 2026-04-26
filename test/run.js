@@ -772,7 +772,16 @@ async function main() {
     if (!lastInputEvent) return 0;
     if (lastInputEvent.hwnd) { logs.push(`[check_input_hwnd] explicit hwnd=0x${lastInputEvent.hwnd.toString(16)}`); return lastInputEvent.hwnd; }
     const m = lastInputEvent.msg;
-    if (m >= 0x100 && m <= 0x108) { logs.push(`[check_input_hwnd] keyboard → 0x10002`); return 0x10002; }
+    // Keyboard: prefer the WAT focus owner (e.g. edit child), else fall back to
+    // main_hwnd (0). Hard-coding 0x10002 was a notepad hack that broke any app
+    // (e.g. SDL) whose focus owner isn't a notepad-shaped edit ctrl.
+    if (m >= 0x100 && m <= 0x108) {
+      const we = instance && instance.exports;
+      const focus = (we && we.get_focus_hwnd) ? (we.get_focus_hwnd() | 0) : 0;
+      if (focus) { logs.push(`[check_input_hwnd] keyboard → focus 0x${focus.toString(16)}`); return focus; }
+      logs.push(`[check_input_hwnd] keyboard → 0 (main_hwnd)`);
+      return 0;
+    }
     logs.push(`[check_input_hwnd] msg=0x${m.toString(16)} → 0 (main_hwnd)`);
     return 0;
   };

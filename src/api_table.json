@@ -10580,5 +10580,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3896222620
+  },
+  {
+    "id": 1512,
+    "name": "MapVirtualKeyExA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3269813513
+  },
+  {
+    "id": 1513,
+    "name": "GetKeyboardState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3645156891
+  },
+  {
+    "id": 1514,
+    "name": "ToAsciiEx",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 349546314
   }
 ]
