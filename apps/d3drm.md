@@ -1,7 +1,19 @@
 # Direct3D Retained Mode (D3DRM) — Design
 
-**Status:** Design only, not implemented.
-**Blocks:** ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI (7 Plus! 98 DirectDraw screensavers).
+**Status:** SUPERSEDED. We took a different path: ship the real **d3drm.dll** (DX5/6 redist) as a guest PE and let it run on our emulator. The host-side `$handle_Direct3DRMCreate` E_FAIL stub is dead code — d3drm.dll exports its own Direct3DRMCreate that constructs guest-internal COM vtables. This design (Level 1 host-side stub graph) is kept for historical reference only; do not implement.
+**Blocks:** ARCHITEC, FALLINGL, GEOMETRY, JAZZ, OASAVER, ROCKROLL, SCIFI, WIN98 — all 7 Plus! 98 Organic Art DirectDraw screensavers (single byte-identical PE, differentiated by `.SCN` config).
+
+## Current state (2026-04-25)
+
+- `d3drm.dll` (DX6 redist) loaded as guest PE at runtime base 0x7459b000. Runs fine.
+- `d3dxof.dll` (DX6 redist, 107792 B, 1999-01-08) shipped at `test/binaries/dlls/d3dxof.dll` — was the gate for `.x` mesh parsing. Without it, `0x647d0a8b` LoadLibrary failed and the parser early-exited with HRESULT 0x8876031a, so meshes were never read.
+- ROCKROLL.SCR `--args=/s` end-to-end: 37 distinct `.x` + texture file mappings via `fs_create_file_mapping`/`fs_map_view_of_file`; per-frame STATETRANSFORM Execute buffers + Flip; 1 `IDirect3DDevice2_DrawPrimitive` per frame submitting a static 4-vertex TLVERTEX HUD watermark.
+- Render path verified WORKING via canary: the watermark rasterizes to the back-canvas and shows in the PNG snapshot at (550,434)–(595,468). Lock/Unlock direct-write theory ruled out.
+- **Open blocker:** d3rm never emits scene geometry (no PROCESSVERTICES, no TRIANGLE op, no DrawPrimitive with mesh data). Most likely the `.x` parse → `IDirect3DRMMeshBuilder::Load` succeeds but no `IDirect3DRMFrame::AddVisual` call ever attaches the mesh to the scene graph, so `IDirect3DRMViewport::Render` walks an empty visual list. All IDirect3DRM* methods live inside d3rm.dll and never cross our COM boundary, so `--trace-api` won't show them; need static disasm of d3rm to locate the AddVisual / Render functions and `--break=` on them.
+
+See memory/`project_organic_art_engine.md` for the active investigation log.
+
+## Original design (kept for context — DO NOT IMPLEMENT)
 
 ## Context
 
