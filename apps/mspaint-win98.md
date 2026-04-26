@@ -1,8 +1,67 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status (2026-04-26): I5 STILL OPEN — wipe path narrowed to gdi_bitblt
+## Status (2026-04-26 later): 8/9 — Colors palette survives, Tools glyphs missing at startup
 
-`test/test-mspaint-draw.js` still 7/9 (`tools=827→0`, `colors=3168→0`).
+`test/test-mspaint-draw.js` now `8/9`: `colors=3168→2736` ✓, `tools=116→0` ✗.
+
+### What landed this session
+
+`gdi_bitblt` (sourceless / SRCCOPY / complex / 1:1 stretched / scaled
+stretched) and `gdi_stretch_blt` (all paths) now wrap their final
+`_clippedPut`/`fillRect` calls in `_drawWithClip(dstDC, t => …)` so
+cousin/descendant exclusion + DC clipRgn apply. `_clippedPut` already
+respects canvas clip (uses temp canvas + `drawImage`, not
+`putImageData` which ignores clip), so no separate `_blitWithClip`
+helper was needed.
+
+`getImageData` calls intentionally stay outside the clip — clip
+doesn't affect reads, and reading inside a saved/clipped state would
+be redundant.
+
+After the fix the canvas mousedown's 19 BitBlts (PATCOPY frame +
+SRCCOPY 266×240 from selection bitmap onto the MDI client back-canvas)
+no longer wipe the Colors palette. The remaining 432-pixel delta in
+COLORS_BBOX is just antialiasing noise from the redrawn frame edge.
+
+### Remaining: Tools palette glyphs missing at startup
+
+The "before" PNG (`scratch/mspaint_draw_before.png`, taken before any
+click) already shows the Tools palette as a blank grey panel with only
+4 ghost glyphs visible at the bottom (rounded-rect, rounded-rect,
+oval, half-frame). The 16 tool icons aren't being rendered at all.
+
+The previous session's `tools=827→0` reflected a fully-painted Tools
+palette getting wiped. Now `tools=116→0` reflects a near-empty Tools
+palette that gets fully cleared by the tool click. So the post-fix
+pencil click still wipes the few remaining glyphs, but the bigger
+problem is that the icons never paint in the first place.
+
+This is a separate bug from the bitblt clip — likely the toolbar
+bitmap blit at startup either targets the wrong DC or gets fully
+clipped out. Suspects:
+
+1. **Cover collapses to empty.** When a button's owner-draw blits its
+   glyph from the shared `mspaint.exe` toolbar bitmap, the destination
+   may be the button's whole-window DC. The button has no children but
+   has 15 sibling buttons — if their `zOrder > button.zOrder`, they're
+   in the cover-exclusion list. They don't overlap the painting button
+   so the cover should still allow drawing — verify with `--trace-clip`
+   on a button hwnd during initial paint.
+2. **Wrong source coords on the toolbar bitmap.** The 16 icons live in
+   one strip; each button picks its own subrect via `StretchBlt`. If
+   our `gdi_stretch_blt` 1:1 path or scaled path mis-clips at the
+   `t.ox/t.oy` boundary, glyphs land off-canvas.
+3. **Owner-draw never fires.** If `WM_DRAWITEM` isn't dispatched for
+   these buttons, they never get a glyph in the first place.
+
+Next step: enable `--trace-gdi` over the startup phase, grep for
+BitBlt/StretchBlt with src = the toolbar bitmap (commonly 240×16 or
+similar), and confirm each glyph draw fires. If they don't, investigate
+WM_DRAWITEM dispatch.
+
+## Status (2026-04-26): I5 NARROWED — wipe path was gdi_bitblt (now fixed)
+
+`test/test-mspaint-draw.js` was 7/9 (`tools=827→0`, `colors=3168→0`).
 
 ### Progress this session
 
