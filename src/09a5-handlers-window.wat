@@ -1113,13 +1113,15 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; x86 WndProc dispatch: use window table result, or fall back to globals
+    ;; ONLY for the main hwnd. A 0 lookup for any other hwnd means the
+    ;; window was destroyed (or was never registered) — falling back to
+    ;; $wndproc_addr would route a child's message to the main wndproc,
+    ;; e.g. Find dialog Cancel (id=2) leaking into Notepad's IDM_SAVEAS
+    ;; handler after the dialog tore itself down on the first dispatch.
     (if (i32.eqz (local.get $wndproc))
       (then
         (if (i32.eq (call $gl32 (local.get $arg0)) (global.get $main_hwnd))
-          (then (local.set $wndproc (global.get $wndproc_addr)))
-          (else (if (global.get $wndproc_addr2)
-            (then (local.set $wndproc (global.get $wndproc_addr2)))
-            (else (local.set $wndproc (global.get $wndproc_addr))))))))
+          (then (local.set $wndproc (global.get $wndproc_addr))))))
     ;; If no WndProc or null MSG ptr, return 0
     (if (i32.or (i32.eqz (local.get $wndproc)) (i32.eqz (local.get $arg0)))
       (then
