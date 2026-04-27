@@ -530,8 +530,11 @@
     (if (i32.and (local.get $name_rva) (i32.const 0x80000000))
       (then
         (local.set $name_ptr (i32.const 0x2E0))
-        (call $host_log (local.get $name_ptr) (i32.const 5))
-        (call $host_log_i32 (i32.or (i32.const 0xC0DE0000) (local.get $api_id))))
+        ;; Emit COM-marker BEFORE the name so JS can substitute the real
+        ;; method name in $lastApiName before --trace-api filtering and
+        ;; --trace-stack walking happen on the entry log.
+        (call $host_log_i32 (i32.or (i32.const 0xC0DE0000) (local.get $api_id)))
+        (call $host_log (local.get $name_ptr) (i32.const 5)))
       (else
         (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
         (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))

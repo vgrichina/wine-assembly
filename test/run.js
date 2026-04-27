@@ -179,6 +179,7 @@ async function main() {
   let lastApiEntry = null; // typed metadata for last API (for return formatting)
   let lastApiArgs = null;  // raw dword args captured at entry, used for out-param dump on return
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
+  let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -477,6 +478,18 @@ async function main() {
     const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
     let t = '';
     for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
+    // COM ordinal dispatch: 09b-dispatch.wat emits the api_id marker via
+    // host_log_i32 IMMEDIATELY before this log of the '<ord>' placeholder.
+    // Resolve the real method name now so all downstream tracing
+    // (--trace-api filter, --trace-stack, breakpoints, decodeDx, typed
+    // formatting via api_table.json) works against the real name.
+    let comOrdRaw = false;
+    if (t === '<ord>' && pendingComApiId >= 0) {
+      const entry = apiTable.find(e => e.id === pendingComApiId);
+      if (entry) t = entry.name;
+      comOrdRaw = true;
+      pendingComApiId = -1;
+    }
     apiCount++;
     if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
 
@@ -691,22 +704,20 @@ async function main() {
   };
 
   h.log_i32 = val => {
+    // COM-dispatch marker (emitted by 09b-dispatch.wat BEFORE the '<ord>'
+    // name log). Stash api_id so h.log can substitute the real method
+    // name on the immediately-following entry log.
+    if (((val >>> 0) >>> 16) === 0xC0DE) {
+      pendingComApiId = (val >>> 0) & 0xFFFF;
+      return;
+    }
     if (ESP_DELTA && lastApiName) {
-      const isComMarker = ((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>';
-      if (!isComMarker) {
-        const espAfter = instance.exports.get_esp();
-        const delta = (espAfter - lastApiEsp) | 0;
-        logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
-      }
+      const espAfter = instance.exports.get_esp();
+      const delta = (espAfter - lastApiEsp) | 0;
+      logs.push(`[ESP] ${lastApiName}: ${hex(lastApiEsp)} -> ${hex(espAfter)} delta=${delta >= 0 ? '+' : ''}${delta}`);
     }
     if (TRACE_API && lastApiName) {
-      // COM method api_id marker: 0xC0DE0000 | api_id
-      if (((val >>> 0) >>> 16) === 0xC0DE && lastApiName === '<ord>') {
-        const apiId = (val >>> 0) & 0xFFFF;
-        const entry = apiTable.find(e => e.id === apiId);
-        flushDedup();
-        logs.push(`  [COM api_id=${apiId} => ${entry ? entry.name : '???'}]`);
-      } else if (!lastApiEntry || !lastApiEntry.ret) {
+      if (!lastApiEntry || !lastApiEntry.ret) {
         // Legacy untyped path. Typed entries are formatted in log_api_exit
         // using EAX, which is authoritative — skip here to avoid duplicate lines.
         flushDedup();
