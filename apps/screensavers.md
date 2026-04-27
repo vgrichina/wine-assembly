@@ -745,6 +745,27 @@ So the dispatcher's "result row" pointers `[vp+0xa0]/[vp+0xa4]` are seeded by Ga
 2. Hexdump that bucket array: if every dword is 0, the scene populator never ran. If non-zero entries point at mesh-class instances, then Gate A's `[arg+0x88]==0` early-out is filtering them out (which means mesh-data attachment is failing).
 3. Fork: if buckets are empty, the bug is at scene-population time (CreateMeshBuilder/Load/AddVisual init path). If buckets are populated but Gate A bounces them, check whether `[arg+0x88]` (likely a mesh-data ptr) was ever written — that's the real failure point.
 
+**Iteration (2026-04-27): static analysis identified the populator + runtime confirmed it never fires.**
+
+`find_field --op=write --reg=esi,edi,ebx 0x9c` on d3drm.dll returns 3 sites that write `[reg+0x9c]`:
+
+| Site | Enclosing fn | Role |
+|---|---|---|
+| 0x647c13c2 | 0x647c1377 (viewport ctor) | Zeros `[esi+0x9c]=0` along with `+0x98/+0xa0/+0xa4/+0xa8/...` (initial NULL state) |
+| 0x647aef29 | 0x647aeede (vp clone) | Copies `[edi+0x9c]` → `[esi+0x9c]` (and many surrounding fields) — clone path |
+| 0x6479e6b5 | 0x6479e550 (populator wrapper) | `[esi+0x9c] = [ebp-4]` only on success — the lone allocator/populator |
+
+The populator wrapper at `0x6479e550` (loaded VA `0x745B9550`) calls inner `0x6479e6cc(vp, arg, &out_ptr)` which allocates the bucket array; on success writes `[vp+0x9c]=out_ptr` and `[arg2]=out_ptr`. Caller chain: `0x6479e259 → 0x6479e3c1 (call 0x6479e550)`.
+
+**Runtime test:** `--trace-at=0x745B9550` over 15000 batches → **0 hits.**
+
+**Conclusion:** `[vp+0x9c]` stays NULL for ROCKROLL's entire run. The bucket array is never allocated — scene-population path is short-circuiting before it ever reaches the populator. This pins the bug to the scene-creation path that should invoke `0x6479e259`'s caller chain.
+
+**Next-session pivot:**
+1. Walk the call chain back from `0x6479e259` — its sole external xref is `0x6479ee76`. Find its enclosing fn and continue back until we hit either (a) a public d3rm COM method (entry pattern `mov ecx,[esp+4]; mov eax,[ecx]; jmp [eax+N]` style or a vtable slot), or (b) a code path gated on something the SCR doesn't satisfy.
+2. Once identified, set `--trace-at=` on each level to see which is the topmost fn that DOES fire vs the topmost that DOESN'T — the gap is the missing wiring.
+3. The likely culprit class: `IDirect3DRMViewport::Render` or its inner `BuildVisualList`. Check `[obj+0x540]` slot 12 callee from Gate B for hints about what kind of object owns `[+0x540]`.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
