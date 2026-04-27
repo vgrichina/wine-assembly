@@ -1456,6 +1456,329 @@ node test/run.js ... --trace-api 2>&1 | grep "Thread.*crashed"
 node tools/disasm_fn.js test/binaries/winamp.exe 0x40f8e4 120
 ```
 
+## SESSION 21 — Plateau Re-measured: ~3.94s / 5.34s, Not 27 648 Bytes
+
+S18/S20 reported audio plateau at **27 648 bytes (~313 ms, ~17 writes)** regardless of batches and concluded the cap was unmoved. Re-running their own repro with `--max-batches=` set to {400, 1500, 3000} all produce **exactly 347 904 bytes (~3.94 s, 200 `waveOutWrite` calls)**. Identical byte count across batch counts → hard cap, not wall-clock.
+
+```
+batches=400  pcm=347904  T4 active eip=0x6eb101 (LeaveCS, about to WFSO)
+batches=1500 pcm=347904  T4 active eip=0x6eafe1 (pause/restart check)
+batches=3000 pcm=347904  T4 active eip=0x6eaf7e (completed-list drain, esi=0)
+```
+
+S20's "27 648 byte" number appears to have been measured under a different config (maybe before the deferred-WHDR_DONE flush worked, or before the test harness wired `--audio-out` correctly). With the current tree at HEAD (post-S20 vis-clip fix), the real ceiling matches **SESSION 17** (`12.6× to 347 KB (3.94s/5.34s); decoder sets [struct+0xaa48] EOF flag prematurely`).
+
+### What the tail of the PCM tells us
+
+```
+seg 0..7 peaks ≈ 11k–20k   (normal music level)
+seg 8     peak  ≈ 3.4k     (faded)
+seg 9     peak  ≈ 2.6k     (faded)
+trailing zero bytes: 1     (no silence pad — file ends mid-sample)
+```
+
+The signal is fading at the cutoff, then stops abruptly with no silence run. Consistent with the in_mp3 decoder hitting its premature EOF flag at `[struct+0xaa48]` (S17) rather than T4 deadlocking — T3 ends decoding cleanly and exits, T4 drains everything T3 produced (~3.94 s of PCM), then parks on `WaitForSingleObject` because there is no further producer.
+
+### Why the prior "ceiling" sessions were misleading
+
+- **S18** four reverted patches (WHDR depth-2, WFSO idle, SetEvent keep-alive, more slices) all targeted the wrong root cause — the WHDR completion policy is fine; the producer (T3) stops early.
+- **S19** correctly identified that T4 was crashing in the vis BitBlt and that S14's "FPU synth is the bottleneck" was wrong. **S20** fixed the BitBlt crash and stabilized T4. The remaining gap is **not** about T4 throughput — it's about T3 exiting at frame ~85 of a ~115-frame file.
+- The "ceiling at 17 writes" reported in S18/S20 was either a pre-fix artifact or a misread of `wc -l` on a partial trace; current measurement (3 batch sizes, identical byte count) shows the real cap.
+
+### Real next step (revised)
+
+Stop investigating T4 / WHDR / scheduling. Investigate **why T3 (in_mp3.dll decoder) terminates 26% short of EOF**:
+
+### EOF flag write sites in in_mp3.dll (preferred base 0x10000000)
+
+`tools/find_field.js test/binaries/plugins/in_mp3.dll 0xaa48 --op=write,imm` finds three:
+
+| VA | Op | Meaning | Enclosing fn |
+|---|---|---|---|
+| `0x100111e7` | `mov [esi+0xaa48], bl` (bl=0 from xor at fn entry) | clear EOF on Open/Init | `0x10011150` — class init/open (xrefed by `0x10008e77`, `0x1000a22d`) |
+| `0x10011259` | `mov byte [esi+0xaa48], 0x0` | clear EOF on Reset/Resume | `0x10011250` — reset (xrefed by `0x10009336`, jmp from `0x1000a291`) |
+| `0x10011332` | `mov byte [esi+0xaa48], 0x1` | **set EOF** | `0x10011327` — vtable thunk (no static xrefs; called via `[esi+0x34][+4]`) |
+
+The setter sits in a 3-arm dispatcher around `[esi+0xaa4c]` (mode at +0x70, copied to +0xaa4c by `0x100112c6`):
+
+- `[+0xaa4c]==3` → `0x100112d9` calls `0x1000da90`, returns (no EOF write)
+- `[+0xaa4c]!=3` → `0x10011300` calls `0x1000bd70` (looks like `*+0x5f14` decoder buffer pull), returns
+- third arm `0x10011327`: `cmp edi, 0x81010004 ; jnz 0x1001133e ; mov [+0xaa48], 0x1` — **EOF is set only when an inner call returned the magic code `0x81010004`**
+
+### EOF-status state machine (mapped statically — no runtime trace needed yet)
+
+Status code propagation (sticky field at `[bitstream_obj+0x88]`):
+
+| Code | Meaning |
+|---|---|
+| `0x81010001` | buffer underrun (transient) |
+| `0x81010002` | re-sync needed |
+| `0x81010003` | short read / out of input (transient) |
+| `0x81010004` | **EOF — sticky terminal, exits decoder** |
+
+`0x10010b80..0x10010c99` is the bitstream "advance & classify" routine. Tail at `0x10010c69`:
+
+```
+call 0x1000a760            ; one-liner: returns AL = byte [this+0x20] (forced-EOF flag)
+test al,al ; jz 0x10010c92
+cmp [+0x88], 0x81010001 ; jz set_eof
+cmp [+0x88], 0x81010003 ; jnz skip
+set_eof: mov [+0x88], 0x81010004
+```
+
+So **EOF is promoted from transient (`0x81010001` or `0x81010003`) to sticky (`0x81010004`) only when `[bitstream_obj+0x20]` is non-zero**.
+
+`[bitstream_obj+0x20]` is set by `0x1000a745` inside `0x1000a6c0..0x1000a753`:
+
+```
+mov ecx, [esi+0x4]    ; ecx = inner stream/source object (file reader)
+mov eax, [ecx]        ; vtable
+call [eax+0x8]        ; vtable slot 2 → AL = "input source at EOF?"
+test al,al ; jz skip
+mov byte [esi+0x20], 0x1   ; latch forced-EOF
+```
+
+**Root cause hypothesis:** the file-source object's vtable slot 2 (`IsEOF()`) returns true at ~74% of the MP3 file. That object wraps our VFS-backed `ReadFile`. Likely our file wrapper signals EOF when its sliding-window buffer is exhausted rather than when the underlying file is consumed — i.e., a buffer-empty-but-stream-not-at-end miscategorization.
+
+### Runtime confirmation — EOF-flag chain is NOT the cap
+
+Re-ran with `in_mp3.dll` actually loaded at runtime base **`0x6b6000`** (verified, not preferred 0x10000000). Relocated: static `0x10011332` → `0x6c7332`, static `0x1000a745` → `0x6c0745`.
+
+```
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=1500 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,50:poke:0x45caa4:1,60:winamp-play:C:\demo.mp3,100:winamp-start" \
+  --break=0x6c7332 --break-once --trace-callstack=12
+```
+
+**Result:** breakpoint propagated to T1, T2, T3, T4 (per `[ThreadManager] propagate bp` lines) — and **never fires**. T3 reaches EIP=0 (clean thread exit) instead, with `prev_eip=0x6bfc16` (static `0x10009c16`).
+
+Static `0x10009c16` is a function epilogue: `pop edi ; pop esi ; xor eax,eax ; pop ebx ; leave ; ret 0x4` — i.e., **T3's decoder thread proc returns 0 cleanly, not via the public EOF flag.** S21's "EOF-flag chain" trace was real code but on a path T3 never takes for this file.
+
+### New hypothesis — track-end exit gated on `[in_mp3+0x10022cbc]` percentage threshold
+
+The actual exit path lives upstream of `0x10009c16`. At static `0x10009396..0x100093b0`:
+
+```
+call 0x10009c70                ; status
+mov esi, eax
+call 0x10009c20                ; pct = (current * 100) / [esi+0x1d24]   ← progress getter
+mov ecx, [0x10022cbc]          ; threshold (BSS, 0 by default, set elsewhere)
+cmp eax, ecx
+jge 0x1000952e                 ; pct >= threshold → track-end exit
+cmp esi, 0x2
+jz  0x1000952e
+```
+
+`0x1000952e` posts `WM_USER+0xf3` (243) to Winamp's main HWND `[0x1001d8d0]`, clears `[0x10022cbc]` and `[0x100203b0]`, and falls through to the `0x10009c16` epilogue. Path matches the observed prev_eip.
+
+Caller gates the threshold-check on `[0x10022cbc] != 0` (`0x1000936c`), so the threshold is configured to non-zero somewhere — see writers at `0x10008fc1`, `0x100092f7`, `0x100092fe`, `0x10009560`, `0x10009871`. The writer at `0x10008fa0` computes `eax = ([0x1001d480] * ecx) / 0x80` where `[0x1001d480] = 40` (raw .data). So the threshold is normalized 0..40 — which would explain a cap somewhere in that range, but we observe 73.8 %, not <40 %, so this writer alone isn't the path. One of the other writers is producing the value we hit.
+
+### Watch on `[0x6d8cbc]` — threshold is set once at init, value = 40, NOT the trigger
+
+```
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=1500 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,50:poke:0x45caa4:1,60:winamp-play:C:\demo.mp3,100:winamp-start" \
+  --watch=0x6d8cbc --watch-log
+```
+
+Single hit (line 15906):
+```
+[ThreadManager] T3 WATCH 0x6d8cbc 0x0 -> 0x28 eip=0x6befd2 prev_eip=0x6befad esi=0x80 ecx=0x80
+```
+
+Maps to the `0x10008fa0` writer: `eax = ([0x1001d480]=40) * (ecx=128) / (esi=128) = 40`. So the threshold is **40** (set once at track init, never updated). With observed cap at **~74 %**, the `jge pct,40` branch would have fired at frame ~85·(40/74) ≈ 46, but T3 actually decodes past 40 %. Therefore **the threshold-percentage branch is NOT the cap** — `pct >= 40` doesn't terminate playback in practice (this branch must do something else, like trigger a UI update, despite my read of `jge → exit`).
+
+That leaves the **other** exit at `0x100093b9`:
+```
+cmp esi, 0x2 ; jz 0x1000952e
+```
+where `esi` came from `call 0x10009c70` — the playback-status query (returns from `[bitstream_obj][+0x4]` vtable call or `0x10012b10`). **Status `2` is the trigger** that drives T3 into the WM_USER+0xf3 post + `0x10009c16` epilogue we observed at runtime.
+
+### Plan for next session
+
+1. **Trace `0x10009c70` returns at runtime** — relocated to `0x6bfc70`. Use `--trace-at=0x6bfc70` plus a follow-up trace at the return site (`0x6bfc[xx]` after the chain) to capture EAX. The frame at which EAX first equals 2 is the trigger.
+2. **Inspect the vtable slot it calls** — the chain is `mov eax,[esi]; call [eax+4]` (status getter) or fallback `0x10012b10`. From the runtime callstack at the moment of `EAX=2`, deref `[esi]` to get the vtable, then `[+4]` is the impl VA. That impl returns 2 prematurely — it is the actual lie.
+3. Once the impl is known, compare its logic against the simpler S21 EOF-flag chain (`+0xaa48`, magic `0x81010004`). Likely they share the file-source object — but this getter path returns `2` while the EOF path returns `0x81010004`, which is why my S21 break never fired even though playback caps for the same underlying reason (file-source `IsEOF` reporting prematurely).
+
+### What's no longer useful
+
+- **EOF-flag chain (S21 hypothesis 1)** — chain is real but unused for this MP3. Don't break at `0x6c7332` next time.
+- **Threshold-percentage gate (this round, hypothesis 2)** — threshold is `40` once at init, doesn't move, and pct goes well past 40 % before any cutoff. Don't watch `0x6d8cbc` again.
+- **T4 / WHDR queue depth (S18, S20)** — already invalidated; T4 idle at WFSO is a *consequence* of T3 stopping, not a cause.
+
+### Compatible findings retained
+
+- **Producer-side cap** at exactly **347 904 bytes** = 73.8 % of demo.mp3 (S21 measurement, reproducible across `--max-batches={400,1500,3000}`).
+- **T3 clean exit signature**: EIP=0, `prev_eip=0x6bfc16` (static `0x10009c16` epilogue, `ret 0x4` returning to NULL because that's how thread procs end in our emulator).
+- **Exit posts WM_USER+0xf3** (winamp IPC ~243) to `[0x1001d8d0]` (Winamp main HWND) before exiting — a "track finished" notification regardless of whether full track played.
+
+### Older lead retained for reference
+
+The static EOF-flag chain (write sites `0x100111e7` / `0x10011259` / `0x10011332`, sticky promotion at `0x10010c69`, forced-EOF latch at `0x1000a745`, file-source vtable `IsEOF` probe at `[esi+0x4][[+8]]`) is real — it's just not the path T3 takes for `demo.mp3`. May matter for tracks that hit actual decoder-EOF rather than this percentage gate.
+
+Repro:
+```bash
+node test/run.js --exe=test/binaries/winamp.exe --max-batches=1500 --batch-size=5000 \
+  --buttons=1,1,1,1,1,1,1,1,1,1 --no-close \
+  --input="10:273:2,50:poke:0x45caa4:1,60:winamp-play:C:\demo.mp3,100:winamp-start" \
+  --audio-out=test/output/winamp-audio.pcm
+# Expect: 347904 bytes, T3 exited, T4 active in WFSO loop.
+```
+
+## SESSION 22 — Status-Getter Theory Disproven; Exit Is Via Fade-Out Post
+
+S21 ended pointing at the status getter at `0x10009c70` returning `2` as the trigger. Tested at runtime — **wrong**. The real exit goes through a fade-out / track-end PostMessage path at `0x100094f0` instead. Still no smoking gun for *why* the producer thinks the track is over, but the search space is much narrower now.
+
+### Confirmed exit path (from runtime bp + xrefs)
+
+T3's last block before EIP=0 is **`prev_eip=0x6bf5dd`** = static `0x100095dd` (`jmp 0x10009c00`). Walking xrefs back through the chain:
+
+```
+0x100094f0  push [ebp-4] ; PostMessageA(winamp_hwnd, WM_USER, 0, 243)   ← TRACK_DONE post
+0x1000952c  jmp 0x1000956c
+0x1000956c  cmp [ebp-0x14], 2 ; jnz 0x100095e2
+0x10009579  mov eax, [0x1001d95c] ; call [eax+0x30]    ← decoder vtable cleanup
+0x10009581  call [eax+0x34] ; test eax, eax ; jnz 0x10009b32
+0x10009591  cmp [0x100250d8], eax ; jnz 0x100095ac
+0x10009599  PostMessageA(winamp_hwnd, WM_USER, 0, 0x402)  ← TRACK_FINISHED_2
+0x100095ac  EnterCS / clear flags / LeaveCS
+0x100095c8  call 0x10002a82
+0x100095dd  jmp 0x10009c00      ← prev_eip we observe
+0x10009c00  destructor chain → 0x10009c16 epilogue → ret 0x4 → EIP=0
+```
+
+`0x100094f0` is reached by fall-through from the **fade-out / volume-ramp loop** at `0x10009440-0x100094ce` (small loops over `[ebp+0xffffff78..]` computing balance/volume bytes via `imul ebx, 0x4b`, then `jmp short 0x100094f0`). Whatever code enters that fade-out region is the actual "stop decoding" decision point — that's the upstream address still to find.
+
+### Negative results — do not re-investigate
+
+| Tried | Address (relocated) | Result |
+|---|---|---|
+| Status getter `mov eax, 0x2` | `0x6bfcc4` | **bp never fires** — getter never returns 2 |
+| Decode-error post-stop (`PostMessage WM_COMMAND 40047`) | `0x6bf0f4` | **bp never fires** — decode call never returns negative |
+| Track-done in eax==0 path (push 0xf3) | `0x6bf15a` | **bp never fires** |
+| Common cleanup at `0x1000919c` | `0x6bf19c` | **bp never fires** |
+| Second post site `0x1000952e` | `0x6bf52e` | **bp never fires** |
+| Volume-loop entry `0x100094f0` predecessor | `0x6bf4f0` | **bp never fires** at that exact addr (fall-through start is elsewhere) |
+| Loop-end cmp `0x10009b73` | `0x6bfb73` | **bp fires many times** — flag stays 0, `jz 0x100092b9` continues loop |
+| Loop-exit jmp `0x10009b80` | `0x6bfb80` | **bp never fires** — confirms `[0x100250d8]==0` always at this cmp |
+| Watch on `[0x100250d8]` (= `0x6db0d8`) | dword/byte | **never fires across whole run**; post-run dump confirms 0 |
+| Cleanup-jmp entry `0x10009c00` | `0x6bfc00` | fires once, **prev_eip=0x6bf5dd** (`0x100095dd`) ← path confirmed |
+
+So S21's whole "status `2` is the trigger" thread is dead. `[0x100250d8]` (the loop's primary exit flag) is never set during this run — the decoder doesn't get its conventional "stop now" signal. Instead, T3 enters the fade-out region from somewhere else and walks itself out cleanly via `[ebp-0x14]==2` → vtable cleanup → epilogue.
+
+### Open question for next session
+
+**Where is `0x10009440` (or whatever upstream block falls into `0x100094f0`) reached from?** Static xrefs to `0x100094f0`, `0x100094ce`, `0x10009480`, `0x10009440` all return empty — the entry must come from a `jmp short` whose target xref the tool didn't classify, or from inside the loop body via a conditional that drops into the fade. Strategy:
+
+1. `tools/scan_fn_bounds.js test/binaries/plugins/in_mp3.dll 0x10009300 0x10009440 0x10009440` to find any `jmp/jcc → 0x10009440` (or `0x100094XX`) the standard xrefs missed.
+2. Failing that, set a sweep of `--break=` at every block-entry candidate in `0x10009300..0x10009440` and identify which one fires last before T3 exit. Use `--break-thread=3` to isolate to T3.
+3. Once the gating condition is identified, read the upstream variable that triggers fade-out — likely a "decoder reports underrun / no more frames available" status from a different vtable slot than the one S21 chased.
+
+This is the actual lie causing the 73.8% cap — not the EOF flag, not the threshold gate, not the status getter — a fade-out path triggered by an as-yet-unidentified producer-exhaustion signal.
+
+### Tooling note
+
+`tools/xrefs.js` does not reliably report **conditional** branches into a target (`jnz/jz/jge/jle`); only unconditional `jmp/call`. Three known examples from this session:
+- `0x10009b93 jnz 0x10009c00` not in `xrefs 0x10009c00`
+- `0x10009bdc jnz 0x10009c00` not in `xrefs 0x10009c00`
+- `0x10009597 jnz 0x100095ac` not in `xrefs 0x100095ac`
+
+When chasing a control-flow predecessor, also `grep -E "jnz|jz|jge|jle" $(disasm)` for the target address. Worth a fix in `tools/xrefs.js` later — short-form Jcc opcodes (`70..7F`) and the long form (`0F 80..8F rel32`) likely aren't being classified as branches.
+
+## SESSION 23 — EOF Chain Reinstated; S22's Negative Was a Block-Boundary Bug
+
+S22 claimed the EOF chain was disproven. **Wrong.** S21's chain *is* the trigger; S22's bp at `0x6c7332` (the `mov [esi+0xaa48], 1` byte) didn't fire because that mov is mid-block — the decoder dispatches blocks by entry EIP only, never by mid-block PC. Re-armed at the **block start** (`0x6c732f` = static `0x1001132f`, the jz fall-through), bp fires reliably with `edi=0x81010004` (terminal-EOF status) at exactly the moment of write.
+
+```
+0x10011327: cmp edi, 0x81010004      ← block start (jz target above)
+0x1001132d: jnz 0x1001133e
+0x1001132f: mov eax, edi              ← block start (fall-through after jnz)
+0x10011331: pop edi
+0x10011332: mov [esi+0xaa48], 1       ← S22's bp here NEVER fires (mid-block)
+0x10011339: pop esi ; pop ebx ; ret 0xc
+```
+
+### Walking the chain backward from confirmed write
+
+1. EOF write at 0x10011332 — confirmed by bp at 0x6c732f (block start), `edi=0x81010004`, `esi=0x768c0c` (parser sub-object).
+2. `edi` came from `call 0x10010b60` (bitstream advance / next packet) at 0x10011296 — return value stored as `mov edi, eax`, then `and eax, 0xc0000000 ; jz/cmp` decides path; high bits `10` route to 0x10011327.
+3. Fade-out post (S22's apparent "exit point" at `prev_eip=0x6bf5dd`) is **downstream** of the EOF write — caller observes `[parser+0xaa48]==1` via `0x100113b0` (`mov al, [ecx+0xaa48] ; ret`) at `0x100097eb`, sets `[ebp-0x14]=1`, walks normal cleanup → fade-out → epilogue. S22's reasoning ("no EOF setter fires, must be fade-out") was inverted: EOF setter fires *first*, fade-out is the consequence.
+
+### Where the chain still goes dark — `0x10010b60`
+
+The actual lie is inside `0x10010b60` (the bitstream advance). It returns `0x81010004` at frame ~151. Per S21's static read of `0x10010c69`, this happens when prior status was `0x81010001` (sync error) or `0x81010003` (count exceeded) AND the forced-EOF latch `[parser+0x20]` is non-zero. The latch is set at `0x1000a745` when the file source's vtable[2] (IsEOF) returns AL=1.
+
+But the post-run **dump of the file source EOF flag is zero**: `[0x77365c+0x2330] = 0` (`tools/run.js --dump=0x775a80:32` after end of run shows all zeros). And the only static writers of `[reg+0x2330]=1` are `0x10004339` (15-second wall-clock timeout) and `0x100043ef` (ReadFile-returned-zero), **neither of which a `--break-once` ever fires** at any nearby block-start address.
+
+So either:
+- the file source's EOF flag is read from somewhere *other* than `[+0x2330]` (maybe the runtime vtable resolves to a different IsEOF impl than the static `0x10004407` slot — vtable_dump showed two parallel vtables at `0x100161d0` and `0x100161e8` with slot-2 differing wildly, and the object stores `[+0]=0x6cc1e8` = the +0x18-into-vtable address, suggesting MI sub-object adjustment),
+- or the forced-EOF latch `[parser+0x20]` is set by code other than `0x1000a745`,
+- or the bitstream advance promotes status to `0x81010004` via a path that doesn't read the forced-EOF latch at all (e.g., a frame-decode error that *itself* signals terminal EOF).
+
+### Useful tooling fact (block-boundary trap)
+
+When chasing a `mov [imm], imm` write site, the bp at the byte itself rarely fires. **bps fire on block-entry EIP only**, and most stores are mid-block. Pick the nearest preceding instruction that *is* a block start: a branch target, the instruction after a `jcc/jmp/call/ret`, or an `[eip] = ...` patched address. For "fall-through after jcc" the next instruction *is* a block start (the decoder splits blocks at every conditional). The S22 negatives on `0x6c7332`, `0x6bf52e`, `0x6bf4f0`, `0x6bf15a`, `0x6bf19c`, `0x6bf0f4`, `0x6bf7f4` should *all* be retried at the nearest block-start address (typically -1 to -3 bytes).
+
+### Counter-evidence on the file source IsEOF path
+
+Walking the file source vtable: object at `0x77365c` stores `[+0]=0x6cc1e8` (= static `0x100161e8`). Slot 2 of vtable starting there = `0x100161f0` → `0x10015d4e` = `jmp [0x10016114]` = MSVCRT `_purecall` thunk. Our `$handle__purecall` calls `$host_exit(3)` which only logs; it doesn't crash. **But the trace shows zero `[Exit]` lines for the entire run**, so this trampoline isn't executed either.
+
+Yet a `--break-once 0x6c0745` (forced-EOF latch site `0x1000a745`) DOES fire on T3 with `eax=0x6cc101` (AL=1, IsEOF returned 1) and `ecx=0x77365c` (correct file source). So *something* at the IsEOF call site returned 1, despite (a) the static vtable resolving to `_purecall` and (b) `_purecall` not being called. Possible explanations:
+
+- block-boundary artifact: the bp at `0x6c0745` fires on the *wrong* block-entry (stale prev_eip), and the actual hit is from an unrelated function that lands on the same EIP after a thread context switch;
+- the file source has a parallel vtable patched at runtime by its constructor that we haven't located;
+- Winamp's plugin interface defines a different ABI for this slot that bypasses the C++ vtable.
+
+### Actionable next session
+
+1. **Re-verify with thread-isolated bps.** Use `--break-thread=3` plus `--break=0x6c0745` plus `--trace-callstack=12` — we want to see the exact call chain that lands at the latch site with AL=1. The current bp output has only `depth=0`, which means the unwinder couldn't walk frames; the caller VA isn't recoverable that way. Try also `--show-cstring=0x77365c` to get the file source object's contents at the moment of the bp (specifically `[+0x2330]` byte and `[+0x1ba0]` state field).
+2. **Trace `0x10010b60` directly.** That's the bitstream advance returning `0x81010004`. Set a `--break-once 0x6c0b60` (the function entry) and on hit dump `esi`, `[esi+0x88]`, `[esi+0x20]`. Then a *second* `--break-once` at the function's exit — a `ret` or `ret N` near the end — and capture EAX. Compare across the two hits to find the iteration where status flips.
+3. **`tools/find_field.js` doesn't accept negative offsets.** When chasing local-variable writes (`[ebp-0x14]`, `[esp+0x18]`), drop to a one-off Python ModRM scan as in this session, or add `disp8`-as-signed-int8 support to the tool.
+
+The cap is real and reproducible at exactly **347 904 bytes (3.94 s of 5.34 s)** across batch counts {400, 1500, 3000} at HEAD. T3 reaches a clean `prev_eip=0x6bfc16` epilogue exit. Audio test still passes (>8 KB threshold), so this is an *enhancement*, not a regression.
+
+## SESSION 24 — EOF chain proven end-to-end; root is bogus IsEOF return from `_purecall` stub
+
+S24 settled the chain. Two `--break-thread=T3 --break-once` shots:
+
+| BP @ guest VA | static VA | meaning | regs at hit |
+|---|---|---|---|
+| `0x6c6c88` | `0x10010c88` | `mov dword [esi+0x88], 0x81010004` (terminal-EOF write) | `prev_eip=0x6c6c81 eax=0x81010003 esi=0x768c40` |
+| `0x6c0745` | `0x1000a745` | `mov byte [esi+0x20], 1` (forced-EOF latch in parent parser) | `prev_eip=0x6c0741 eax=0x6cc101 ecx=0x77365c esi=0x768c40` |
+
+Both fire on T3. The terminal-EOF write site fires (S22's "doesn't fire" was the trace-at-from-main-thread artifact noted below). EAX=0x81010003 at write means status was already "count exceeded" before promotion to terminal EOF.
+
+**Root: `_purecall` resolution returns AL=0xc1 (non-zero), tripping the IsEOF latch.**
+
+Walking the IsEOF call site at `0x1000a73e`:
+```
+1000a739  mov ecx, [esi+0x4]       ; file-source ptr = 0x77365c
+1000a73c  mov eax, [ecx]           ; vtable = 0x6cc1e8
+1000a73e  call [eax+0x8]           ; vtable slot = 0x6cc1f0 = 0x6cbd4e (jmp [0x6cc114] = IAT)
+1000a741  test al, al
+1000a743  jz +4
+1000a745  mov byte [esi+0x20], 1   ; latch tripped because AL != 0
+```
+
+Runtime memory dumps:
+- `[0x6cc1f0] = 0x6cbd4e` → `jmp [0x6cc114]` (IAT trampoline for in_mp3.dll's `_purecall` import)
+- `[0x6cc114] = 0x0057a8c5` (IAT-resolved target)
+- bytes at `0x57a8c5`: `6a 19 e8 c0 cc ff ff 59 c3` = `push 0x19 ; call -0x3340 ; pop ecx ; ret` — looks like an MSVC-style `_purecall` stub from a statically-linked CRT, not our `$handle__purecall`. `--trace-api=_purecall` confirms zero calls reach our handler. The stub neither sets EAX nor halts; it returns with EAX retaining the IAT-call setup value `0x6cc101` (low byte of vtable + something), AL=0xc1 ≠ 0.
+
+This is a real-MSVCRT `_purecall` that returns instead of aborting (likely because no handler was registered and our environment doesn't supply the default abort path). Two paths to a fix:
+
+1. **Locate that stub's origin.** `0x57a8c5` is past the EXE end (`0x4e3000`) and below the heap (`0x6f0000`); it's not in our THUNK_BASE (`0x4200000+`). Most likely a section from one of the loaded DLLs, but `[LoadLibrary]` only logs `in_mp3.dll @ 0x6b6000` and `out_wave.dll @ 0x6e9000`. It might be a fallback bytecode the DLL loader injected on import resolution. Worth grepping the loader for any `0x57` allocation to understand what code is sitting there — the stub address is suspiciously stable and within the EXE's BSS extension.
+2. **Fix `_purecall` semantics.** Real MSVCRT's `_purecall` aborts; if we want this code path to reach a handler that DOES abort, our DLL loader needs to point in_mp3's `_purecall` IAT slot at our `$handle__purecall` thunk (in THUNK_BASE) rather than at this stub. Then `$handle__purecall` can either truly abort (reveals the bug clearly) or zero EAX (papers over it).
+
+In either path, the deeper question is whether reaching `_purecall` is itself a bug — it suggests in_mp3's IFileSource sub-object expects an IsEOF override that the constructor never installed. The static vtable at `0x100161e8` (the sub-object view) has `_purecall` literally in slot 2; the primary-vtable view at `0x100161d0` has the real IsEOF (`mov al, [ecx+0x2330] ; ret`) at slot 2. So whoever passed the file-source pointer to the parser passed the IFileSource cast — but the IFileSource interface in this binary genuinely has no IsEOF override. That's either (a) Winamp expecting the abort behavior, or (b) the parser asking the wrong slot. Real Windows may never reach this code (e.g. if a different decoder path is used for files vs streams), and our emulator stumbles into it because of some divergence upstream.
+
+### Lessons captured
+
+- **`--trace-at` only fires from the main thread.** It checks `eipNow` of the parent `instance` after `instance.exports.run()`; worker-thread block entries are never compared. For thread-resident addresses, use `--break=… --break-thread=Tn` — the thread-manager (lib/thread-manager.js:430) surfaces BP hits on each thread's `instance`. S23's "trace-at on `0x6c6c88` gave zero hits" was this artifact, not evidence the path didn't fire. `--break` propagation to threads happens at thread create (lib/thread-manager.js:281) but `--trace-at` has no such surface yet.
+- **Find the runtime IAT target before assuming our handler runs.** `--trace-api=NAME` showing zero calls means the IAT slot doesn't point at our thunk. Dump the IAT (`--dump=&iat:8`) and the byte at the resolved address before trying to fix our handler. Our `_purecall` got bypassed silently; an editing detour cost a build cycle.
+
 ## Automated Tests
 
 | Test | What it checks |
