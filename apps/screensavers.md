@@ -608,10 +608,48 @@ fn(arg1=esi_caller, arg2=this, arg3, arg4=rect4, arg5=rect4cnt, arg6=rect2, arg7
 ```
 So the real geometry-emit fn is **slot 12** (`+0x30`) of `[arg2->[0x1bc]]->[0]` — yet another vtable indirection through a sub-object.
 
-**Concrete next step (well-paved):**
-1. Probe ESI inside `0x6479fcd6` at runtime: `--trace-at=0x745bacd6 --trace-at-dump=ESP+0x14:4` (= `[ebp+0xc]` after the prologue) to learn `arg2` (the visual). Or simpler — the call at `0x647988bf` already passes EAX (visual ptr) as arg2 — re-do the existing `--trace-at=0x745b38a4` and dump `ebp+0x8` (= preserved EAX local in `0x64798521` frame).
-2. From visual+0x1bc → sub-object → `[sub+0]` → vtable → `[vtable+0x30]` = the real leaf emitter.
-3. Disasm that leaf to see why it produces empty geometry. The fn signature `(this, rect_array, count, mode)` with `mode∈{1,2}` strongly hints **clip-rect-driven span emission** rather than triangle emission — perhaps RM is in "rect-blit / 2D" mode instead of "3D triangle" mode? That would explain `vc=0` in the execute buffer and would point upstream to a setup call (texture mode? execute-buffer type?) that's chosen the wrong rasterizer path.
+**Runtime walk continued — the leaf is NOT a geometry emitter, it is `IDirect3DViewport3::Clear`:**
+
+| Step | Address | Source |
+|---|---|---|
+| arg2 to `0x6479fcd6` (visual) = EAX at trace | `0x750aada0` | `--trace-at=0x745b38a4` reg snapshot |
+| sub-object at `[visual+0x1bc]` | `0x7c3e6090` | `--trace-at-dump=0x750aaf5c:4` |
+| sub-object's vtable `[sub+0]` | `0x7451267c` | `--trace-at-dump=0x7c3e6090:4` |
+| vtable slot 12 (`+0x30`) | `0x78200ed0` | `--trace-at-dump=0x745126ac:4` |
+| Bytes at the leaf | `10 00 ca ca ae 04 00 00` | `--trace-at-dump=0x78200ed0:32` |
+
+`10 00 ca ca` is our **COM-thunk marker**; the next dword is the API id. **API 0x4ae = `IDirect3DViewport3::Clear`** (per `src/api_table.json`). Adjacent slots are 0x4af, 0x4b0, 0x4b1 (sequential thunk IDs), confirming this is a packed COM vtable for IDirect3DViewport3.
+
+**So the entire path we have been tracing is the clear path, not the render path.**
+- `0x6479fcd6` with `flags=7` (`& 3 == 3`) calls `Clear(rect2, n2, 1)` then `Clear(rect4, n4, 2)` — likely color-buffer clear (mode 1) followed by z-buffer clear (mode 2). That matches the d3d Clear API's `dwFlags` bits.
+- The disasm of `0x64798521` (the slot-12 trampoline target on the source `0x647e08f8` vtable) confirms the function body is purely viewport rect clamping + clip-rect computation, ending in the gated `call [ecx+0x38]` to Clear. **No triangle/vertex code anywhere in this fn.**
+
+**Reframed root cause: we have not yet found the real Render call.** The "RM Visual::Render" identification was wrong — this is `RMViewport::Clear` (or an internal rect-clip helper that funnels into Clear). RM `Render`/`ForceUpdate` lives on a different code path that we haven't traced.
+
+**Concrete next step:**
+1. Find d3rm's actual public `IDirect3DRMViewport::Render` vtable slot. Per the SCR's COM trace earlier (look for `RM*::Render` and `RMViewport::Render` in `--trace-com`), grep for `Render` in `src/api_table.json` to enumerate every Render variant's API id (RMViewport, RMViewport2, RMFrame::DoSomething, etc.) and which interfaces the SCR actually calls per frame.
+2. Once the right RM Render entrypoint is identified, set `--trace-com` to dump it and follow its call chain into d3rm internals — it should eventually call `IDirect3DDevice::BeginScene` / `Execute` / `EndScene` (NOT just Clear).
+3. Possible alt hypothesis: SCR might be calling `RMViewport::Clear` per frame but **never** `RMViewport::Render`. Verify by tracing all RM-COM dispatch IDs the SCR invokes per frame; if Render is missing, the bug is upstream (scene tree empty? frame loop broken? animation tick missing?).
+
+**Update — `--trace-com` shows d3rm IS executing per frame:** The actual per-frame COM call sequence is:
+```
+IDirect3DExecuteBuffer_Lock                ← d3rm acquires the buffer
+IDirect3DDevice2_SetRenderState × 7        ← state setup (rasterizer, alpha, etc.)
+IDirect3DExecuteBuffer_Unlock              ← d3rm releases the buffer
+IDirect3DExecuteBuffer_SetExecuteData      ← fills D3DEXECUTEDATA (vc=0, il=32)
+IDirect3DDevice_Execute                    ← runs the buffer
+IDirect3DViewport3_Clear                   ← (the Clear we were chasing)
+```
+Repeated for each RM frame/visual.
+
+So d3rm DOES walk Render+Execute. But its **buffer-emit code (which runs as plain memory writes between Lock and Unlock — no API calls)** produces only D3DOP_STATETRANSFORM headers, never D3DOP_TRIANGLE / D3DOP_PROCESSVERTICES. That's why `vc=0, il=32`. Only ~15-20 API calls happen between Lock and Unlock; the geometry-emit logic is purely in-memory in d3rm internals.
+
+**Refined root cause hypothesis:** the geometry-emit loop in d3rm walks the visual's mesh face/vertex list, but at runtime that list appears empty (zero faces). Possible upstream causes:
+- Mesh data was loaded as a placeholder / count of 0 — SCN/X-file load may have failed silently.
+- A `IDirect3DRMMesh::AddFace` / similar call returned an error and the SCR didn't notice.
+- An animation tick (`IDirect3DRMFrame::SetPosition`/`AddRotation`) is failing and the visual ends up culled.
+
+**New concrete next step:** Set `--break-api=IDirect3DExecuteBuffer_Lock` to pause inside Lock; then `--trace-at=` on the Lock call's return EIP and dump bytes at the lpData buffer just before the matching Unlock — confirm the buffer is genuinely empty/zero. Then walk back: scan d3rm's symbol space for fns that compose D3DOP_* constants (0x05=PROCESSVERTICES, 0x09=TRIANGLE) — `node tools/find_string.js test/binaries/dlls/d3drm.dll` won't help (these are immediates, not strings); instead grep d3rm.dll bytes for `c6 04 06 05` / `c6 04 06 09` (mov byte ptr [esi+eax], 0x05/0x09) to find the buffer-write call sites.
 
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
