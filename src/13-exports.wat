@@ -878,6 +878,14 @@
     (local $parent i32) (local $cb i32)
     (local.set $parent (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Register parent dialog frame with renderer so back-canvas + paint
+    ;; queue exist. (Title=0 means renderer uses an empty caption.) Same
+    ;; pattern as $create_findreplace_dialog. nc kind=0.
+    (call $host_register_dialog_frame
+      (local.get $parent) (i32.const 0)
+      (i32.const 0)
+      (i32.const 320) (i32.const 200)
+      (i32.const 0))
     (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
     (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
     (local.set $cb (call $ctrl_create_child (local.get $parent) (i32.const 5) (i32.const 100)
