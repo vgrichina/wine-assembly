@@ -1769,7 +1769,7 @@ Runtime memory dumps:
 
 This is a real-MSVCRT `_purecall` that returns instead of aborting (likely because no handler was registered and our environment doesn't supply the default abort path). Two paths to a fix:
 
-1. **Locate that stub's origin.** `0x57a8c5` is past the EXE end (`0x4e3000`) and below the heap (`0x6f0000`); it's not in our THUNK_BASE (`0x4200000+`). Most likely a section from one of the loaded DLLs, but `[LoadLibrary]` only logs `in_mp3.dll @ 0x6b6000` and `out_wave.dll @ 0x6e9000`. It might be a fallback bytecode the DLL loader injected on import resolution. Worth grepping the loader for any `0x57` allocation to understand what code is sitting there — the stub address is suspiciously stable and within the EXE's BSS extension.
+1. **Stub origin (resolved).** `0x57a8c5` lives in `msvcrt.dll` (loaded at `0x56c000` per startup DLL log; offset `0xea8c5`). `[LoadLibrary]` only logs runtime `LoadLibraryA` calls, not boot-time `DLL: msvcrt.dll at 0x56c000, DllMain=0x56f428` lines emitted by the static-import loader — that's why prior sessions thought msvcrt wasn't loaded. The stub is msvcrt's real `_purecall`; our `$handle__purecall` is dead code as long as the IAT resolves through real msvcrt. Either bypass real msvcrt for this import or replace msvcrt's `_purecall` with one that aborts.
 2. **Fix `_purecall` semantics.** Real MSVCRT's `_purecall` aborts; if we want this code path to reach a handler that DOES abort, our DLL loader needs to point in_mp3's `_purecall` IAT slot at our `$handle__purecall` thunk (in THUNK_BASE) rather than at this stub. Then `$handle__purecall` can either truly abort (reveals the bug clearly) or zero EAX (papers over it).
 
 In either path, the deeper question is whether reaching `_purecall` is itself a bug — it suggests in_mp3's IFileSource sub-object expects an IsEOF override that the constructor never installed. The static vtable at `0x100161e8` (the sub-object view) has `_purecall` literally in slot 2; the primary-vtable view at `0x100161d0` has the real IsEOF (`mov al, [ecx+0x2330] ; ret`) at slot 2. So whoever passed the file-source pointer to the parser passed the IFileSource cast — but the IFileSource interface in this binary genuinely has no IsEOF override. That's either (a) Winamp expecting the abort behavior, or (b) the parser asking the wrong slot. Real Windows may never reach this code (e.g. if a different decoder path is used for files vs streams), and our emulator stumbles into it because of some divergence upstream.
@@ -1778,6 +1778,76 @@ In either path, the deeper question is whether reaching `_purecall` is itself a 
 
 - **`--trace-at` only fires from the main thread.** It checks `eipNow` of the parent `instance` after `instance.exports.run()`; worker-thread block entries are never compared. For thread-resident addresses, use `--break=… --break-thread=Tn` — the thread-manager (lib/thread-manager.js:430) surfaces BP hits on each thread's `instance`. S23's "trace-at on `0x6c6c88` gave zero hits" was this artifact, not evidence the path didn't fire. `--break` propagation to threads happens at thread create (lib/thread-manager.js:281) but `--trace-at` has no such surface yet.
 - **Find the runtime IAT target before assuming our handler runs.** `--trace-api=NAME` showing zero calls means the IAT slot doesn't point at our thunk. Dump the IAT (`--dump=&iat:8`) and the byte at the resolved address before trying to fix our handler. Our `_purecall` got bypassed silently; an editing detour cost a build cycle.
+
+## SESSION 25 — S24 was wrong; the IsEOF call resolves to the real in_mp3 IsEOF, not `_purecall`. True bug is in the decoder, not I/O.
+
+S24's "vtable slot 2 = `_purecall` stub" theory was wrong. Re-running the IsEOF site bp with `--break=0x6c0741 --break-thread=T3 --break-once` and inspecting `prev_eip`:
+
+```
+[ThreadManager] T3 BP hit at 0x6c0741 prev_eip=0x6ba407 esp=0x768bc4
+                eax=0x6cc100 ecx=0x77365c esi=0x768c40
+```
+
+`prev_eip = 0x6ba407` = static `0x10004407` = in_mp3's **real** `IsEOF` (`mov al, [ecx+0x2330] ; ret`). `tools/xrefs.js 0x10004407` shows exactly one xref — the vtable slot at `0x100161d8` (= `0x6cc1d0+8`). So at runtime, the file-source object at `0x77365c` actually stores `[+0]=0x6cc1d0` (the **primary** vtable), not `0x6cc1e8` as S24 claimed. Confirmed by a separate hit at the legitimate EOF setter (`bp 0x6ba339 --break-thread=T3 --break-once`):
+
+```
+[ThreadManager] T3 BP hit at 0x6ba339 prev_eip=0x6ba38f esp=0x763ad8
+                eax=0x768bd4 ecx=0x77365c edx=0x6cc1d0 esi=0x77365c edi=0x0
+```
+
+`edx=0x6cc1d0` is loaded from `[esi+0]` somewhere up-function — that's the file source's actual vptr.
+
+The post-run `--dump=0x77365c:8` showing `e8 c1 6c 00` (= `0x6cc1e8`) is what threw S24 off. That dump fires after T3 has exited; either the buffer was reused by then, or the value at `[0x77365c+0]` lives somewhere different at the moment of the bp. Either way, **the runtime call resolves to in_mp3's real IsEOF, not `_purecall`**. `_purecall` is a static-vtable artifact and never executes.
+
+### Where the cap actually comes from
+
+`bp 0x6ba339` walks back to:
+```
+10004380  ...
+10004382  cmp ebx, eax
+10004384  jle +2
+10004386  mov ebx, eax
+10004388  mov eax, [ebp+0x10]
+1000438b  cmp eax, edi
+1000438d  jz +2
+1000438f  mov [eax], ebx
+10004391  cmp ebx, edi              ; edi=0 (xor edi,edi up-function)
+10004393  jz 0x10004339             ; ← legitimate "ReadFile returned 0 bytes" → set EOF
+```
+
+So the EOF flag is set when `bytes_read==0` — i.e. ReadFile reached the actual end of the audio payload. This is **correct behavior**, not a bug.
+
+`--trace-fs` confirms the file is fully read into in_mp3's buffer:
+
+```
+[FS] ReadFile(h=0x70000002, n=0x1000, read=0x1000, pos=0x0,    path=c:\demo.mp3)  ; ID3v2 + first frames probe
+[FS] ReadFile(h=0x70000002, n=0x1000, read=0x1000, pos=0x5fd,  path=c:\demo.mp3)  ; first frames
+[FS] ReadFile(h=0x70000002, n=0x80,   read=0x80,   pos=0x9780, path=c:\demo.mp3)  ; ID3v1 footer
+[FS] ReadFile(h=0x70000002, n=0x9183, read=0x9183, pos=0x5fd,  path=c:\demo.mp3)  ; ALL audio (post-ID3v2, pre-ID3v1)
+```
+
+Audio payload `0x9183` = 37 251 bytes. ffprobe says `duration=5.339857s @ 56kbps` so the full 5.34s of audio is present in those 0x9183 bytes. We output 347 904 PCM bytes = 3.94s @ 22.05 kHz stereo 16-bit = **73.8 % of expected audio**.
+
+So: **the file is entirely in the decoder's buffer, but the decoder only emits ~74 % of the frames as PCM**. The cap is not in I/O, vtable resolution, EOF latch, status promotion, or `_purecall`. It's somewhere in the bitstream/synthesis layer of in_mp3, dropping ~26 % of frames silently.
+
+### What to chase next session
+
+The earlier S22-style "in the in_mp3 frame loop" investigation is the right direction; S23/S24 went the wrong way for two sessions. Concretely:
+
+1. **Frame-count check:** instrument the synth-out path (write to `out_wave`'s `WriteAudioData`-equivalent) and compare frame count to expected (5.34s × 38.28 fps for MPEG-1 Layer III, or about 230 frames for 5.34s @ 22.05 kHz Layer III with 1152 samples/frame — ~204 frames). Compare to actual emitted.
+2. **Bitstream advance trace:** S23 located `0x10010b60` as the bitstream-advance fn; trace its return values across the run. The point at which it starts returning `0x81010003`/`0x81010004` consistently is the divergence — **not** the place where it first does so (which is the legitimate EOF), but the iteration count and parser state. If real Winamp emits N frames and we emit 0.74 N, the divergence is likely a per-frame failure (sync miss, granule decode error, etc.) that compounds.
+3. **The `0x100229e8` flag set at 0x10004310:** that global is set just before the EOF setter; xref it to find what reads it as a "buffering done" or "stop polling" sentinel. Might be the seam where the decoder transitions from "fetch more" to "drain buffer", and our buffer-drain math is wrong.
+
+### Correction summary
+
+- The `_purecall`/msvcrt path documented in S24 is a **red herring**. The actual call resolves to in_mp3's real IsEOF via the primary vtable.
+- S22's "fade-out is the trigger" theory was wrong (S23 was right that EOF write fires).
+- S23's "EOF promotion via `_purecall` stub" was wrong (S25 — this session — corrects it).
+- **S21's original chain was correct after all**, modulo the misidentification of the trigger: the file source's local EOF flag at `[+0x2330]` is set by a legitimate "ReadFile returned 0" path at frame ~151 (i.e., when the decoder has consumed the full 0x9183-byte payload); from there the parser/bitstream layer correctly promotes status to terminal-EOF. The decoder then stops and we get whatever PCM was emitted up to that point — which is only 73.8 % of the available audio because **frame decoding itself is dropping ~26 % of the stream silently**.
+
+### Method lesson
+
+Trust `prev_eip` over a post-run hexdump for "what code actually ran". `prev_eip` is recorded at the moment of the BP from the WAT-side block dispatcher; the post-run dump is from after T3 has exited and freed/reused memory. When the two disagree, **`prev_eip` wins**. S24 prioritized the dump and built a wrong story; S25 prioritized `prev_eip` and confirmed the static xref of the real IsEOF.
 
 ## Automated Tests
 

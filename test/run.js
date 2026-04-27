@@ -981,6 +981,8 @@ async function main() {
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
       _sharedAudio: ctx._sharedAudio,  // share waveOut state across threads
+      _waveStats: ctx._waveStats,  // share audio-stats counters so T4 writes show in main-thread summary
+      audioStatsStride: ctx.audioStatsStride,
       _debugReadFile: TRACE_API,
       sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
     };
