@@ -353,6 +353,38 @@ Two viable instrumentation paths for the next session:
 
 Both paths converge to the same finding: who called Lock, did SetExecuteData get a populated buffer, and where does the geometry get dropped (matching org-art's STATETRANSFORM-only observation).
 
+**2026-04-26 seventh probe — landed: tracing infra fixed AND first d3drm Lock-callers mapped.**
+
+`test/run.js` now resolves COM ordinal names before tracing decisions: `--trace-api=IDirect3DExecuteBuffer_Lock,...` and `--trace-stack=IDirect3DExecuteBuffer_Lock:N` work (commit 8bfc0e2). On ROCKROLL, the captured chains for the FIRST Lock burst (3 Lock/Unlock/SetExecuteData triplets) are:
+
+```
+[API #16443] IDirect3DExecuteBuffer_Lock(this=0x7c3e60a0, ...) [ret=0x745de773]
+  frames=[0x745de73d <- 0x745dd2fb <- 0x745b359d <- 0x745b3900]
+[API #20277] IDirect3DExecuteBuffer_Lock(...) [ret=0x745de773]
+  frames=[0x745de73d <- 0x745dd2fb <- 0x745b4087 <- 0x745b4202 <- 0x745a1365 <- 0x7442020b]
+```
+
+Reloc delta = `0x7459b000 - 0x64780000 = 0xfe1b000`. Translating runtime VAs back to preferred-base d3drm addresses and decoding (with `find_fn.js` + `disasm_fn.js`):
+
+| runtime ret | preferred | function | role |
+|---|---|---|---|
+| `0x745de773` | `0x647c3773` | fn `0x647c3744` | **Lock-wrapping helper.** Pushes a 0x14-byte D3DEXECUTEBUFFERDESC on stack, calls `[ecx+0x10]` (Lock vtable slot 4) on `[esi+0x8]`, on success caches lpData at `[esi+0x44]`/`[esi+0x48]`/`[esi+0x4c]` (`[esi+0x44]` = "is locked" flag). Retries on `0x88760215` (`D3DERR_EXECUTE_LOCKED_FAILED`)? — actually the `cmp eax, 0x8876021c` is jump-back-if-equal which loops. |
+| `0x745de73d` | `0x647c373d` | fn `0x647c3726` | Tiny shim: pushes 3 args (this, ?, ?) and calls `0x647c3744`. Used only as fall-through from `0x647c36e0`. |
+| `0x745dd2fb` | `0x647c22fb` | fn `0x647c21ec` | **State-token batcher.** Builds two stack structs from `[esi+0x3c..0x14C]` and `[esi+0x58..0x94]` (camera/viewport/projection matrices), calls `[ecx+0x14]` and `[ecx+0x40]` on the buffer, then issues 3 calls to `0x647c36e0(this, kind, 6, src)` with kind ∈ {1,2,3} and src ∈ `[esi+0x1d4]` / `[esi+0x1d0]` / `[esi+0x1c8]` — three D3DOP_STATETRANSFORM ops setting WORLD/VIEW/PROJ matrices. **This is the matrix-only path; never emits triangles.** |
+| `0x6479859d` | `0x6479859d` | fn `0x64798521` | **Per-frame render driver.** Resolves scene-root frame from viewport `[esi+0x34]`, calls predicate `0x647c2792`, then matrix helper `0x647c1d30`, then `0x647c21ec` (matrices). Continues with comparisons of `[eax+0x124]/[edi+0x2c8]` etc. and a call to `0x647b9663` — geometry emission likely lives further inside this function (after the matrix block). Frame chain confirms this is what's running on the live render loop. |
+| `0x745b3900` / `0x745b4087` / `0x745b4202` / `0x745a1365` | (see find_fn) | upper frames | Render-loop entry path; reachable via `0x7442020b` (the SCR's WinMain → message loop in ROCKROLL.SCR). |
+
+`0x647c36e0` (the state-writer) takes `(this, kind, type, data)` and gates on `kind`:
+- `kind == 7 || kind == 8` → calls `0x647a0a29` (different path — possibly **D3DOP_TRIANGLE / D3DOP_PROCESSVERTICES**!)
+- otherwise → falls through to `0x647c3726` → Lock+memcpy (the only path we observe firing)
+
+**Concrete next-session hypothesis to verify:**
+- `0x647a0a29` is the geometry-emit path. If we never see Lock chains rooted there, the problem is in d3drm's renderer never reaching kind=7/8 calls — i.e. visuals aren't being walked.
+- Inside `0x64798521`, after the call to `0x647c21ec` returns, follow the post-matrix code; look for `push N; push 7` or `push N; push 8` argument patterns being passed to `0x647c36e0` (or directly to `0x647a0a29`). That tells us whether the call exists in the binary at all.
+- Equivalently: `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647a0a29 --code` to find every caller, then break on each at runtime to see which fires and which is dead. If none fires, the dead code is a missing call from the parent (the visual-iteration loop).
+
+So the real next step is no longer "find the Lock caller" — it's **find who calls `0x647a0a29` (the kind=7/8 path) and discover why that path is dead under our emulation while kind=1/2/3 fires fine.**
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
