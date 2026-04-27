@@ -693,8 +693,22 @@ Both reach the same emit helper: `0x647c36e0(ctx, op, lo, hi)` →`0x647c3744(ct
 **Triangle emit lives in fn `0x647af646`** (which wraps the only op=9 push at 0x647af84f). Xref shows `0x647af646` is bound only via vtable at `0x647e0b58` — a class vtable whose name string is `"Texture"`. Equivalent slot in the `"Device"` class vtable (`0x647e08f8`+0x38) is the Clear-dispatcher we have been chasing.
 
 **Tested both candidate geometry-emit fns at runtime — NEITHER fires for ROCKROLL:**
-- `--trace-at=0x745cb646` (= preferred 0x647af646, "Texture" slot-14): zero hits
-- `--trace-at=0x745dff6b` (= preferred 0x647bff6b, "Mesh" slot-14 from vtable 0x647e0ec8): zero hits
+- `--trace-at=0x745CA646` (= preferred 0x647af646, "Texture" slot-14): zero hits
+- `--trace-at=0x745DAF6B` (= preferred 0x647bff6b, "Mesh" slot-14 from vtable 0x647e0ec8): zero hits
+
+**(2026-04-27 verification)** Re-tested with the correct relocation delta (`0x7459b000 − 0x64780000 = 0xFE1B000`). Earlier session used a wrong delta — reported addresses `0x745cb646` / `0x745dff6b` were never code in the loaded image, so those "zero hits" were vacuous. Confirmed Device-class slot-14 (Clear, `0x745BACD6`) fires repeatedly while Texture/Mesh slot-14 (`0x745CA646` / `0x745DAF6B`) genuinely never fire. The "bug is upstream" conclusion stands.
+
+**Reference relocated addresses (delta = +0xFE1B000):**
+
+| Source VA | Loaded VA | Purpose |
+|---|---|---|
+| 0x64798E51 | 0x745B3E51 | per-vp render entry |
+| 0x647C2792 | 0x745DD792 | Gate B (per-vp setup, populates [vp+0xa0/0xa4]) |
+| 0x647AD71E | 0x745C871E | Gate A (mesh-data populated predicate) |
+| 0x647AF646 | 0x745CA646 | "Texture" class slot-14 (only op=9 site) |
+| 0x647BFF6B | 0x745DAF6B | "Mesh" class slot-14 |
+| 0x6479FCD6 | 0x745BACD6 | "Device" class slot-14 (Clear — fires) |
+| 0x647C534F | 0x745E034F | inner walker |
 
 So ROCKROLL's scene-walker invokes only `"Device"`-class slot-14 (Clear), never `"Mesh"` or `"Texture"`. The bug is **upstream of vtable dispatch**: the scene-graph iteration either contains no Mesh/Texture-class visuals, or the iteration filters them out.
 
