@@ -385,6 +385,80 @@ Reloc delta = `0x7459b000 - 0x64780000 = 0xfe1b000`. Translating runtime VAs bac
 
 So the real next step is no longer "find the Lock caller" — it's **find who calls `0x647a0a29` (the kind=7/8 path) and discover why that path is dead under our emulation while kind=1/2/3 fires fine.**
 
+**2026-04-26 eighth probe — `0x647b9663` IS being called: it's a per-mesh transform/preprocess, not the triangle emitter.**
+
+`--break=0x745d4663 --break-once` (relocated `0x647b9663`) hit at batch 8683 — the function fires. `bp_first_caller=0x745bafeb` → preferred `0x6479ffeb`, inside fn `0x6479ff51`.
+
+Caller `0x6479ff51` shape (lines `0x6479fff2..0x647a002b`):
+```
+lea ecx, [eax+0xa4]   ; arg3 = &[eax+0xa4]
+push ecx
+lea ecx, [eax+0xa8]   ; arg2 = &[eax+0xa8]  (out_count?)
+push ecx
+push [eax+0xa0]       ; arg1 = [eax+0xa0]   (vertex/data buffer)
+call 0x647b9663       ; transform/preprocess
+add esp, 0x10
+test eax, eax
+jnz error
+push [ebp+0x8]
+call 0x647bb74e       ; ← actual emit pass: walks [esi+0x840..0x844] (list of meshes)
+call 0x647a0461       ; another emit
+mov esi, [eax+0xb8]   ; walk linked-list of child frames/visuals
+```
+
+`0x647bb74e` iterates a frame's child-mesh list (count at `[esi+0x844]`, ptr at `[esi+0x840]`). For each non-2 element calls `[ecx+0x28]` then `0x647b99d4(child)`. **That's the chase target**: `0x647b99d4` likely emits actual D3DOP_TRIANGLE / D3DOP_PROCESSVERTICES into the execute buffer.
+
+`0x647b9663` itself: walks vertex-like data with stride 0x10 (per-record), shifts indices by 5 (×32 = D3DTLVERTEX size) — looks like it's writing transformed vertex indices, not triangles. Probably a vertex-list builder rather than triangle emitter.
+
+**Concrete path for next session:**
+1. Set `--break=0x745d49d4` (= `0x647b99d4 + 0xfe1b000`) — does the actual triangle emit fire?
+2. If yes: walk inside `0x647b99d4`, watch which D3DOP_* values get written. Cross-reference with our d3dim Execute() decoder to see which op codes go in.
+3. If no: walk the path that decides whether to call it — predicate check at `0x647bb768` (`cmp word [edi+0xa4], 0x2`). If `[edi+0xa4]` is always 2 in our run, we're skipping the emit. That field looks like a "visual subtype" — 2 might mean "skip". Trace to find what sets it.
+4. Verify `0x647bb74e`'s outer loop (`cmp [esi+0x844], ebx`) — if `[esi+0x844]` is 0, the mesh list is empty and we never even consider emitting. That would suggest `Frame::AddVisual` never populated this list — matching the stated organic-art finding.
+
+Reloc helpers for next session:
+- d3drm preferred=0x64780000, runtime=0x7459b000, delta=`0xfe1b000`.
+- runtime VA = preferred + 0xfe1b000.
+
+Frame chain to reproduce: `--trace-api=IDirect3DExecuteBuffer_Lock --trace-stack=IDirect3DExecuteBuffer_Lock:8 --max-batches=20000`.
+
+**2026-04-27 confirmed: render loop hits `0x647bb74e` but the triangle-emit path at `0x647b99d4` is skipped by the visual-subtype predicate.**
+
+Three runtime breakpoints (80K batches each):
+
+| breakpoint | preferred | hits | first caller |
+|---|---|---|---|
+| `0x745d4663` | `0x647b9663` (vertex/data preprocess) | many | `0x6479ffeb` (render loop) |
+| `0x745d674e` | `0x647bb74e` (visual-list iterator) | many | `0x745bb016` (`0x647a0016`, post-`b9663`) |
+| `0x745d49d4` | `0x647b99d4` (**triangle emit**) | only at startup batch 68 | `0x647cc689` (init/static, NOT render loop) |
+
+So the render path enters `0x647bb74e` per frame but its inner branch at `0x647bb778..0x647bb787` never fires. The relevant code:
+
+```asm
+647bb768  cmp word [edi+0xa4], 0x2
+647bb770  mov eax, [edi+0xac]
+647bb776  jz short 0x647bb78d   ; subtype==2  → SKIP emit
+647bb778  test eax, eax
+647bb77a  jz short 0x647bb78d   ; [edi+0xac]==0 → SKIP emit
+647bb77c  mov ecx, [eax]
+647bb77e  push eax
+647bb77f  call [ecx+0x28]       ; some Lock/prep on ass'd object at [edi+0xac]
+647bb782  test eax, eax
+647bb784  jl short 0x647bb78d
+647bb786  push edi
+647bb787  call 0x647b99d4       ; ← TRIANGLE EMIT (never reached at render time)
+```
+
+So one of these is true for every visual in the list: `(word [edi+0xa4]) == 2`, or `[edi+0xac] == 0`. Both look like "this visual is incomplete / not a renderable mesh".
+
+**Concrete next session:** runtime-inspect `[edi+0xa4]` and `[edi+0xac]` for each visual when `0x647bb74e`'s loop iterates. Use `--break=0x745d6768 --trace-at=0x745d6768 --trace-at-dump=0x745d6768:0` (tracing won't capture EDI directly but `--trace-at` logs regs). Concretely: add `--break=0x745d6768` then read `[edi+0xa4]` and `[edi+0xac]` at the prompt with `d` (dump) using EDI.
+
+If `[edi+0xa4]==2` always: the visuals were created as the wrong subtype. Find what writes `[obj+0xa4]=2` and trace upstream — likely a Frame::AddVisual variant that registers a "deferred" or "skip me" subtype.
+
+If `[edi+0xac]==0` always: the visual has no associated d3dim mesh-data pointer — i.e. d3drm built the visual record but never attached the prepared geometry. Find what writes `[obj+0xac]` (or fails to). Likely candidates: MeshBuilder::CreateMesh path or material/texture binding.
+
+Tooling shortcut: `node tools/find_field.js test/binaries/dlls/d3drm.dll 0xac --reg=edi,esi --op=write` — find every store to `[obj+0xac]`. Same for offset 0xa4. Cross-reference with what's CALLED during init vs not — that narrows the suspect.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
