@@ -651,6 +651,23 @@ So d3rm DOES walk Render+Execute. But its **buffer-emit code (which runs as plai
 
 **New concrete next step:** Set `--break-api=IDirect3DExecuteBuffer_Lock` to pause inside Lock; then `--trace-at=` on the Lock call's return EIP and dump bytes at the lpData buffer just before the matching Unlock — confirm the buffer is genuinely empty/zero. Then walk back: scan d3rm's symbol space for fns that compose D3DOP_* constants (0x05=PROCESSVERTICES, 0x09=TRIANGLE) — `node tools/find_string.js test/binaries/dlls/d3drm.dll` won't help (these are immediates, not strings); instead grep d3rm.dll bytes for `c6 04 06 05` / `c6 04 06 09` (mov byte ptr [esi+eax], 0x05/0x09) to find the buffer-write call sites.
 
+**Byte-pattern search for D3DOP_TRIANGLE emit — INCONCLUSIVE:**
+
+Scanned d3rm.dll for likely byte-write patterns of D3DOP_TRIANGLE=0x09 / D3DOP_PROCESSVERTICES=0x05:
+- `c6 06 09` (mov byte [esi],9): 0 hits
+- `c6 07 09` (mov byte [edi],9): 0 hits
+- `c6 00 09` (mov byte [eax],9): 1 hit at VA 0x647af491
+- `c6 04 06 09` (mov byte [esi+eax],9): 0 hits
+- 16-bit `09 08` (op=9, size=8 = sizeof(D3DTRIANGLE)) anywhere in .text: 1 hit (incidental, not an instruction emit)
+- `c7 ?? 09 ..` (mov [reg], imm32 starting with 0x09): produced one cluster at 0x647be721 that writes `dword [ebx]=9` then `[ebx+4]=eax`, advance 8 — *not* the D3DINSTRUCTION format (op|size|count packed). Looks like a d3rm-internal scratch DAG/IR, not the public D3DEXECUTEBUFFER format.
+
+Conclusion: d3rm almost certainly emits D3DINSTRUCTIONs through a **parameterized helper** that takes (buf_ptr, op, size, count) — opcode is a parameter, not a byte-literal. Direct byte-pattern search will not find it.
+
+**Better paths to find the emitter:**
+1. Trace the lpData pointer returned by Lock. Set `--trace-api=IDirect3DExecuteBuffer_Lock` with `--trace-stack=Lock:8` to get d3rm's caller; disasm there to see what local stores the unpacked `lpData`. Then use `tools/find_field.js test/binaries/dlls/d3drm.dll <local_offset>` (or a watch on the lpData address) to find every store through it.
+2. Set `--watch-byte=<lpData_VA>` on the buffer immediately after Lock; the first write tells us exactly which fn writes the first instruction.
+3. Lift the buffer dump just before SetExecuteData to confirm whether the 32-byte content is actually 4× D3DOP_STATETRANSFORM headers or some other shape. If it's only headers with the count=0, then a single conditional gate is suppressing the body — that's the bug site.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
