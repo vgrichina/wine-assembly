@@ -227,11 +227,32 @@
         <optgroup label="Win98 Accessories">
           <option value="mspaint98">Paint (Win98)</option>
           <option value="notepad98">Notepad (98)</option>
+          <option value="wordpad">WordPad</option>
+          <option value="write">Write</option>
           <option value="mplayer">Media Player</option>
           <option value="mplay32">Media Player 32</option>
+          <option value="cdplayer">CD Player</option>
+          <option value="sndrec32_98">Sound Recorder (98)</option>
+          <option value="sndvol32">Volume Control</option>
+          <option value="vol98">Volume (98)</option>
+          <option value="fontview">Font Viewer</option>
+          <option value="kodakimg">Kodak Imaging</option>
+          <option value="kodakprv">Kodak Preview</option>
+          <option value="hypertrm">HyperTerminal</option>
+          <option value="telnet">Telnet</option>
+          <option value="winipcfg">IP Config</option>
+          <option value="explorer98">Explorer (98)</option>
+          <option value="regedit">RegEdit</option>
+          <option value="taskman">Task Manager</option>
+          <option value="welcome98">Welcome (98)</option>
+          <option value="tour98">Win98 Tour</option>
           <option value="sysmon">System Monitor</option>
           <option value="rsrcmtr">Resource Meter</option>
           <option value="cleanmgr">Disk Cleanup</option>
+        </optgroup>
+        <optgroup label="XP">
+          <option value="claass">Calculator (XP)</option>
+          <option value="xp_eos">XP End of Life</option>
         </optgroup>
         <optgroup label="Community WEP Remakes">
           <option value="funtris">Funtris (Tetris)</option>
@@ -242,6 +263,13 @@
           <option value="bricks">Bricks (Klotski)</option>
           <option value="empipe">EmPipe (Pipe Dream)</option>
           <option value="tworld">Tile World (Chip's Challenge)</option>
+          <option value="pawn">Pawn (Chess)</option>
+          <option value="qblackjack">QuickBlackjack</option>
+          <option value="runenlegen">Runenlegen (Stones)</option>
+          <option value="tetravex">Tetravex</option>
+          <option value="winarc">Winarc (Pegs/Krypto/Life)</option>
+          <option value="jigssawme">JigSawedME (VB6)</option>
+          <option value="rodent2000">Rodent2000 (VB6)</option>
         </optgroup>
         <optgroup label="Plus! 98">
           <option value="spider">Spider</option>
@@ -249,7 +277,10 @@
         </optgroup>
         <optgroup label="DirectX Shareware">
           <option value="abedemo">Abe's Oddysee (demo)</option>
+          <option value="aoe1">Age of Empires (demo)</option>
           <option value="aoe2">Age of Empires II (demo)</option>
+          <option value="mcm">Motocross Madness (demo)</option>
+          <option value="mw3">MechWarrior 3 (demo)</option>
           <option value="rct">RollerCoaster Tycoon</option>
         </optgroup>
         <optgroup label="DirectX SDK Samples">
@@ -258,6 +289,7 @@
           <option value="dx_ddex3">DDraw Sample 3 (ddex3)</option>
           <option value="dx_ddex4">DDraw Sample 4 (ddex4)</option>
           <option value="dx_ddex5">DDraw Sample 5 (ddex5)</option>
+          <option value="dx_flip2d">Flip2D</option>
           <option value="dx_palette">Palette</option>
           <option value="dx_stretch">Stretch</option>
           <option value="dx_donut">Donut</option>
@@ -268,6 +300,8 @@
           <option value="dx_boids">D3DIM Boids</option>
           <option value="dx_globe">D3DIM Globe</option>
           <option value="dx_bellhop">D3DIM Bellhop</option>
+          <option value="dx_viewer">D3DIM Viewer</option>
+          <option value="dx_flip3dtl">D3DIM Flip3DTL</option>
           <option value="dx_wormhole">D3DIM Wormhole</option>
         </optgroup>
         <optgroup label="Plus! 98 Screensavers">
@@ -298,7 +332,13 @@
           <option value="mspaint">Paint (NT/MFC)</option>
           <option value="pinball">Space Cadet Pinball</option>
           <option value="pinball_plus95">Space Cadet Pinball (Plus! 95)</option>
+          <option value="mspaint_ep">MSPaint (EP)</option>
           <option value="winamp">Winamp 2.91</option>
+          <option value="winamp295">Winamp 2.95</option>
+        </optgroup>
+        <optgroup label="Installers">
+          <option value="winamp291_inst">Winamp 2.91 Installer</option>
+          <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
@@ -358,7 +398,6 @@ Resource-aware Win98 emulator
       ['reversi',     'Reversi',     '\u{26AB}'],
       ['winmine_wep', 'Minesweeper', '\u{1F4A3}'],
       ['ski32',       'SkiFree',     '\u{26F7}'],
-      ['winamp',      'Winamp',      '\u{1F3B5}'],
     ];
     const DEFAULT_APP_SET = new Set(DEFAULT_APPS.map(a => a[0]));
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
@@ -440,11 +479,31 @@ Resource-aware Win98 emulator
       winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
       mspaint98: { exe: 'binaries/mspaint.exe' },
       notepad98: { exe: 'binaries/win98-apps/notepad98.exe' },
+      wordpad:   { exe: 'binaries/win98-apps/wordpad.exe' },
+      write:     { exe: 'binaries/win98-apps/write.exe' },
       mplayer:  { exe: 'binaries/win98-apps/mplayer.exe' },
       mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' },
+      cdplayer: { exe: 'binaries/win98-apps/cdplayer.exe' },
+      sndrec32_98: { exe: 'binaries/win98-apps/sndrec32.exe' },
+      sndvol32: { exe: 'binaries/win98-apps/sndvol32.exe' },
+      vol98:    { exe: 'binaries/win98-apps/vol98.exe' },
+      fontview: { exe: 'binaries/win98-apps/fontview.exe' },
+      kodakimg: { exe: 'binaries/win98-apps/kodakimg.exe' },
+      kodakprv: { exe: 'binaries/win98-apps/kodakprv.exe' },
+      hypertrm: { exe: 'binaries/win98-apps/hypertrm.exe' },
+      telnet:   { exe: 'binaries/win98-apps/telnet.exe' },
+      winipcfg: { exe: 'binaries/win98-apps/winipcfg.exe' },
+      explorer98: { exe: 'binaries/win98-apps/explorer.exe' },
+      regedit:  { exe: 'binaries/win98-apps/regedit.exe' },
+      taskman:  { exe: 'binaries/win98-apps/taskman.exe' },
+      welcome98: { exe: 'binaries/win98-apps/welcome.exe' },
+      tour98:   { exe: 'binaries/win98-apps/tour98.exe' },
       sysmon:   { exe: 'binaries/win98-apps/sysmon.exe' },
       rsrcmtr:  { exe: 'binaries/win98-apps/rsrcmtr.exe' },
       cleanmgr: { exe: 'binaries/win98-apps/cleanmgr.exe' },
+      claass:   { exe: 'binaries/xp/claass.exe' },
+      xp_eos:   { exe: 'binaries/xp/xp_eos.exe' },
+      mspaint_ep: { exe: 'binaries/entertainment-pack/mspaint.exe' },
       mspaint:  { exe: 'binaries/nt/mspaint.exe', dlls: ['binaries/dlls/msvcrt.dll', 'binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
       ski32:    { exe: 'binaries/entertainment-pack/ski32.exe' },
       winmine:  { exe: 'binaries/xp/winmine.exe' },
@@ -463,6 +522,13 @@ Resource-aware Win98 emulator
       fourstones: { exe: 'binaries/wep32-community/Funpack/FourStones.exe', dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
       cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
       bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      dlls: ['binaries/wep32-community/Bricks/brk1.dll'] },
+      pawn:       { exe: 'binaries/wep32-community/Pawn/Pawn.exe' },
+      qblackjack: { exe: 'binaries/wep32-community/QBlackjack/QuickBlackjack.exe' },
+      runenlegen: { exe: 'binaries/wep32-community/Runenlegen/Runenlegen.exe' },
+      tetravex:   { exe: 'binaries/wep32-community/Tetravex/Tetravex.exe' },
+      winarc:     { exe: 'binaries/wep32-community/Winarc/Winarc.exe' },
+      jigssawme:  { exe: 'binaries/wep32-community/Jigssawme/JigSawedME.exe' },
+      rodent2000: { exe: 'binaries/wep32-community/Rodent2000/Rodent2000.exe' },
       tworld: {
         exe: 'binaries/wep32-community/TWorld/tworld.exe',
         dlls: ['binaries/wep32-community/TWorld/SDL.dll'],
@@ -506,6 +572,9 @@ Resource-aware Win98 emulator
         'binaries/plus98/2.WAV', 'binaries/plus98/MARBLES.ICO',
       ] },
       winamp:     { exe: 'binaries/winamp.exe', files: ['binaries/plugins/in_mp3.dll', 'binaries/plugins/out_wave.dll'] },
+      winamp295:  { exe: 'binaries/winamp295.exe' },
+      winamp291_inst: { exe: 'binaries/installers/winamp291.exe' },
+      mirc59:     { exe: 'binaries/installers/mirc59.exe' },
       abedemo:    { exe: 'binaries/shareware/abe/ex/AbeDemo.exe', files: [
         'binaries/shareware/abe/ex/GAMEBGN.ddv',
         'binaries/shareware/abe/ex/R1P18P19.ddv',
@@ -515,15 +584,19 @@ Resource-aware Win98 emulator
         'binaries/shareware/abe/ex/r1.lvl',
         'binaries/shareware/abe/ex/s1.lvl',
       ] },
+      aoe1:       { exe: 'binaries/shareware/aoe/aoe_ex/Empires.exe' },
       aoe2:       { exe: 'binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', files: [
         'binaries/shareware/aoe2/aoe2_ex/language.dll',
       ] },
+      mcm:        { exe: 'binaries/shareware/mcm/mcm_ex/MCM.EXE' },
+      mw3:        { exe: 'binaries/shareware/mw3/ex/Program_Files/mech3demo.exe' },
       rct:        { exe: 'binaries/shareware/rct/English/RCT.exe' },
       dx_ddex1:   { exe: 'binaries/dx-sdk/bin/ddex1.exe' },
       dx_ddex2:   { exe: 'binaries/dx-sdk/bin/ddex2.exe' },
       dx_ddex3:   { exe: 'binaries/dx-sdk/bin/ddex3.exe' },
       dx_ddex4:   { exe: 'binaries/dx-sdk/bin/ddex4.exe' },
       dx_ddex5:   { exe: 'binaries/dx-sdk/bin/ddex5.exe' },
+      dx_flip2d:  { exe: 'binaries/dx-sdk/bin/flip2d.exe' },
       dx_palette: { exe: 'binaries/dx-sdk/bin/palette.exe' },
       dx_stretch: { exe: 'binaries/dx-sdk/bin/stretch.exe' },
       dx_donut:   { exe: 'binaries/dx-sdk/bin/donut.exe' },
@@ -534,6 +607,8 @@ Resource-aware Win98 emulator
       dx_boids:   { exe: 'binaries/dx-sdk/bin/boids.exe' },
       dx_globe:   { exe: 'binaries/dx-sdk/bin/globe.exe' },
       dx_bellhop: { exe: 'binaries/dx-sdk/bin/bellhop.exe' },
+      dx_viewer:  { exe: 'binaries/dx-sdk/bin/viewer.exe' },
+      dx_flip3dtl: { exe: 'binaries/dx-sdk/bin/flip3dtl.exe' },
       dx_wormhole: { exe: 'binaries/dx-sdk/bin/wormhole.exe' },
       scr_architec: { exe: 'binaries/screensavers/ARCHITEC.SCR', args: '/s', files: [
         'binaries/screensavers/ARCHITEC.SCN',
