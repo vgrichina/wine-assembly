@@ -700,6 +700,37 @@ So ROCKROLL's scene-walker invokes only `"Device"`-class slot-14 (Clear), never 
 
 **Refined root-cause direction:** check the scene-tree population path. RM scenes are built via `IDirect3DRMFrame::AddVisual` (slot 41 of the Frame interface) and `AddChild` (slot 18). At runtime, trace those COM IDs in the SCR's COM-call sequence — if `AddVisual` is never invoked or is invoked with a wrong-class ptr, that pinpoints the upstream bug. Also worth checking: `IDirect3DRMMeshBuilder::Load` (mesh data load) and `IDirect3DRMObject::CreateObject` to see if the SCR even creates meshes during init.
 
+**Iteration — characterized the two gates from the next-session pivot:**
+
+Gate A — `0x647ad71e` (relocated `0x745c871e`): trivial mesh-data populated predicate.
+```
+mov eax,[esp+4]            ; arg = some object (mesh or visual)
+cmp [eax+0x88], 0
+mov ecx,[eax+0x38]         ; ecx = arg's child (mesh data?)
+jnz +alt
+xor eax,eax; ret           ; early-out: returns 0
+alt:
+  copy [ecx+0x11c..+0x134] (24B) → [arg+0x6c..+0x80]    ; bbox/transform copy
+  cmp [arg+0x34], 0
+  setnz cl; mov eax,ecx; ret    ; returns ([arg+0x34] != 0)
+```
+So Gate A returns 0 when `[arg+0x88]==0` — meaning the object has no mesh data attached. Returns 1 when both `[arg+0x88]` and `[arg+0x34]` are populated.
+
+Gate B — `0x647c2792` (per-vp setup, called as the per-frame gate at `0x64798e9a`): NOT a pure predicate, it actively populates `[vp+0xa0]` and `[vp+0xa4]` from a hash table:
+```
+esi=vp; ecx=[esi+0x34]=scene; ebx=[esi+0x98]; edi=[esi+0x9c]
+ecx += 0xac                         ; ecx = &scene[0xac]  (counter)
+[esi+0xa0] = [edi + ([ecx] mod ebx)*4]      ; hash-bucket lookup
+[esi+0xa4] = [edi + ((([ecx]+ebx-1) mod ebx))*4]
+mov edi,[ebx_local+0x540]; call [edi.vtbl + 0x30]    ; vtable slot 12 on a COM obj
+```
+So the dispatcher's "result row" pointers `[vp+0xa0]/[vp+0xa4]` are seeded by Gate B from `[vp+0x9c]` (a hash bucket array of size `[vp+0x98]`, indexed by a per-frame counter at `[scene+0xac]`). **The hash bucket array `[vp+0x9c]` IS the consumer chain we need.** If those buckets contain row entries pointing at meshes, geometry emit follows; if they're zero/empty, we get the observed "Clear-only" walk.
+
+**Concrete next probe:** at runtime, after init has settled (e.g. batch 800), dump the contents of `[vp+0x9c]` for ROCKROLL's main viewport. Steps:
+1. Locate `vp` ptr — viewport is the obj passed to `0x647c2792` (recurses into the scene-root walk). Easiest: `--break=0x745d2792 --break-once`, dump `[esp+4]` (= vp) and step into to read `ebx=[vp+0x98]` (bucket count) and `edi=[vp+0x9c]` (bucket array base).
+2. Hexdump that bucket array: if every dword is 0, the scene populator never ran. If non-zero entries point at mesh-class instances, then Gate A's `[arg+0x88]==0` early-out is filtering them out (which means mesh-data attachment is failing).
+3. Fork: if buckets are empty, the bug is at scene-population time (CreateMeshBuilder/Load/AddVisual init path). If buckets are populated but Gate A bounces them, check whether `[arg+0x88]` (likely a mesh-data ptr) was ever written — that's the real failure point.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
