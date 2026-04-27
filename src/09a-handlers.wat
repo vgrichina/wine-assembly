@@ -3299,7 +3299,7 @@
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $scan)))))
     ;; Set second wndproc for subsequent windows
-    (if (i32.and (global.get $wndproc_addr) (i32.eqz (global.get $wndproc_addr2)))
+    (if (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0)) (i32.eqz (global.get $wndproc_addr2)))
     (then
     (if (global.get $main_hwnd)  ;; not the first window
     (then

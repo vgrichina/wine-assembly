@@ -351,7 +351,7 @@
     ;; Dialog style (WS_DLGFRAME 0x00400000 without WS_THICKFRAME 0x00040000
     ;; and without WS_MINIMIZEBOX/MAXIMIZEBOX 0x00010000/0x00020000).
     (if (i32.and
-          (i32.and (i32.and (local.get $style) (i32.const 0x00400000))
+          (i32.and (i32.ne (i32.and (local.get $style) (i32.const 0x00400000)) (i32.const 0))
                    (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
           (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000))))
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
@@ -462,7 +462,7 @@
             ;; Dialog style: close only (matches $defwndproc_ncpaint dialog branch).
             (local.set $is_dialog (i32.and
               (i32.and
-                (i32.and (local.get $style) (i32.const 0x00400000))
+                (i32.ne (i32.and (local.get $style) (i32.const 0x00400000)) (i32.const 0))
                 (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
               (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000)))))
             (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
