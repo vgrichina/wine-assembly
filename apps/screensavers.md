@@ -562,18 +562,56 @@ The actual geometry-emit happens further down in `0x64798521`'s cache-miss path:
 0x647988bf  call [ecx+0x38]            ; ecx = [esi+0x18] (cached-source-data vtable+0x38)
 ```
 
-**Probe verdict:** `--break=0x745b38bd --break-once` (preferred `0x647988bd`, runtime offset `+0x0FE1B000`) NEVER hits across 4000+ batches → at runtime `[ebp+0xc] & 3 == 0`, so the slot-14 (`[ecx+0x38]`) geometry-emit vtable call on the cached source data is gated off.
+**2026-04-27 update — flags ARE 7, gate IS open. Earlier "break never hits" finding was a tooling artifact (bp at non-block-boundary doesn't fire).**
 
-**Walk-back of the flags arg:**
-- `arg2` of `0x64798521` flows from caller `0x64786943` — a critical-section-wrapped trampoline:
-  `EnterCriticalSection(g_lock); arg1' = arg1->[8]->[0x10] || 0; render(arg1', arg2); LeaveCriticalSection(g_lock); return;`
-- `0x64786943` has zero direct `--code` xrefs → reached ONLY through vtable. Single data ref at `0x647df310`.
-- `0x647df310` is slot 12 (`+0x30`) of vtable `0x647df2e0` (24+ slots, IDirect3DRMObject-derived layout: slots 0-2 = IUnknown, 3-10 = RMObject methods, 11+ = subclass methods).
+Used `--trace-at=0x745b38a4 --trace-at-dump=0x77fffb64:4` (the test instr is a known block boundary — branch target from the earlier `jle 0x647988a4`). At every hit:
+```
+[TRACE-AT] EIP=0x745b38a4 ... EBP=0x77fffb58 ...
+Hexdump 0x77fffb64 (4 bytes): 07 00 00 00     ← [ebp+0xc] = 0x7
+```
+So `flags & 3 == 3` → the geometry-emit vtable call AT `0x647988bf` (`call [ecx+0x38]`) **does fire every frame**. The bug is not gating — it's that the slot-14 geometry-emit fn produces an empty execute buffer.
 
-**Concrete next step:** find what calls vtable slot 12 of `0x647df2e0`.
-- `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647df310` to find readers of the slot pointer.
-- Or hunt for `ff 50 30` (`call [eax+0x30]`) byte pattern; cross-check the source vtable equals `0x647df2e0`.
-- Once located, inspect what arg2 (flags) is being pushed at that call site. If it's literally `push 0`, walk further to find whose responsibility it is to set bits 0/1 (likely D3DRMRENDERMODE-derived: WIREFRAME=1, UNLITFLAT=2, GOURAUD=4, PHONG=8, etc., or an internal "execute geometry" enable bit).
+**Two parallel render trampolines confirmed:**
+| vtable | slot 12 fn | flags pushed |
+|---|---|---|
+| `0x647df240` | `0x647862f4` (CS-wrap → `0x647988f5` shim) | **literal `push 0x7`** ← fires per frame |
+| `0x647df2e0` | `0x64786943` (CS-wrap → direct `0x64798521`) | passthrough of caller's arg2 |
+
+`0x647df240` is the active path (verified: `--trace-at=0x745a12f4` fires per frame); `0x647df2e0` (`--trace-at=0x745a1943`) NEVER fires for this app. Slots 0-11 are identical — only the "render" method (slot 12) differs. Both interfaces are RM-object derived; almost certainly **IDirect3DRMVisual** (slot 12 = `Render`) vs some other RM-object type sharing slots 0-11.
+
+**Runtime probe — followed the vtable chain one level deeper:**
+| What | Address | How |
+|---|---|---|
+| Cached source data ESI | `0x750a9a68` (rt) | `--trace-at-dump=0x77fffb48:4` (= `[ebp-0x10]`) |
+| Source vtable `[esi+0x18]` | `0x745fb8f8` (rt) → `0x647e08f8` (pref) | `--trace-at-dump=0x750a9a80:4` |
+| Slot 14 (geometry-emit) `vtbl[+0x38]` | `0x745bacd6` (rt) → **`0x6479fcd6` (pref)** | `--trace-at-dump=0x745fb930:4` |
+
+**Disasm of `0x6479fcd6` — yet another dispatch layer (NOT the leaf emitter):**
+```c
+fn(arg1=esi_caller, arg2=this, arg3, arg4=rect4, arg5=rect4cnt, arg6=rect2, arg7=rect2cnt, arg8=flags)
+{
+  esi = arg2->[0x1bc];               // sub-object on the visual
+  switch (arg8 & 3) {
+    case 3:                          // ← flags=7 → 7&3=3 → this branch
+      if (arg6 != 0) { eax=esi->[0]; eax->[0x30](esi, rect2, rect2cnt, 1); }
+      eax = esi->[0];
+      eax->[0x30](esi, rect4, rect4cnt, 2);
+      break;
+    case 1:                          // emit single pass
+      eax = esi->[0]; eax->[0x30](esi, rect4, rect4cnt, 1);
+      break;
+    case 2:
+      if (arg6) { eax=esi->[0]; eax->[0x30](esi, rect2, rect2cnt, 2); }
+      break;
+  }
+}
+```
+So the real geometry-emit fn is **slot 12** (`+0x30`) of `[arg2->[0x1bc]]->[0]` — yet another vtable indirection through a sub-object.
+
+**Concrete next step (well-paved):**
+1. Probe ESI inside `0x6479fcd6` at runtime: `--trace-at=0x745bacd6 --trace-at-dump=ESP+0x14:4` (= `[ebp+0xc]` after the prologue) to learn `arg2` (the visual). Or simpler — the call at `0x647988bf` already passes EAX (visual ptr) as arg2 — re-do the existing `--trace-at=0x745b38a4` and dump `ebp+0x8` (= preserved EAX local in `0x64798521` frame).
+2. From visual+0x1bc → sub-object → `[sub+0]` → vtable → `[vtable+0x30]` = the real leaf emitter.
+3. Disasm that leaf to see why it produces empty geometry. The fn signature `(this, rect_array, count, mode)` with `mode∈{1,2}` strongly hints **clip-rect-driven span emission** rather than triangle emission — perhaps RM is in "rect-blit / 2D" mode instead of "3D triangle" mode? That would explain `vc=0` in the execute buffer and would point upstream to a setup call (texture mode? execute-buffer type?) that's chosen the wrong rasterizer path.
 
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
