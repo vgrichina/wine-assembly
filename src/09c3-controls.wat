@@ -246,6 +246,9 @@
     ;; Class 4 = ListBox
     (if (i32.eq (local.get $class) (i32.const 4))
       (then (return (call $listbox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 5 = ComboBox
+    (if (i32.eq (local.get $class) (i32.const 5))
+      (then (return (call $combobox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 6 = ColorGrid (ChooseColor swatches)
     (if (i32.eq (local.get $class) (i32.const 6))
       (then (return (call $colorgrid_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -1755,6 +1758,53 @@
       (br $scan)))
   )
 
+  ;; ---- Owner-draw WM_DRAWITEM dispatch ----
+  ;; Build a DRAWITEMSTRUCT on the heap, send WM_DRAWITEM to the parent so
+  ;; the owning wndproc paints the button face, then free. Called on state
+  ;; transitions (mousedown/up) for BS_OWNERDRAW buttons; the WM_PAINT
+  ;; handler skips drawing for that kind.
+  ;;
+  ;; DRAWITEMSTRUCT (48 bytes):
+  ;;   +0x00 CtlType=ODT_BUTTON(4)   +0x04 CtlID
+  ;;   +0x08 itemID=0                +0x0C itemAction=ODA_DRAWENTIRE(1)
+  ;;   +0x10 itemState (ODS_SELECTED 0x01 | ODS_FOCUS 0x10 | ODS_DEFAULT 0x20)
+  ;;   +0x14 hwndItem                +0x18 hDC
+  ;;   +0x1C..+0x2B RECT rcItem      +0x2C itemData=0
+  (func $btn_send_drawitem (param $hwnd i32) (param $state_w i32) (param $flags i32)
+    (local $dis i32) (local $disw i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $ctrl_id i32) (local $hdc i32) (local $state_bits i32)
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $state_bits
+      (i32.or
+        (i32.or
+          (select (i32.const 0x0001) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x01)))
+          (select (i32.const 0x0010) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x08))))
+        (select (i32.const 0x0020) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x04)))))
+    (local.set $dis (call $heap_alloc (i32.const 48)))
+    (local.set $disw (call $g2w (local.get $dis)))
+    (i32.store           (local.get $disw) (i32.const 4))
+    (i32.store offset=4  (local.get $disw) (local.get $ctrl_id))
+    (i32.store offset=8  (local.get $disw) (i32.const 0))
+    (i32.store offset=12 (local.get $disw) (i32.const 1))
+    (i32.store offset=16 (local.get $disw) (local.get $state_bits))
+    (i32.store offset=20 (local.get $disw) (local.get $hwnd))
+    (i32.store offset=24 (local.get $disw) (local.get $hdc))
+    (i32.store offset=28 (local.get $disw) (i32.const 0))
+    (i32.store offset=32 (local.get $disw) (i32.const 0))
+    (i32.store offset=36 (local.get $disw) (local.get $w))
+    (i32.store offset=40 (local.get $disw) (local.get $h))
+    (i32.store offset=44 (local.get $disw) (i32.const 0))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002B)
+            (local.get $ctrl_id)
+            (local.get $dis)))
+    (call $heap_free (local.get $dis)))
+
   ;; ---- Button WndProc ----
   ;;
   ;; Test path NOT YET WIRED: dialog buttons today receive only BM_GETCHECK
@@ -1918,9 +1968,15 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (i32.store offset=8 (local.get $state_w)
+            (local.set $flags
               (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x01))) ;; pressed
-            (call $invalidate_hwnd (local.get $hwnd))))
+            (i32.store offset=8 (local.get $state_w) (local.get $flags))
+            ;; BS_OWNERDRAW: ask parent to repaint via WM_DRAWITEM. Other
+            ;; kinds rely on WM_PAINT → button_wndproc drawing the bevel.
+            (if (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
+                        (i32.const 0x0B))
+              (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
+              (else (call $invalidate_hwnd (local.get $hwnd))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
@@ -1957,7 +2013,11 @@
                 (local.set $flags
                   (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
-            (call $invalidate_hwnd (local.get $hwnd))
+            ;; BS_OWNERDRAW: dispatch WM_DRAWITEM to repaint the unpressed
+            ;; face. Other kinds use button_wndproc's WM_PAINT.
+            (if (i32.eq (local.get $w) (i32.const 0x0B))
+              (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
+              (else (call $invalidate_hwnd (local.get $hwnd))))
             ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
             ;; to parent. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
@@ -1990,6 +2050,14 @@
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $kind (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
+
+        ;; BS_OWNERDRAW (kind 11): parent paints the face. Dispatch
+        ;; WM_DRAWITEM with the current state so the initial paint and any
+        ;; later invalidations both render.
+        (if (i32.eq (local.get $kind) (i32.const 0x0B))
+          (then
+            (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags))
+            (return (i32.const 0))))
 
         ;; Common DC setup: select DEFAULT_GUI_FONT and switch to TRANSPARENT
         ;; bk mode so text glyphs don't get an opaque white background box.
@@ -2162,11 +2230,13 @@
         ;; ---- Groupbox (kind 7) ----
         ;; Etched rectangle with a label notched into the top stroke. The label
         ;; width is measured via DT_CALCRECT so we know how wide a hole to clear.
+        ;; Do NOT fill the interior — the dialog face is already painted by
+        ;; $dlg_fill_bkgnd (WM_ERASEBKGND), and an interior fill here would
+        ;; overpaint any siblings created before the groupbox in the template
+        ;; (pinball's Player Controls lists groupboxes last; an inner fill
+        ;; erases its static labels and combos).
         (if (i32.eq (local.get $kind) (i32.const 7))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
-                    (i32.const 0x30011)))
             ;; EDGE_ETCHED = 0x06 (BDR_SUNKENOUTER|BDR_RAISEDINNER), BF_RECT = 0x0F.
             ;; Top edge sits at y=6 so the label can overlap it.
             (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -2863,6 +2933,371 @@
               (i32.load offset=20 (local.get $sw)) (local.get $max)
               (select (global.get $sb_pressed_part) (i32.const 0)
                       (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+        (return (i32.const 0))))
+
+    ;; Default
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; ComboBox WndProc  (control class 5)
+  ;; ============================================================
+  ;;
+  ;; Minimal stub: drop-down list with current selection. Renders the
+  ;; closed-state field only (the popup list is not implemented). Pinball's
+  ;; Player Controls dialog populates each combo with key names via
+  ;; CB_ADDSTRING and picks one via CB_SETCURSEL — enough to make the
+  ;; selected key visible.
+  ;;
+  ;; ComboBoxState (24 bytes, allocated in WM_CREATE)
+  ;;   +0   text_buf_ptr   guest ptr to selected item text (or initial title)
+  ;;   +4   text_len
+  ;;   +8   style          full window style (low byte CBS_*)
+  ;;   +12  ctrl_id        from CREATESTRUCT.hMenu
+  ;;   +16  items_buf_ptr  guest ptr to NUL-separated items, 0 if empty
+  ;;   +20  cur_sel        signed; -1 if none
+  ;;
+  ;; The closed-combo field is fixed-height (21 px) regardless of the cy
+  ;; supplied in the dialog template (which budgets the dropdown list).
+  (func $combobox_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $cs_w i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $name_ptr i32) (local $text_len i32)
+    (local $items i32) (local $items_w i32) (local $used i32)
+    (local $idx i32) (local $p i32) (local $slen i32)
+    (local $new_buf i32) (local $new_w i32) (local $count i32)
+    (local $arrow_x i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    ;; ---------- WM_CREATE ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $cs_w (call $g2w (local.get $lParam)))
+        (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
+        (local.set $state (call $heap_alloc (i32.const 24)))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (i32.store          (local.get $state_w) (i32.const 0))
+        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (i32.store offset=8 (local.get $state_w) (i32.load offset=32 (local.get $cs_w)))
+        (i32.store offset=12 (local.get $state_w)
+          (i32.and (i32.load offset=8 (local.get $cs_w)) (i32.const 0xFFFF)))
+        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (i32.store offset=20 (local.get $state_w) (i32.const -1))
+        (if (local.get $name_ptr)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+            (i32.store          (local.get $state_w)
+              (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_DESTROY ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (call $heap_free (i32.load          (local.get $state_w)))
+            (call $heap_free (i32.load offset=16 (local.get $state_w)))
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $state_w (call $g2w (local.get $state)))
+
+    ;; ---------- WM_SETTEXT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000C))
+      (then
+        (call $heap_free (i32.load (local.get $state_w)))
+        (i32.store          (local.get $state_w) (i32.const 0))
+        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (if (local.get $lParam)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
+            (i32.store          (local.get $state_w)
+              (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
+            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; ---------- WM_GETTEXT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000D))
+      (then
+        (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (if (i32.ge_u (local.get $text_len) (local.get $wParam))
+          (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
+        (if (i32.load (local.get $state_w))
+          (then (if (local.get $text_len)
+                  (then (call $memcpy (call $g2w (local.get $lParam))
+                                      (call $g2w (i32.load (local.get $state_w)))
+                                      (local.get $text_len))))))
+        (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
+        (return (local.get $text_len))))
+
+    ;; ---------- WM_GETTEXTLENGTH ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000E))
+      (then (return (i32.load offset=4 (local.get $state_w)))))
+
+    ;; ---------- CB_RESETCONTENT (0x014B) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x014B))
+      (then
+        (call $heap_free (i32.load offset=16 (local.get $state_w)))
+        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (i32.store offset=20 (local.get $state_w) (i32.const -1))
+        (call $heap_free (i32.load (local.get $state_w)))
+        (i32.store          (local.get $state_w) (i32.const 0))
+        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- CB_GETCOUNT (0x0146) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0146))
+      (then
+        (local.set $items (i32.load offset=16 (local.get $state_w)))
+        (if (i32.eqz (local.get $items)) (then (return (i32.const 0))))
+        (local.set $items_w (call $g2w (local.get $items)))
+        (local.set $count (i32.const 0))
+        (local.set $p (local.get $items_w))
+        (block $cdone (loop $clp
+          (br_if $cdone (i32.eqz (i32.load8_u (local.get $p))))
+          (block $skip (loop $slp
+            (br_if $skip (i32.eqz (i32.load8_u (local.get $p))))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $slp)))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
+          (br $clp)))
+        (return (local.get $count))))
+
+    ;; ---------- CB_GETCURSEL (0x0147) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0147))
+      (then (return (i32.load offset=20 (local.get $state_w)))))
+
+    ;; ---------- CB_ADDSTRING (0x0143) ----------
+    ;; lParam = guest ptr to NUL-terminated string. Append to items buffer
+    ;; and return new index. Realloc by malloc-copy-free since heap has no
+    ;; realloc primitive — counts here are tiny (≤ ~20 keys), fine.
+    (if (i32.eq (local.get $msg) (i32.const 0x0143))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
+        (local.set $slen (call $strlen (call $g2w (local.get $lParam))))
+        (local.set $items (i32.load offset=16 (local.get $state_w)))
+        (local.set $used (i32.const 0))
+        (local.set $count (i32.const 0))
+        (if (local.get $items)
+          (then
+            (local.set $items_w (call $g2w (local.get $items)))
+            (local.set $p (local.get $items_w))
+            (block $udone (loop $ulp
+              (br_if $udone (i32.eqz (i32.load8_u (local.get $p))))
+              (block $usk (loop $usl
+                (br_if $usk (i32.eqz (i32.load8_u (local.get $p))))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))
+                (br $usl)))
+              (local.set $p (i32.add (local.get $p) (i32.const 1)))
+              (local.set $count (i32.add (local.get $count) (i32.const 1)))
+              (br $ulp)))
+            (local.set $used (i32.sub (local.get $p) (local.get $items_w)))))
+        ;; New buf = used + slen + 1 (NUL after new item) + 1 (terminator NUL)
+        (local.set $new_buf (call $heap_alloc
+          (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 2)))))
+        (local.set $new_w (call $g2w (local.get $new_buf)))
+        (if (local.get $used)
+          (then (call $memcpy (local.get $new_w)
+                              (call $g2w (local.get $items))
+                              (local.get $used))))
+        (if (local.get $slen)
+          (then (call $memcpy (i32.add (local.get $new_w) (local.get $used))
+                              (call $g2w (local.get $lParam))
+                              (local.get $slen))))
+        (i32.store8 (i32.add (local.get $new_w)
+                             (i32.add (local.get $used) (local.get $slen)))
+                    (i32.const 0))
+        (i32.store8 (i32.add (local.get $new_w)
+                             (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
+                    (i32.const 0))
+        (call $heap_free (local.get $items))
+        (i32.store offset=16 (local.get $state_w) (local.get $new_buf))
+        (return (local.get $count))))
+
+    ;; ---------- CB_GETLBTEXT (0x0148) / CB_GETLBTEXTLEN (0x0149) ----------
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0148))
+                (i32.eq (local.get $msg) (i32.const 0x0149)))
+      (then
+        (local.set $items (i32.load offset=16 (local.get $state_w)))
+        (if (i32.eqz (local.get $items)) (then (return (i32.const -1))))
+        (local.set $idx (local.get $wParam))
+        (local.set $p (call $g2w (local.get $items)))
+        (block $fdone (loop $flp
+          (br_if $fdone (i32.eqz (local.get $idx)))
+          (br_if $fdone (i32.eqz (i32.load8_u (local.get $p))))
+          (block $fsk (loop $fsl
+            (br_if $fsk (i32.eqz (i32.load8_u (local.get $p))))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $fsl)))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (local.set $idx (i32.sub (local.get $idx) (i32.const 1)))
+          (br $flp)))
+        (if (i32.eqz (i32.load8_u (local.get $p))) (then (return (i32.const -1))))
+        (local.set $slen (call $strlen (local.get $p)))
+        (if (i32.eq (local.get $msg) (i32.const 0x0149))
+          (then (return (local.get $slen))))
+        (if (local.get $lParam)
+          (then
+            (if (local.get $slen)
+              (then (call $memcpy (call $g2w (local.get $lParam))
+                                  (local.get $p) (local.get $slen))))
+            (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $slen)) (i32.const 0))))
+        (return (local.get $slen))))
+
+    ;; ---------- CB_SETCURSEL (0x014E) ----------
+    ;; wParam = index, or -1 to clear.
+    (if (i32.eq (local.get $msg) (i32.const 0x014E))
+      (then
+        (i32.store offset=20 (local.get $state_w) (local.get $wParam))
+        (call $heap_free (i32.load (local.get $state_w)))
+        (i32.store          (local.get $state_w) (i32.const 0))
+        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (if (i32.ne (local.get $wParam) (i32.const -1))
+          (then
+            (local.set $items (i32.load offset=16 (local.get $state_w)))
+            (if (local.get $items)
+              (then
+                (local.set $idx (local.get $wParam))
+                (local.set $p (call $g2w (local.get $items)))
+                (block $sdone (loop $slp2
+                  (br_if $sdone (i32.eqz (local.get $idx)))
+                  (br_if $sdone (i32.eqz (i32.load8_u (local.get $p))))
+                  (block $ssk (loop $ssl
+                    (br_if $ssk (i32.eqz (i32.load8_u (local.get $p))))
+                    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+                    (br $ssl)))
+                  (local.set $p (i32.add (local.get $p) (i32.const 1)))
+                  (local.set $idx (i32.sub (local.get $idx) (i32.const 1)))
+                  (br $slp2)))
+                (if (i32.load8_u (local.get $p))
+                  (then
+                    (local.set $slen (call $strlen (local.get $p)))
+                    ;; Build a guest copy of the selected item for text_buf.
+                    (local.set $new_buf (call $heap_alloc (i32.add (local.get $slen) (i32.const 1))))
+                    (call $memcpy (call $g2w (local.get $new_buf)) (local.get $p) (local.get $slen))
+                    (i32.store8 (i32.add (call $g2w (local.get $new_buf)) (local.get $slen)) (i32.const 0))
+                    (i32.store          (local.get $state_w) (local.get $new_buf))
+                    (i32.store offset=4 (local.get $state_w) (local.get $slen))))))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $wParam))))
+
+    ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
+    ;; No real popup list yet — clicking the closed combo cycles to the next
+    ;; item (wraps), updates the displayed text, and posts WM_COMMAND with
+    ;; CBN_SELCHANGE(1) so the parent dialog reacts as if the user picked
+    ;; from a dropdown. Pinball's Player Controls sends WM_COMMAND back to
+    ;; rebind the key on each change, so cycling actually re-binds.
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        ;; Count items.
+        (local.set $items (i32.load offset=16 (local.get $state_w)))
+        (if (i32.eqz (local.get $items)) (then (return (i32.const 0))))
+        (local.set $items_w (call $g2w (local.get $items)))
+        (local.set $count (i32.const 0))
+        (local.set $p (local.get $items_w))
+        (block $cdone2 (loop $clp2
+          (br_if $cdone2 (i32.eqz (i32.load8_u (local.get $p))))
+          (block $skip2 (loop $slp3
+            (br_if $skip2 (i32.eqz (i32.load8_u (local.get $p))))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $slp3)))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
+          (br $clp2)))
+        (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+        ;; next = (cur_sel + 1) % count, with -1 → 0.
+        (local.set $idx (i32.load offset=20 (local.get $state_w)))
+        (if (i32.lt_s (local.get $idx) (i32.const 0))
+          (then (local.set $idx (i32.const 0)))
+          (else
+            (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+            (if (i32.ge_s (local.get $idx) (local.get $count))
+              (then (local.set $idx (i32.const 0))))))
+        ;; Reuse the CB_SETCURSEL path by re-dispatching to ourselves.
+        (drop (call $combobox_wndproc (local.get $hwnd)
+                (i32.const 0x014E) (local.get $idx) (i32.const 0)))
+        ;; Notify parent: WM_COMMAND with HIWORD=CBN_SELCHANGE(1), LOWORD=ctrl_id.
+        (drop (call $wnd_send_message
+          (call $wnd_get_parent (local.get $hwnd))
+          (i32.const 0x0111)
+          (i32.or (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
+                  (i32.shl (i32.const 1) (i32.const 16)))
+          (local.get $hwnd)))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_PAINT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        ;; Closed combo paints only the top 21 px regardless of template cy
+        ;; (which budgets the drop-down list height).
+        (local.set $h (i32.const 21))
+        ;; White interior + sunken edge.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30010)))  ;; WHITE_BRUSH
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x0A) (i32.const 0x0F)))  ;; EDGE_SUNKEN | BF_RECT
+        ;; Drop-down arrow box on the right (16 px wide, raised face).
+        (local.set $arrow_x (i32.sub (local.get $w) (i32.const 18)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $arrow_x) (i32.const 2)
+                (i32.sub (local.get $w) (i32.const 2))
+                (i32.sub (local.get $h) (i32.const 2))
+                (i32.const 0x30011)))  ;; LTGRAY_BRUSH
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (local.get $arrow_x) (i32.const 2)
+                (i32.sub (local.get $w) (i32.const 2))
+                (i32.sub (local.get $h) (i32.const 2))
+                (i32.const 0x05) (i32.const 0x0F)))  ;; EDGE_RAISED | BF_RECT
+        ;; Triangle (▼) — three short horizontal strokes via fill_rect.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $arrow_x) (i32.const 4)) (i32.const 9)
+                (i32.add (local.get $arrow_x) (i32.const 11)) (i32.const 10)
+                (i32.const 0x30014)))  ;; BLACK_BRUSH
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $arrow_x) (i32.const 5)) (i32.const 10)
+                (i32.add (local.get $arrow_x) (i32.const 10)) (i32.const 11)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $arrow_x) (i32.const 6)) (i32.const 11)
+                (i32.add (local.get $arrow_x) (i32.const 9)) (i32.const 12)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $arrow_x) (i32.const 7)) (i32.const 12)
+                (i32.add (local.get $arrow_x) (i32.const 8)) (i32.const 13)
+                (i32.const 0x30014)))
+        ;; Selected-item text in the field area.
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (if (i32.load (local.get $state_w))
+          (then
+            (i32.store          (global.get $PAINT_SCRATCH) (i32.const 4))
+            (i32.store offset=4 (global.get $PAINT_SCRATCH) (i32.const 2))
+            (i32.store offset=8 (global.get $PAINT_SCRATCH)
+              (i32.sub (local.get $arrow_x) (i32.const 2)))
+            (i32.store offset=12 (global.get $PAINT_SCRATCH)
+              (i32.sub (local.get $h) (i32.const 2)))
+            (drop (call $host_gdi_draw_text (local.get $hdc)
+                    (call $g2w (i32.load (local.get $state_w)))
+                    (i32.load offset=4 (local.get $state_w))
+                    (global.get $PAINT_SCRATCH)
+                    (i32.const 0x24) (i32.const 0)))))  ;; DT_VCENTER|DT_SINGLELINE
         (return (i32.const 0))))
 
     ;; Default
