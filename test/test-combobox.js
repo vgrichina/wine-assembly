@@ -242,6 +242,48 @@ async function main() {
     slotsAfterDestroy === baselineSlots,
     `${slotsAfterDestroy} vs ${baselineSlots}`);
 
+  // ===================================================================
+  // CBS_DROPDOWN (variant=2): editable field via inner edit child
+  // ===================================================================
+  const CBS_DROPDOWN = 2;
+  const WM_SETTEXT = 0x000C, WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E;
+  const CB_LIMITTEXT = 0x0141, CB_GETEDITSEL = 0x0140, CB_SETEDITSEL = 0x0142;
+  const EM_GETLIMITTEXT = 0x00D5;
+
+  const cb2 = e.test_create_combobox(0, 0, 200, 100, CBS_DROPDOWN);
+  check('CBS_DROPDOWN combobox allocated', cb2 !== 0, 'hwnd=0x' + cb2.toString(16));
+
+  const ed = e.combobox_get_edit_hwnd(cb2);
+  check('CBS_DROPDOWN exposes edit child', ed !== 0, 'edit=0x' + ed.toString(16));
+
+  const lb2 = e.combobox_get_lb_hwnd(cb2);
+  check('CBS_DROPDOWN still has inner listbox', lb2 !== 0);
+
+  // WM_SETTEXT routed to edit
+  e.send_message(cb2, WM_SETTEXT, 0, writeStr('hello'));
+  const dest = e.guest_alloc(64);
+  const n = e.send_message(cb2, WM_GETTEXT, 64, dest);
+  check('WM_SETTEXT/GETTEXT routes through edit',
+    n === 5 && readStr(dest) === 'hello', `n=${n} text="${readStr(dest)}"`);
+  check('WM_GETTEXTLENGTH agrees',
+    e.send_message(cb2, WM_GETTEXTLENGTH, 0, 0) === 5);
+
+  // CB_LIMITTEXT → EM_SETLIMITTEXT round-trip via EM_GETLIMITTEXT
+  e.send_message(cb2, CB_LIMITTEXT, 32, 0);
+  check('CB_LIMITTEXT sets edit limit',
+    e.send_message(ed, EM_GETLIMITTEXT, 0, 0) === 32);
+
+  // CB_SETEDITSEL with packed (start|end<<16); CB_GETEDITSEL returns same packing.
+  e.send_message(cb2, CB_SETEDITSEL, 0, (1 & 0xFFFF) | ((4 & 0xFFFF) << 16));
+  const sel = e.send_message(cb2, CB_GETEDITSEL, 0, 0);
+  check('CB_SETEDITSEL/CB_GETEDITSEL round-trip',
+    (sel & 0xFFFF) === 1 && ((sel >>> 16) & 0xFFFF) === 4, `got 0x${sel.toString(16)}`);
+
+  if (e.wnd_destroy_tree) e.wnd_destroy_tree(cb2 - 1);
+  const slots3 = e.wnd_count_used();
+  check('CBS_DROPDOWN cleanup returns to baseline',
+    slots3 === baselineSlots, `${slots3} vs ${baselineSlots}`);
+
   console.log('');
   const failed = checks.filter(c => !c.pass).length;
   console.log(`${checks.length - failed}/${checks.length} checks passed`);

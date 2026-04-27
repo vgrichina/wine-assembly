@@ -3162,7 +3162,7 @@
   ;;   +16  cur_sel        mirror of listbox cur_sel; -1 = none
   ;;   +20  lb_hwnd        inner listbox hwnd
   ;;   +24  popup_hwnd     reserved for future WS_POPUP escape (0 today)
-  ;;   +28  edit_hwnd      reserved for CBS_DROPDOWN edit child (Phase 3)
+  ;;   +28  edit_hwnd      CBS_DROPDOWN inner edit child; 0 for SIMPLE/DROPDOWNLIST
   ;;   +32  is_dropped     0/1 — CB_GETDROPPEDSTATE
   ;;   +36  variant        1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
   ;;
@@ -3316,6 +3316,20 @@
         ;; CBS_SIMPLE: always-dropped state.
         (if (i32.eq (local.get $variant) (i32.const 1))
           (then (i32.store offset=32 (local.get $state_w) (i32.const 1))))
+        ;; CBS_DROPDOWN (variant=2): create EDIT child filling the field
+        ;; area minus the arrow box (18px wide on right). Style: WS_CHILD |
+        ;; WS_VISIBLE | ES_AUTOHSCROLL(0x80). Field width = w - 18 to leave
+        ;; room for the arrow.
+        (if (i32.eq (local.get $variant) (i32.const 2))
+          (then
+            (i32.store offset=28 (local.get $state_w)
+              (call $ctrl_create_child (local.get $hwnd) (i32.const 2)
+                (i32.const 1001) ;; synthetic ctrl_id for inner edit
+                (i32.const 2) (i32.const 2)
+                (i32.sub (local.get $w) (i32.const 20))
+                (i32.sub (local.get $field_h) (i32.const 4))
+                (i32.const 0x50000080)  ;; WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL
+                (i32.load offset=36 (local.get $cs_w)))))) ;; pass initial title
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY ----------
@@ -3338,8 +3352,13 @@
     (local.set $lb      (i32.load offset=20 (local.get $state_w)))
 
     ;; ---------- WM_SETTEXT ----------
+    ;; CBS_DROPDOWN (variant=2): forward to inner edit; the edit owns the text.
     (if (i32.eq (local.get $msg) (i32.const 0x000C))
       (then
+        (if (i32.eq (local.get $variant) (i32.const 2))
+          (then (return (call $wnd_send_message
+                          (i32.load offset=28 (local.get $state_w))
+                          (i32.const 0x000C) (local.get $wParam) (local.get $lParam)))))
         (call $heap_free (i32.load (local.get $state_w)))
         (i32.store          (local.get $state_w) (i32.const 0))
         (i32.store offset=4 (local.get $state_w) (i32.const 0))
@@ -3355,6 +3374,10 @@
     ;; ---------- WM_GETTEXT ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000D))
       (then
+        (if (i32.eq (local.get $variant) (i32.const 2))
+          (then (return (call $wnd_send_message
+                          (i32.load offset=28 (local.get $state_w))
+                          (i32.const 0x000D) (local.get $wParam) (local.get $lParam)))))
         (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
@@ -3369,7 +3392,12 @@
 
     ;; ---------- WM_GETTEXTLENGTH ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
-      (then (return (i32.load offset=4 (local.get $state_w)))))
+      (then
+        (if (i32.eq (local.get $variant) (i32.const 2))
+          (then (return (call $wnd_send_message
+                          (i32.load offset=28 (local.get $state_w))
+                          (i32.const 0x000E) (i32.const 0) (i32.const 0)))))
+        (return (i32.load offset=4 (local.get $state_w)))))
 
     ;; ---------- WM_SETFOCUS (0x0007) — fire CBN_SETFOCUS(3) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0007))
@@ -3491,19 +3519,35 @@
         (i32.store offset=12 (call $g2w (local.get $lParam)) (local.get $h))
         (return (i32.const 1))))
 
-    ;; ---------- CB_LIMITTEXT (0x0141) — only meaningful for CBS_DROPDOWN ----------
+    ;; ---------- CB_LIMITTEXT (0x0141) → EM_SETLIMITTEXT (0x00C5) ----------
+    ;; Only meaningful for CBS_DROPDOWN; CBS_DROPDOWNLIST/SIMPLE return TRUE no-op.
     (if (i32.eq (local.get $msg) (i32.const 0x0141))
       (then
         (if (i32.eq (local.get $variant) (i32.const 2))
-          (then (call $crash_unimplemented (i32.const 0x100))))  ;; phase 3
+          (then (drop (call $wnd_send_message
+                        (i32.load offset=28 (local.get $state_w))
+                        (i32.const 0x00C5) (local.get $wParam) (i32.const 0)))))
         (return (i32.const 1))))
 
-    ;; ---------- CB_GETEDITSEL / CB_SETEDITSEL — phase 3 ----------
-    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0140))
-                (i32.eq (local.get $msg) (i32.const 0x0142)))
+    ;; ---------- CB_GETEDITSEL (0x0140) → EM_GETSEL (0x00B0) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0140))
       (then
         (if (i32.eq (local.get $variant) (i32.const 2))
-          (then (call $crash_unimplemented (i32.const 0x100))))
+          (then (return (call $wnd_send_message
+                          (i32.load offset=28 (local.get $state_w))
+                          (i32.const 0x00B0) (local.get $wParam) (local.get $lParam)))))
+        (return (i32.const 0))))
+
+    ;; ---------- CB_SETEDITSEL (0x0142) → EM_SETSEL (0x00B1) ----------
+    ;; Win32: lParam packs (start | end<<16); EM_SETSEL takes wParam=start, lParam=end.
+    (if (i32.eq (local.get $msg) (i32.const 0x0142))
+      (then
+        (if (i32.eq (local.get $variant) (i32.const 2))
+          (then (return (call $wnd_send_message
+                          (i32.load offset=28 (local.get $state_w))
+                          (i32.const 0x00B1)
+                          (i32.and (local.get $lParam) (i32.const 0xFFFF))
+                          (i32.shr_s (local.get $lParam) (i32.const 16))))))
         (return (i32.const 0))))
 
     ;; ---------- CB_SETEXTENDEDUI / CB_GETEXTENDEDUI ----------
@@ -3622,11 +3666,32 @@
             (return (i32.const 0))))
         (return (i32.const 0))))
 
-    ;; ---------- WM_COMMAND (0x0111) from inner listbox ----------
-    ;; When the listbox notifies us of LBN_SELCHANGE/LBN_DBLCLK, copy text and
-    ;; (if dropped) close + emit CBN_SELCHANGE to the parent.
+    ;; ---------- WM_COMMAND (0x0111) from inner listbox or edit ----------
+    ;; Listbox: LBN_SELCHANGE/LBN_DBLCLK → sync_text + relay CBN_SELCHANGE.
+    ;; Edit (variant=2 only): EN_CHANGE(0x0300) → CBN_EDITCHANGE(5);
+    ;;                        EN_UPDATE(0x0400) → CBN_EDITUPDATE(6).
     (if (i32.eq (local.get $msg) (i32.const 0x0111))
       (then
+        ;; Edit notification path
+        (if (i32.and (i32.eq (local.get $variant) (i32.const 2))
+                     (i32.eq (local.get $lParam)
+                             (i32.load offset=28 (local.get $state_w))))
+          (then
+            (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
+            (local.set $cmd (i32.const 0))  ;; CBN_* code
+            (if (i32.eq (local.get $notif) (i32.const 0x0300))  ;; EN_CHANGE
+              (then (local.set $cmd (i32.const 5))))           ;; CBN_EDITCHANGE
+            (if (i32.eq (local.get $notif) (i32.const 0x0400))  ;; EN_UPDATE
+              (then (local.set $cmd (i32.const 6))))           ;; CBN_EDITUPDATE
+            (if (local.get $cmd)
+              (then
+                (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+                (if (local.get $parent)
+                  (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                          (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
+                          (local.get $hwnd)))))))
+            (return (i32.const 0))))
         (if (i32.eq (local.get $lParam) (local.get $lb))
           (then
             (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
@@ -3660,10 +3725,14 @@
         ;; Skip field paint for CBS_SIMPLE — entire window is the listbox.
         (if (i32.ne (local.get $variant) (i32.const 1))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (i32.const 0)
-                    (local.get $w) (local.get $h)
-                    (i32.const 0x30010)))  ;; WHITE_BRUSH
+            ;; CBS_DROPDOWN (variant=2): the inner edit child paints the field.
+            ;; CBS_DROPDOWNLIST (variant=3): combobox paints the white field.
+            (if (i32.ne (local.get $variant) (i32.const 2))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x30010)))))  ;; WHITE_BRUSH
             (drop (call $host_gdi_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
@@ -4596,6 +4665,21 @@
                     (i32.add (local.get $hi) (i32.const 18))
                     (i32.const 0x30014))))))) ;; BLACK_BRUSH
         (return (i32.const 0))))
+
+    ;; ---------- EM_SETLIMITTEXT / EM_LIMITTEXT (0x00C5) ----------
+    ;; wParam = max chars (0 → unlimited; semantics differ across versions —
+    ;; we treat 0 as unlimited as the Win9x docs state). No return value.
+    (if (i32.eq (local.get $msg) (i32.const 0x00C5))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $wParam))
+        (return (i32.const 0))))
+
+    ;; ---------- EM_GETLIMITTEXT (0x00D5) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00D5))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (i32.load offset=28 (call $g2w (local.get $state))))))
 
     ;; ---------- EM_GETSEL (0x00B0) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00B0))
