@@ -668,6 +668,38 @@ Conclusion: d3rm almost certainly emits D3DINSTRUCTIONs through a **parameterize
 2. Set `--watch-byte=<lpData_VA>` on the buffer immediately after Lock; the first write tells us exactly which fn writes the first instruction.
 3. Lift the buffer dump just before SetExecuteData to confirm whether the 32-byte content is actually 4× D3DOP_STATETRANSFORM headers or some other shape. If it's only headers with the count=0, then a single conditional gate is suppressing the body — that's the bug site.
 
+**Iteration — found the parameterized emitter and its caller graph:**
+
+`--trace-stack=Lock:8` resolved the per-frame Lock callers to two distinct fn entries:
+- Site A (alternates with Site B): caller fn `0x6479f781` — emits only ops 7, 8, 0x1b, 0x29, 0x1d (STATELIGHT, STATERENDER, render-state value codes). No triangle/vertex emit.
+- Site B: caller fn `0x6479df51`/related.
+
+Both reach the same emit helper: `0x647c36e0(ctx, op, lo, hi)` →`0x647c3744(ctx, op, ptr_to_8byte_payload)`. The latter writes a 4-byte D3DINSTRUCTION header `(op, size=8, count++)` then copies 8 bytes payload. **Size=8 is hardcoded** — meaning this helper handles ONLY 8-byte-payload ops (TRIANGLE, STATE*, MATRIXLOAD, POINT). PROCESSVERTICES (24B) and LINE (4B) need different paths, presumably with a similar parameterized helper that we haven't located yet.
+
+**Caller-opcode tally** (49 call sites of `0x647c36e0`, opcode tallied from preceding `push imm8`):
+| op | count | meaning |
+|---|---|---|
+| 8 | 23 | D3DOP_STATERENDER |
+| 1 | 10 | D3DOP_POINT or counter |
+| 0 | 8 | (size or value) |
+| 7 | 8 | D3DOP_STATELIGHT |
+| 4 | 5 | D3DOP_MATRIXMULTIPLY |
+| 0x21 | 5 | render-state code |
+| ... | ... | various |
+| **9** | **1** | **D3DOP_TRIANGLE** ← only one site |
+| **5** | **2** | **D3DOP_PROCESSVERTICES (DX6)** |
+| 3 | 2 | D3DOP_TRIANGLE (DX2/3) or size |
+
+**Triangle emit lives in fn `0x647af646`** (which wraps the only op=9 push at 0x647af84f). Xref shows `0x647af646` is bound only via vtable at `0x647e0b58` — a class vtable whose name string is `"Texture"`. Equivalent slot in the `"Device"` class vtable (`0x647e08f8`+0x38) is the Clear-dispatcher we have been chasing.
+
+**Tested both candidate geometry-emit fns at runtime — NEITHER fires for ROCKROLL:**
+- `--trace-at=0x745cb646` (= preferred 0x647af646, "Texture" slot-14): zero hits
+- `--trace-at=0x745dff6b` (= preferred 0x647bff6b, "Mesh" slot-14 from vtable 0x647e0ec8): zero hits
+
+So ROCKROLL's scene-walker invokes only `"Device"`-class slot-14 (Clear), never `"Mesh"` or `"Texture"`. The bug is **upstream of vtable dispatch**: the scene-graph iteration either contains no Mesh/Texture-class visuals, or the iteration filters them out.
+
+**Refined root-cause direction:** check the scene-tree population path. RM scenes are built via `IDirect3DRMFrame::AddVisual` (slot 41 of the Frame interface) and `AddChild` (slot 18). At runtime, trace those COM IDs in the SCR's COM-call sequence — if `AddVisual` is never invoked or is invoked with a wrong-class ptr, that pinpoints the upstream bug. Also worth checking: `IDirect3DRMMeshBuilder::Load` (mesh data load) and `IDirect3DRMObject::CreateObject` to see if the SCR even creates meshes during init.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
