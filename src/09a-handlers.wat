@@ -1418,8 +1418,11 @@
                 (local.get $arg3)             ;; nMaxCount
                 (local.get $arg2))))          ;; lpString (guest ptr)
       (else
-        ;; Empty string on miss, matching Win32
-        (if (i32.and (local.get $arg2) (i32.gt_u (local.get $arg3) (i32.const 0)))
+        ;; Empty string on miss, matching Win32. NOTE: i32.and is BITWISE — for
+        ;; a logical "ptr non-null AND len > 0" coerce both sides to 0/1 first,
+        ;; otherwise an even-aligned ptr & 1 = 0 and the null-terminator never lands.
+        (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                     (i32.gt_u (local.get $arg3) (i32.const 0)))
           (then (i32.store8 (call $g2w (local.get $arg2)) (i32.const 0))))
         (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)

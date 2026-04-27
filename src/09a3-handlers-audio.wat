@@ -123,8 +123,11 @@
     ;; Read lpData and dwBufferLength from WAVEHDR
     (local.set $data_ga (i32.load (local.get $wa)))
     (local.set $data_len (i32.load (i32.add (local.get $wa) (i32.const 4))))
-    ;; Send PCM data to host for playback
-    (if (i32.and (local.get $data_ga) (local.get $data_len))
+    ;; Send PCM data to host for playback. Use logical-and (coerce both to 0/1)
+    ;; — bare i32.and is BITWISE and silently drops calls where data_ga and
+    ;; data_len happen not to share any 1-bits (e.g. lpData=0x78521c & len=0x2d00 = 0).
+    (if (i32.and (i32.ne (local.get $data_ga) (i32.const 0))
+                 (i32.ne (local.get $data_len) (i32.const 0)))
       (then
         (drop (call $host_wave_out_write
           (local.get $arg0)

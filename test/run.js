@@ -454,6 +454,8 @@ async function main() {
     audioStatsStride: AUDIO_STATS ? AUDIO_STATS_STRIDE : 0,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
+    _audioOutPath: AUDIO_OUT || null,
+    _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
     _sharedAudio: {},  // shared waveOut state across threads
     readFile: (name) => {
       // Try to find file relative to exe directory
@@ -2283,6 +2285,43 @@ if (VERBOSE) {
   }
 
   if (ctx._finalizeWaveTrace) ctx._finalizeWaveTrace();
+
+  // If --audio-out=*.wav, prepend a 44-byte RIFF/WAVE header now that we know
+  // the captured format and total bytes. Plain .pcm output is left raw.
+  if (ctx._audioOutFd !== undefined && ctx._audioOutWav) {
+    // Format may have been captured by a worker thread's ctx; fall back to
+    // the renderer's last-seen format if the main ctx didn't observe it.
+    const fmt = ctx._audioOutFormat
+      || (ctx._waveStats && ctx._waveStats.lastFmt)
+      || { rate: 22050, ch: 2, bits: 16 };
+    // PCM byte counter is per-thread; trust the file size on disk instead.
+    const dataLen = fs.fstatSync(ctx._audioOutFd).size;
+    const bytesPerSec = fmt.rate * fmt.ch * (fmt.bits / 8);
+    const blockAlign = fmt.ch * (fmt.bits / 8);
+    const hdr = Buffer.alloc(44);
+    hdr.write('RIFF', 0);
+    hdr.writeUInt32LE(36 + dataLen, 4);
+    hdr.write('WAVE', 8);
+    hdr.write('fmt ', 12);
+    hdr.writeUInt32LE(16, 16);              // PCM fmt chunk size
+    hdr.writeUInt16LE(1, 20);               // PCM format
+    hdr.writeUInt16LE(fmt.ch, 22);
+    hdr.writeUInt32LE(fmt.rate, 24);
+    hdr.writeUInt32LE(bytesPerSec, 28);
+    hdr.writeUInt16LE(blockAlign, 32);
+    hdr.writeUInt16LE(fmt.bits, 34);
+    hdr.write('data', 36);
+    hdr.writeUInt32LE(dataLen, 40);
+    // Read the raw PCM we wrote, then rewrite header + data in one go.
+    fs.closeSync(ctx._audioOutFd);
+    ctx._audioOutFd = undefined;
+    const pcm = fs.readFileSync(ctx._audioOutPath);
+    const fd = fs.openSync(ctx._audioOutPath, 'w');
+    fs.writeSync(fd, hdr);
+    fs.writeSync(fd, pcm);
+    fs.closeSync(fd);
+    console.log(`[wav] wrote ${ctx._audioOutPath}: ${fmt.rate}Hz ${fmt.ch}ch ${fmt.bits}bit ${dataLen} B PCM (+44 B header)`);
+  }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
 

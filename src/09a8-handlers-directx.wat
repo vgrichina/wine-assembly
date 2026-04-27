@@ -2350,7 +2350,10 @@
       (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $handle))))
     ;; DSBPLAY_LOOPING = 1
     (local.set $loop (i32.and (local.get $arg3) (i32.const 1)))
-    (if (i32.and (local.get $dib_wa) (local.get $buf_size)) (then
+    ;; Bitwise i32.and on (ptr, size) silently drops the play call whenever
+    ;; their bits don't happen to overlap. Coerce both to 0/1 for logical AND.
+    (if (i32.and (i32.ne (local.get $dib_wa) (i32.const 0))
+                 (i32.ne (local.get $buf_size) (i32.const 0))) (then
       (drop (call $host_voice_play_ring
         (local.get $handle) (local.get $dib_wa) (local.get $buf_size)
         (i32.const 0) (local.get $loop)))))
