@@ -522,6 +522,34 @@ Concrete probes:
 
 Reloc reminder: runtime VA = preferred + 0xfe1b000.
 
+**2026-04-27 SMOKING GUN: per-render execute buffer is `vc=0, il=32 bytes`.**
+
+Instrumented `$handle_IDirect3DExecuteBuffer_SetExecuteData` to emit `host_log_i32(marker), log(vc), log(il)`. Run output:
+```
+[i32] 0xd3d70001   ← marker
+[i32] 0x00000000   ← dwVertexCount
+[i32] 0x00000020   ← dwInstructionLength (32 bytes)
+```
+Repeating every frame for thousands of frames.
+
+32 bytes ≈ 4 × 8-byte D3DSTATE records = state ops only (matrix/render state + D3DOP_EXIT). **No D3DOP_TRIANGLE, no D3DOP_PROCESSVERTICES emitted.** This matches the long-standing organic-art finding ("STATETRANSFORM only").
+
+So `0x6479f65f` (the heavy preprocess in the cache-miss path) succeeds but populates the execute buffer with state transforms only — geometry never gets appended.
+
+**Cache-miss-path probe sequence verified at runtime:**
+| break | preferred | hits | notes |
+|---|---|---|---|
+| `0x745b3521` | `0x64798521` (per-mesh render entry) | YES | per-frame |
+| `0x745b3669` | `0x64798669` (cache-miss branch) | YES | always taken (cache-hit at `0x745b3607` NEVER fires) |
+| `0x745b38c9` | `0x647988c9` (fail-exit) | NO | `0x6479f65f` succeeds |
+
+**Concrete next step:** `0x64798757 call 0x647b95a5(&[ebp-0x3c], [eax+0xa0])` is the prime suspect for geometry emission — it's called between cache update and the bounds-update loop. Set `--break=0x745d45a5 --break-once` to confirm it fires; if so, walk inside to find where it would write `D3DOP_TRIANGLE` (1) or `D3DOP_PROCESSVERTICES` (9) opcodes to the buffer. If the byte-write loop never reaches those branches, find what predicate skips them — likely tied to vertex-source-data being null on the mesh object `[ebp+0x8]`.
+
+Tooling for next session:
+- `node tools/disasm_fn.js test/binaries/dlls/d3drm.dll 0x647b95a5 200`  — inspect the candidate emitter.
+- `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647b95a5 --code` — see all callers; if it's used elsewhere as a non-emitter we can disambiguate.
+- Re-instrument the SetExecuteData handler (one-line `host_log_i32`) to read from the actual execute buffer's instruction stream and dump opcodes — hand-decode the 32 bytes to confirm exactly which D3DOP_* values appear.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
