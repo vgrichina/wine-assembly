@@ -459,6 +459,69 @@ If `[edi+0xac]==0` always: the visual has no associated d3dim mesh-data pointer 
 
 Tooling shortcut: `node tools/find_field.js test/binaries/dlls/d3drm.dll 0xac --reg=edi,esi --op=write` — find every store to `[obj+0xac]`. Same for offset 0xa4. Cross-reference with what's CALLED during init vs not — that narrows the suspect.
 
+**2026-04-27 retrace — prior chain misidentified.**
+
+Two key reidentifications based on actual runtime dumps:
+
+1. **`0x647b99d4` is `Release()` (refcount-decrement), NOT triangle emit.**
+   ```
+   647b99d4  mov eax, [esp+0x4]      ; this
+   647b99d8  xor edx, edx
+   647b99da  cmp eax, edx            ; if this==0 ret
+   ...
+   647b99e4  mov ecx, [eax+0xc]      ; refcount
+   647b99eb  dec ecx
+   647b99ec  mov [eax+0xc], ecx
+   647b99ef  cmp [eax+0xc], edx
+   647b99f2  jnz ret
+   647b99f4  cmp [eax+0x10], edx
+   647b99f7  jnz ret
+   647b99fa  call 0x647b9a01         ; → destructor
+   647b9a00  ret
+   ```
+   69 xrefs across the DLL — far too many for a render-only function. Calling chains threaded through this look like normal COM teardown, not draw events.
+
+2. **`0x647bb74e` is a property-list destructor, NOT a per-frame visual iterator.** Runtime dump of ESI=0x750a9a68 at the function entry showed not a Frame but a dictionary of property strings ("green", "red", "blue", "alpha", "filename", "Material", "TextureFilename", color refs, etc.). The fn's tail at `0x647bb796..0x647bb7c2` frees `[esi+0x840]`, zeroes `[esi+0x844]/[esi+0x848]` — classic teardown. The "visual subtype skip" reading was wrong.
+
+**Real per-mesh render fn: `0x64798521`** (caller of `0x647c21ec` → Lock chain `0x745de73d <- 0x745dd2fb <- 0x745b359d <- 0x745b3900` from `--trace-stack=Lock`).
+
+Critical structure (post-Lock body):
+```
+64798521  push ebp; mov ebp,esp; sub esp,0x3c
+64798547  call 0x64799d8d           ; setup
+64798557  mov eax,[ebp+0x8]
+6479855d  call 0x647c11f7           ; get device
+6479858f  call 0x647c1d30
+64798598  call 0x647c21ec           ; ← Lock execute buffer
+647985a9  cmp [eax+0x124], ecx      ; ┐
+647985b0  jnz 0x64798669            ; │  state-cache check —
+647985bc  cmp edx, [edi+0x2cc]      ; │  if any cached field
+647985c2  jnz 0x64798669            ; │  differs from current,
+647985ce  cmp edx, [edi+0x2d0]      ; │  go to "reprocess" path
+647985d4  jnz 0x64798669            ; │  at 0x64798669
+647985e0  cmp edx, [esi+0x34]       ; │
+647985e3  jnz 0x64798669            ; ┘
+647985f5  push [eax+0xa0]           ; cache-HIT: data buf
+647985fb  call 0x647b9663           ; preprocess → out vert_count at [ebp-0x18]
+64798603  test eax, eax
+64798605  jz 0x64798613
+64798607  cmp dword [ebp-0x18], 0   ; ← VERTEX-COUNT CHECK
+6479860b  jle 0x647988c9            ; ← ZERO VERTS → BAIL OUT
+64798611  jmp 0x6479864f            ; non-zero → render
+```
+
+Runtime: `--break=0x745b3607` (= 0x64798607) over 20K batches **NEVER fires** — confirms cache-hit path is not taken. We always go through `jnz 0x64798669` (cache-miss / reprocess path), which calls `0x6479f65f` followed by its own emit chain.
+
+**True next step: trace the cache-miss path at `0x64798669`.** That's where every per-mesh render lands in our run. It calls `0x6479f65f(esi, [eax+0x1c4], ecx, 0, edx, 0, 0, ebx)`; if it returns nonzero, exit at `0x647988c9`. If 0, continues to a setup block at `0x647986d3+` that primes `[ebp-0x2c..0x20]` and `[eax+0x124/0x128/0x184]` cache fields.
+
+Concrete probes:
+1. `--break=0x745b3669 --break-once` (runtime VA of `0x64798669`) — confirm we land here.
+2. `--break=0x745baa90` (runtime of `0x6479f65f`'s ret site test, i.e. `0x6479868e+0xfe1b000`) — log eax to see if `0x6479f65f` is failing for us (returning nonzero → `0x647988c9` exit).
+3. Disasm `0x6479f65f` end-to-end — that's the actual heavy "geometry preprocess" workhorse for this scene; it likely contains the equivalent vertex-count gate that the cache-hit branch has at `0x64798607`.
+4. Inspect what's in `0x647988c9..0x647988ec` (the bail/exit block) — does it set `[viewport.error]` or just unwind? That tells us whether the Unlock+SetExecuteData we still see in the trace are real-render or a no-op-flush of an empty buffer.
+
+Reloc reminder: runtime VA = preferred + 0xfe1b000.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
