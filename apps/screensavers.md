@@ -550,6 +550,31 @@ Tooling for next session:
 - `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647b95a5 --code` — see all callers; if it's used elsewhere as a non-emitter we can disambiguate.
 - Re-instrument the SetExecuteData handler (one-line `host_log_i32`) to read from the actual execute buffer's instruction stream and dump opcodes — hand-decode the 32 bytes to confirm exactly which D3DOP_* values appear.
 
+**2026-04-27 NEXT LAYER: 0x647b95a5 is NOT the geometry emitter — it's a rect surface fill (`rep stosd/stosb` of color into `[edi+0x44]+stride*y`). The real geometry-emit call sits later at 0x647988bf, gated on `[ebp+0xc] & 3`.**
+
+Confirmed via disasm of `0x647b95a5` — it scales 4 packed-fixed16 rect coords, computes `width-=stride`, then `imul eax, [edi+0x3c]; add eax, [edi+0x44]` and `rep stosd; rep stosb` to fill a rect with `[ebp+0x10]` as the byte color. That's a **clear-target** primitive, not vertex output.
+
+The actual geometry-emit happens further down in `0x64798521`'s cache-miss path:
+```
+0x647988a4  test [ebp+0xc], 0x3        ; flags & 3
+0x647988a8  jz   0x647988d0            ; skip render if 0
+0x647988aa..bc  build 8 args
+0x647988bf  call [ecx+0x38]            ; ecx = [esi+0x18] (cached-source-data vtable+0x38)
+```
+
+**Probe verdict:** `--break=0x745b38bd --break-once` (preferred `0x647988bd`, runtime offset `+0x0FE1B000`) NEVER hits across 4000+ batches → at runtime `[ebp+0xc] & 3 == 0`, so the slot-14 (`[ecx+0x38]`) geometry-emit vtable call on the cached source data is gated off.
+
+**Walk-back of the flags arg:**
+- `arg2` of `0x64798521` flows from caller `0x64786943` — a critical-section-wrapped trampoline:
+  `EnterCriticalSection(g_lock); arg1' = arg1->[8]->[0x10] || 0; render(arg1', arg2); LeaveCriticalSection(g_lock); return;`
+- `0x64786943` has zero direct `--code` xrefs → reached ONLY through vtable. Single data ref at `0x647df310`.
+- `0x647df310` is slot 12 (`+0x30`) of vtable `0x647df2e0` (24+ slots, IDirect3DRMObject-derived layout: slots 0-2 = IUnknown, 3-10 = RMObject methods, 11+ = subclass methods).
+
+**Concrete next step:** find what calls vtable slot 12 of `0x647df2e0`.
+- `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647df310` to find readers of the slot pointer.
+- Or hunt for `ff 50 30` (`call [eax+0x30]`) byte pattern; cross-check the source vtable equals `0x647df2e0`.
+- Once located, inspect what arg2 (flags) is being pushed at that call site. If it's literally `push 0`, walk further to find whose responsibility it is to set bits 0/1 (likely D3DRMRENDERMODE-derived: WIREFRAME=1, UNLITFLAT=2, GOURAUD=4, PHONG=8, etc., or an internal "execute geometry" enable bit).
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
