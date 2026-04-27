@@ -144,12 +144,17 @@
       (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
       (else
         ;; System control class detection — atoms or case-insensitive name match.
-        ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082.
-        ;; ctrl class IDs (see $control_wndproc_dispatch): Button=1, Edit=2, Static=3.
+        ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082, LISTBOX=0x0083,
+        ;;        SCROLLBAR=0x0084, COMBOBOX=0x0085.
+        ;; ctrl class IDs (see $control_wndproc_dispatch):
+        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7.
         (local.set $detected_class (i32.const 0))
         (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
         (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
         (if (i32.eq (local.get $arg1) (i32.const 0x0082)) (then (local.set $detected_class (i32.const 3))))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0083)) (then (local.set $detected_class (i32.const 4))))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0084)) (then (local.set $detected_class (i32.const 7))))
+        (if (i32.eq (local.get $arg1) (i32.const 0x0085)) (then (local.set $detected_class (i32.const 5))))
         ;; String compare (case-insensitive via OR 0x20). Lowercase LE dwords:
         ;;   "edit\0"   = 0x74696465, NUL at offset 4
         ;;   "button\0" = 0x74747562, "on\0" at offset 4 (0x6e6f), NUL at offset 6
@@ -186,7 +191,50 @@
                           (i32.const 0x74737973))
                   (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x76656572)))
-              (then (local.set $detected_class (i32.const 8))))))
+              (then (local.set $detected_class (i32.const 8))))
+            ;; "listbox\0" — LE dwords: "list"=0x7473696c, "box\0" = u32 0x00786f62.
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x7473696c))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
+                            (i32.const 0x6f62))
+                    (i32.and
+                      (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
+                      (i32.eqz (i32.load8_u offset=7 (local.get $name_w))))))
+              (then (local.set $detected_class (i32.const 4))))
+            ;; "combobox\0" — LE dwords: "comb"=0x626d6f63, "obox"=0x786f626f
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x626d6f63))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x786f626f))
+                    (i32.eqz (i32.load8_u offset=8 (local.get $name_w)))))
+              (then (local.set $detected_class (i32.const 5))))
+            ;; "ComboLBox\0" — popup-listbox class used by some apps
+            ;; LE dwords: "Comb" lower → "comb"=0x626d6f63, "oLBo" lower → "olbo"=0x6f626c6f, "x\0"
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x626d6f63))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x6f626c6f))
+                    (i32.and
+                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
+                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
+              (then (local.set $detected_class (i32.const 4))))
+            ;; "scrollbar\0" — LE dwords: "scro"=0x6f726373, "llba"=0x61626c6c, "r\0"
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x6f726373))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x61626c6c))
+                    (i32.and
+                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x72))
+                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
+              (then (local.set $detected_class (i32.const 7))))))
         (if (local.get $detected_class)
           (then
             ;; System Edit/Button/Static class → WAT-native control

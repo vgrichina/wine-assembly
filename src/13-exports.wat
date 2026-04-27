@@ -869,6 +869,66 @@
     (i32.store8 (i32.add (local.get $dest_w) (local.get $slen)) (i32.const 0))
     (local.get $slen))
 
+  ;; Test helper: create a parent dlg + combobox child. Class index 5 is
+  ;; ComboBox. $cbs_style ORs CBS_* (1=SIMPLE, 2=DROPDOWN, 3=DROPDOWNLIST)
+  ;; into the window style. 0 → defaults to DROPDOWNLIST (matches WM_CREATE
+  ;; fallback in $combobox_wndproc).
+  (func (export "test_create_combobox")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $cbs_style i32) (result i32)
+    (local $parent i32) (local $cb i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $cb (call $ctrl_create_child (local.get $parent) (i32.const 5) (i32.const 100)
+                     (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+                     (i32.or (i32.const 0x50000000) (local.get $cbs_style)) (i32.const 0)))
+    (local.get $cb))
+
+  ;; ComboBoxState readers for tests.
+  (func (export "combobox_get_cur_sel") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
+    (i32.load offset=16 (call $g2w (local.get $s))))
+
+  (func (export "combobox_is_dropped") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=32 (call $g2w (local.get $s))))
+
+  (func (export "combobox_get_lb_hwnd") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=20 (call $g2w (local.get $s))))
+
+  (func (export "combobox_get_edit_hwnd") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=28 (call $g2w (local.get $s))))
+
+  (func (export "combobox_get_text")
+    (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $s i32) (local $sw i32) (local $len i32) (local $src i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $src (i32.load (local.get $sw)))
+    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $len) (local.get $max))
+      (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
+    (if (local.get $src)
+      (then (if (local.get $len)
+              (then (call $memcpy (call $g2w (local.get $dest_guest))
+                                  (call $g2w (local.get $src))
+                                  (local.get $len))))))
+    (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
+    (local.get $len))
+
   ;; StaticState text reader (StaticState layout matches ButtonState for the
   ;; first two fields: text_buf_ptr / text_len).
   (func (export "static_get_text")
