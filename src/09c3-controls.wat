@@ -3114,6 +3114,13 @@
     ;; a 16px scrollbar strip is reserved at the right edge.
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
+        ;; Skip paint when not WS_VISIBLE — combobox dropdowns rely on this:
+        ;; their inner listbox child is invisible until $combobox_open_dropdown
+        ;; sets WS_VISIBLE. Without this guard, LB_ADDSTRING's invalidate path
+        ;; would paint the invisible dropped-area onto the parent every time
+        ;; the combobox is populated.
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000)))
+          (then (return (i32.const 0))))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -3606,7 +3613,7 @@
                           (i32.load offset=28 (local.get $state_w))
                           (i32.const 0x00B1)
                           (i32.and (local.get $lParam) (i32.const 0xFFFF))
-                          (i32.shr_s (local.get $lParam) (i32.const 16))))))
+                          (i32.shr_u (local.get $lParam) (i32.const 16))))))
         (return (i32.const 0))))
 
     ;; ---------- CB_SETEXTENDEDUI / CB_GETEXTENDEDUI ----------
