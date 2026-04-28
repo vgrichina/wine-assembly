@@ -9154,13 +9154,13 @@
     (local $entry i32) (local $size i32)
     ;; If lpdwHandle is non-null, set *lpdwHandle = 0
     (if (local.get $arg1)
-      (then (call $gs32 (call $g2w (local.get $arg1)) (i32.const 0))))
+      (then (call $gs32 (local.get $arg1) (i32.const 0))))
     ;; Find RT_VERSION (16) resource with ID 1
     (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
     (if (local.get $entry)
       (then
         ;; entry points to data entry: +0=RVA, +4=size
-        (local.set $size (call $gl32 (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4))))))
+        (local.set $size (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4)))))
         (global.set $eax (local.get $size)))
       (else
         (global.set $eax (i32.const 0))))
@@ -9177,8 +9177,8 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    (local.set $rva (call $gl32 (call $g2w (i32.add (global.get $image_base) (local.get $entry)))))
-    (local.set $size (call $gl32 (call $g2w (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4))))))
+    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $entry))))
+    (local.set $size (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4)))))
     ;; Copy min(dwLen, size) bytes from resource to lpData
     (local.set $len (local.get $arg2))
     (if (i32.gt_u (local.get $len) (local.get $size))
@@ -9207,16 +9207,16 @@
                   (i32.const -17825603)))  ;; 0xFEEF04BD
       (then
         ;; Set *lplpBuffer = guest ptr to VS_FIXEDFILEINFO
-        (call $gs32 (call $g2w (local.get $arg2))
+        (call $gs32 (local.get $arg2)
           (i32.add (local.get $arg0) (i32.const 0x28)))
         ;; Set *puLen = sizeof(VS_FIXEDFILEINFO) = 52
-        (call $gs32 (call $g2w (local.get $arg3)) (i32.const 52))
+        (call $gs32 (local.get $arg3) (i32.const 52))
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; For any other sub-block or if signature doesn't match, return FALSE
     (if (local.get $arg3)
-      (then (call $gs32 (call $g2w (local.get $arg3)) (i32.const 0))))
+      (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
