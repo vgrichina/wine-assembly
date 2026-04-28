@@ -7,6 +7,292 @@
 
 **Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
 
+## REGRESSION (2026-04-28): LEFT flipper (Z) does not move; RIGHT flipper (/) does
+
+**Test status:** `test/test-pinball-playable.js` reports 8/9 — **right flipper rect signal=366px > noise=128px** (FAR above the +200 threshold), but **left flipper rect signal=0px**. Right works, left doesn't.
+
+This is now narrowed to a key-specific bug, not a global gate3 / message-pump issue. Whatever path delivers '/' (VK_OEM_2 = 0xBF) all the way to the right-flipper component does NOT go through `process_key` at `0x01015072` — `--count` shows zero hits at process_key entry when only F2 + '/' are sent. So pinball has TWO key dispatch paths and Z is on the broken one.
+
+The investigation below was originally framed around process_key being the only flipper handler — that turns out to be incomplete. Focus going forward: identify the working-path that '/' takes (probably TranslateAccelerator or a direct check in the wndproc before process_key), and figure out why Z misses it.
+
+### Trace evidence
+
+Same input (`F2 → Space-plunge → Z-hold`), counted with `--count` over the input-and-render chain:
+
+| Address | Stage | Hits, no Z | Hits, Z held |
+|---|---|---|---|
+| `0x01007d1a` | WM_KEYDOWN handler | n/a | 6 (3× down, 3× up) |
+| `0x01015072` | `process_key` entry | 6 | 6 |
+| `0x010150bf` | `cmp esi, [0x1028238]` (wParam vs left-flipper key) | 3 | 3 |
+| `0x010150e5` | not-equal fall-through to next slot | 3 | 3 |
+| `0x010152d1` | post-handler jump target | 3 | 3 |
+| `0x010175aa` | flipper angle update | 8 | 8 |
+| `0x01013c89` | flipper bitmap-index pick | 16 | 16 |
+| `0x01013d2d` | sprite group render | 3205 | 3204 |
+| `0x01004870` | CopyBits8 (sprite blit to back-buf) | 1542 | 1542 |
+| `0x010159a9` | flipper-component vtable[0] (per-frame Message) | 210 | 210 |
+
+Conclusion: holding Z makes **zero** difference at every stage of the render chain. `[0x01028238]=0x5A` is correctly configured (post-run dump confirmed), and 3 wParam values reach the cmp (F2/Space/Z), but the cmp evidently never matches Z (otherwise downstream blit counts would diverge).
+
+The match body `0x010150c7` and the vtable call at `0x010150de` could not be probed directly with `--count` because they sit in the same WAT-decoded basic block as `0x010150bf` (`--count` resolves to block-entries, not instructions).
+
+### Blit-set diff is empty
+
+Captured every `gdi_stretch_dib_bits` line, sorted/uniqued:
+- no-Z run: 684 unique blit signatures, 6587 total
+- Z-held run: 684 unique blit signatures, 6587 total
+- `comm` diff: zero blits exclusive to either side
+
+If the flipper sprite were rotating, the rotated frame would emit at least one new `(srcX,srcY,W,H,dstX,dstY)` tuple. None do. The render chain is running, but its output is identical with and without the flipper key — meaning the flipper object's `bitmap_index` never changes.
+
+### Hypothesis ruled out: esi clobber across `0x100e1b0`
+
+I suspected `0x100e1b0` (the call between `mov esi, wParam` and `cmp esi, [0x1028238]`) might trash esi. Disasm proves it doesn't — entry pushes esi (`0x100e1ba`), exit pops it back (`0x100e501`). Standard Win32 ABI preservation.
+
+### Half of process_key entries fail an early-exit gate
+
+| Probe | Hits |
+|---|---|
+| `0x01015072` (process_key entry) | 6 |
+| `0x010150b5` (post-3-gates, push esi) | 3 |
+| `0x010150bf` (key cmp) | 3 |
+| `0x010152d2` (early-exit OR end-of-handler tail) | 3 |
+
+3 of the 6 entries are blocked by one of the three early-exit gates: `[0x1024fd8]==0`, `[0x1025570]==0`, `[0x1025568]==1`. Likely process_key is called for both KEYDOWN and KEYUP and one path fails the gate. The 3 that reach the cmp should include F2 / Space / Z.
+
+### Match body proven unreached
+
+`0x010150c7` (fall-through after `jnz 0x10150e5`) and `0x010150e5` (taken target) ARE separate basic blocks in the WAT decoder — each is a branch outcome. `--count` confirms:
+
+| Probe | Hits |
+|---|---|
+| `0x010150bf` cmp | 3 |
+| `0x010150c7` match body | **0** |
+| `0x010150e5` no-match path | 3 |
+| `0x010150de` vtable call | 0 |
+
+All 3 cmp executions take the no-match jnz. Match body never fires.
+
+### Why: gate3 timing makes Z miss the window
+
+`process_key` is called 12 times when spamming 5 Z keypresses after F2. Only **1** ever reaches the cmp body — the other 11 fail gate3 and take the inactive-key path at `0x010150a9` (`push 0xff; call 0x1014743`).
+
+Disassembled gate logic (`0x01015072..0x010150b5`):
+
+```
+cmp [0x1024fd8], 0    ; gate1: 0=ok, else exit
+cmp [0x1025570], 0    ; gate2: 0=ok, else exit
+cmp [0x1025568], 1    ; gate3: 1=match-path, else inactive
+```
+
+Watching `[0x1025568]` shows transitions at batches 219, 3397, **5000** (precisely when F2 keydown injected). Z keydowns at batch 9000+ never line up with another transition. Apparently the F2 keypress flips gate3 to 1 only briefly — the single hit at `0x010150b5` likely IS F2's own keydown landing in that window, not Z.
+
+Without F2 entirely (`--input='9000:keydown:90,9100:keyup:90'`): 2 process_key entries, **0** reach b5. Gate3 never opens.
+
+### Real bug: gate3 (`[0x01025568]`) is a 0/1/2 state machine — flippers only work at 1
+
+`--watch --watch-log` (already prints writer EIP) shows three transitions during a typical run:
+
+| Batch | Writer EIP | Transition | Likely meaning |
+|---|---|---|---|
+| 219 | `0x010155ee` | 0 → 1 | initial demo idle armed |
+| 3397 | `0x01011b54` | 1 → 2 | demo running |
+| 5000 | `0x010d785f` (F2 keydown handled) | 2 → 1 | game requested |
+
+After F2, gate3 stays at 1 — but spamming 5 Z keypresses afterward yields only 1 b5 hit total (out of 10 entries). The watch detects no further transitions, so the only way 11 calls miss b5 is gate3 momentarily flipping to ≠1 inside `process_key` itself (set-and-restore within a batch — invisible to the watchpoint). Smaller `--batch-size=100` doesn't surface them either.
+
+### Fix landed: double-dispatch on WM_KEYDOWN (renderer-input.js:925-934)
+
+**Status:** Patched 2026-04-28. Now only synchronously sends WM_KEYDOWN to focus when focus is an Edit control (class==2). Other apps (pinball, etc.) just queue.
+
+Before: `process_key` entered 6× per F2+Space+Z run (3 keydowns × 2 deliveries). After: 3× (one per keydown). Confirms the double-dispatch theory — but did not fix flippers, which means the gate3 issue is independent.
+
+
+
+`renderer-input.js` `handleKeyDown` delivers each keydown **twice** when WAT focus is set:
+
+```
+we.send_message(watFocus, 0x0100, vkCode, 0);   // synchronous send
+this.inputQueue.push({...msg: 0x0100, wParam: vkCode...});  // queued
+```
+
+For pinball, `check_input_hwnd: keyboard → focus 0x10002` confirms watFocus is the main window. So each keydown reaches the wndproc twice.
+
+This is consistent with our counts:
+- 3 keydowns × 2 = 6 process_key entries (F2+Space+Z test) ✓
+- 2 keydowns × 2 = 4 entries (F2+Z test) ✓
+- Keyups don't go through process_key (the wndproc only dispatches WM_KEYDOWN to the bit-30 test at `0x01007d1a`)
+
+**Why it's relevant to the flipper bug:** the immediate `send_message` runs BEFORE F2's gate3-flipping write at `0x010d785f` lands. So the dispatch is:
+
+1. F2 keydown → immediate send_message → process_key with gate3==2 → inactive path
+2. F2 keydown → process_key inside batch flips gate3 to 1 (via `0x010d785f` reached through inactive-path side-effects? need to verify)
+3. F2 keydown → queued → process_key with gate3==1 → reaches b5, fails Z-cmp, takes no-match chain
+4. Z keydown → immediate send_message → process_key with gate3=??? — if step 3 reset it to 2, inactive
+5. Z keydown → queued → process_key with gate3 still 2 → inactive
+
+The single `0x010150b5` hit observed in single-Z + F2 tests is most likely **F2's QUEUED dispatch** (step 3), not Z. To confirm, instrument the b5 path to print esi at that point.
+
+Next concrete step: write a `--trace-instr=ADDR` or short-circuit by dumping `[ebp+8]` via an existing mechanism. The cleanest is probably to add a `--print-regs-at=ADDR` flag that, like `--count`, fires on every basic-block-equivalent EIP hit but prints registers. Alternatively, narrow further by setting a write-watchpoint on a memory location only the match-body touches (e.g. at `0x010150d4` we write fld result to `[esp]`, but [esp] varies — better target: the indirect call at `0x010150de` writes a return address to the new stack slot). 
+
+### NEW: gate3 setter located + caller pattern
+
+`tools/xrefs.js 0x01025568` shows ONE writer: `0x0101472f mov [0x1025568], esi`. It's the tail of a state-setter function `0x0101461a` (signature: `set_gate3_state(int)`); arg 1/2/3/4 dispatches through side effects then writes to gate3.
+
+After the double-dispatch fix, watching gate3 over a fuller run (F2 + Space + 3× Z keydowns):
+
+| Batch | Transition | Setter call |
+|---|---|---|
+| 219 | 0 → 1 | from `0x010155ee` (init) |
+| 3397 | 1 → 2 | from `0x01011b54` (caller fn `0x01011987`) — demo enters running state |
+| 5001 | 2 → 1 | from `0x010153c2` (F2 keydown handler) |
+| **6226** | **1 → 2** | from `0x01011b54` again — **resets to demo before Z arrives at batch 7000** |
+
+So **after F2 launches the game at batch 5001, the demo-state resetter at fn `0x01011987` re-fires at batch 6226 and pushes gate3 back to 2**. By the time Z keypress arrives at batch 7000, the gate is closed again.
+
+`0x01011987` has no static xrefs (`tools/find-refs` returns 0) — it's reached via vtable indirection (likely a per-frame component callback). Its first arg `[ebp+8]` selects a sub-handler: `sub eax, 0x42; jz 0x1011b3b` then `dec eax; jnz 0x1011b84`. So the args are 0x42 ('B') and 0x43 ('C') — character-coded commands. The 0x42 path leads to the `set_gate3_state(2)` call.
+
+**Hypothesis:** something is firing this component's "B" command on every animation tick OR after some "demo idle timeout" that is mis-firing in our emulator. Could be a missing message in the GetMessageA queue (e.g., a `WM_TIMER` that should advance demo state but instead resets it), or a component vtable[N] being mistakenly dispatched.
+
+### Next steps
+
+1. Find what's invoking the vtable that targets `0x01011987` — instrument with `--break=0x01011987` and inspect the call stack.
+2. Compare against a no-F2 run (where gate3 stays 2 throughout demo) to see if the same vtable call site fires at the same cadence — that'd narrow whether it's a timer or a state-machine bug.
+3. Long-term: if gate3==2 is "demo", the F2 handler should set a sticky "game running" flag elsewhere that prevents this resetter from firing. Look for a state field that pinball sets in F2 path (`0x010d785f`) but our emu may not be honoring.
+
+### NEW (2026-04-28): gate3 setter caller census + asymmetry NOT real
+
+**TranslateMessage trace confirms both Z (0x5A) and / (0xBF) reach the wndproc as WM_KEYDOWN/KEYUP.** Both go through the normal message pump — no TranslateAccelerator path. So the L vs R "asymmetry" in the playable test is almost certainly **noise**: signal=366 in the R rect is just ball physics + scoreboard text changing between settle.png (batch 8200) and right.png (batch 8400), not actual flipper movement. The `R flipper rect: noise=128px signal=366px` reading is misleading — we should re-baseline R-rect noise against the same time window where R is held but the flipper hypothetically isn't moving.
+
+**process_key (0x01015072) hit count over full F2+Space+Z+/ run = 4.** That's exactly 4 keydowns reaching it (F2/Space/Z// — KEYUPs not dispatched), so all 4 keys reach process_key. process_key bails at the gate3 check `cmp dword [0x1025568], 0x1` (0x010150a0): if not 1, jumps to 0x10152d2 (exit). Both Z and / arrive while gate3==2, so **both are dropped at the same gate**.
+
+**Caller census of gate3-setter `0x0101461a`** (6 static call sites, run with F2+Space+Z):
+
+| Caller | Hits | Sets gate3 to | Notes |
+|---|---|---|---|
+| `0x010155ee` | 1 | 1 | one-shot init at batch 219 |
+| `0x01011b4f` (in fn 0x01011987 'B' path) | 2 | 2 | demo-resetter — fires twice, batch 3397 and 6223 |
+| `0x010147b3` (start of big "reset world" fn at 0x010147a0) | 2 | 2 | also pushes 2 — same demo-reset family |
+| `0x010153bd` (F2 keydown handler) | 2 | 1 | F2 path — sets gate3=1 |
+| `0x01018930` | 2 | ? | ? |
+| `0x01014786` | 0 | 4 | unused in this run |
+
+`0x01011987` and `0x010147a0` are BOTH gate3=2 setters and BOTH fire twice. Together they explain the 1→2 transitions at batches 3397 and 6223. The 2nd round is what kills gameplay.
+
+**Curious `--count` artifact:** entry of fn `0x01011987` reports 0 hits, but inner blocks (0x010119a7, 0x01011a78, 0x01011b84) report dozens. Bytes upstream of 0x01011987 are `int3` padding (no fall-through), and no static pointer literals to 0x01011987 (or 0x010119a7) exist anywhere in the PE. Yet the fn clearly executes (0x01011b84 epilogue hits 29×, gate3-store fires from 0x01011b4f). Either `--count` slot for fn-entry-with-`mov edi,edi` prefix mishandles block-entry detection, or the cache decoder is fusing the entry block with a predecessor in a way that hides the entry address. **Not load-bearing for the bug investigation, but worth a tools note** — `--count` at fn entries with hot-patch prefixes may silently report 0 even when the fn runs.
+
+### Cleaner next step
+
+Forget tracing the indirect caller. Instead: check whether `0x010d785f` (the suspected sticky "game-running" flag write in F2 path) actually fires in our emulator. If it doesn't, the bug is upstream of gate3 — F2 sets gate3=1 but fails to set the OTHER flag that disables the demo-state resetter, so the ticker walks back into demo on its next pass. `tools/xrefs.js` on whatever address F2 writes via 0x010d785f will tell us who reads it (i.e., the resetter caller's gate condition).
+
+### NEW (2026-04-28 evening): full call chain captured via `--trace-at + --trace-callstack`
+
+Combining `--trace-at=0x01011b3b --trace-callstack=12` printed the EBP-walked stack at every gate3=2 store. Both 1→2 transitions (batches 3397 + 6223) showed an **identical 9-frame stack**:
+
+```
+ret=0x01011e30  (in fn 0x01011bb7 — case 0x20 of jump table)
+ret=0x01012d6c  (in fn ~0x010128be — calls 0x01011bb7 with arg=0x42)
+ret=0x01011f05
+ret=0x010185a3
+ret=0x0101c809
+ret=0x01014a19
+ret=0x01014b95
+ret=0x01014c4f
+ret=0x01008a32  (top: tick / message-pump driver)
+```
+
+**Hot-patch entry off-by-2:** call site at 0x01011e2b targets `0x01011985`, NOT `0x01011987`. The real fn entry has the `8b ff` (mov edi, edi) hot-patch prefix at 0x01011985; the `push ebp` prologue is at +2 (0x01011987). `tools/find-refs.js` on 0x01011987 returned 0; on 0x01011985 returned 1 — every find-refs sweep should be tried at both `entry` and `entry-2` for compiler hot-patch ABI.
+
+**The dispatch chain:**
+
+| Fn | Role |
+|---|---|
+| `0x01011985` (=`0x01011987`+(-2 hot-patch)) | message handler — `[ebp+8]==0x42` ('B') → call vtable[0x14], call `set_gate3_state(2)` |
+| `0x01011bb7` | jump-table dispatcher — `ebx = [0x1023bbc][0x6]`, case `ebx==0x20` (offset 32 in table at 0x01011e40) lands at `0x01011e29` which calls `0x01011985(edi, esi)` |
+| `~0x010128be` | sets `[0x1023bbc][0x6] = 0x20`, pushes `0x42` ('B') as edi, calls `0x01011bb7` |
+
+So **the demo-resetter is invoked deliberately** by SOME state machine in `~0x010128be` that decides "switch component X to mode 0x20 and send it message 'B'." The mystery is which call in our message-pump chain (frames #3-#8) is reaching that branch when it shouldn't.
+
+**Tool note:** `--trace-at=ADDR --trace-callstack=N` is the recipe for capturing a call site without static pointer literals. No need to add a new flag — it already works for arbitrary addresses, not just APIs. Just remember to enable `--trace-callstack` (the WAT side maintains call-stack metadata via `set_callstack_enabled`).
+
+### NEXT (2026-04-28, late): the predicate is `[0x1023d0c+0x6]`
+
+Disasm of the actual call site at 0x01012d49–0x01012d67 (inside fn ~0x010128be, the "ball-end handler"):
+
+```
+01012d49  mov eax, [0x1023d0c]      ; OBJ_D0C — game-state object
+01012d4e  cmp [eax+0x6], ebx        ; predicate (ebx == 0)
+01012d51  mov eax, [0x1023bbc]      ; OBJ_BBC — dispatcher target
+01012d56  push ebx                  ; arg2
+01012d57  push 0x42                 ; arg1 = 'B'
+01012d59  jz short 0x1012d64        ; predicate==0 → "no demo reset" branch
+01012d5b  mov [eax+0x6], 0x20       ; predicate!=0 → arm OBJ_BBC.field=0x20 (demo resetter)
+01012d62  jmp short 0x1012d67
+01012d64  mov [eax+0x6], ebx        ; predicate==0 → arm OBJ_BBC.field=0 (no reset)
+01012d67  call 0x1011bb5            ; dispatch on OBJ_BBC.field
+```
+
+So **`[0x1023d0c + 0x6]` is the gate**. When nonzero at ball-end time, the demo-resetter is invoked. When zero, the case-0 branch runs (normal "next ball" flow). This is the inverse of what we want during gameplay — that field should be 0 throughout play.
+
+**Plan:**
+1. `--watch-byte=0x01023d12 --watch-log` over a full session to log every transition of `[0x1023d0c+0x6]` and correlate against gate3 transitions. (`0x1023d0c+6 = 0x01023d12`.)
+2. If the byte goes nonzero just before batch 6223, that's the smoking gun — `find-refs.js` / `find_field.js --reg=eax --op=write` at offset 0x6 will name the writer.
+3. If it's zero throughout, the gate3=2 firing at 6223 is benign and the visible regression has another root.
+
+Also: `find_fn.js` reports `entry=0x010128be (-0)` but the preceding `c3` is the ModRM of `2b c3 sub eax,ebx`, not a real ret — the heuristic was fooled. The actual entry is upstream of 0x010127c0 (desynced byte stream there suggests an embedded jump table). Not needed for the predicate watch.
+
+### CONFIRMED (2026-04-28, late evening): bug is in ball_index/ball_count, not the gate
+
+OBJ_D0C lives on the heap (initialised at batch 1459 to 0x0143562c in our run; pointer slot 0x01023d0c is BSS-zero at boot, set indirectly with no static-disasm xref). Gate byte = `0x0143562c + 0x6 = 0x01435632`.
+
+`--watch-byte=0x01435632 --watch-log` over a full F2+Space session:
+
+| Batch | Old→New | EIP (writer) | Meaning |
+|---|---|---|---|
+| 637  | 0→0x42 | 0x010e56f4 | startup |
+| 640  | 0x42→0 | 0x010d75f2 | startup |
+| 3383 | 0→1    | 0x0101293d | demo's last-ball end (expected) |
+| 5006 | 1→0    | 0x01009f29 (prev=0x01009a10) | F2 "new game" clears it ✓ |
+| 6256 | 0→1    | 0x0101293d | **gameplay end-of-game fires too early** ✗ |
+
+Writer at 0x0101291d only reaches if all three hold:
+```
+[OBJ_5040 + 0xda] + 1 == [OBJ_5040 + 0xd6]    ; ball_index+1 == ball_count
+[OBJ_5040 + 0x146] == 0                        ; tilt/extra-ball guard
+```
+
+So either ball_count was set to 1 by F2 (instead of 3) or ball_index is initialised at ball_count-1 — both make the very first plunge register as game-over, which then triggers the demo-resetter via the gate.
+
+**CONFIRMED at firing batch 6258:** `--trace-at=0x01012918 --trace-at-dump=0x012696ee:0x40` showed both fires (#1 demo end, #2 gameplay end) with **identical** OBJ_5040 layout. Decoded:
+
+- `[OBJ+0xd6] = 1` (ball_count) ❌ should be 3
+- `[OBJ+0xda] = 0` (ball_index)
+
+So ball_count is **permanently 1**. The first plunge legitimately registers as "last ball ended" and triggers demo restoration.
+
+**ball_count writers** (`tools/find_field.js 0xd6 --op=write`): only at 0x010189a2 / 0x010189aa / 0x010189b9 — three branches of one clamp `clamp(ftol(floor([ebp+0xc])), 0, 4)`. The float arg comes from `[ebp+0xc]` of fn 0x010187d6 (caller's stack). Code path ID at this site is `push 0x3f5; call 0x10187d6` (msg_id 1013 = "set ball_count from float").
+
+`tools/find-refs.js 0x010187d6` finds: 2 internal recursions + **one data-ref at 0x01002790 → vtable**. Bytes around: `..."table"\0\0\0  d6 87 01 01 ...` — vtable for the `table` class at 0x01002790, slot[0] = 0x010187d6. That's the same object whose pointer lives at 0x01025040 (=OBJ_5040). So ball_count is set via `vtable[0](0x3f5, float_arg)`.
+
+**Watch on slot itself** (`--watch=0x0126970a --watch-log`): three writes total, all in pre-game:
+- batch 6: `0 → 0x4f433030` (string-init, irrelevant offset overlap)
+- batch 220: cleared
+- batch 2122: `0 → 1` from the writer at 0x010189a2 (the only "real" ball_count set)
+
+**No write happens during F2.** The F2 path runs a "soft reset" fn ending at 0x01009a1f (`mov [esi+0x6], edi` clears the gate byte + zeros many other [esi+...] fields) but never re-runs vtable[0](0x3f5, ...). And even at batch 2122, the float arg already floors to 1 — so even if F2 re-fired the setter, it would set 1 again.
+
+**Two open questions:**
+1. Where does the float arg to `vtable[0](0x3f5, ...)` come from? In real pinball, default = 3.0. Possible sources: (a) hardcoded literal, (b) registry/INI, (c) PINBALL.DAT-derived. Registry probe trace shows `HKCU\...\Plus!\Pinball\SpaceCadet\Pinball Data → not found` (returns empty) — could be the bug if pinball expects nonempty bytes there for ball_count.
+2. Is this an emu regression at all, or a longstanding "1 ball default" quirk? Compare with original pinball.exe behaviour or check if a recent change to registry/INI handling started returning empty where it used to return 3.
+
+**Next concrete step:** trace the call site of `vtable[0](0x3f5, ...)` — set `--trace-at=0x010187d6 --trace-callstack=8` and filter by ecx==0x01269634 or by msg_id=0x3f5; the float parameter at `[esp+8]` (cdecl) tells us where 1.0 originates. If it's from a static load of a `.data` constant, dump that VA. If it's from a computation, trace upward.
+
+For now, the pixel-rect playable test (`test/test-pinball-playable.js`) is the regression detector.
+
+### Test
+
+`test/test-pinball-playable.js` exercises both flippers (Z and `/`) with tighter bounding-box diffs: left flipper rect `[40,270]→[100,310]`, right flipper rect `[105,270]→[165,310]`. Currently fails by design — it's the regression target.
+
 ## Open Tasks
 
 ### 1. Re-add pinball flag pokes — DONE
