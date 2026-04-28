@@ -100,14 +100,23 @@ function flushPendingPaints(harness) {
       r._defwndprocNcpaint(win, win.x, win.y, win.w, win.h);
     }
   }
-  // Walk every slot; deliver WM_PAINT to children of any registered window.
+  // Walk every slot; deliver WM_PAINT to any descendant of a registered
+  // top-level. Multiple passes handle grandchildren (e.g. combobox's inner
+  // listbox is a grandchild of the test top-level).
   const topSet = new Set(Object.keys(r.windows).map(k => Number(k)));
-  for (let s = 0; s < 256; s++) {
-    const hw = e.wnd_slot_hwnd(s);
-    if (!hw || topSet.has(hw)) continue;
-    const parent = e.wnd_get_parent ? e.wnd_get_parent(hw) : 0;
-    if (!parent || !topSet.has(parent)) continue;
-    e.send_message(hw, 0x000F, 0, 0); // WM_PAINT
+  const painted = new Set(topSet);
+  for (let pass = 0; pass < 4; pass++) {
+    let progress = false;
+    for (let s = 0; s < 256; s++) {
+      const hw = e.wnd_slot_hwnd(s);
+      if (!hw || painted.has(hw)) continue;
+      const parent = e.wnd_get_parent ? e.wnd_get_parent(hw) : 0;
+      if (!parent || !painted.has(parent)) continue;
+      e.send_message(hw, 0x000F, 0, 0); // WM_PAINT
+      painted.add(hw);
+      progress = true;
+    }
+    if (!progress) break;
   }
 }
 

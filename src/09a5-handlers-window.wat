@@ -1456,16 +1456,16 @@
   ;; 82: SendDlgItemMessageA(hDlg, nIDDlgItem, Msg, wParam, lParam)
   ;; Equivalent to SendMessage(GetDlgItem(hDlg, nIDDlgItem), Msg, wParam, lParam)
   (func $handle_SendDlgItemMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $child_hwnd i32) (local $lParam i32)
-    ;; Read lParam from stack (5th arg, at ESP+24)
-    (local.set $lParam (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local $child_hwnd i32)
+    ;; arg0=hDlg, arg1=nIDDlgItem, arg2=Msg, arg3=wParam, arg4=lParam
+    ;; (already loaded by $win32_dispatch from ESP+4..20).
     ;; Try to find real control HWND
     (local.set $child_hwnd (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
     (if (local.get $child_hwnd)
       (then
         ;; Route through control wndproc dispatch
         (global.set $eax (call $control_wndproc_dispatch (local.get $child_hwnd) (local.get $arg2)
-          (local.get $arg3) (local.get $lParam)))
+          (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; Fallback: construct synthetic child HWND
@@ -1474,7 +1474,7 @@
     (if (i32.and (i32.ge_u (local.get $arg2) (i32.const 0x0401))
                  (i32.le_u (local.get $arg2) (i32.const 0x0440)))
       (then (call $host_send_ctrl_msg (local.get $child_hwnd) (local.get $arg2)
-              (local.get $arg3) (local.get $lParam))))
+              (local.get $arg3) (local.get $arg4))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 

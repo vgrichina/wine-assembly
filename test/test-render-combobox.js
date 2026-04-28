@@ -42,4 +42,6 @@ runRenderTest('combobox', async (h, check) => {
   // Open the dropdown so both the field AND the listbox visibly paint.
   e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
   check('CB_SHOWDROPDOWN(1) → is_dropped=1', e.combobox_is_dropped(cb) === 1);
+  const count = e.listbox_get_count(lb);
+  check('inner listbox has 5 items', count === 5, 'count=' + count);
 }, { minColors: 8 });
