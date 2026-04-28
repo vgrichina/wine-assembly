@@ -246,7 +246,19 @@
               (local.get $arg4)                                          ;; x
               (call $gl32 (i32.add (global.get $esp) (i32.const 24)))   ;; y
               (call $gl32 (i32.add (global.get $esp) (i32.const 28)))   ;; cx
-              (call $gl32 (i32.add (global.get $esp) (i32.const 32))))) ;; cy
+              ;; Combobox (class 5, non-CBS_SIMPLE): caller-supplied cy is the
+              ;; full dropped-down extent per Win32 convention. Clamp the
+              ;; window/hit-test rect to the field height (21px) so stacked
+              ;; combos in dialogs don't overlap each other and route clicks
+              ;; to the wrong combo. CREATESTRUCT keeps the original cy so
+              ;; combobox WM_CREATE can size its inner listbox child.
+              (select
+                (i32.const 21)
+                (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+                (i32.and
+                  (i32.eq (local.get $detected_class) (i32.const 5))
+                  (i32.ne (i32.and (local.get $arg3) (i32.const 0x3))
+                          (i32.const 1)))))) ;; CBS_SIMPLE keeps full height
           (else
             (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))))
     ;; Store parent hwnd (hWndParent = [esp+36])
@@ -279,7 +291,16 @@
               (local.get $arg4)                                          ;; x
               (call $gl32 (i32.add (global.get $esp) (i32.const 24)))   ;; y
               (call $gl32 (i32.add (global.get $esp) (i32.const 28)))   ;; cx
-              (call $gl32 (i32.add (global.get $esp) (i32.const 32))))))))
+              ;; Same combobox cy clamp as the system-class path above —
+              ;; this branch reruns ctrl_geom_set for any WS_CHILD with a
+              ;; parent, including the combobox we just registered.
+              (select
+                (i32.const 21)
+                (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+                (i32.and
+                  (i32.eq (local.get $detected_class) (i32.const 5))
+                  (i32.ne (i32.and (local.get $arg3) (i32.const 0x3))
+                          (i32.const 1))))))))) ;; CBS_SIMPLE keeps full height
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
