@@ -1401,3 +1401,34 @@ Neither AddVisual call sites firing nor not firing is the relevant signal — we
 2. Once found, count their hits. If zero, that's where the chain breaks.
 
 This is a more productive thread than slot-32 hunting.
+
+**2026-04-28 cont.13 — pivot complete: `[esi+0x13c]` is a transform snapshot, NOT a visual list. Real AddVisual is slot 18.**
+
+Walked the 7 lea-`[reg+0x13c]` sites with `find_fn`. The decisive one is inside the gate setter `0x647966da` itself at `+0xc0`:
+
+```
+64796796  lea esi, [eax+0xb4]
+6479679c  lea edi, [eax+0x13c]
+647967a2  rep movsd  ; ecx=17 → 68 bytes
+```
+
+So `[eax+0x13c]` is a 17-dword **snapshot of `[eax+0xb4]`** (the current transform block) — the "previous transform" needed to compute interpolation deltas. It is NOT a visual list. The populator `0x647c0ddc` reads this snapshot, calls `0x6479a6a2(local, &snapshot, local)` to derive interpolated values, then bulk-copies them into `[esi+0xb8..+0xe0]` — i.e. updates the *current* transform block from interpolation between `[esi+0xb4]` (current) and `[esi+0x13c]` (previous). That entire chain is the **animation interpolation subsystem** — irrelevant to whether visuals get rendered.
+
+**Slot-numbering correction.** From the DX6/7 SDK `IDirect3DRMFrame` vtable, slot 18 = `AddVisual` (1-arg), slot 32 = `GetSceneFogParams` (a getter). I had the slot wrong by 14. The earlier "slot 32 = AddVisual" was a guess from comparing constructor counts — the disassembly disproved it.
+
+**Real AddVisual census on ROCKROLL.SCR.**
+```
+$ node tools/find_vtable_calls.js test/binaries/screensavers/ROCKROLL.SCR 18
+=== [.text]  24 hits  call dword [reg+0x48] ===
+```
+24 sites. Verified one at `0x74410c7a`:
+```
+74410c72  mov edx, [esp+0x1c]
+74410c76  mov ecx, [eax]      ; vtable
+74410c78  push edx            ; arg
+74410c79  push eax            ; this
+74410c7a  call [ecx+0x48]     ; AddVisual(this, visual)
+```
+1-arg + this — matches `AddVisual(IDirect3DRMVisual*)` exactly.
+
+**Real next step.** Set `--break-api` (or a code break) at d3rm.dll's slot-18 thunk and count hits during ROCKROLL run. If zero hits, the SCR never attaches visuals to frames (asset-loading failure or scene-construction abort earlier). If non-zero, AddVisual fires but the render walk skips them — that's a different failure mode (frame visibility / camera attach / viewport binding).
