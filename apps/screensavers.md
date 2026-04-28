@@ -1230,3 +1230,60 @@ So the entire emit-subtree — 2 levels up from the leaf — is statically reach
 **Update on (1)/(2):** byte-search for `0x647bf26a` and `0x647bd538` as 4-byte LE words anywhere in d3rm.dll → **0 hits each**. Neither is a vtable target. Combined with `xrefs.js` showing zero call-target xrefs to `0x647bf26a`, that fn is most likely dead code in the binary itself (unreferenced — possibly an inline helper the optimizer kept around). So the only live entry into the emit-subtree is via fn `0x647bd538` and its 3 callers — all of which are dead at runtime. **The whole geometry-emit branch of d3rm is unreachable from the per-frame path the SCR drives.**
 
 This rotates the next-step priority: stop chasing the dead emit-subtree. Instead profile the *live* per-frame path's leaves to see what they DO emit. The 5863 Execute calls per run all come through `0x647c26a0`'s state-batcher (vc=0, il=32). Walk *into* that batcher to see what it iterates over — if its source list is empty, that's the upstream bug. Look for the loop body inside `0x647c26a0` (or its caller chain `0x64786365`/`0x64799202`/`0x64799087`) that should be visiting per-mesh state but is iterating zero items.
+
+**2026-04-28 cont.10 — visual-list count is **0** across all 16 invocations of the per-frame state-batcher.**
+
+Walking `0x647c26a0` upward landed on the real enclosing fn — preferred VA **`0x64798e51`** (reloc `0x745b3e51`), found by scanning for `55 8b ec` prologues between `0x64798c00` and `0x6479905f` in d3rm's `.text`. (`find_fn` mis-classifies because there's a code/data island just above; raw byte search beats it here.)
+
+Fn `0x64798e51` runs the per-frame state setup. Around offset `+0x237` it has the suspect iteration loop:
+
+```
+64799082  push esi
+64799083  call 0x647c21ec      ; ret addr 0x64799087 (Execute-wrapper from prior trace)
+64799088  xor  ecx, ecx
+6479908a  cmp  [esi+0xbc], ebx ; ebx=0 here
+64799090  jle  0x647990be
+loop:
+  mov  eax, [esi+0xc4]         ; per-visual array
+  mov  eax, [eax+ecx*4]        ; array[i]
+  cmp  [eax+0x84], ebx         ; flag
+  jz   set_to_1
+  mov  [eax+0x88], ebx
+  jmp  next
+set_to_1:
+  mov  dword [eax+0x88], 0x1
+next:
+  inc  ecx
+  cmp  ecx, [esi+0xbc]
+  jl   loop
+```
+
+So **`[esi+0xbc]` = visual count, `[esi+0xc4]` = visual array base**. Each item has flags at +0x84/+0x88 — looks like "dirty/visible" bits.
+
+`--count` over 15k batches: fn fires **16×**. `--trace-at=0x745b3e51` gives one register snapshot per call:
+
+| call # | esi | esi+0xbc value |
+|---|---|---|
+| #1 | 0x74a19420 | **0** |
+| #2 | 0x74a194e0 | (esi increments by 0xc0 each call) |
+| #3 | 0x74a195a0 | — |
+| ... | ... | — |
+| #15 | 0x74a19f00 | — |
+
+`--trace-at-dump=0x74a194dc:4,0x74a1959c:4,0x74a1965c:4` (esi+0xbc for #1/#3/#5):
+
+```
+Hexdump 0x74a194dc (4 bytes):  00 00 00 00
+Hexdump 0x74a1959c (4 bytes):  00 00 00 00
+Hexdump 0x74a1965c (4 bytes):  00 00 00 00
+```
+
+**Visual count = 0 in every case.** This is the smoking gun: the per-frame state-batcher iterates a list of zero visuals, so emits zero per-visual state ops, and never descends into the geometry-emit path. Matches the consistent `vc=0, il=32` Execute-buffer signature (just 4 state ops + EXIT, no geometry).
+
+The 16 `esi` values march by 0xc0 from `0x74a19420` to `0x74a19f00` — a contiguous array of 16 × 0xC0-byte device-state context records, plausibly one per render queue slot. None has a non-empty visual list.
+
+**Implication:** the SCR creates `IDirect3DRMMeshBuilder`s and frames (constructor counts confirm: 6 / 40 over 15k batches), but the equivalent of `Frame::AddVisual` either (a) is never invoked, or (b) targets a different aggregation than the one the per-frame batcher reads. The visual-attach path is broken upstream.
+
+**Next probe:**
+1. Find writers to `[esi+0xbc]` and `[esi+0xc4]` in d3rm.dll: `node tools/find_field.js test/binaries/dlls/d3drm.dll 0xbc --reg=esi,edi --op=write,imm` (and 0xc4). The setter is what `AddVisual` calls under the hood. Once located, count its hits — if **zero**, the SCR never invokes the AddVisual path; if nonzero, the writes target a different esi than the one fn `0x64798e51` reads.
+2. Walk up callers of fn `0x64798e51` (xrefs at `0x64798598`, `0x64799082`, `0x647a118c`) — that's the fn calling chain that actually reads from these contexts. The "input" caller would be where the SCR's per-frame entry point lands, telling us which interface method the SCR uses to feed visuals into d3rm.
