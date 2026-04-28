@@ -1298,7 +1298,7 @@
       (then
         (local.set $row (call $gl32 (i32.add
           (call $gl32 (i32.add (global.get $esp) (i32.const 24))) ;; lpDDBltFx arg6
-          (i32.const 36)))) ;; DDBLTFX.dwFillColor at offset 36
+          (i32.const 80)))) ;; DDBLTFX.dwFillColor at offset 80 (after dwSize..dwAlphaSrcConst)
         (call $host_dx_trace (i32.const 13) (call $dx_slot_of (local.get $dst_entry))
           (local.get $row) (local.get $dx) (local.get $dy))
         ;; Fill destination rect
