@@ -3249,11 +3249,19 @@
   ;; ============================================================
   (func $combo_popup_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $owner i32) (local $rect i32) (local $w i32) (local $h i32)
-    (local $mx i32) (local $my i32)
+    (local $mx i32) (local $my i32) (local $sw i32) (local $lb i32)
     (local.set $owner (call $wnd_get_userdata (local.get $hwnd)))
-    ;; WM_LBUTTONDOWN: outside-rect → ask owner combo to close as cancel.
-    ;; lParam = (y<<16)|x, signed 16 each, in popup-local client coords.
-    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+    ;; WM_LBUTTONDOWN / WM_LBUTTONUP / WM_MOUSEMOVE / WM_LBUTTONDBLCLK:
+    ;; outside-rect → ask owner combo to close as cancel; inside → forward
+    ;; to inner listbox child (which lives at popup-local (0,0), so lParam
+    ;; passes through unchanged). The listbox isn't a renderer-known
+    ;; window, so the renderer can't deep-hit-test it — forwarding here
+    ;; makes click-to-select work for CBS_DROPDOWNLIST popups.
+    (if (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))   ;; WM_LBUTTONDOWN
+                  (i32.eq (local.get $msg) (i32.const 0x0202)))  ;; WM_LBUTTONUP
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0200))   ;; WM_MOUSEMOVE
+                  (i32.eq (local.get $msg) (i32.const 0x0203)))) ;; WM_LBUTTONDBLCLK
       (then
         (local.set $mx (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $my (i32.shr_s (local.get $lParam) (i32.const 16)))
@@ -3269,11 +3277,23 @@
               (i32.or (i32.ge_s (local.get $mx) (local.get $w))
                       (i32.ge_s (local.get $my) (local.get $h))))
           (then
-            (if (local.get $owner)
-              (then (call $combobox_close_dropdown (local.get $owner) (i32.const 0))))
+            ;; Outside rect: only LBUTTONDOWN dismisses the dropdown.
+            ;; (UP/MOVE outside should be ignored, not trigger close.)
+            (if (i32.eq (local.get $msg) (i32.const 0x0201))
+              (then
+                (if (local.get $owner)
+                  (then (call $combobox_close_dropdown (local.get $owner) (i32.const 0))))))
             (return (i32.const 0))))
-        ;; Inside: fall through (return 0; capture-translated coords on the
-        ;; listbox child are dispatched through the normal hit-test path).
+        ;; Inside: forward to listbox child (state offset +20).
+        (if (local.get $owner)
+          (then
+            (local.set $sw (call $wnd_get_state_ptr (local.get $owner)))
+            (if (local.get $sw)
+              (then
+                (local.set $lb (i32.load offset=20 (call $g2w (local.get $sw))))
+                (if (local.get $lb)
+                  (then (drop (call $wnd_send_message (local.get $lb)
+                                (local.get $msg) (local.get $wParam) (local.get $lParam)))))))))
         (return (i32.const 0))))
     ;; WM_COMMAND from inner listbox child — forward to owner combo so its
     ;; existing LBN_SELCHANGE / LBN_DBLCLK handling fires.
@@ -3374,7 +3394,14 @@
     (drop (call $wnd_set_style (local.get $lb) (i32.or (local.get $style) (i32.const 0x10000000))))
     (i32.store offset=32 (local.get $sw) (i32.const 1))
     (global.set $combo_open_hwnd (local.get $hwnd))
-    (global.set $capture_hwnd (local.get $hwnd))
+    ;; Capture: prefer the popup (variant=3) so DOWN+UP both flow through
+    ;; $combo_popup_wndproc, which forwards inside-rect events to the inner
+    ;; listbox. Without this, UP gets routed via capture to the combo and
+    ;; misses the listbox entirely. Falls back to combo for variants without
+    ;; a popup shell (CBS_SIMPLE).
+    (if (local.get $popup)
+      (then  (global.set $capture_hwnd (local.get $popup)))
+      (else  (global.set $capture_hwnd (local.get $hwnd))))
     ;; CBN_DROPDOWN(7) → parent
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (local.get $parent)
@@ -3426,19 +3453,33 @@
     (i32.store offset=32 (local.get $sw) (i32.const 0))
     (if (i32.eq (global.get $combo_open_hwnd) (local.get $hwnd))
       (then (global.set $combo_open_hwnd (i32.const 0))))
-    (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+    (if (i32.or (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+                (i32.and (i32.ne (local.get $popup) (i32.const 0))
+                         (i32.eq (global.get $capture_hwnd) (local.get $popup))))
       (then (global.set $capture_hwnd (i32.const 0))))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $sw)) (i32.const 0xFFFF)))
     (if (local.get $parent)
       (then
-        ;; CBN_SELENDOK(9) or CBN_SELENDCANCEL(10)
+        ;; CBN_SELENDOK(9) or CBN_SELENDCANCEL(10) — POSTED, not sent.
+        ;; Real Win32 sends these synchronously, but doing so here means
+        ;; the row-pick click (which already runs nested under JS-driven
+        ;; $wnd_send_message into our popup wndproc) recursively reenters
+        ;; the dialog wndproc one frame deep. In pinball.exe specifically,
+        ;; the dialog wndproc returns through a stack-pop sequence that
+        ;; depends on x86 callee-save state established by its outer
+        ;; PeekMessage caller — when reentered nested, the saved ESI on
+        ;; the dialog's stack frame is the recursive-run scratch (0),
+        ;; and after the wndproc's pop esi the outer pump calls esi=0
+        ;; (EIP=0 freeze). Posting defers the notification to the next
+        ;; PeekMessage iteration, where the dialog wndproc runs as a
+        ;; first-class dispatch instead of nested-reentry.
         (local.set $notif (select (i32.const 9) (i32.const 10) (local.get $accept)))
-        (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+        (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
                 (i32.or (local.get $ctrl_id) (i32.shl (local.get $notif) (i32.const 16)))
                 (local.get $hwnd)))
-        ;; CBN_CLOSEUP(8)
-        (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+        ;; CBN_CLOSEUP(8) — also posted for the same reason.
+        (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
                 (i32.or (local.get $ctrl_id) (i32.shl (i32.const 8) (i32.const 16)))
                 (local.get $hwnd)))))
     (call $invalidate_hwnd (local.get $hwnd))
@@ -3977,8 +4018,10 @@
                 (call $combobox_sync_text (local.get $state_w))
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
                 (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+                ;; CBN_SELCHANGE(1) → parent dialog. POSTED for the same
+                ;; reentrancy reason as CBN_SELENDOK below (close_dropdown).
                 (if (local.get $parent)
-                  (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                  (then (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
                           (i32.or (local.get $ctrl_id) (i32.shl (i32.const 1) (i32.const 16)))
                           (local.get $hwnd)))))
                 (call $invalidate_hwnd (local.get $hwnd))

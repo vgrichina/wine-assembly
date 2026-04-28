@@ -912,6 +912,12 @@
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
     (i32.load offset=20 (call $g2w (local.get $s))))
 
+  (func (export "combobox_get_popup_hwnd") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=24 (call $g2w (local.get $s))))
+
   (func (export "combobox_get_edit_hwnd") (param $hwnd i32) (result i32)
     (local $s i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))

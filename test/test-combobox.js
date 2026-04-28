@@ -160,6 +160,39 @@ async function main() {
   check('out-of-bounds click closes dropdown',
     e.combobox_is_dropped(cb) === 0);
 
+  // ---------------- Popup-shell click forwarding ----------------
+  // Renderer hit-testing routes clicks within the dropped popup directly to
+  // the popup hwnd (not to the combobox), because the popup is a top-level
+  // WS_POPUP and the listbox is a WAT-internal child not registered with the
+  // renderer. The popup wndproc must therefore forward inside-rect mouse
+  // events to its inner listbox. Without this, click-to-select silently
+  // does nothing — which was the pinball Player Controls bug.
+  if (e.combobox_get_popup_hwnd) {
+    e.send_message(cb, CB_SETCURSEL, 0, 0);  // baseline = "Up"
+    e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
+    const popup = e.combobox_get_popup_hwnd(cb);
+    check('popup hwnd exists for CBS_DROPDOWNLIST',
+      popup !== 0, 'popup=0x' + popup.toString(16));
+    // Popup-local (5, row2_y). Each list row is 16px; first row at y=0 in
+    // popup-local coords (listbox is at popup-local (0,0)). Row 2 → y in
+    // (32..47). Click at (5, 35) should select index 2 = "Left".
+    e.send_message(popup, WM_LBUTTONDOWN, 1, (5 & 0xFFFF) | ((35 & 0xFFFF) << 16));
+    check('popup-routed click selected row 2',
+      e.combobox_get_cur_sel(cb) === 2 && getText() === items[2],
+      `sel=${e.combobox_get_cur_sel(cb)} text="${getText()}"`);
+    check('popup-routed click closes dropdown (accept)',
+      e.combobox_is_dropped(cb) === 0);
+
+    // Popup-local outside-rect click (negative coords) dismisses as cancel.
+    e.send_message(cb, CB_SETCURSEL, 1, 0);  // baseline
+    e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
+    e.send_message(popup, WM_LBUTTONDOWN, 1, (-5 & 0xFFFF) | ((-5 & 0xFFFF) << 16));
+    check('popup outside-rect click cancels dropdown',
+      e.combobox_is_dropped(cb) === 0);
+    check('popup outside-rect click does not change selection',
+      e.combobox_get_cur_sel(cb) === 1);
+  }
+
   // CB_SHOWDROPDOWN(1) opens, CB_SHOWDROPDOWN(0) closes.
   e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
   check('CB_SHOWDROPDOWN(1) opens', e.combobox_is_dropped(cb) === 1);
