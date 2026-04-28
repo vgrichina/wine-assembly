@@ -532,17 +532,16 @@
     ;; buttons never receive their first WM_PAINT and so never post
     ;; WM_DRAWITEM to the dialog proc — calc.exe's 30-button keypad
     ;; would stay invisible after ShowWindow(dlg).
-    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $hwnd)))
-    (if (local.get $dlg_rec)
-      (then
-        (local.set $ctrl_count (i32.load offset=28 (local.get $dlg_rec)))
-        (local.set $i (i32.const 0))
-        (block $done (loop $push_loop
-          (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
-          (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
-          (call $paint_flag_set (local.get $ctrl_hwnd))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $push_loop)))))
+    ;; Walk children via parent linkage — combobox WM_CREATE may have added
+    ;; auxiliary windows (inner listbox / WS_POPUP shell) that interleave
+    ;; with dialog controls and break the dlg_hwnd+1+i contiguous assumption.
+    (local.set $i (i32.const 0))
+    (block $done (loop $push_loop
+      (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
+      (br_if $done (i32.eq (local.get $i) (i32.const -1)))
+      (call $paint_flag_set (call $wnd_slot_hwnd (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $push_loop)))
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then

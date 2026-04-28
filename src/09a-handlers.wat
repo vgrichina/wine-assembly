@@ -2036,18 +2036,17 @@
     (call $nc_flags_set (local.get $hwnd) (i32.const 1))
     ;; Enqueue WM_PAINT for each child control. Mirrors CreateDialogParamA;
     ;; otherwise buttons/edits/statics never get their first WM_PAINT while
-    ;; the modal pump runs.
-    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $hwnd)))
-    (if (local.get $dlg_rec)
-      (then
-        (local.set $ctrl_count (i32.load offset=28 (local.get $dlg_rec)))
-        (local.set $i (i32.const 0))
-        (block $done (loop $push_loop
-          (br_if $done (i32.ge_u (local.get $i) (local.get $ctrl_count)))
-          (local.set $ctrl_hwnd (i32.add (local.get $hwnd) (i32.add (local.get $i) (i32.const 1))))
-          (call $paint_flag_set (local.get $ctrl_hwnd))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $push_loop)))))
+    ;; the modal pump runs. Walk via $wnd_next_child_slot rather than
+    ;; assuming contiguous hwnd allocation — combobox WM_CREATE may
+    ;; allocate auxiliary windows (inner listbox, WS_POPUP shell) that
+    ;; punch holes in the dlg_hwnd+1..dlg_hwnd+ctrl_count range.
+    (local.set $i (i32.const 0))
+    (block $done (loop $push_loop
+      (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
+      (br_if $done (i32.eq (local.get $i) (i32.const -1)))
+      (call $paint_flag_set (call $wnd_slot_hwnd (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $push_loop)))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
     (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
