@@ -1348,3 +1348,56 @@ Fn signature `ret 0x18` = 6 args × 4 bytes. Looks like `Frame::AddVisual(this, 
 1. Find SCR-side `call [reg+0x80]` (slot 32 = offset 0x80) instructions — those are the AddVisual call sites in the SCR binary. If no such instruction exists in `ROCKROLL.SCR`, the SCR uses a different attach mechanism (e.g., `IDirect3DRMMeshBuilder::AddFace` directly into a global mesh, or `IDirect3DRMViewport::SetCamera` style aggregation we haven't found yet).
 2. Alternative hypothesis: the SCR may build geometry into a **single mesh-builder** that's attached via `IDirect3DRM::SetDefaultTextureColors`/some scene-root API rather than per-frame. Search for slot offsets used in `call dword [reg+0xNN]` patterns inside SCR's `.text` to enumerate which Frame/MeshBuilder methods it actually uses.
 3. Faster: dump every COM vtable indirect call EIP from the SCR itself and tally — currently we have constructor counts but no full vtable-call census from the SCR's perspective.
+
+**2026-04-28 cont.12 — assets confirm; gate fn signature ≠ AddVisual; promoted slot-call scanner.**
+
+Promoted `/tmp/scan_slot.js` to `tools/find_vtable_calls.js` (commit `263b632`). Modes: `<slot>`, `--disp=0xNN`, `--slots` histogram, `--reg=` filter. Filled the call-indirect-by-displacement gap left by `find_field.js` / `xrefs.js`.
+
+**Asset / file-IO sanity check.** All ROCKROLL assets are present in `test/binaries/screensavers/` (RO_PICK.X 7KB, RO_GIT.X 45KB, RO_TEX01.GIF, RO_BACK.GIF). The SCR opens them via `CreateFileA` then `GetFileSize → CreateFileMappingA → MapViewOfFile → … → UnmapViewOfFile`. Mesh `.X` files are read via memory-mapping, not `ReadFile` (so absence of `[FS] ReadFile` for `.X` is not a bug). `lib/filesystem.js:700` `fs_map_view_of_file` correctly copies `vfs.files[path].data` into a fresh `guest_alloc` region — verified with `--trace-host=fs_map_view_of_file`: each `.X` file produces a unique mapping at distinct guest addresses (e.g. ro_pick.x → 0x7500a004). `--dump-vfs` confirms both files registered with full byte counts. **File IO is not the bug.**
+
+**Slot-32 census on the SCR.** `find_vtable_calls.js ROCKROLL.SCR 32` reports **40** `call dword [reg+0x80]` sites in `.text`. Distribution: ecx=24, edx=16. `--slots` histogram shows the most-active slots in SCR's compiled code:
+
+| slot | disp | count |
+|---|---|---|
+| 1 | 0x04 | 157 |
+| 2 | 0x08 | 555 |
+| 3 | 0x0c | 57 |
+| 4 | 0x10 | 66 |
+| 5 | 0x14 | 76 |
+| 6 | 0x18 | 41 |
+| 22 | 0x58 | 38 |
+| 23 | 0x5c | 66 |
+| 26 | 0x68 | 53 |
+| 32 | 0x80 | 40 |
+
+Slots 1/2 dominate (Release/AddRef). Slots 3-6 are typical IUnknown-extended methods.
+
+**Gate setter fn signature is NOT AddVisual.** Disassembly of fn `0x64788789` (sole caller of the gate setter) shows it takes **6 stack args + this** (`ret 0x18` after pushing this+6):
+
+```
+64788789  push ebp; mov ebp,esp; push esi
+6478878d  push [0x647e7ad4]; call [0x64781198]   ; lock acquire
+64788799  mov eax, [ebp+0xc]; …                  ; arg1: frameB ptr → ecx (deref +8 +0x10)
+647887aa  mov eax, [ebp+0x8]; …                  ; arg0: frameA ptr → eax (same deref)
+647887bb  push float [ebp+0x1c]; … +0x18; … +0x14; … +0x10  ; 4 floats
+647887d7  push ecx; push eax
+647887d9  call 0x647966da                        ; gate setter
+…
+647887e6  call [0x647811a4]                      ; lock release
+647887f0  ret 0x18                               ; 6-arg cdecl/stdcall + this
+```
+
+So slot 32 is `Method(this, frameA*, frameB*, float, float, float, float)` — **two frame pointers + 4 floats**, not the canonical 1-arg `AddVisual(visual)` signature. With the FPU-compare-then-set-dirty-flag pattern in fn `0x647966da`, this is more consistent with a `Transform`/`SetMatrix`/`SetSceneBackground`-style mutator that compares old vs new value to set a "dirty" bit — likely `IDirect3DRMFrame::SetSceneFogParams` or one of the `Set*Transform*(this, refFrame, …, axis_x, axis_y, axis_z, theta)` style methods. **Not AddVisual.**
+
+**Implication.** Earlier conclusion was wrong: `[esi+0xb1]` is not a "visual attached" gate but a "transform/state changed" dirty-flag, which gates whether the per-frame batcher repopulates the visual array `[esi+0xc4]` from a source list. Either:
+- (a) the source list (somewhere upstream) is empty AND the dirty flag never fires, so the array stays null forever; or
+- (b) the source list has visuals but the dirty flag never fires, so they're never copied into the per-context array the batcher reads.
+
+Neither AddVisual call sites firing nor not firing is the relevant signal — we were chasing the wrong gate.
+
+**Pivot.** The right next step is to find what *populates* the visuals' source list (likely a member of the d3rm scene root, before the per-context cache). Start from the writers to `[esi+0xc4]` and walk *upstream* — the call site that copies INTO that field is sourced from somewhere. Specifically:
+
+1. Disasm fn `0x647c0ddc` (the populator) at `+0x37` (the `call 0x647c0e2e → 0x6479a6a2` prior to the writes). That call's output is the local `[ebp-0x44 .. -0x18]` block which then gets bulk-copied into `[esi+0xb8 .. +0xe0]`. So fn `0x6479a6a2` produces `(visual_count, visual_array_ptr, …)` — its inputs are `[esi+0x13c]` and a tmp buffer. So **`[esi+0x13c]` is the upstream visual-list source.** Find writers to `+0x13c`.
+2. Once found, count their hits. If zero, that's where the chain breaks.
+
+This is a more productive thread than slot-32 hunting.
