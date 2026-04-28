@@ -1064,3 +1064,10 @@
   ;; Set by $combobox_open_dropdown / cleared by $combobox_close_dropdown.
   (global $combo_open_hwnd (mut i32) (i32.const 0))
 
+  ;; Set while $combobox_wndproc forwards a navigation key (VK_DOWN/UP/HOME/
+  ;; END/PGUP/PGDN) to its inner listbox. The listbox fires LBN_SELCHANGE
+  ;; back via WM_COMMAND; the combo uses this flag to suppress the
+  ;; click-driven "close on selection" path so keyboard nav can scroll
+  ;; through items without dismissing the dropdown.
+  (global $combo_kbd_nav_active (mut i32) (i32.const 0))
+

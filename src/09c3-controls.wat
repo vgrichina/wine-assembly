@@ -3294,7 +3294,33 @@
         (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
                 (i32.or (local.get $ctrl_id) (i32.shl (i32.const 8) (i32.const 16)))
                 (local.get $hwnd)))))
-    (call $invalidate_hwnd (local.get $hwnd)))
+    (call $invalidate_hwnd (local.get $hwnd))
+    ;; The inner listbox was painted into the parent's back-canvas while
+    ;; visible; hiding it via WS_VISIBLE removal stops future paints but
+    ;; leaves stale dropdown pixels on the canvas. Repaint the parent
+    ;; (dialog) AND every sibling so the gray background reappears under
+    ;; the dropdown area and other controls (labels, buttons, other combos)
+    ;; aren't left as gaps. The renderer doesn't cascade parent → children
+    ;; on its own — child paint flags are tracked per-slot.
+    (if (local.get $parent)
+      (then
+        (call $invalidate_hwnd (local.get $parent))
+        (call $combobox_invalidate_siblings (local.get $parent) (local.get $hwnd)))))
+
+  ;; Mark every direct child of $parent (including $hwnd, harmless) as
+  ;; needing WM_PAINT, so closing a dropdown doesn't leave the dialog's
+  ;; other controls unpainted after the parent's background re-erase.
+  (func $combobox_invalidate_siblings (param $parent i32) (param $hwnd i32)
+    (local $slot i32) (local $ch i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $walk
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (local.get $ch)
+        (then (call $paint_flag_set (local.get $ch))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $walk))))
 
   ;; Helper: copy the inner listbox's selected item text into combobox text_buf.
   ;; Called after CB_SETCURSEL or LBN_SELCHANGE so WM_GETTEXT returns the right thing.
@@ -3739,8 +3765,13 @@
                 (i32.or (i32.eq (local.get $wParam) (i32.const 0x21))  ;; VK_PRIOR
                         (i32.eq (local.get $wParam) (i32.const 0x22))))) ;; VK_NEXT
           (then
+            ;; Suppress click-driven close: keyboard nav fires LBN_SELCHANGE
+            ;; via the listbox synchronously, but we don't want that to close
+            ;; the dropdown.
+            (global.set $combo_kbd_nav_active (i32.const 1))
             (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0100)
                     (local.get $wParam) (local.get $lParam)))
+            (global.set $combo_kbd_nav_active (i32.const 0))
             (return (i32.const 0))))
         (return (i32.const 0))))
 
@@ -3785,10 +3816,16 @@
                           (i32.or (local.get $ctrl_id) (i32.shl (i32.const 1) (i32.const 16)))
                           (local.get $hwnd)))))
                 (call $invalidate_hwnd (local.get $hwnd))
-                ;; LBN_DBLCLK while dropped → accept-close
-                (if (i32.eq (local.get $notif) (i32.const 2))
+                ;; Click-driven LBN_SELCHANGE/LBN_DBLCLK while dropped →
+                ;; accept-close. Keyboard nav suppresses this via
+                ;; $combo_kbd_nav_active so VK_DOWN/UP can scroll the listbox
+                ;; without dismissing the dropdown. CBS_SIMPLE (variant=1)
+                ;; has no dropdown to close.
+                (if (i32.and
+                      (i32.load offset=32 (local.get $state_w))
+                      (i32.eqz (global.get $combo_kbd_nav_active)))
                   (then
-                    (if (i32.load offset=32 (local.get $state_w))
+                    (if (i32.ne (local.get $variant) (i32.const 1))
                       (then (call $combobox_close_dropdown (local.get $hwnd) (i32.const 1))))))
                 (return (i32.const 0))))))
         (return (i32.const 0))))
