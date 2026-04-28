@@ -872,3 +872,144 @@ CORBIS investigation (2026-04-20): the COM dependency isn't IPicture/OleLoadPict
 - **SEH walker fix** — `frame_ebp = seh_rec + 0x10` (was `+0xC`) for the 5-dword MSVC `__SEH_prolog4` layout; also reset `$steps=0` on unwind so `$th_call` doesn't clobber the unwind target. Apps with top-level MFC `__except` handlers now exit cleanly.
 - **dibSection sparse-hash sync** — `_syncDibSection` no longer wipes the canvas on every BitBlt source resolution. Unblocked PHODISC's desktop-color render.
 - **GetClipBox / Timer ID 0 / SetStretchBltMode / GetBkColor / GetTextColor / GdiFlush / PlaySoundA stub** — implemented.
+
+**2026-04-27 iteration — public Viewport::Render is dead at the SCR boundary; "caller B" recap was a false lead.**
+
+Today's session pinned down two things that the prior chain had wrong:
+
+1. **`0x647bc46a` is NOT a viewport-render path.** Its sole xref is `0x647914ca` inside fn `0x647914b5`, which sits at slot 32 of all three IDirect3DRMFrame vtables (`0x647e0200/0290/0320`) and is a critsec-wrapped 1-float setter (scene-fog-class). So the prior session's "caller B at `0x647bc516` is the viewport-render path to populator" was wrong — `0x647bc516` is inside the body of the fog setter, not on the render hot path. That branch fires only for fog manipulation, which ROCKROLL never does.
+
+2. **Public IDirect3DRMViewport vtable located: `0x647dfde0` (38 slots).** Confirmed via `tools/vtable_dump.js`:
+   - Slots 0–10 = IUnknown(3) + IDirect3DRMObject(8) shared base — same prefix as every other RM vtable in `.data` (`0x64791da1, 0x64791df6, 0x64791e3d, 0x64791e84, 0x64791f73, 0x647924ab, 0x647926d4, 0x64792720, 0x64792766, 0x647927aa, 0x647928bd`).
+   - Slot 13 = **IDirect3DRMViewport::Render = `0x6478be6d`**. Body confirms: `push esi; push [global_lock]; call [crit_lock]; mov eax,[esp+8]=arg1=Frame; if (eax) ecx=[eax+8]; ... call 0x647aebc1; push eax; push esi; call 0x64793e93; ...; pop esi; ret 0x8` — single-frame-arg, locked, dispatches to internal renderer at `0x64793e93`.
+
+3. **Runtime probe — `0x6478be6d` (relocated `0x745d6e6d`) NEVER fires** in an 8000-batch ROCKROLL run. Confirms an architectural fact already implicit in the trace inventory: the SCR never calls the public IDirect3DRMViewport::Render. The whole "RM scene tree → RM Render → emits Execute buffer" mental model doesn't apply here. **ROCKROLL is pure D3DIM:** `--trace-api` over a full run shows **zero** `IDirect3DRM*` API names — only `IDirect3D{,2,3}_*`, `IDirect3DDevice{,2,3}_*`, `IDirect3DExecuteBuffer_*`, `IDirect3DViewport3_*`, `IDirect3DMaterial3_*`, `IDirect3DTexture2_*`. The only d3rm import the SCR pulls is `Direct3DRMCreate` (plus a few math helpers).
+
+   So d3rm.dll is loaded, `Direct3DRMCreate` is called once, but nothing on the render side ever traverses through public RM interfaces. The visible per-frame work (the Lock/Unlock/Execute/Clear cycle) goes directly through D3DIM. d3rm's internal scene-walker (the `0x647c534f` family we've been tracing) is reachable, but only via the Frame fog setter — which the SCR never invokes — so it's effectively dead code in this run.
+
+4. **Vtable map of d3drm `.data`** (file/VA delta `dataFile=0x5e400`, dataVA=0x647df000): scanning for runs of valid-text-pointers yields 37 vtable runs. Notable identifications:
+   - `0x647e0200 / 0x647e0290 / 0x647e0320` — IDirect3DRMFrame v1/v2/v3 (≈33/45/39 slots). Confirmed.
+   - `0x647dfde0` — IDirect3DRMViewport (38 slots, slot 13=Render=`0x6478be6d`). **NEW.**
+   - `0x647dff98` (24 slots) + `0x647dfff8` (14 slots) — paired interfaces sharing 11-slot RMObject base; sizes don't match Viewport.
+   - `0x647dfb50` (~70 slots before next prefix) — IDirect3DRMMeshBuilder3 candidate (extends RMVisual+RMObject; ~50 derived methods).
+   - Long merged runs at `0x647dfde0..` and `0x647dfb50..` contain multiple back-to-back vtables; the 11-slot RMObject prefix demarcates each new vtable boundary.
+
+**Reframed picture (consolidated with prior findings):** The *only* per-frame execute buffer that reaches our D3DIM is the d3rm-internal state batcher producing `vc=0, il=32` (4× state ops + EXIT). The SCR doesn't drive RM at all post-Direct3DRMCreate. So the geometry must be coming from one of:
+   (a) The SCR builds D3DIM execute buffers itself (with TRIANGLE/PROCESSVERTICES) and our Lock/Unlock pair fails to retain its writes — but `--trace-stack=Lock:8` shows every Lock caller resolves to a d3rm-internal fn (`0x647c3744` / `0x647c3726`), never to SCR code (`0x744xxxxx`). So **the SCR doesn't directly populate execute buffers either.**
+   (b) The SCR's draw path is "build execute buffer via d3rm-internal helpers it discovered through QI on the device" — i.e., d3rm exposes execute-buffer-fill helpers that the SCR uses without going through the public RM Render API. This matches the prior `0x6479ff51` finding (16 hits per frame, all skipping body via the `0x6479fe13` dirty-check). The SCR's per-frame work invokes that wrapper, but the dirty bit is never set, so the populator never runs.
+   (c) Old hardware-rendering shortcut: SCR fills geometry through `IDirect3DDevice::DrawPrimitive`-style calls. Our trace has zero `DrawPrimitive` (no `IDirect3DDevice2_DrawPrimitive` in the API set), so this path is also dead.
+
+**Concrete consolidation for next session:**
+- Drop the Viewport::Render hypothesis — it's dead at the SCR boundary.
+- Re-focus on the existing `0x6479ff51`/`0x6479fe13` finding: at runtime, when ff51 fires, dump `[ebp+8]` (= esi inside fe13) and read `+0x90` (flags), `+0x5cc`, `+0x698` (list heads). Whichever gate is failing tells us which upstream init step is missing.
+- Cross-check with the SCR's d3rm-internal entry: only one of ff51's two callers (`0x647857ef` or `0x647bc516`) is on the live path. `0x647bc516` is inside the fog setter (dead in ROCKROLL), so all 16 ff51 hits per frame must come from `0x647857ef`. Find what fn `0x647857ef` belongs to and walk up — that's the per-frame entry the SCR uses to drive d3rm internals.
+
+**2026-04-27 cont. — `0x647857cf` identified: IDirect3DRMDevice slot 14 (versioned), reachable from SCR's paint loop.**
+
+Walked the live caller of `0x6479ff51` (the dirty-check wrapper that fires 16×/frame but always skips body). The trampoline at `0x647857cf`:
+```
+push [global_lock]; call [crit_lock]
+mov eax,[esp+8]            ; arg1 = this (COM wrapper)
+test eax,eax; jz null
+mov eax,[eax+8]            ; eax = inner
+mov eax,[eax+0x10]          ; eax = inner.[+0x10]
+push eax
+call 0x6479ff51            ; ← the dirty-check chain
+push [global_lock]; call [crit_unlock]
+ret 0x4                     ; 1 arg + this
+```
+Single-arg public method, classic critsec-wrapped COM trampoline.
+
+`tools/xrefs.js` shows three xrefs to `0x647857cf` — all from `.data`. Scanning d3rm `.data` for the canonical 11-slot IUnknown+RMObject prefix yields 33 vtable starts; scoring `0x647857cf`'s slot index across those:
+- `0x647df068` slot 14
+- `0x647df0f0` slot 14
+- `0x647df190` slot 14
+
+Three vtables, same slot, identical fn → **versioned IDirect3DRMDevice vtables (Device v1/v2/v3), slot 14**. Per DX5 header order (IUnknown[3]+RMObject[8]+Device-specific), slot 14 is `HandlePaint(HDC)` — the per-WM_PAINT render-trigger an app calls to drive the device. The 16 hits/frame match a typical paint-loop cadence (one HandlePaint per child viewport per frame).
+
+So the SCR's per-frame entry into d3rm internals goes:
+```
+SCR WndProc/timer → IDirect3DRMDevice::HandlePaint(hdc)
+                  → trampoline 0x647857cf
+                  → 0x6479ff51 (dirty-check wrapper)
+                  → 0x6479fe13 (dirty bits @ [obj+0x90], list heads at +0x5cc/+0x698)
+                    → ALL 16 calls skip body — dirty bits never set
+                  → exit without populating
+```
+
+The bug surface narrows further: **dirty bits at `[obj+0x90]`** never get set during scene init. That's what gates the entire populate→emit→draw chain.
+
+**Refined next-session probe (keep narrow):**
+1. `--break=0x745b3f51 --break-once` (= `0x6479ff51 + 0xfe1b000`), at hit dump `[esp+4]` = arg-to-ff51, then dump that obj's `+0x90` (flags), `+0x5cc` (list head 1), `+0x698` (list head 2). Confirm all three are zero.
+2. `find_field --op=write 0x90 --reg=esi,edi` on d3drm.dll for writers that *set* (not zero) the dirty bits. The setter is what should fire when the SCR calls `IDirect3DRMFrame::AddVisual`/`AddChild`/`SetPosition` — find which of those it is, then trace whether the SCR ever invokes that path.
+3. The COM trace already shows the SCR calls `IDirect3DDevice_BeginScene/EndScene/Execute/CreateExecuteBuffer/SetMatrix/CreateMatrix` plus `IDirect3DViewport3_*` — but **no `IDirect3DRM*` API at all**. So the dirty bit must be set *internally* by Direct3DRMCreate or by an internal helper the SCR triggers via Device QI. Check Direct3DRMCreate's own body to see whether it primes `[device+0x90]` with the right flags.
+
+**2026-04-27 cont. — fe13 predicate decoded, gate is bit 1 of `[device+0x90]` (bit 0 is set, bit 1 is missing).**
+
+Ran with `--trace-at=0x745baf51 --trace-at-dump=0x750a9a68:0x100` (relocated ff51, d3drm.dll loaded at 0x7459b000, delta 0x0fe1b000, obj from `[esp+4]` is 0x750a9a68 — stable across all 16 hits/frame, confirming there's a single device on the paint path).
+
+Live device dump (first 0x100 bytes):
+```
++0x00  vtable=0x7500c138, inner=0x75033350
++0x10  =2  +0x18=0x745fb8f8 (d3rm static)  +0x20=0x7500bf60  +0x2c=0x74e13390 (global)
++0x3c  =0x280 (640)   +0x40=0x1e0 (480)        ← viewport size
++0x80  =0x3fb33333 (1.4f)   +0x8c=0x3fc00000 (1.5f)
++0x90  =0x00000001                                ← FLAGS: only bit 0 set
++0x94  =1  +0x98=1  +0x9c=0x7500bf50              ← visual-list count=1, array of 1 ptr
+```
+
+So the obj IS populated (1 visual at `0x7500bf50`, 640×480 viewport, default 1.4/1.5 floats — looks like real device state).
+
+Disassembled the predicate at `0x6479fe13`:
+```
+mov esi, [esp+8]                ; esi = device
+lea eax, [esi+0x5cc]; call 0x6479fe64    ; list_active(&device.list1)?
+test eax, eax; jnz fe3a
+lea eax, [esi+0x698]; call 0x6479fe64    ; list_active(&device.list2)?
+test eax, eax; jz fe53                    ; if BOTH lists inactive → return 0
+fe3a: mov eax, [esi+0x90]
+      test al, 0x1; jz fe4d              ; bit 0 must be set
+      test al, 0x2; jz fe4d              ; bit 1 must be set      ← FAILS HERE (al=0x01)
+      mov eax, 1
+fe4f: test eax, eax; jnz fe57            ; → run full populate path
+fe53: xor eax, eax; ret                  ; → return 0, ff51 caller skips work
+```
+
+And the list-active helper `0x6479fe64`:
+```
+mov eax, [esp+4]          ; arg = &device.list_struct
+test [eax+0x04], 0x40    ; jz fail
+test [eax+0x74], 0x10    ; jz fail
+test [eax+0x78], 0x20    ; jz fail
+return 1
+```
+Three independent ready-bits across a sub-struct. We didn't dump +0x5cc/+0x698 yet (next probe), so list-active state remains unknown — but it doesn't matter: **the bit-1 gate at +0x90 already fails**, fe13 returns 0 even if both lists are active.
+
+**Hunt for the bit-1 setter** — `find_field [reg+0x90] --op=write` on d3rm.dll yields exactly 4 mov-writers; none ORs in bit 1, none stores imm 3:
+- `0x64794596` — public setter `[ecx+0x90] = arg` (any value); enclosing fn `0x6479456e`. Single xref from trampoline `0x64785b8f`, which appears in **slot 36 of Device v2/v3 vtables (`0x647df180`/`0x647df220`)** — strongly looks like `IDirect3DRMDevice2::SetRenderMode(DWORD)`. **COM trace shows zero IDirect3DRM* calls from ROCKROLL.SCR** — slot 36 is never dispatched, so this path can't be where the value gets set at runtime.
+- `0x6479c852` — device-init initializer, writes `[esi+0x90] = 0` (init clears).
+- `0x6479d95c` / `0x6479d970` — list-unlink/relink in some teardown helper; neither sets bit 1.
+
+So the writers `find_field` can see don't account for the live value `0x01` in our dump. Either:
+  (a) bit 0 is set via a byte/OR op (`80 88 90 00 00 00 ..` or `83 88 90 00 00 00 ..`) that find_field's mov-only scan misses, or
+  (b) writer 4 (which copies `[ebx]` into `[ecx+0x90]`) fires with a global-table value that holds 1.
+
+**Refined next-session probe (this is the working theory):**
+1. Relocated breakpoints on the public setter and on writer 4: `--break=0x745af56e,0x745b8970 --break-once` — confirm (or rule out) that writer 4 is what installs the live value 1.
+2. If neither fires before the first ff51 hit, then bit 0 is set via a non-mov op. Run `objdump -d` / a custom byte-pattern grep on d3rm.dll for `83 88 90 00 00 00` (or-imm32) and `80 88 90 00 00 00` (or-imm8) to find OR-ers.
+3. Once the bit-0 setter is found, look for what *should* set bit 1 in the same code path. The likely scenario: there's a path conditioned on a flag we never satisfy (e.g., palette/dither config, scene attached, viewport background set), and that path is where bit 1 = "scene ready" gets ORed in. Identifying it pins down exactly which init-time check our emulator is failing.
+4. As a parallel probe, dump the larger device region `0x750a9a68:0x800` (covers +0x5cc and +0x698) just to verify list-active state isn't *also* failing — even though the bit-1 gate is sufficient on its own.
+
+**2026-04-27 cont.2 — ff51 = IDirect3DDevice IM EndScene; gate object is a *sub*-object of the device, not the device itself.**
+
+- xrefs(0x6479ff51) → 2 callers; the relevant one is thin trampoline `0x647857cf` (push critsec → call ff51 → pop critsec) which lives in slot 14 of Device v1/v2/v3 vtables `0x647df068/0x647df0f0/0x647df190` (slot offset 0x38 from each base, all three pointing at `0x647857cf`). **Slot 14 of IDirect3DDevice2 = EndScene.** So ff51 is the IM device's EndScene scene-renderer.
+- The trampoline pre-call at `0x647857d0`: `push eax = [[device+8]+0x10]`. So the obj that lands in `[esp+4]` of ff51 is **not the device** — it's `device->internal_state[+8]->[+0x10]`. Our earlier "live device dump at 0x750a9a68" was actually the IM-device's *render-context* or *scene-state* sub-object. The `+0x90` bit-flag predicate is on this sub-object, not on the device.
+- This means the bit-1 gate is whatever flag this sub-object sets to mean "scene populated and ready to render." Exec buffers, vertex buffers, and matrix-table state probably feed into it.
+- The 4 mov-writers in `find_field` may all target the device proper (called with different bases) — we need to redo `find_field` filtered to writers reachable from the IM render path (Execute / SetMatrix / SetRenderTarget / BeginScene). The byte-pattern grep for OR-imm targeting +0x90 in the *whole* DLL returned 0 hits, so the bit-1 setter is definitely a `mov dword ptr [reg+0x90], <value-with-bit1>` — and `<value-with-bit1>` must come from a load in a code path that's not yet firing.
+- Tried bp at relocated 0x745af56e / 0x745b8970 with `--max-batches=20000`: ROCKROLL.SCR didn't get past CRT init / heap loop in 100M instructions, never even reached `RegisterClass` → `CreateWindow` → first paint. Earlier sessions reaching ff51-16x/frame must have used different setup (longer run, different /s args, or windowed); current `/s` flow is stuck before any d3rm code executes (174 unique EIPs, none in the 0x745b0000+ range).
+
+**Next-session probe (revised):**
+1. Get the SCR past CRT init first — try `--args=""` (run-config dialog instead of /s) or `--args="/p HWND"` (preview), and crank `--max-batches=200000`. Confirm we reach a CreateWindow/ShowWindow before chasing the bit-1 problem.
+2. Once paint loop runs, set `--break=0x745b8516 --break-once` (= relocated 0x647bc516, the *other* ff51 caller — the one with a real prologue at `0x647bc46a`). It's the in-d3rm internal caller (not the vtable trampoline), and it likely runs *during* scene setup. If it fires earlier than the trampoline path, walk back to find which init step was supposed to set bit 1.
+3. Re-run `find_field 0x90 --op=write` but this time on **DLL-internal** structures. The "sub-object at device->[+8]->[+0x10]" could be a different class with its own +0x90 field that overlaps with what `find_field` is reporting. If the sub-object is allocated by a specific factory function, walk its constructor (`new` site → ctor) to see the full bit-init.
+4. Long shot: the bit-1 might actually represent "a render target has been bound" — check if SCR ever calls `IDirect3DDevice::SetRenderTarget` or equivalent. COM trace would show this. If absent, the SCR might be expecting an implicit binding that our emulator doesn't perform on viewport attach.
