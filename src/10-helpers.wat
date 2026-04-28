@@ -28,8 +28,13 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0xFFFF))
-  ;; Apply segment override to an address (FS=5 adds fs_base)
+  ;; Apply segment override to an address. FS=5 adds fs_base. GS=6 traps
+  ;; (no Win32 use of GS in this emulator). Other segments treated flat.
   (func $seg_adj (param $addr i32) (param $seg i32) (result i32)
+    (if (i32.eq (local.get $seg) (i32.const 6))
+      (then
+        (call $host_log_i32 (i32.const 0xCA5E9006))
+        (unreachable)))
     (if (result i32) (i32.eq (local.get $seg) (i32.const 5))
       (then (i32.add (local.get $addr) (global.get $fs_base)))
       (else (local.get $addr))))
@@ -1215,15 +1220,19 @@
                 (i32.eq (local.get $class_enum) (i32.const 5))
                 (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x3))
                         (i32.const 1)))))))
-      ;; Build CREATESTRUCT and send WM_CREATE
+      ;; Build CREATESTRUCT and send WM_CREATE. Per Win32 the x/y/cx/cy fields
+      ;; are PIXELS, not dialog units — combobox WM_CREATE in particular reads
+      ;; cs+16 (cy) to size its dropped listbox, and pinball's Player Controls
+      ;; supplied raw DLU ch=22 (≈38 px) so the listbox dropped area was only
+      ;; ~17 px tall, clipping to ~2 visible items.
       (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
       (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
-      (i32.store offset=16 (call $g2w (local.get $cs)) (local.get $ch))
-      (i32.store offset=20 (call $g2w (local.get $cs)) (local.get $cw))
-      (i32.store offset=24 (call $g2w (local.get $cs)) (local.get $cy))
-      (i32.store offset=28 (call $g2w (local.get $cs)) (local.get $cx))
+      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4)))
+      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2)))
+      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4)))
+      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
       (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_ptr))
       (i32.store offset=40 (call $g2w (local.get $cs)) (i32.const 0))

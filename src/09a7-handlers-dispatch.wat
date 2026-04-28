@@ -955,6 +955,30 @@
       (global.set $eax (i32.const 0xFFFF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))  ;; stdcall, 1 arg
 
+  ;; VK->scancode lookup table for letters A..Z (vk 0x41..0x5A → table[vk-0x41]).
+  ;; Real PS/2 set-1 scancodes; the previous (uCode-0x20) approximation produced
+  ;; bogus values (e.g. Z=0x3A) that GetKeyNameTextA couldn't decode, so the
+  ;; Pinball Player Controls dialog rendered "?" for the default flipper keys.
+  (data (i32.const 0x380)
+    "\1e\30\2e\20\12\21\22\23\17\24\25\26\32\31\18\19\10\13\1f\14\16\2f\11\2d\15\2c")
+
+  ;; Reverse table: PS/2 set-1 scancode → VK (uMapType=1). Indexed by scancode
+  ;; 0x00..0x58 (89 bytes). Pinball's Player Controls dialog walks scan 0..0xFF
+  ;; calling MapVirtualKey(scan,1) to populate its key-binding combobox; without
+  ;; this table every entry collapses to vk=0. Numpad scancodes (0x47..0x53)
+  ;; map to VK_NUMPAD*/_DECIMAL/_ADD/_SUBTRACT/_MULTIPLY/_DIVIDE — the arrow
+  ;; vkeys come from extended (0xE0-prefixed) scancodes, not the base table.
+  (data (i32.const 0x3A0)
+    "\00\1b\31\32\33\34\35\36\37\38"   ;; 0x00..0x09
+    "\39\30\bd\bb\08\09\51\57\45\52"   ;; 0x0a..0x13
+    "\54\59\55\49\4f\50\db\dd\0d\11"   ;; 0x14..0x1d
+    "\41\53\44\46\47\48\4a\4b\4c\ba"   ;; 0x1e..0x27
+    "\de\c0\10\dc\5a\58\43\56\42\4e"   ;; 0x28..0x31
+    "\4d\bc\be\bf\10\6a\12\20\14\70"   ;; 0x32..0x3b
+    "\71\72\73\74\75\76\77\78\79\90"   ;; 0x3c..0x45
+    "\91\67\26\69\6d\25\65\27\6b\61"   ;; 0x46..0x4f (4B/4D/48 favor arrow VKs)
+    "\28\63\60\6e\00\00\00\7a\7b")     ;; 0x50..0x58 (50 favors VK_DOWN over NP2)
+
   ;; 785: MapVirtualKeyA — translate between vkeys, scan codes, and characters
   (func $handle_MapVirtualKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $uCode i32)
@@ -969,15 +993,25 @@
       (if (i32.eqz (local.get $uMapType))
         (then
           (block $vk0_done
-            ;; Letters A-Z: vkeys 0x41-0x5A -> scancodes 0x1E-0x39 (approximate)
+            ;; Letters A-Z: vkeys 0x41-0x5A -> real PS/2 set-1 scancodes via table
             (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x41)) (i32.le_u (local.get $uCode) (i32.const 0x5A)))
               (then
-                ;; Simple mapping: A=0x1E, B=0x30, C=0x2E, etc. Use offset table concept
-                ;; For simplicity, return scancode = uCode (non-zero signals "exists")
-                (local.set $result (i32.sub (local.get $uCode) (i32.const 0x20)))
+                (local.set $result (i32.load8_u (i32.add (i32.const 0x380) (i32.sub (local.get $uCode) (i32.const 0x41)))))
                 (br $vk0_done)
               )
             )
+            ;; OEM punctuation
+            (if (i32.eq (local.get $uCode) (i32.const 0xBA)) (then (local.set $result (i32.const 0x27)) (br $vk0_done))) ;; ;:
+            (if (i32.eq (local.get $uCode) (i32.const 0xBB)) (then (local.set $result (i32.const 0x0D)) (br $vk0_done))) ;; =+
+            (if (i32.eq (local.get $uCode) (i32.const 0xBC)) (then (local.set $result (i32.const 0x33)) (br $vk0_done))) ;; ,<
+            (if (i32.eq (local.get $uCode) (i32.const 0xBD)) (then (local.set $result (i32.const 0x0C)) (br $vk0_done))) ;; -_
+            (if (i32.eq (local.get $uCode) (i32.const 0xBE)) (then (local.set $result (i32.const 0x34)) (br $vk0_done))) ;; .>
+            (if (i32.eq (local.get $uCode) (i32.const 0xBF)) (then (local.set $result (i32.const 0x35)) (br $vk0_done))) ;; /?
+            (if (i32.eq (local.get $uCode) (i32.const 0xC0)) (then (local.set $result (i32.const 0x29)) (br $vk0_done))) ;; `~
+            (if (i32.eq (local.get $uCode) (i32.const 0xDB)) (then (local.set $result (i32.const 0x1A)) (br $vk0_done))) ;; [{
+            (if (i32.eq (local.get $uCode) (i32.const 0xDC)) (then (local.set $result (i32.const 0x2B)) (br $vk0_done))) ;; \|
+            (if (i32.eq (local.get $uCode) (i32.const 0xDD)) (then (local.set $result (i32.const 0x1B)) (br $vk0_done))) ;; ]}
+            (if (i32.eq (local.get $uCode) (i32.const 0xDE)) (then (local.set $result (i32.const 0x28)) (br $vk0_done))) ;; '"
             ;; Numbers 0-9: vkeys 0x30-0x39 -> scancodes 0x0B,0x02-0x0A
             (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x30)) (i32.le_u (local.get $uCode) (i32.const 0x39)))
               (then
@@ -1016,19 +1050,45 @@
           (br $done)
         )
       )
-      ;; Type 1: scan code -> vkey (reverse of type 0) — return 0 for simplicity
-      ;; Type 2: vkey -> unshifted char
+      ;; Type 1: scan code -> vkey (reverse table at 0x3A0, scan 0x00..0x58).
+      ;; Pinball walks scan 0..0xFF at dialog init and pairs each with
+      ;; GetKeyNameTextA to build the Player Controls combobox.
+      (if (i32.eq (local.get $uMapType) (i32.const 1))
+        (then
+          (if (i32.le_u (local.get $uCode) (i32.const 0x58))
+            (then (local.set $result (i32.load8_u (i32.add (i32.const 0x3A0) (local.get $uCode))))))
+          (br $done)
+        )
+      )
+      ;; Type 2: vkey -> unshifted char.
+      ;; Pinball's combobox-populator at 0x1005c2d walks vk 0x80..0xFF asking
+      ;; MapVirtualKey(vk,2) to find the OEM vkey that produces a target glyph
+      ;; (e.g. '/' for the right flipper). Without OEM coverage here every
+      ;; punctuation slot in the dialog would silently skip.
       (if (i32.eq (local.get $uMapType) (i32.const 2))
         (then
-          ;; Letters: return lowercase ASCII
+          ;; Letters: return uppercase ASCII (real Windows returns uppercase
+          ;; for type 2; Pinball's compare uses the low byte either way).
           (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x41)) (i32.le_u (local.get $uCode) (i32.const 0x5A)))
-            (then (local.set $result (i32.add (local.get $uCode) (i32.const 0x20))))
+            (then (local.set $result (local.get $uCode)))
           )
           ;; Numbers: return ASCII digit
           (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x30)) (i32.le_u (local.get $uCode) (i32.const 0x39)))
             (then (local.set $result (local.get $uCode)))
           )
           (if (i32.eq (local.get $uCode) (i32.const 0x20)) (then (local.set $result (i32.const 0x20))))
+          ;; OEM punctuation (US layout, unshifted glyph)
+          (if (i32.eq (local.get $uCode) (i32.const 0xBA)) (then (local.set $result (i32.const 0x3B)))) ;; ;
+          (if (i32.eq (local.get $uCode) (i32.const 0xBB)) (then (local.set $result (i32.const 0x3D)))) ;; =
+          (if (i32.eq (local.get $uCode) (i32.const 0xBC)) (then (local.set $result (i32.const 0x2C)))) ;; ,
+          (if (i32.eq (local.get $uCode) (i32.const 0xBD)) (then (local.set $result (i32.const 0x2D)))) ;; -
+          (if (i32.eq (local.get $uCode) (i32.const 0xBE)) (then (local.set $result (i32.const 0x2E)))) ;; .
+          (if (i32.eq (local.get $uCode) (i32.const 0xBF)) (then (local.set $result (i32.const 0x2F)))) ;; /
+          (if (i32.eq (local.get $uCode) (i32.const 0xC0)) (then (local.set $result (i32.const 0x60)))) ;; `
+          (if (i32.eq (local.get $uCode) (i32.const 0xDB)) (then (local.set $result (i32.const 0x5B)))) ;; [
+          (if (i32.eq (local.get $uCode) (i32.const 0xDC)) (then (local.set $result (i32.const 0x5C)))) ;; \
+          (if (i32.eq (local.get $uCode) (i32.const 0xDD)) (then (local.set $result (i32.const 0x5D)))) ;; ]
+          (if (i32.eq (local.get $uCode) (i32.const 0xDE)) (then (local.set $result (i32.const 0x27)))) ;; '
           (br $done)
         )
       )
@@ -1081,6 +1141,53 @@
       (if (i32.eq (local.get $scan) (i32.const 0x01)) (then
         (i32.store (local.get $buf) (i32.const 0x00637345)) ;; "Esc\0"
         (local.set $len (i32.const 3)) (br $done)))
+      ;; Backspace (0x0E)
+      (if (i32.eq (local.get $scan) (i32.const 0x0E)) (then
+        (i32.store (local.get $buf) (i32.const 0x6B636142)) ;; "Back"
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x63617073)) ;; "spac"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x0065)) ;; "e\0"
+        (local.set $len (i32.const 9)) (br $done)))
+      ;; Caps Lock (0x3A)
+      (if (i32.eq (local.get $scan) (i32.const 0x3A)) (then
+        (i32.store (local.get $buf) (i32.const 0x73706143)) ;; "Caps"
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x636F4C20)) ;; " Loc"
+        (i32.store16 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x006B)) ;; "k\0"
+        (local.set $len (i32.const 9)) (br $done)))
+      ;; Num Lock (0x45)
+      (if (i32.eq (local.get $scan) (i32.const 0x45)) (then
+        (i32.store (local.get $buf) (i32.const 0x206D754E)) ;; "Num "
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x6B636F4C)) ;; "Lock"
+        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))
+        (local.set $len (i32.const 8)) (br $done)))
+      ;; Scroll Lock (0x46)
+      (if (i32.eq (local.get $scan) (i32.const 0x46)) (then
+        (i32.store (local.get $buf) (i32.const 0x6F726353)) ;; "Scro"
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x4C206C6C)) ;; "ll L"
+        (i32.store (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x006B636F)) ;; "ock\0"
+        (local.set $len (i32.const 11)) (br $done)))
+      ;; Numpad scancodes 0x37 (*), 0x47..0x53. Render as "Num <glyph>".
+      ;; 0x47-0x49=NP7-9, 0x4A=-, 0x4B-0x4D=NP4-6, 0x4E=+, 0x4F-0x51=NP1-3,
+      ;; 0x52=NP0, 0x53=. — match Windows' "Num 7" / "Num *" naming.
+      (local.set $ch (i32.const 0))
+      (if (i32.eq (local.get $scan) (i32.const 0x37)) (then (local.set $ch (i32.const 0x2A)))) ;; *
+      (if (i32.eq (local.get $scan) (i32.const 0x47)) (then (local.set $ch (i32.const 0x37)))) ;; 7
+      (if (i32.eq (local.get $scan) (i32.const 0x48)) (then (local.set $ch (i32.const 0x38)))) ;; 8
+      (if (i32.eq (local.get $scan) (i32.const 0x49)) (then (local.set $ch (i32.const 0x39)))) ;; 9
+      (if (i32.eq (local.get $scan) (i32.const 0x4A)) (then (local.set $ch (i32.const 0x2D)))) ;; -
+      (if (i32.eq (local.get $scan) (i32.const 0x4B)) (then (local.set $ch (i32.const 0x34)))) ;; 4
+      (if (i32.eq (local.get $scan) (i32.const 0x4C)) (then (local.set $ch (i32.const 0x35)))) ;; 5
+      (if (i32.eq (local.get $scan) (i32.const 0x4D)) (then (local.set $ch (i32.const 0x36)))) ;; 6
+      (if (i32.eq (local.get $scan) (i32.const 0x4E)) (then (local.set $ch (i32.const 0x2B)))) ;; +
+      (if (i32.eq (local.get $scan) (i32.const 0x4F)) (then (local.set $ch (i32.const 0x31)))) ;; 1
+      (if (i32.eq (local.get $scan) (i32.const 0x50)) (then (local.set $ch (i32.const 0x32)))) ;; 2  (overrides arrow Down)
+      (if (i32.eq (local.get $scan) (i32.const 0x51)) (then (local.set $ch (i32.const 0x33)))) ;; 3
+      (if (i32.eq (local.get $scan) (i32.const 0x52)) (then (local.set $ch (i32.const 0x30)))) ;; 0
+      (if (i32.eq (local.get $scan) (i32.const 0x53)) (then (local.set $ch (i32.const 0x2E)))) ;; .
+      (if (local.get $ch) (then
+        (i32.store (local.get $buf) (i32.const 0x206D754E)) ;; "Num "
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (local.get $ch))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 0))
+        (local.set $len (i32.const 5)) (br $done)))
       ;; Number row: 0x02-0x0A = '1'-'9', 0x0B = '0'
       (if (i32.and (i32.ge_u (local.get $scan) (i32.const 0x02)) (i32.le_u (local.get $scan) (i32.const 0x0A)))
         (then (i32.store16 (local.get $buf) (i32.add (i32.const 0x30) (i32.sub (local.get $scan) (i32.const 1))))
@@ -1187,6 +1294,23 @@
       (if (i32.eq (local.get $scan) (i32.const 0x58)) (then
         (i32.store (local.get $buf) (i32.const 0x00323146)) ;; "F12\0"
         (local.set $len (i32.const 3)) (br $done)))
+      ;; OEM punctuation — render the unshifted glyph as a 1-char name.
+      (local.set $ch (i32.const 0))
+      (if (i32.eq (local.get $scan) (i32.const 0x0C)) (then (local.set $ch (i32.const 0x2D)))) ;; -
+      (if (i32.eq (local.get $scan) (i32.const 0x0D)) (then (local.set $ch (i32.const 0x3D)))) ;; =
+      (if (i32.eq (local.get $scan) (i32.const 0x1A)) (then (local.set $ch (i32.const 0x5B)))) ;; [
+      (if (i32.eq (local.get $scan) (i32.const 0x1B)) (then (local.set $ch (i32.const 0x5D)))) ;; ]
+      (if (i32.eq (local.get $scan) (i32.const 0x27)) (then (local.set $ch (i32.const 0x3B)))) ;; ;
+      (if (i32.eq (local.get $scan) (i32.const 0x28)) (then (local.set $ch (i32.const 0x27)))) ;; '
+      (if (i32.eq (local.get $scan) (i32.const 0x29)) (then (local.set $ch (i32.const 0x60)))) ;; `
+      (if (i32.eq (local.get $scan) (i32.const 0x2B)) (then (local.set $ch (i32.const 0x5C)))) ;; \
+      (if (i32.eq (local.get $scan) (i32.const 0x33)) (then (local.set $ch (i32.const 0x2C)))) ;; ,
+      (if (i32.eq (local.get $scan) (i32.const 0x34)) (then (local.set $ch (i32.const 0x2E)))) ;; .
+      (if (i32.eq (local.get $scan) (i32.const 0x35)) (then (local.set $ch (i32.const 0x2F)))) ;; /
+      (if (local.get $ch) (then
+        (i32.store8 (local.get $buf) (local.get $ch))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0))
+        (local.set $len (i32.const 1)) (br $done)))
       ;; Unknown: write "?"
       (i32.store16 (local.get $buf) (i32.const 0x003F))
       (local.set $len (i32.const 1))
