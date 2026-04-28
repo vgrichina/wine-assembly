@@ -5746,9 +5746,9 @@
     (local $i i32) (local $c1 i32) (local $c2 i32) (local $minlen i32)
     (local.set $p1 (call $g2w (local.get $arg2)))
     (local.set $len1 (local.get $arg3))
-    ;; arg4 = lpString2, read cchCount2 from stack
+    ;; arg4 = lpString2, read cchCount2 (6th arg) from guest stack at esp+24
     (local.set $p2 (call $g2w (local.get $arg4)))
-    (local.set $len2 (call $gl32 (i32.add (call $g2w (global.get $esp)) (i32.const 4))))
+    (local.set $len2 (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     ;; If len == -1, compute strlen
     (if (i32.eq (local.get $len1) (i32.const -1))
       (then (local.set $len1 (call $strlen_a (local.get $p1)))))
@@ -5787,7 +5787,7 @@
     (local.set $p1 (call $g2w (local.get $arg2)))
     (local.set $len1 (local.get $arg3))
     (local.set $p2 (call $g2w (local.get $arg4)))
-    (local.set $len2 (call $gl32 (i32.add (call $g2w (global.get $esp)) (i32.const 4))))
+    (local.set $len2 (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     ;; If len == -1, compute wcslen
     (if (i32.eq (local.get $len1) (i32.const -1))
       (then (local.set $len1 (call $strlen_w (local.get $p1)))))
