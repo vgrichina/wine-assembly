@@ -766,6 +766,61 @@ The populator wrapper at `0x6479e550` (loaded VA `0x745B9550`) calls inner `0x64
 2. Once identified, set `--trace-at=` on each level to see which is the topmost fn that DOES fire vs the topmost that DOESN'T — the gap is the missing wiring.
 3. The likely culprit class: `IDirect3DRMViewport::Render` or its inner `BuildVisualList`. Check `[obj+0x540]` slot 12 callee from Gate B for hints about what kind of object owns `[+0x540]`.
 
+**Iteration (2026-04-27, part 2): walked the chain up — found the gating fn, identified the failing dirty/has-work check.**
+
+Call chain (each level confirmed by xrefs):
+
+```
+0x6479e6cc (allocator, writes [vp+0x9c])
+  ← 0x6479e550 (wrapper, success path)            16 callers
+  ← 0x6479e259 (multi-arg caller, calls 0x6479e550 at 0x6479e3c1)
+  ← 0x6479ee1c (loop fn — walks 3 parallel arrays at [ebp+0x10/14/18], calls 0x6479e259 per item)
+  ← 0x6479f1ee (only 1 xref to ee1c)
+  ← 0x6479ff51 (entry: push ebp; sub esp,0x20)    2 callers: 0x647857ef, 0x647bc516
+```
+
+Fn `0x6479ff51` body (relevant skeleton):
+```
+push 0x647e08f8 / push [ebp+8] / lea/push &local
+call 0x64799d8d           — QI/lock probe (returns nonzero on FAIL)
+test eax,eax
+jnz 0x647a021e            — FAIL path (skip body)
+push [ebp+8]
+call 0x6479fe13           — DIRTY/has-work check (returns 1 if work needed)
+test eax,eax
+jz  0x6479ffeb            — SKIP body if no work
+... (body that eventually calls 0x6479f1ee → ... → populator)
+```
+
+**Runtime probes (single --trace-at per run, block-entry only):**
+
+| Probe | Loaded VA | Hits |
+|---|---|---|
+| 0x6479ff51 entry (wrapper) | 0x745BAF51 | **16** |
+| 0x6479ff76 (after QI-success) | 0x745BAF76 | **16** |
+| 0x6479ff7e (after dirty-check call) | 0x745BAF7E | **16** |
+| 0x6479ff85 (work-path entry) | 0x745BAF85 | **0** |
+| 0x6479ffeb (skip-body target) | 0x745BAFEB | **16** |
+| 0x6479f1ee | 0x745BA1EE | 0 |
+| 0x6479ee1c | 0x745B9E1C | 0 |
+| 0x6479e259 | 0x745B9259 | 0 |
+| 0x6479e550 (populator) | 0x745B9550 | 0 |
+
+**Conclusion:** Wrapper `0x6479ff51` IS reached 16 times. QI succeeds every time. **All 16 calls take the skip-body path** because `0x6479fe13` (dirty/has-work check) returns 0 every time. The populator chain is therefore never invoked.
+
+`0x6479fe13` returns 1 only if **both** conditions hold:
+1. List at `[esi+0x5cc]` non-empty OR list at `[esi+0x698]` non-empty (probe via `0x6479fe64` — likely "is list head non-NULL")
+2. AND `[esi+0x90] & 3 == 3` (both bits 0 and 1 set)
+
+`esi` here is the object passed to ff51 — based on push-pattern at the call site (`push 0x647e08f8` / `push [ebp+8]` / `lea+push`), this is presumably a viewport or root frame.
+
+**Next-session pivot:**
+1. At runtime, when 0x6479ff51 fires, dump the wrapper's `[ebp+8]` (= `esi` inside fe13) and read `+0x90`, `+0x5cc`, `+0x698`. That tells us which of the two gates is failing.
+2. Trace the writers to those fields to find the missing wiring:
+   - `find_field --op=write 0x90 --reg=esi,edi,ebx` for the flags field
+   - `find_field --op=write 0x5cc` and `--op=write 0x698` for the list heads
+3. The 0x647e08f8 token pushed before the QI call is likely a class/IID identifier — dump it to confirm what kind of object ff51 expects.
+
 **Original (now superseded) "find AddLight in d3drm" plan:**
 1. **Find the real public-COM vtable for IDirect3DRMFrame** — its `AddLight` slot (slot 12 in DirectX 5 header order) must call into `0x647adcef` somehow (possibly via more glue we haven't disasm'd). Walk class-Frame's ctor at `0x647e0f18+...` to find what vtable address it writes into `[obj+0x0]`. That gives the public Frame vtable; slot 12 is AddLight.
 2. **Inside d3rm, search for direct calls to `0x647adcef`** (not just vtable refs): `node tools/xrefs.js test/binaries/dlls/d3drm.dll 0x647adcef --code` — its callers are the COM-method implementations that should fire when the SCR calls AddLight. If a chain of these exists, set `--break=` on each in turn to find the layer where the call is missing.
