@@ -1197,12 +1197,24 @@
           ;; live text via existing button_get_text / edit / static
           ;; accessors, so we don't need to stash a parallel copy in
           ;; CONTROL_TABLE.
-          ;; DLU → pixel geometry (x*3/2, y*7/4)
+          ;; DLU → pixel geometry (x*3/2, y*7/4). For comboboxes (class 5),
+          ;; the template's ch is the full dropped-down extent per Win32
+          ;; convention — clamp the window/hit-test rect to the field
+          ;; height (21px) unless CBS_SIMPLE so stacked combos don't
+          ;; overlap each other and route clicks to the wrong combo
+          ;; (pinball Player Controls: 6 combos at y=85/108/133 with
+          ;; ch=70 each were all ~120px tall pre-clamp).
           (call $ctrl_geom_set (local.get $ctrl_slot)
             (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
             (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4))
             (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
-            (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4)))))
+            (select
+              (i32.const 21)
+              (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4))
+              (i32.and
+                (i32.eq (local.get $class_enum) (i32.const 5))
+                (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x3))
+                        (i32.const 1)))))))
       ;; Build CREATESTRUCT and send WM_CREATE
       (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
