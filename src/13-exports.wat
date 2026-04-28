@@ -192,7 +192,12 @@
     (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0005) ;; WM_SIZE
       (local.get $size_w)
       (i32.or (i32.and (local.get $cw) (i32.const 0xFFFF))
-              (i32.shl (local.get $ch) (i32.const 16))))))
+              (i32.shl (local.get $ch) (i32.const 16)))))
+    ;; Resize reallocates the back-canvas (grey-filled), wiping the previous
+    ;; chrome. The guest's WM_SIZE handler invalidates the client area but
+    ;; not the NC region, so synchronously redraw chrome here — same pattern
+    ;; as nc_repaint_now after a sysbutton release.
+    (call $defwndproc_do_ncpaint (local.get $hwnd)))
 
   ;; User-initiated resize commit (host mousedrag on edge/corner).
   ;; Renderer has already updated win.{x,y,w,h}; we recompute CLIENT_RECT
