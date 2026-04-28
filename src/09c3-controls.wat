@@ -3300,6 +3300,29 @@
     (i32.const 0)
   )
 
+  ;; Allocate + register a WS_POPUP top-level dropdown shell owned by the
+  ;; given combobox. Returns the popup hwnd. Created hidden — caller (or
+  ;; $combobox_open_dropdown) ShowWindows it later. Userdata stores the
+  ;; owner combo hwnd so $combo_popup_wndproc can forward messages back.
+  (func $combo_create_popup (param $combo i32) (param $w i32) (param $h i32) (result i32)
+    (local $popup i32) (local $slot i32)
+    (local.set $popup (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Register a JS-side window record (no chrome — kind bit 2 = isPopup).
+    (call $host_register_dialog_frame
+      (local.get $popup) (local.get $combo)
+      (i32.const 0)              ;; no title
+      (local.get $w) (local.get $h)
+      (i32.const 4))             ;; kind = 4 (isPopup)
+    (call $wnd_table_set (local.get $popup) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_parent (local.get $popup) (local.get $combo))
+    ;; WS_POPUP — explicitly hidden until open_dropdown shows it.
+    (drop (call $wnd_set_style (local.get $popup) (i32.const 0x80000000)))
+    (local.set $slot (call $wnd_table_find (local.get $popup)))
+    (call $ctrl_table_set (local.get $slot) (i32.const 9) (i32.const 0))
+    (drop (call $wnd_set_userdata (local.get $popup) (local.get $combo)))
+    (local.get $popup))
+
   ;; Helper: open the dropdown (show inner listbox, fire CBN_DROPDOWN, set
   ;; capture so outside clicks dismiss). Idempotent.
   (func $combobox_open_dropdown (param $hwnd i32)
@@ -3495,6 +3518,14 @@
                 (i32.sub (local.get $field_h) (i32.const 4))
                 (i32.const 0x50000080)  ;; WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL
                 (i32.load offset=36 (local.get $cs_w)))))) ;; pass initial title
+        ;; CBS_DROPDOWNLIST (variant=3): pre-allocate a WS_POPUP dropdown
+        ;; shell sized to the listbox area. Hidden until $combobox_open_dropdown
+        ;; shows it. Listbox is still parented to the combo for now —
+        ;; subsequent commit migrates it under the popup.
+        (if (i32.eq (local.get $variant) (i32.const 3))
+          (then
+            (i32.store offset=24 (local.get $state_w)
+              (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))))
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY ----------
@@ -3504,6 +3535,10 @@
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             ;; Inner listbox is destroyed by the parent's $wnd_destroy_tree pass.
+            ;; Popup top-level is NOT a child (no parent walk reaches it) so
+            ;; remove its window-table slot explicitly.
+            (if (i32.load offset=24 (local.get $state_w))
+              (then (call $wnd_table_remove (i32.load offset=24 (local.get $state_w)))))
             (call $heap_free (i32.load (local.get $state_w))) ;; text_buf
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))

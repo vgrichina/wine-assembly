@@ -86,11 +86,11 @@ async function main() {
   const cb = e.test_create_combobox(0, 0, 200, 100, CBS_DROPDOWNLIST);
   check('combobox hwnd allocated', cb !== 0, 'hwnd=0x' + cb.toString(16));
 
-  // create allocates: parent + combobox + inner listbox (ctrl_create_child)
+  // create allocates: parent + combobox + inner listbox + WS_POPUP shell
   const slotsAfterCreate = e.wnd_count_used();
-  check('create added 3 slots (parent + combobox + inner listbox)',
-    slotsAfterCreate === baselineSlots + 3,
-    `${slotsAfterCreate} vs ${baselineSlots}+3`);
+  check('create added 4 slots (parent + combobox + listbox + popup)',
+    slotsAfterCreate === baselineSlots + 4,
+    `${slotsAfterCreate} vs ${baselineSlots}+4`);
 
   const lb = e.combobox_get_lb_hwnd(cb);
   check('inner listbox hwnd exposed', lb !== 0, 'lb=0x' + lb.toString(16));
