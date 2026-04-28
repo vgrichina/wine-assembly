@@ -258,6 +258,9 @@
     ;; Class 8 = TreeView (SysTreeView32)
     (if (i32.eq (local.get $class) (i32.const 8))
       (then (return (call $treeview_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 9 = ComboBox dropdown popup shell (WS_POPUP top-level owned by a combobox)
+    (if (i32.eq (local.get $class) (i32.const 9))
+      (then (return (call $combo_popup_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 10 = Find/Replace dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 10))
       (then (return (call $findreplace_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -3233,6 +3236,70 @@
   ;;   +36  variant        1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
   ;;
   ;; FIELD_H = 21 px; arrow box = 16 px wide on right edge.
+
+  ;; ============================================================
+  ;; ComboBox dropdown popup shell — class 9, WS_POPUP top-level.
+  ;; Hosts the inner listbox child for CBS_DROPDOWN/DROPDOWNLIST.
+  ;; Owns no state of its own; userdata stores the owner combobox hwnd
+  ;; so messages can be forwarded back. Outside-click dismissal happens
+  ;; here (combobox SetCapture's the popup). Inside clicks fall through
+  ;; to the listbox child via normal hit-testing.
+  ;;
+  ;;   userdata = owner combo hwnd
+  ;; ============================================================
+  (func $combo_popup_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $owner i32) (local $rect i32) (local $w i32) (local $h i32)
+    (local $mx i32) (local $my i32)
+    (local.set $owner (call $wnd_get_userdata (local.get $hwnd)))
+    ;; WM_LBUTTONDOWN: outside-rect → ask owner combo to close as cancel.
+    ;; lParam = (y<<16)|x, signed 16 each, in popup-local client coords.
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (local.set $mx (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $my (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (local.set $rect (global.get $PAINT_SCRATCH))
+        (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+        (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
+                                (i32.load          (local.get $rect))))
+        (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
+                                (i32.load offset=4 (local.get $rect))))
+        (if (i32.or
+              (i32.or (i32.lt_s (local.get $mx) (i32.const 0))
+                      (i32.lt_s (local.get $my) (i32.const 0)))
+              (i32.or (i32.ge_s (local.get $mx) (local.get $w))
+                      (i32.ge_s (local.get $my) (local.get $h))))
+          (then
+            (if (local.get $owner)
+              (then (call $combobox_close_dropdown (local.get $owner) (i32.const 0))))
+            (return (i32.const 0))))
+        ;; Inside: fall through (return 0; capture-translated coords on the
+        ;; listbox child are dispatched through the normal hit-test path).
+        (return (i32.const 0))))
+    ;; WM_COMMAND from inner listbox child — forward to owner combo so its
+    ;; existing LBN_SELCHANGE / LBN_DBLCLK handling fires.
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then
+        (if (local.get $owner)
+          (then (return (call $wnd_send_message (local.get $owner)
+                              (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+        (return (i32.const 0))))
+    ;; WM_KEYDOWN: forward to owner combo (it already handles VK_ESC/RETURN/UP/DOWN).
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        (if (local.get $owner)
+          (then (return (call $wnd_send_message (local.get $owner)
+                              (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+        (return (i32.const 0))))
+    ;; WM_CAPTURECHANGED (0x0215): popup lost capture → close as cancel.
+    (if (i32.eq (local.get $msg) (i32.const 0x0215))
+      (then
+        (if (local.get $owner)
+          (then (call $combobox_close_dropdown (local.get $owner) (i32.const 0))))
+        (return (i32.const 0))))
+    ;; All others: DefWindowProc (return 0).
+    (i32.const 0)
+  )
+
   ;; Helper: open the dropdown (show inner listbox, fire CBN_DROPDOWN, set
   ;; capture so outside clicks dismiss). Idempotent.
   (func $combobox_open_dropdown (param $hwnd i32)
