@@ -2589,9 +2589,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 216: _XcptFilter
+  ;; 216: _XcptFilter — cdecl, returns EXCEPTION_CONTINUE_SEARCH (0).
+  ;; nop was leaving ret-addr on stack and corrupting subsequent instructions;
+  ;; pop the ret-addr (cdecl: caller pops args).
   (func $handle__XcptFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (nop)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 217: _CxxThrowException — STUB: unimplemented
