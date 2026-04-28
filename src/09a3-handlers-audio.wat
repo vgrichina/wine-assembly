@@ -553,9 +553,10 @@
     (i32.store16 (local.get $caps) (i32.const 1))
     ;; wPid = 1
     (i32.store16 (i32.add (local.get $caps) (i32.const 2)) (i32.const 1))
-    ;; wTechnology at offset 36 = MOD_MIDIPORT (1)
-    (i32.store16 (i32.add (local.get $caps) (i32.const 36)) (i32.const 1))
-    ;; dwSupport at offset 44 = 0
+    ;; wTechnology at offset 40 = MOD_MIDIPORT (1)
+    ;; (szPname[MAXPNAMELEN=32] runs from +8 through +39)
+    (i32.store16 (i32.add (local.get $caps) (i32.const 40)) (i32.const 1))
+    ;; dwSupport at offset 48 = 0
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
