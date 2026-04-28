@@ -682,8 +682,6 @@
   (global $esi (mut i32) (i32.const 0))
   (global $edi (mut i32) (i32.const 0))
   (global $eip (mut i32) (i32.const 0))
-  (global $dbg_last_push0 (mut i32) (i32.const 0))
-  (global $dbg_last_push1 (mut i32) (i32.const 0))
   (global $dbg_prev_eip (mut i32) (i32.const 0))
   (global $dbg_counter (mut i32) (i32.const -1))
   ;; Shadow call-stack for --trace-callstack: ring buffer of ret_addrs.

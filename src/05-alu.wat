@@ -490,11 +490,6 @@
   (func $th_push_i32 (param $op i32)
     (local $v i32)
     (local.set $v (call $read_thread_word))
-    ;; DEBUG: track last 2 small pushes globally so $th_call_rel can compare
-    (if (i32.le_u (local.get $v) (i32.const 0x20))
-      (then
-        (global.set $dbg_last_push1 (global.get $dbg_last_push0))
-        (global.set $dbg_last_push0 (local.get $v))))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $v)) (return_call $next))
   (func $th_pushad (param $op i32)
@@ -530,18 +525,6 @@
   ;; --- Control flow ---
   (func $th_call_rel (param $op i32)
     (local $target i32) (local.set $target (call $read_thread_word))
-    ;; DEBUG: trace pinball wall-loader interactions (BEFORE pushing ret addr)
-    (if (i32.eq (local.get $target) (i32.const 0x01008f7a))
-      (then
-        (call $host_log_i32 (i32.const 0xE220F7A0))   ;; sentinel
-        (call $host_log_i32 (call $gl32 (global.get $esp)))                            ;; stack [esp]   = msg
-        (call $host_log_i32 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))    ;; stack [esp+4] = caption
-        (call $host_log_i32 (global.get $dbg_last_push0))                              ;; most recent push imm
-        (call $host_log_i32 (global.get $dbg_last_push1))                              ;; previous push imm
-        ;; live read of guest memory at the push imm bytes (0x01009601, 0x01009603)
-        (call $host_log_i32 (call $gl8 (i32.const 0x01009601)))                        ;; should be 0x12
-        (call $host_log_i32 (call $gl8 (i32.const 0x01009603)))                        ;; should be 0x0e
-        (call $host_log_i32 (local.get $op))))   ;; ret addr (caller post-call)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $op))
     (call $cs_push (local.get $op))

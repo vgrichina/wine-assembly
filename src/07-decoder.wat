@@ -73,41 +73,57 @@
     (local.set $rm (i32.and (local.get $modrm) (i32.const 7)))
     (global.set $mr_mod (local.get $mod))
 
-    ;; mod=11: register direct
+    ;; mod=11: register direct — no EA, no segment adj
     (if (i32.eq (local.get $mod) (i32.const 3))
       (then (global.set $mr_val (local.get $rm)) (return)))
 
-    ;; mod=00
-    (if (i32.eq (local.get $mod) (i32.const 0))
-      (then
-        (if (i32.eq (local.get $rm) (i32.const 4)) ;; SIB
-          (then (call $decode_sib_info (i32.const 0)) (return)))
-        (if (i32.eq (local.get $rm) (i32.const 5)) ;; disp32 only
-          (then (global.set $mr_disp (call $d_fetch32)) (return)))
-        ;; [reg] only
-        (global.set $mr_base (local.get $rm))
-        (return)))
+    (block $ea_done
+      ;; mod=00
+      (if (i32.eq (local.get $mod) (i32.const 0))
+        (then
+          (if (i32.eq (local.get $rm) (i32.const 4)) ;; SIB
+            (then (call $decode_sib_info (i32.const 0)) (br $ea_done)))
+          (if (i32.eq (local.get $rm) (i32.const 5)) ;; disp32 only
+            (then (global.set $mr_disp (call $d_fetch32)) (br $ea_done)))
+          ;; [reg] only
+          (global.set $mr_base (local.get $rm))
+          (br $ea_done)))
 
-    ;; mod=01: [rm + disp8]
-    (if (i32.eq (local.get $mod) (i32.const 1))
-      (then
-        (if (i32.eq (local.get $rm) (i32.const 4))
-          (then (call $decode_sib_info (i32.const 1)))
-          (else (global.set $mr_base (local.get $rm))))
-        (global.set $mr_disp (i32.add (global.get $mr_disp) (call $sign_ext8 (call $d_fetch8))))
-        (return)))
+      ;; mod=01: [rm + disp8]
+      (if (i32.eq (local.get $mod) (i32.const 1))
+        (then
+          (if (i32.eq (local.get $rm) (i32.const 4))
+            (then (call $decode_sib_info (i32.const 1)))
+            (else (global.set $mr_base (local.get $rm))))
+          (global.set $mr_disp (i32.add (global.get $mr_disp) (call $sign_ext8 (call $d_fetch8))))
+          (br $ea_done)))
 
-    ;; mod=10: [rm + disp32]
-    (if (i32.eq (local.get $rm) (i32.const 4))
-      (then (call $decode_sib_info (i32.const 2)))
-      (else (global.set $mr_base (local.get $rm))))
-    (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch32)))
-  )
+      ;; mod=10: [rm + disp32]
+      (if (i32.eq (local.get $rm) (i32.const 4))
+        (then (call $decode_sib_info (i32.const 2)))
+        (else (global.set $mr_base (local.get $rm))))
+      (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch32))))
 
-  ;; Apply FS segment override to mr_disp (call after decode_modrm when mr_mod != 3)
+    ;; Centralized segment-override application for all memory EAs.
+    ;; Emitter-side calls remain in place but become idempotent no-ops.
+    (call $apply_seg_override))
+
+  ;; Apply segment override to mr_disp. Idempotent — clears $d_seg after
+  ;; applying, so redundant calls from emitters are safe. Now invoked
+  ;; centrally from $decode_modrm; emitter call sites act as a guard.
+  ;; FS (5): add fs_base. GS (6): trap (no Win32 use of GS in this emu).
+  ;; CS/SS/DS/ES (1-4): no base, treated as flat.
   (func $apply_seg_override
     (if (i32.eq (global.get $d_seg) (i32.const 5))
-      (then (global.set $mr_disp (i32.add (global.get $mr_disp) (global.get $fs_base))))))
+      (then
+        (global.set $mr_disp (i32.add (global.get $mr_disp) (global.get $fs_base)))
+        (global.set $d_seg (i32.const 0))
+        (return)))
+    (if (i32.eq (global.get $d_seg) (i32.const 6))
+      (then
+        (call $host_log_i32 (i32.const 0xCA5E9006)) ;; GS override unsupported
+        (unreachable)))
+    (global.set $d_seg (i32.const 0)))
 
   ;; Decode SIB, store base/index/scale info (not resolved)
   (func $decode_sib_info (param $mod i32)
@@ -606,6 +622,15 @@
 
       ;; Propagate segment prefix to global for ModRM decoder
       (global.set $d_seg (local.get $prefix_seg))
+
+      ;; 0x67 (address-size override) is parsed but not implemented.
+      ;; Decoding 16-bit addressing as 32-bit ModRM/SIB silently corrupts
+      ;; EAs, so trap explicitly until 16-bit addressing exists.
+      (if (local.get $prefix_67)
+        (then
+          (call $host_log_i32 (i32.const 0xCA5E0067))
+          (call $host_log_i32 (global.get $d_pc))
+          (unreachable)))
 
       ;; ---- NOP (0x90) ----
       (if (i32.eq (local.get $op) (i32.const 0x90)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode)))

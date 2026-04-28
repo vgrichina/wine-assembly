@@ -20,6 +20,7 @@ TIER="${1:-all}"
 
 UNIT=(
   test/test-x86-ops.js
+  test/test-fs-prefix.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
