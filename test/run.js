@@ -123,12 +123,35 @@ const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
-const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : [];
+
+// Module-relative address syntax: `module.dll+0xVA` or `module.exe+0xVA` resolves
+// to runtime VA (loadAddr - origBase + VA) after DLLs load. Plain `0xVA` stays as-is.
+// `moduleBases` is populated after loadDlls(); resolveAddr() called via deferred
+// re-parse below.
+const moduleBases = {}; // name(lowercase, no .dll/.exe) → { loadAddr, origBase }
+function resolveAddr(spec) {
+  const s = String(spec).trim();
+  const m = s.match(/^([A-Za-z0-9_.]+?)(?:\.(?:dll|exe))?\s*\+\s*(0x[0-9a-fA-F]+)$/);
+  if (!m) return parseInt(s, 16) >>> 0;
+  const key = m[1].toLowerCase();
+  const va = parseInt(m[2], 16) >>> 0;
+  const mod = moduleBases[key];
+  if (!mod) {
+    console.error(`[resolveAddr] unknown module '${m[1]}' in spec '${spec}'. Known: ${Object.keys(moduleBases).join(',') || '(none yet)'}`);
+    return 0;
+  }
+  return ((va - mod.origBase + mod.loadAddr) >>> 0);
+}
+function resolveAddrList(spec) {
+  return spec ? spec.split(',').map(resolveAddr).filter(v => v !== 0) : [];
+}
+
+const breakAddrs = BREAKPOINT ? BREAKPOINT.split(',').map(s => parseInt(s, 16)) : []; // re-resolved post-DLL-load if any spec is module-relative
 if (breakAddrs.length > 1) {
   BATCH_SIZE = 1; // WASM set_bp holds only one addr; JS check must see every block
 }
 const traceAtAddrs = TRACE_AT ? TRACE_AT.split(',').map(s => parseInt(s, 16) >>> 0) : [];
-const traceAtAddr = traceAtAddrs[0] || 0; // set_bp supports only one addr; JS checks all
+let traceAtAddr = traceAtAddrs[0] || 0; // re-set after deferred resolve
 if (traceAtAddrs.length > 1) {
   BATCH_SIZE = 1;
 }
@@ -137,6 +160,23 @@ const parseWatchSpec = (spec) => spec ? spec.split(',').map(s => parseInt(s.spli
 const watchAddrsArg = parseWatchSpec(WATCH_SPEC).concat(parseWatchSpec(WATCH_BYTE)).concat(parseWatchSpec(WATCH_WORD));
 if (watchAddrsArg.length > 1) {
   BATCH_SIZE = 1;
+}
+function deferredResolveAddrs() {
+  // Re-parse all addr specs that may contain `module+0xVA`. Call after loadDlls.
+  if (BREAKPOINT && /\+/.test(BREAKPOINT)) {
+    const r = resolveAddrList(BREAKPOINT);
+    breakAddrs.length = 0; r.forEach(v => breakAddrs.push(v));
+  }
+  if (TRACE_AT && /\+/.test(TRACE_AT)) {
+    const r = resolveAddrList(TRACE_AT);
+    traceAtAddrs.length = 0; r.forEach(v => traceAtAddrs.push(v));
+    traceAtAddr = traceAtAddrs[0] || 0;
+  }
+  if (COUNT_SPEC && /\+/.test(COUNT_SPEC)) {
+    const r = resolveAddrList(COUNT_SPEC);
+    countAddrs.length = 0; r.forEach(v => countAddrs.push(v));
+  }
+  // (TRACE_AT_DUMP, WATCH, etc. could also be module-relative; extend here as needed.)
 }
 const breakThreadFilter = BREAK_THREAD ? parseInt(BREAK_THREAD.replace(/^T/i, ''), 10) : null;
 let traceAtHits = 0;
@@ -1097,11 +1137,26 @@ async function main() {
       }
     }
   }
+  // Register exe in moduleBases so `exe+0xVA` and basename-relative specs work.
+  {
+    const peOff = exeBytes[0x3C] | (exeBytes[0x3D] << 8) | (exeBytes[0x3E] << 16) | (exeBytes[0x3F] << 24);
+    const exeOrig = exeBytes[peOff + 52] | (exeBytes[peOff + 53] << 8) | (exeBytes[peOff + 54] << 16) | (exeBytes[peOff + 55] << 24);
+    const exeLoad = instance.exports.get_image_base();
+    const exeBase = path.basename(EXE_PATH).toLowerCase().replace(/\.[^.]+$/, '');
+    moduleBases['exe'] = { loadAddr: exeLoad, origBase: exeOrig };
+    moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
+  }
   if (dlls.length > 0) {
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
       exeName: path.basename(EXE_PATH),
       extraArgs: EXTRA_ARGS || '',
     });
+    if (dllResults) {
+      for (const r of dllResults) {
+        const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
+        moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
+      }
+    }
     stopped = false;
     // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT's
     // $find_resource. DLL bitmaps (cards.dll for sol/freecell, etc.)
@@ -1123,7 +1178,8 @@ async function main() {
     }
   }
 
-
+  // Resolve any module-relative address specs now that all module bases are known.
+  deferredResolveAddrs();
 
   // Pre-populate EXE in virtual filesystem so CreateFileA on itself works
   // GetModuleFileNameA returns "C:\app.exe" — inject EXE bytes at that path
