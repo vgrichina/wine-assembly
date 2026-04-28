@@ -52,13 +52,15 @@
               ;; C++ exception (throw): parse FuncInfo from __ehhandler stub
               ;; Stub: B8 <FuncInfo*> E9/EB <offset>
               ;; FuncInfo+0: magic, +4: maxState, +8: pUnwindMap, +12: nTryBlocks, +16: pTryBlockMap
-              (local.set $scopetable (call $gl32 (call $g2w (i32.add (local.get $handler) (i32.const 1))))) ;; FuncInfo*
+              ;; All FuncInfo/TryBlockMap fields live at guest addresses;
+              ;; gl32 already does g2w internally, so don't wrap again.
+              (local.set $scopetable (call $gl32 (i32.add (local.get $handler) (i32.const 1)))) ;; FuncInfo*
               (local.set $trylevel (call $gl32 (i32.sub (local.get $frame_ebp) (i32.const 4)))) ;; current state
               ;; Read nTryBlocks from FuncInfo+12
-              (local.set $filter_result (call $gl32 (call $g2w (i32.add (local.get $scopetable) (i32.const 12)))))
+              (local.set $filter_result (call $gl32 (i32.add (local.get $scopetable) (i32.const 12))))
               (if (local.get $filter_result) (then
                 ;; Read pTryBlockMap from FuncInfo+16
-                (local.set $filter (call $gl32 (call $g2w (i32.add (local.get $scopetable) (i32.const 16)))))
+                (local.set $filter (call $gl32 (i32.add (local.get $scopetable) (i32.const 16))))
                 ;; Search try blocks for one covering current state
                 (local.set $entry (i32.const 0))
                 (block $found_catch (loop $try_scan
@@ -66,13 +68,13 @@
                   ;; TryBlockMapEntry: +0 tryLow, +4 tryHigh, +8 catchHigh, +12 nCatches, +16 pCatches
                   (local.set $except_body (i32.add (local.get $filter) (i32.mul (local.get $entry) (i32.const 20))))
                   (if (i32.and
-                        (i32.ge_s (local.get $trylevel) (call $gl32 (call $g2w (local.get $except_body))))
-                        (i32.le_s (local.get $trylevel) (call $gl32 (call $g2w (i32.add (local.get $except_body) (i32.const 4))))))
+                        (i32.ge_s (local.get $trylevel) (call $gl32 (local.get $except_body)))
+                        (i32.le_s (local.get $trylevel) (call $gl32 (i32.add (local.get $except_body) (i32.const 4)))))
                     (then
                       ;; Found covering try block. Read first catch handler.
                       ;; HandlerType: +0 adjectives, +4 pType, +8 dispCatchObj, +12 addressOfHandler
-                      (local.set $except_body (call $gl32 (call $g2w (i32.add (local.get $except_body) (i32.const 16))))) ;; pCatches
-                      (local.set $except_body (call $gl32 (call $g2w (i32.add (local.get $except_body) (i32.const 12))))) ;; handler addr
+                      (local.set $except_body (call $gl32 (i32.add (local.get $except_body) (i32.const 16)))) ;; pCatches
+                      (local.set $except_body (call $gl32 (i32.add (local.get $except_body) (i32.const 12)))) ;; handler addr
                       ;; Unwind: FS:[0] = seh_rec->next
                       (call $gs32 (global.get $fs_base) (call $gl32 (local.get $seh_rec)))
                       ;; Restore frame and jump to catch handler
@@ -80,7 +82,7 @@
                       (global.set $esp (local.get $seh_rec))
                       ;; Set trylevel to catchHigh
                       (call $gs32 (i32.sub (local.get $frame_ebp) (i32.const 4))
-                        (call $gl32 (call $g2w (i32.add (i32.add (local.get $filter) (i32.mul (local.get $entry) (i32.const 20))) (i32.const 8)))))
+                        (call $gl32 (i32.add (i32.add (local.get $filter) (i32.mul (local.get $entry) (i32.const 20))) (i32.const 8))))
                       (global.set $eip (local.get $except_body))
                       (global.set $steps (i32.const 0))
                       (return)))
