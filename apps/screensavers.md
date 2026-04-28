@@ -1150,3 +1150,47 @@ So d3rm uses **CreateFileMappingA + MapViewOfFile** (not ReadFile) to slurp .x f
 3. Pick the SCR's loader fn at `0x7442020b` (already known from prior call-stack trace) and step through it to see which vtable indirect calls succeed and which return E_FAIL. Best done with `--break=0x7442020b --break-once` then single-step / dump the COM dispatch each call.
 
 A successful run should show multiple `[FS] MapViewOfFile` calls **followed by** non-zero hits at fn 0x647bdf8a within a few hundred batches of each unmap. Currently zero hits ever, despite ~40+ map/unmap cycles.
+
+**2026-04-28 cont.8 — SCR's X-file walker fn identified and confirmed running cleanly; mesh upload to d3rm not yet localized.**
+
+Earlier note "0x7442020b is the SCR's loader" was wrong — that EIP is the **SEH unwind tail** of the loader. Real loader entry: **fn `0x74420140`** (found via `find_fn` → -203 bytes from 0x7442020b). It's a C++ method with full SEH frame setup (`push 0xFFFFFFFF; push 0x744ad0b8; fs:[0]=...`).
+
+What it does, per static disasm:
+1. Calls `0x7440c0c0` to get a buffer/string
+2. Calls `0x74401780` via vtable
+3. Calls `0x74420360` (sets up an out-param pair)
+4. Tests `edi` (the X-file data ptr); if non-zero, calls **`0x74420aa0`**
+5. fn `0x74420aa0` = `QueryInterface(IID_IDirectXFileData, &out)` — IID at `0x744b66f0` decoded as `{C3DFBD60-3988-11D0-9EC2-0000C0291AC3}` = **IID_IDirectXFileData** (a d3dxof IID)
+6. After QI: calls `0x744207a0`, then vtable slot 0 of result, then `0x74429bb0`
+
+**Confirmed via `--count` over 20k batches:**
+
+| EIP | Hits | Meaning |
+|---|---|---|
+| 0x74420140 (entry) | 270 | SCR loader called 270x — once per X-file data node |
+| 0x74420aa0 (entry) | 540 | QI called 540x (3 callers, 270 from this site + 270 from two other call sites) |
+| 0x744201cd (after QI ret) | 270 | QI returns — control returns to caller |
+| 0x744201d9 (throw on QI fail) | 0 | **QI never fails** |
+| 0x744201de (post-throw merge) | 270 | Reached cleanly |
+| 0x74420317 (cleanup tail) | 270 | Clean exit |
+| 0x744207a0 / 0x744192a0 | 540 | Downstream fns hit (multi-caller) |
+
+So the SCR runs the X-file walker **270 times cleanly with zero exceptions**. Every QI for IDirectXFileData succeeds. The walker traverses tree nodes, presumably builds `IDirect3DRMMeshBuilder` from each Mesh node, and attaches it to the scene. Yet `0x647bdf8a` (geometry emit) never fires — so the MeshBuilder either parses 0 vertices OR is never attached to a frame in the rendered subtree.
+
+**Counter caveat learned this turn:** `--count` only fires on **block-entry EIPs**, not mid-block instructions. So 0 hits at `0x744201eb` (mid-block, between 0x744201de and the next branch) doesn't mean the code wasn't executed. Always pick block-boundary addresses for `--count` queries.
+
+**SCR's d3rm imports (from `pe-imports.js --dll=d3drm.dll`):**
+
+Only 9 imports, all utility helpers:
+- `Direct3DRMCreate` (the only "create" entry point)
+- `D3DRMCreateColorRGB` / `D3DRMCreateColorRGBA`
+- `D3DRMVectorRotate` / `D3DRMVectorSubtract` / `D3DRMVectorNormalize`
+- `D3DRMColorGetRed` / `D3DRMColorGetGreen` / `D3DRMColorGetBlue`
+
+So the SCR gets `IDirect3DRM*` from `Direct3DRMCreate` and walks vtables from there for everything else (CreateMeshBuilder, CreateFrame, AddVisual, MeshBuilder::Load, etc.). All COM-vtable indirect calls — invisible to our tracer without IID/slot mapping.
+
+**Direct3DRMCreate** (d3rm preferred VA `0x6478f112`) is a tiny shim that calls `0x6478f11f`, which `mem_alloc(0x428)` for the IDirect3DRM struct, then sets up vtable + state. The vtable for IDirect3DRM should be in d3rm's .rdata — would need to find it (look for the assignment to `[ebx+0]` in fn `0x6478f11f`'s success path) and then enumerate slots to identify CreateMeshBuilder / Load.
+
+**Next probe (most direct):**
+- Single-step or `--break-once` at fn `0x74420140`, step into the **vtable indirect calls** to see what fn entries they land on inside d3rm — those entries identify which IDirect3DRM/MeshBuilder/Frame methods the SCR uses. Once we know the d3rm-side VA for `MeshBuilder::Load` and `Frame::AddVisual`, set `--count` on them: zero hits = AddVisual never called (scene wired wrong); high hits + zero geometry-emit = MeshBuilder::Load succeeds but emits empty mesh (X-file parse bug or vertex extraction bug).
+- Alternative quicker check: count any hits at `0x6478f11f` (Direct3DRMCreate impl) — confirms IDirect3DRM is created at all. Then dump the vtable that gets installed at `[ebx+0]`.
