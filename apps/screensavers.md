@@ -1078,3 +1078,34 @@ The fe13 predicate `test al, 0x1; test al, 0x2` is therefore **"are BOTH transpa
 1. Are `IDirect3DDevice_Execute` calls actually rasterizing geometry, or are we ignoring opcodes? `--trace-host=...` or step into our `$handle_IDirect3DDevice_Execute` and confirm we're processing TRIANGLE / PROCESSVERTICES opcodes (not just STATETRANSFORM, per the existing D3DIM matrix-table memory).
 2. Verify the canvas attached to the SCR's window receives any draw calls at all. If COM-level Execute fires but our handler does nothing, no pixels appear.
 3. Existing memory `project_d3dim_matrix_table.md` says rasterizer still ignores matrices and op=9 PROCESSVERTICES is next. **That is the actual gating issue for ROCKROLL** — implement op=9 there, then op=2 TRIANGLE, then transparency-sort path can stay skipped without hurting visible output.
+
+**2026-04-27 cont.6 — Execute buffer confirmed geometry-empty; PROCESSVERTICES emitter never reached.**
+
+Ran ROCKROLL.SCR /s with `--trace-dx-raw --max-batches=200000`. Result: **5863 IDirect3DDevice_Execute calls, but the buffers contain ONLY:**
+- op=6 (STATETRANSFORM): 2918 records
+- op=11 (EXIT): 1459 records
+- **Zero op=1/2/3/9 (POINT/LINE/TRIANGLE/PROCESSVERTICES). Zero geometry.**
+
+So our op=9 / op=2 handlers in `09ab-handlers-d3dim-core.wat` (which DO exist — `$d3dim_exec_process_vertices` at line 1083, `$d3dim_exec_triangles` at line 894) never receive work. The bug is upstream: d3rm's scene walker never emits geometry into the buffer.
+
+**Located the geometry-emit fn:** `0x647bdf8a` (preferred d3rm VA). Identified by byte-pattern scan for `c6 03 09` (`mov byte [ebx], 0x9` = write D3DOP_PROCESSVERTICES into Execute buffer). Only 2 sites in the entire d3rm.dll write byte 0x09 to memory (and only 3 sites write byte 0x03 = TRIANGLE). The interesting site at file 0x3da5a (VA 0x647be45a) lives inside fn `0x647bdf8a`, which:
+- Takes 1 stack arg (pointer to a write cursor `ebx`)
+- Loops over visuals, emitting op=7 STATELIGHT (light state), op=9 PROCESSVERTICES (16-byte D3DPROCESSVERTICES record), then op=12 BRANCHFORWARD into the buffer
+- This is the per-mesh emitter
+
+**Trace confirms fn `0x647bdf8a` is NEVER called** (`--trace-at=0x745d8f8a` returns 0 hits over 200k batches). So the geometry-emit code path is completely dead.
+
+The fn has 2 callers:
+- `0x647bd912` (inside fn `0x647bd538`)
+- `0x647bf29b` (inside fn `0x647becb6`)
+
+**Both upstream callers also never fire** (`--trace-at=0x745d8538` and `--trace-at=0x745d9cb6` both 0 hits). So the bug is even higher up the call chain.
+
+**Yet d3rm's render flush plumbing IS running** — 5863 Execute calls per session, all dispatched by d3rm internal frame-loop (we already see the call stack: SCR(`0x7442020b`) → d3rm(`0x64786365` → `0x64799202` → `0x64799087` → Execute-wrapper `0x647c26a0`)). So d3rm is doing its outer per-frame loop but the inner mesh-traversal that should call `0x647bdf8a` never gets entered.
+
+**Next probe:** instrument the d3rm flush stack to find WHERE the mesh-traversal short-circuits. Specifically:
+1. Trace fn `0x64786365` (the d3rm-side entry that the SCR calls per frame): does it walk a visual list? Look for a `cmp` against zero (empty list) that bails early.
+2. Find where `0x647bdf8a` *should* be called from (its 2 callers' enclosing fns): walk those fns and identify the loop/condition gating the call.
+3. Most likely root cause: the SCR's scene has zero visuals attached, OR a visual's mesh count is zero. Check whether `IDirect3DRMFrame::AddVisual` succeeds in our emulator (vtable call chain — needs to be inspected via static disasm of fn 0x7442020b in SCR to see what it constructs).
+
+**Note on COM trace coverage:** `api_table.json` has zero `IDirect3DRM*` entries. So our COM tracer doesn't show any RM-level calls, only D3DIM/DDraw. RM calls land in real d3rm.dll code that we execute via vtable indirect, but we have no name-level visibility. To trace specific RM methods, would need to add IID + slot mapping to api_table.json (or just `--trace-at=` the relevant d3rm vtable-method entry VAs).
