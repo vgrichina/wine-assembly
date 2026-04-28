@@ -3325,8 +3325,15 @@
 
   ;; Helper: open the dropdown (show inner listbox, fire CBN_DROPDOWN, set
   ;; capture so outside clicks dismiss). Idempotent.
+  ;;
+  ;; CBS_DROPDOWNLIST (variant=3): the listbox is migrated under the
+  ;; pre-allocated WS_POPUP shell (offset=24) and the shell is positioned
+  ;; in screen coords directly below the combo's field, then shown via
+  ;; host_move_window(SWP_SHOWWINDOW). This lets the dropdown extend past
+  ;; the parent dialog's clip rect — a real top-level window.
   (func $combobox_open_dropdown (param $hwnd i32)
     (local $state i32) (local $sw i32) (local $lb i32) (local $style i32) (local $parent i32)
+    (local $popup i32) (local $rect i32) (local $lb_wh i32) (local $lb_w i32) (local $lb_h i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
@@ -3339,6 +3346,30 @@
       (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
     (local.set $lb (i32.load offset=20 (local.get $sw)))
     (if (i32.eqz (local.get $lb)) (then (return)))
+    (local.set $popup (i32.load offset=24 (local.get $sw)))
+    ;; Variant=3 with a pre-allocated popup: migrate listbox under popup,
+    ;; position popup at combo screen pos + (0, FIELD_H), show it.
+    (if (i32.and
+          (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 3))
+          (i32.ne (local.get $popup) (i32.const 0)))
+      (then
+        (local.set $lb_wh (call $ctrl_get_wh_packed (local.get $lb)))
+        (local.set $lb_w (i32.and (local.get $lb_wh) (i32.const 0xFFFF)))
+        (local.set $lb_h (i32.shr_u (local.get $lb_wh) (i32.const 16)))
+        ;; Reparent listbox under popup (WAT side + renderer side).
+        (call $wnd_set_parent (local.get $lb) (local.get $popup))
+        (call $host_set_parent (local.get $lb) (local.get $popup))
+        ;; Listbox is now top-left of popup interior.
+        (call $ctrl_geom_set (call $wnd_table_find (local.get $lb))
+          (i32.const 0) (i32.const 0) (local.get $lb_w) (local.get $lb_h))
+        ;; Position popup directly below combo's field area in screen coords.
+        (local.set $rect (global.get $PAINT_SCRATCH))
+        (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+        (call $host_move_window (local.get $popup)
+          (i32.load          (local.get $rect))           ;; left
+          (i32.add (i32.load offset=4 (local.get $rect)) (i32.const 21)) ;; top + FIELD_H
+          (local.get $lb_w) (local.get $lb_h)
+          (i32.const 0x40))))                             ;; SWP_SHOWWINDOW
     (local.set $style (call $wnd_get_style (local.get $lb)))
     (drop (call $wnd_set_style (local.get $lb) (i32.or (local.get $style) (i32.const 0x10000000))))
     (i32.store offset=32 (local.get $sw) (i32.const 1))
@@ -3359,11 +3390,31 @@
   (func $combobox_close_dropdown (param $hwnd i32) (param $accept i32)
     (local $state i32) (local $sw i32) (local $lb i32) (local $style i32)
     (local $parent i32) (local $ctrl_id i32) (local $notif i32)
+    (local $popup i32) (local $lb_wh i32) (local $lb_w i32) (local $lb_h i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
     (if (i32.eqz (i32.load offset=32 (local.get $sw))) (then (return)))  ;; not dropped
     (local.set $lb (i32.load offset=20 (local.get $sw)))
+    (local.set $popup (i32.load offset=24 (local.get $sw)))
+    ;; Variant=3 with popup: reparent listbox back under combo, restore its
+    ;; original geom (y=FIELD_H), and hide popup via SWP_HIDEWINDOW. Symmetric
+    ;; with $combobox_open_dropdown.
+    (if (i32.and
+          (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 3))
+          (i32.and (i32.ne (local.get $popup) (i32.const 0))
+                   (i32.ne (local.get $lb) (i32.const 0))))
+      (then
+        (local.set $lb_wh (call $ctrl_get_wh_packed (local.get $lb)))
+        (local.set $lb_w (i32.and (local.get $lb_wh) (i32.const 0xFFFF)))
+        (local.set $lb_h (i32.shr_u (local.get $lb_wh) (i32.const 16)))
+        (call $wnd_set_parent (local.get $lb) (local.get $hwnd))
+        (call $host_set_parent (local.get $lb) (local.get $hwnd))
+        (call $ctrl_geom_set (call $wnd_table_find (local.get $lb))
+          (i32.const 0) (i32.const 21) (local.get $lb_w) (local.get $lb_h))
+        (call $host_move_window (local.get $popup)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0x83))))                             ;; SWP_NOMOVE|SWP_NOSIZE|SWP_HIDEWINDOW
     ;; Hide listbox (CBS_SIMPLE keeps it visible — variant=1 means "always open")
     (if (i32.ne (i32.load offset=36 (local.get $sw)) (i32.const 1))
       (then
