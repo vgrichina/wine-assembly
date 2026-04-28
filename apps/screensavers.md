@@ -1109,3 +1109,44 @@ The fn has 2 callers:
 3. Most likely root cause: the SCR's scene has zero visuals attached, OR a visual's mesh count is zero. Check whether `IDirect3DRMFrame::AddVisual` succeeds in our emulator (vtable call chain — needs to be inspected via static disasm of fn 0x7442020b in SCR to see what it constructs).
 
 **Note on COM trace coverage:** `api_table.json` has zero `IDirect3DRM*` entries. So our COM tracer doesn't show any RM-level calls, only D3DIM/DDraw. RM calls land in real d3rm.dll code that we execute via vtable indirect, but we have no name-level visibility. To trace specific RM methods, would need to add IID + slot mapping to api_table.json (or just `--trace-at=` the relevant d3rm vtable-method entry VAs).
+
+**2026-04-27 cont.7 — Walked one more level up; entire mesh-render subtree is cold; .x file IS being mmap'd by d3dxof.dll.**
+
+Used `--count` (16-addr hit counter) on the next-level callers of dead fns 0x647bd538 / 0x647becb6:
+
+| Caller fn (preferred VA) | Hit count over 200k batches |
+|---|---|
+| 0x647a1227 (calls bd538 from 0x647a1346) | 0 |
+| 0x647ad0cd (calls bd538 from 0x647ad177) | 0 |
+| 0x647bff37 (calls bd538 from 0x647bff58) | 0 |
+| 0x647bf26a (calls becb6 from 0x647bf27a) | 0 |
+| 0x647bd538 / 0x647becb6 / 0x647bdf8a | 0 / 0 / 0 (re-confirmed) |
+
+So the **entire mesh-render subtree is dead**, two levels deep. Three of the four next-level fns have *no static xrefs* (no callers from `.text`); they're vtable methods. fn `0x647bff37` is in vtable at `0x647e0efc` (slot 7 of the table starting at 0x647e0ee0). Likely `IDirect3DRMVisual` / `IDirect3DRMFrame::Render*` / similar.
+
+**File loading path identified.** Pivoted to ask: is the `.x` mesh data even reaching d3rm? Traced file IO with `--trace-fs --trace-api=CreateFileMappingA,MapViewOfFile,UnmapViewOfFile,CloseHandle`:
+
+```
+CreateFileA("C:\ro_pick.x", access=GENERIC_READ, OPEN_EXISTING) → h=0x70000004
+GetFileSize(h=0x70000004)
+CreateFileMappingA(h=0x70000004, PAGE_READONLY) → mapping h=0xfb000001
+MapViewOfFile(0xfb000001, FILE_MAP_READ) → 0x7500a004
+... (no ReadFile on the .x handle — pure mmap path)
+UnmapViewOfFile(0x7500a004)
+CloseHandle(0x70000004)
+```
+
+So d3rm uses **CreateFileMappingA + MapViewOfFile** (not ReadFile) to slurp .x files. The pattern repeats per frame for ro_pick.x and ro_git.x — **each call lasts hundreds of API calls between map and unmap**, so the parser IS doing real work on the data.
+
+**d3dxof.dll IS loaded** (this hadn't been confirmed before): `LoadLibraryA("d3dxof.dll") → 0x74fe8000`, then `GetProcAddress("DirectXFileCreate")`. So the X-file parser is wired up. The repeated calls into 0x74ff0... range that show up in `--trace-api` are d3dxof internals.
+
+**Verified mmap correctness:** `lib/filesystem.js:700-725` `fs_map_view_of_file` correctly `guest_alloc`s, then `mem.set(data.subarray(offset, offset+mapSize), wasmAddr)` — copies the real VFS bytes into guest memory. ro_pick.x is 7005 bytes, valid `xof 0302txt 0032` header, present in VFS. So the parser sees real X-file content.
+
+**Conclusion of this turn:** the bug is **inside the X-file → MeshBuilder → Frame::AddVisual chain** that runs after MapViewOfFile. The .x file is mapped, d3dxof parses it (we run real DLL code), the result should land in a d3rm IDirect3DRMMeshBuilder, and the mesh should be attached to a frame. Somewhere in that chain it silently fails — leaving the scene with zero visible visuals, so the per-frame render walker sees an empty visual list and never reaches the geometry emitter.
+
+**Next probe:** intercept the d3rm side that consumes the parsed X data. Either:
+1. Trace `IDirect3DRMMeshBuilder::Load` (find its vtable slot in d3rm and `--trace-at=` the entry).
+2. Trace `IDirect3DRMFrame::AddVisual` (same approach).
+3. Pick the SCR's loader fn at `0x7442020b` (already known from prior call-stack trace) and step through it to see which vtable indirect calls succeed and which return E_FAIL. Best done with `--break=0x7442020b --break-once` then single-step / dump the COM dispatch each call.
+
+A successful run should show multiple `[FS] MapViewOfFile` calls **followed by** non-zero hits at fn 0x647bdf8a within a few hundred batches of each unmap. Currently zero hits ever, despite ~40+ map/unmap cycles.
