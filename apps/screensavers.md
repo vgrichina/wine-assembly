@@ -1432,3 +1432,27 @@ $ node tools/find_vtable_calls.js test/binaries/screensavers/ROCKROLL.SCR 18
 1-arg + this — matches `AddVisual(IDirect3DRMVisual*)` exactly.
 
 **Real next step.** Set `--break-api` (or a code break) at d3rm.dll's slot-18 thunk and count hits during ROCKROLL run. If zero hits, the SCR never attaches visuals to frames (asset-loading failure or scene-construction abort earlier). If non-zero, AddVisual fires but the render walk skips them — that's a different failure mode (frame visibility / camera attach / viewport binding).
+
+**2026-04-28 cont.14 — AddVisual fires 7×; bug is downstream (render walk).**
+
+Ran `--trace-at=0x745ad6d4` (AddVisual at relocated VA) over 40K batches with ROCKROLL.SCR /s. **7 hits. 1026 buffer flushes.** So scene init succeeds and 7 visuals get attached.
+
+All 7 hits return to the same SCR caller `0x74410f1a`. Disasm of the call site:
+```
+74410f0b  mov eax, [esp+0x14]   ; this = frame
+74410f0f  mov edx, [esp+0x18]   ; arg = visual ptr
+74410f13  mov ecx, [eax]        ; vtable
+74410f15  push edx              ; visual
+74410f16  push eax              ; this
+74410f17  call [ecx+0x18]       ; slot 6 of an internal vtable (NOT slot 18 of public Frame)
+```
+
+Vtable in use is `ecx=0x745fad58 → static 0x647dfd58`. `vtable_dump` confirms slot 6 there = `0x647926d4` (same fn, named "AddVisual" in our SDK mapping). But slot 0 of THIS vtable = `0x64791da1` (which is `AddLight` per the public Frame vtable mapping). So `0x647dfd58` is a d3rm-**internal** Frame helper vtable, not the public IDirect3DRMFrame vtable. The "AddVisual" method got reused at slot 6 of the internal vtable — same impl, different layout. Wine d3rm.dll likely has multiple sibling vtables for Frame/Frame2/Frame3/internal — slot numbers don't line up with the public DX SDK headers.
+
+Per-hit data:
+- Frame ptrs (this, varies): `0x74fe76c8 / 0x7500cc28 / 0x75034130 / 0x75447f30 / 0x757cc8b8 / 0x75b51b58 / 0x75ed6af0` — 7 independent heap allocations.
+- Visual ptrs (edx): `0x7c3e6018 / 6058 / 6070 / 60a8 / 6108 / 6168 / 61c8` — tightly packed in a dedicated visual-arena range, 0x40-0x60 byte spacing.
+
+So the scene tree IS being built correctly with 7 frame→visual attachments. The render walk just doesn't enumerate them into Execute opcodes. The 1026 flushes per run all carry only `STATETRANSFORM(count=3) + EXIT`.
+
+**Real next step (now correctly framed).** The bug is in d3rm's per-frame visual enumeration — frames have visuals attached, but the renderer's traversal either (a) doesn't find the right frame chain (root scene frame ≠ traversed frame), or (b) walks frames but skips visuals due to a conditional that never opens (visibility flag, transform validity, viewport binding). With AddVisual now confirmed firing, the productive probe shifts to: instrument d3rm's per-frame `Tick` / render-walker (the fn that calls the buffer-flush at `0x647c3905`) and trace what it does with the 7 known frame ptrs — does it visit them at all? If it visits but emits nothing, what gate skips them?
