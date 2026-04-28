@@ -2558,7 +2558,7 @@
   ;; ListBox WndProc  (control class 4)
   ;; ============================================================
   ;;
-  ;; ListBoxState (28 bytes, allocated in WM_CREATE)
+  ;; ListBoxState (44 bytes, allocated in WM_CREATE)
   ;;   +0   items_buf_ptr    guest ptr to flat NUL-separated string buffer
   ;;                         ("item1\0item2\0item3\0", or 0 if empty)
   ;;   +4   items_used       bytes in items_buf actually used (incl. NULs)
@@ -2567,6 +2567,10 @@
   ;;   +16  cur_sel          current selection (-1 = none)
   ;;   +20  top_index        first visible row (vertical scroll)
   ;;   +24  ctrl_id          control id (notification target uses this)
+  ;;   +28  drag_anchor_y
+  ;;   +32  drag_anchor_top
+  ;;   +36  data_buf_ptr     guest ptr to u32[] parallel item-data array (LB_SETITEMDATA)
+  ;;   +40  data_cap         capacity of data array, in u32 slots
   ;;
   ;; Items are stored as concatenated NUL-terminated strings. LB_ADDSTRING
   ;; appends; LB_RESETCONTENT zeros count + items_used (keeps the buffer for
@@ -2598,7 +2602,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 36)))
+        (local.set $state (call $heap_alloc (i32.const 44)))
         (local.set $sw (call $g2w (local.get $state)))
         (i32.store        (local.get $sw) (i32.const 0)) ;; items_buf_ptr
         (i32.store offset=4  (local.get $sw) (i32.const 0)) ;; items_used
@@ -2609,6 +2613,8 @@
         (i32.store offset=24 (local.get $sw) (i32.load offset=8 (local.get $cs_w))) ;; ctrl_id from CREATESTRUCT.hMenu
         (i32.store offset=28 (local.get $sw) (i32.const 0)) ;; drag_anchor_y (thumb drag)
         (i32.store offset=32 (local.get $sw) (i32.const 0)) ;; drag_anchor_top
+        (i32.store offset=36 (local.get $sw) (i32.const 0)) ;; data_buf_ptr
+        (i32.store offset=40 (local.get $sw) (i32.const 0)) ;; data_cap
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -2619,6 +2625,7 @@
           (then
             (local.set $sw (call $g2w (local.get $state)))
             (call $heap_free (i32.load (local.get $sw)))
+            (call $heap_free (i32.load offset=36 (local.get $sw)))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -2663,6 +2670,26 @@
         (i32.store offset=4  (local.get $sw)
           (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
         (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        ;; Grow parallel data array if needed; default new slot to 0.
+        (local.set $cap (i32.load offset=40 (local.get $sw)))
+        (if (i32.ge_u (local.get $count) (local.get $cap))
+          (then
+            (local.set $cap (i32.mul (i32.add (local.get $count) (i32.const 1)) (i32.const 2)))
+            (if (i32.lt_u (local.get $cap) (i32.const 16))
+              (then (local.set $cap (i32.const 16))))
+            (local.set $new_buf (call $heap_alloc (i32.mul (local.get $cap) (i32.const 4))))
+            (local.set $new_w (call $g2w (local.get $new_buf)))
+            (if (local.get $count)
+              (then (call $memcpy (local.get $new_w)
+                                  (call $g2w (i32.load offset=36 (local.get $sw)))
+                                  (i32.mul (local.get $count) (i32.const 4)))))
+            (call $heap_free (i32.load offset=36 (local.get $sw)))
+            (i32.store offset=36 (local.get $sw) (local.get $new_buf))
+            (i32.store offset=40 (local.get $sw) (local.get $cap))))
+        (i32.store
+          (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+                   (i32.mul (local.get $count) (i32.const 4)))
+          (i32.const 0))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $count))))  ;; index of newly inserted item
 
@@ -2966,6 +2993,17 @@
                       (i32.sub (local.get $used) (i32.add (local.get $i) (local.get $slen))))
         (i32.store offset=4 (local.get $sw) (i32.sub (local.get $used) (local.get $slen)))
         (i32.store offset=12 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+        ;; Shift parallel data array down by one slot at $idx.
+        (if (i32.load offset=36 (local.get $sw))
+          (then
+            (local.set $dest_w
+              (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+                       (i32.mul (local.get $idx) (i32.const 4))))
+            (call $memcpy (local.get $dest_w)
+                          (i32.add (local.get $dest_w) (i32.const 4))
+                          (i32.mul (i32.sub (i32.sub (local.get $count) (local.get $idx))
+                                            (i32.const 1))
+                                   (i32.const 4)))))
         ;; Adjust cur_sel if affected
         (local.set $sel (i32.load offset=16 (local.get $sw)))
         (if (i32.eq (local.get $sel) (local.get $idx))
@@ -2974,6 +3012,27 @@
             (then (i32.store offset=16 (local.get $sw) (i32.sub (local.get $sel) (i32.const 1)))))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.sub (local.get $count) (i32.const 1)))))
+
+    ;; ---------- LB_GETITEMDATA (0x0199) / LB_SETITEMDATA (0x019A) ----------
+    ;; wParam = index. SETITEMDATA's lParam is the new u32. Out-of-range → -1.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0199))
+                (i32.eq (local.get $msg) (i32.const 0x019A)))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (local.get $count)))
+          (then (return (i32.const -1))))
+        (if (i32.eqz (i32.load offset=36 (local.get $sw)))
+          (then (return (i32.const 0))))
+        (local.set $dest_w
+          (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+                   (i32.mul (local.get $idx) (i32.const 4))))
+        (if (i32.eq (local.get $msg) (i32.const 0x019A))
+          (then
+            (i32.store (local.get $dest_w) (local.get $lParam))
+            (return (i32.const 0))))
+        (return (i32.load (local.get $dest_w)))))
 
     ;; ---------- LB_FINDSTRING (0x018F) / LB_FINDSTRINGEXACT (0x01A2) ----------
     ;; wParam = start index (-1 = from 0); lParam = NUL-terminated query.
@@ -3562,12 +3621,17 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0156))
       (then (return (i32.shr_u (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x80000000)) (i32.const 31)))))
 
-    ;; ---------- CB_DIR / CB_GETITEMHEIGHT / CB_SETITEMHEIGHT / ownerdraw paths ----------
+    ;; ---------- CB_GETITEMDATA (0x0150) → LB_GETITEMDATA (0x0199) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0150))
+      (then (return (call $wnd_send_message (local.get $lb) (i32.const 0x0199) (local.get $wParam) (i32.const 0)))))
+    ;; ---------- CB_SETITEMDATA (0x0151) → LB_SETITEMDATA (0x019A) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0151))
+      (then (return (call $wnd_send_message (local.get $lb) (i32.const 0x019A) (local.get $wParam) (local.get $lParam)))))
+
+    ;; ---------- CB_DIR / ownerdraw paths ----------
     ;; Fail-fast (memory: feedback_fail_fast_stubs).
-    (if (i32.or (i32.or (i32.eq (local.get $msg) (i32.const 0x0145))   ;; CB_DIR
-                        (i32.eq (local.get $msg) (i32.const 0x0150)))  ;; CB_GETITEMDATA
-                (i32.or (i32.eq (local.get $msg) (i32.const 0x0151))   ;; CB_SETITEMDATA
-                        (i32.eq (local.get $msg) (i32.const 0x0153))))   ;; CB_GETDROPPEDWIDTH (rare)
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0145))   ;; CB_DIR
+                (i32.eq (local.get $msg) (i32.const 0x0153)))  ;; CB_GETDROPPEDWIDTH (rare)
       (then (call $crash_unimplemented (i32.const 0x100))))
 
     ;; ---------- WM_LBUTTONDOWN (0x0201) — toggle dropdown ----------
