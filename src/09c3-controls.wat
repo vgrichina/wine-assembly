@@ -3241,6 +3241,12 @@
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
     (if (i32.load offset=32 (local.get $sw)) (then (return)))  ;; already dropped
+    ;; Another combo already dropped on the same dialog? Close it (cancel) before
+    ;; opening this one — Win32 only allows one expanded combo dropdown at a time.
+    (if (i32.and
+          (i32.ne (global.get $combo_open_hwnd) (i32.const 0))
+          (i32.ne (global.get $combo_open_hwnd) (local.get $hwnd)))
+      (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
     (local.set $lb (i32.load offset=20 (local.get $sw)))
     (if (i32.eqz (local.get $lb)) (then (return)))
     (local.set $style (call $wnd_get_style (local.get $lb)))
@@ -3750,6 +3756,13 @@
             (if (i32.load offset=32 (local.get $state_w))
               (then (call $combobox_close_dropdown (local.get $hwnd) (i32.const 0))))
             (return (i32.const 0))))
+        ;; VK_TAB: dismiss dropdown (cancel) so focus-change leaves no stranded
+        ;; popup. Real dialog tabstop navigation isn't wired up here, but at
+        ;; least the dropdown shouldn't linger.
+        (if (i32.eq (local.get $wParam) (i32.const 0x09))  ;; VK_TAB
+          (then
+            (if (i32.load offset=32 (local.get $state_w))
+              (then (call $combobox_close_dropdown (local.get $hwnd) (i32.const 0))))))
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))  ;; VK_RETURN
           (then
             (if (i32.load offset=32 (local.get $state_w))
@@ -5174,11 +5187,27 @@
             (i32.shl
               (i32.and (i32.sub (local.get $py) (local.get $cy)) (i32.const 0xFFFF))
               (i32.const 16))))
+          ;; Click on a sibling control while another combo is dropped → cancel
+          ;; that combo first (matches Win98: any click outside the dropdown's
+          ;; field/listbox dismisses it). Skip when the hit IS the open combo
+          ;; itself — its wndproc handles open/close internally.
+          (if (i32.and
+                (i32.eq (local.get $msg) (i32.const 0x0201))
+                (i32.and
+                  (i32.ne (global.get $combo_open_hwnd) (i32.const 0))
+                  (i32.ne (global.get $combo_open_hwnd) (local.get $ch))))
+            (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
           (drop (call $wnd_send_message (local.get $ch)
                   (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
           (return (i32.const 1))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $walk)))
+    ;; No child hit. If a combo is dropped, an empty-area click on the dialog
+    ;; should still dismiss it.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0201))
+          (i32.ne (global.get $combo_open_hwnd) (i32.const 0)))
+      (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
     (i32.const 0))
 
   ;; Recursively destroy a window and all of its WAT-managed descendants.
