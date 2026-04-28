@@ -3812,13 +3812,15 @@
   )
 
   ;; 325: wsprintfW — wide sprintf (cdecl, caller cleans up)
-  ;; wsprintfW(buf, fmt, ...) — args start at esp+12 in guest memory
+  ;; wsprintfW(buf, fmt, ...) — cdecl; varargs at guest esp+12 (after ret + buf + fmt)
   (func $handle_wsprintfW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; arg0=buf (guest), arg1=fmt (guest), args on stack at esp+12
+    ;; wsprintf_impl_w treats out/fmt/arg_ptr all as guest addresses (uses gl16/gl32 internally)
     (global.set $eax (call $wsprintf_impl_w
-      (call $g2w (local.get $arg0))
-      (call $g2w (local.get $arg1))
-      (i32.add (call $g2w (global.get $esp)) (i32.const 8)))))
+      (local.get $arg0)
+      (local.get $arg1)
+      (i32.add (global.get $esp) (i32.const 12))))
+    ;; cdecl: only pop return address
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 326: TlsAlloc — return next TLS index
   (func $handle_TlsAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
