@@ -1194,3 +1194,39 @@ So the SCR gets `IDirect3DRM*` from `Direct3DRMCreate` and walks vtables from th
 **Next probe (most direct):**
 - Single-step or `--break-once` at fn `0x74420140`, step into the **vtable indirect calls** to see what fn entries they land on inside d3rm — those entries identify which IDirect3DRM/MeshBuilder/Frame methods the SCR uses. Once we know the d3rm-side VA for `MeshBuilder::Load` and `Frame::AddVisual`, set `--count` on them: zero hits = AddVisual never called (scene wired wrong); high hits + zero geometry-emit = MeshBuilder::Load succeeds but emits empty mesh (X-file parse bug or vertex extraction bug).
 - Alternative quicker check: count any hits at `0x6478f11f` (Direct3DRMCreate impl) — confirms IDirect3DRM is created at all. Then dump the vtable that gets installed at `[ebx+0]`.
+
+**2026-04-28 cont.9 — Direct3DRMCreate / CreateFrame / CreateMeshBuilder all fire; geometry-emit subtree is fully dead 2 levels up.**
+
+ROCKROLL.SCR `/s` loads d3rm.dll at runtime base **`0x7459b000`** (preferred `0x64780000`, delta `+0x0FE1B000`). With that base, `--count` over 15k batches:
+
+| Fn | Preferred VA | Reloc VA | Hits |
+|---|---|---|---|
+| `Direct3DRMCreate` impl | `0x6478f11f` | `0x745aa11f` | 5 |
+| `IDirect3DRM::CreateFrame` (vt slot 4) | `0x6478fa90` | `0x745aaa90` | 40 |
+| `IDirect3DRM::CreateMeshBuilder` (vt slot 6) | `0x6478fcf4` | `0x745aacf4` | 6 |
+| SCR loader fn (X-file walker) | `0x74420140` | static | 16 |
+
+So the SCR creates 5 IDirect3DRMs, 40 frames, 6 MeshBuilders, and runs its X-file walker 16x — nominally enough to populate a scene.
+
+**IDirect3DRM root vtable @ `0x647e01f8`** (installed by `0x6478f11f` at `[obj+0x8]`, slot semantics from MSDN ordering):
+- slot 0–2: IUnknown
+- slot 4: CreateFrame → `0x6478fa90`
+- slot 6: CreateMeshBuilder → `0x6478fcf4`
+- slots 5/7/.../31 enumerated cleanly (CreateMesh/Face/Animation/...)
+
+The struct also installs additional vtables at `[obj+0x14]=0x647e0288` and `[obj+0x20]=0x647e0318` (likely IDirect3DRM2 / IDirect3DRM3 aggregations) — multi-interface object as expected.
+
+**Geometry-emit dead-tree (more callers walked):** `0x647bdf8a` has 2 static callers `0x647bd912` (in fn `0x647bd538`) and `0x647bf29b` (in fn `0x647bf26a`). fn `0x647bd538` has 3 grandparent xrefs `0x647a1227`, `0x647ad0cd`, `0x647bff37`. **`--count` over 15k batches: ALL FIVE FNs zero hits** (`0x745d8538`, `0x745da26a`, `0x745bc227`, `0x745c80cd`, `0x745daf37`).
+
+So the entire emit-subtree — 2 levels up from the leaf — is statically reachable but dynamically dead. The SCR's per-frame work is funneled into a *different* d3rm code path (the `0x647c26a0` Execute-wrapper chain we already see firing 5863×/run) that produces only state-batcher buffers (`vc=0, il=32` STATE+EXIT, no TRIANGLE/PROCESSVERTICES). The "real" geometry path that would call `0x647bdf8a` is reachable only through code that the SCR's vtable indirects never trigger.
+
+**`0x647bf26a` has zero static xrefs** — pure vtable target. Its enclosing fn must live in some d3rm interface vtable; finding which interface/slot would identify what the SCR is *not* invoking that it needs to. Candidate interfaces: IDirect3DRMMeshBuilder, IDirect3DRMMesh, IDirect3DRMFrame, IDirect3DRMVisual (likely Load / SetGeometry / Render / GetVertices).
+
+**Next probe:**
+1. Search d3rm `.data`/`.rdata` for any 4-byte word equal to `0x647bf26a` — its vtable home, then dump the surrounding 50 slots and infer the interface from MSDN method ordering.
+2. Same for `0x647bd538` — confirms whether its only callers are the 3 internal fns we walked or whether one is also a vtable target.
+3. If `0x647bf26a` is `MeshBuilder::Render` or `Mesh::Render`, then the SCR is creating MeshBuilders but never calling Render on them via d3rm's auto-traverse — confirming the "scene tree empty / not attached" hypothesis from cont.8.
+
+**Update on (1)/(2):** byte-search for `0x647bf26a` and `0x647bd538` as 4-byte LE words anywhere in d3rm.dll → **0 hits each**. Neither is a vtable target. Combined with `xrefs.js` showing zero call-target xrefs to `0x647bf26a`, that fn is most likely dead code in the binary itself (unreferenced — possibly an inline helper the optimizer kept around). So the only live entry into the emit-subtree is via fn `0x647bd538` and its 3 callers — all of which are dead at runtime. **The whole geometry-emit branch of d3rm is unreachable from the per-frame path the SCR drives.**
+
+This rotates the next-step priority: stop chasing the dead emit-subtree. Instead profile the *live* per-frame path's leaves to see what they DO emit. The 5863 Execute calls per run all come through `0x647c26a0`'s state-batcher (vc=0, il=32). Walk *into* that batcher to see what it iterates over — if its source list is empty, that's the upstream bug. Look for the loop body inside `0x647c26a0` (or its caller chain `0x64786365`/`0x64799202`/`0x64799087`) that should be visiting per-mesh state but is iterating zero items.
