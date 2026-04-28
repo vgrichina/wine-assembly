@@ -1287,3 +1287,64 @@ The 16 `esi` values march by 0xc0 from `0x74a19420` to `0x74a19f00` — a contig
 **Next probe:**
 1. Find writers to `[esi+0xbc]` and `[esi+0xc4]` in d3rm.dll: `node tools/find_field.js test/binaries/dlls/d3drm.dll 0xbc --reg=esi,edi --op=write,imm` (and 0xc4). The setter is what `AddVisual` calls under the hood. Once located, count its hits — if **zero**, the SCR never invokes the AddVisual path; if nonzero, the writes target a different esi than the one fn `0x64798e51` reads.
 2. Walk up callers of fn `0x64798e51` (xrefs at `0x64798598`, `0x64799082`, `0x647a118c`) — that's the fn calling chain that actually reads from these contexts. The "input" caller would be where the SCR's per-frame entry point lands, telling us which interface method the SCR uses to feed visuals into d3rm.
+
+**2026-04-28 cont.11 — gate chain traced to a vtable slot the SCR never calls.**
+
+Walked the writer chain for `[esi+0xbc]` (visual count). `find_field` shows 6 `mov [esi+0xbc], …` writers; counted hits at the **enclosing fn entry** of each (since the writes themselves are mid-block and `--trace-at` only fires on block boundaries):
+
+| writer | fn entry | reloc | hits/15k |
+|---|---|---|---|
+| 0x6479c884 | 0x6479c7f0 | 0x745b77f0 | 1 |
+| 0x647acb86 | 0x647acace | 0x745c7ace | 0 |
+| 0x647aed4d | 0x647aed3b | 0x745c9d3b | 3 |
+| 0x647bd4f7 | 0x647bd4ba | 0x745d84ba | 0 |
+| **0x647c0e4c** | **0x647c0ddc** | **0x745dbddc** | **37** |
+| 0x647c13e8 | 0x647c1377 | 0x745dc377 | 1 |
+
+Hot writer is fn `0x647c0ddc` (37 hits). Disasm at +0xa shows the gate immediately after entry:
+
+```
+647c0ddc  push ebp; mov ebp,esp; sub esp,0x44
+647c0de2  push esi; mov esi,[ebp+8]
+647c0de6  cmp byte [esi+0xb1], 0
+647c0ded  jz   0x647c0e91          ; <-- skip the whole populate path
+…
+647c0e4c  mov [esi+0xbc], eax       ; write visual_count
+647c0e91  pop esi; leave; ret
+```
+
+So `[esi+0xbc]` only updates when **byte `[esi+0xb1] != 0`**. Direct trace at the write addr `0x745dbe4c`: **0 hits**. The `jz` is taken every time → the gate byte is permanently 0.
+
+**Tracing the gate writer.** `find_field` on `+0xb1` finds 9 references; only **one** real setter:
+
+| addr | insn | role |
+|---|---|---|
+| `0x647c0859` | `mov [esi+0xb1], bl` | **resets** to 0 (bl=0 from xor at fn start) |
+| `0x647967e1` | `mov [ecx+0xb1], al` | **conditional set** — `al` = 1 if FPU compare branch fires, else 0 |
+
+Setter fn entry at `0x647966da` (preferred VA). Disasm of the relevant tail:
+
+```
+647967d4  fnstsw ax; sahf; jz short 0x647967dc
+647967d7  push 0x1; pop eax; jmp short 0x647967de   ; al = 1
+647967dc  xor eax, eax                              ; al = 0
+647967de  mov ecx, [ebp+8]
+647967e1  mov [ecx+0xb1], al
+…
+647967f3  ret 0x18                                  ; 6-arg stdcall
+```
+
+Fn signature `ret 0x18` = 6 args × 4 bytes. Looks like `Frame::AddVisual(this, visual)` plus padding — the FPU compare may be a unity-test on the visual's transform.
+
+**Setter never fires at runtime.** Trace-at on `0x745b16da` (reloc of fn entry): **0 hits over 15k batches**. Trace-at on its sole call-site enclosing fn (`0x64788789`, reloc `0x745a3789`): also **0 hits**.
+
+**Vtable fingerprint.** `xrefs.js` on fn `0x64788789` finds 3 .data references at `0x647df480`, `0x647df598`, `0x647df6e4`. `vtable_dump.js` confirms each is **slot 32** of three sibling vtables — the canonical d3drm Frame/Frame2/Frame3 versioning pattern. So fn `0x64788789` is `IDirect3DRMFrame::AddVisual` (slot 32 in the Frame vtable).
+
+**Bottom line:** the SCR creates 40 frames + 6 mesh-builders, but **never calls `IDirect3DRMFrame::AddVisual`** on any of them. With nothing attached, the per-frame state-batcher's visual list (`[esi+0xbc]`) stays at 0, and the geometry-emit subtree never runs.
+
+`api_table.json` has zero `IDirect3DRMFrame` entries — d3drm vtable methods are dispatched through the real DLL, not our COM thunk layer. So the SCR's vtable[32] indirect should land directly in `0x64788789` if it were invoked. The fact that it isn't means **the SCR's own logic never reaches the AddVisual call site**, not that we mis-route it.
+
+**Next probe direction:**
+1. Find SCR-side `call [reg+0x80]` (slot 32 = offset 0x80) instructions — those are the AddVisual call sites in the SCR binary. If no such instruction exists in `ROCKROLL.SCR`, the SCR uses a different attach mechanism (e.g., `IDirect3DRMMeshBuilder::AddFace` directly into a global mesh, or `IDirect3DRMViewport::SetCamera` style aggregation we haven't found yet).
+2. Alternative hypothesis: the SCR may build geometry into a **single mesh-builder** that's attached via `IDirect3DRM::SetDefaultTextureColors`/some scene-root API rather than per-frame. Search for slot offsets used in `call dword [reg+0xNN]` patterns inside SCR's `.text` to enumerate which Frame/MeshBuilder methods it actually uses.
+3. Faster: dump every COM vtable indirect call EIP from the SCR itself and tally — currently we have constructor counts but no full vtable-call census from the SCR's perspective.
