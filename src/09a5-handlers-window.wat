@@ -1354,6 +1354,17 @@
         (then
           (call $host_sys_command (local.get $arg0)
                 (i32.and (local.get $arg2) (i32.const 0xFFF0)))
+          ;; SC_MAXIMIZE / SC_RESTORE actually resize the window — the guest
+          ;; needs WM_MOVE + WM_SIZE so its wndproc relays out (otherwise the
+          ;; back-canvas grows but the app keeps drawing in its old area).
+          ;; SC_MINIMIZE just hides the window; no relayout needed.
+          (if (i32.or
+                (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
+                (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120)))
+            (then
+              (call $post_resize_messages (local.get $arg0)
+                (select (i32.const 2) (i32.const 0)
+                        (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))))))
           (global.set $eax (i32.const 0))
           (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
       (global.set $eax (i32.const 0))
