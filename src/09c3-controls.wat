@@ -3665,6 +3665,13 @@
                             (local.get $wParam)
                             (i32.or (i32.and (local.get $px) (i32.const 0xFFFF))
                                     (i32.shl (i32.sub (local.get $py) (local.get $field_h)) (i32.const 16)))))
+                    ;; Real Windows: clicking an item in the dropdown selects it
+                    ;; AND closes the dropdown (accept). The listbox already
+                    ;; updated cur_sel and fired LBN_SELCHANGE; close as accept.
+                    ;; CBS_SIMPLE (variant=1) keeps its always-visible listbox
+                    ;; embedded — close_dropdown is a no-op for it.
+                    (if (i32.ne (local.get $variant) (i32.const 1))
+                      (then (call $combobox_close_dropdown (local.get $hwnd) (i32.const 1))))
                     (return (i32.const 0)))
                   (else
                     ;; Click outside field, outside listbox → cancel-close.

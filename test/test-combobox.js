@@ -143,16 +143,19 @@ async function main() {
   // Click on listbox area (py >= FIELD_H) → forwarded to listbox.
   // Row 0 starts at lb-local y=0 (px=5, py=FIELD_H+5 → lb (5,5) → row 0).
   // listbox WM_LBUTTONDOWN sets cur_sel and fires LBN_SELCHANGE; combobox
-  // syncs text + relays CBN_SELCHANGE but does NOT close (only LBN_DBLCLK closes).
+  // syncs text, relays CBN_SELCHANGE, AND closes the dropdown (accept) —
+  // matches real Windows behavior where a single click on an item commits.
   e.send_message(cb, CB_SETCURSEL, 2, 0);  // baseline
+  e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
   e.send_message(cb, WM_LBUTTONDOWN, 0, (5 & 0xFFFF) | ((FIELD_H + 5) & 0xFFFF) << 16);
   check('listbox click selected row 0',
     e.combobox_get_cur_sel(cb) === 0 && getText() === items[0],
     `sel=${e.combobox_get_cur_sel(cb)} text="${getText()}"`);
-  check('listbox single-click keeps dropdown open',
-    e.combobox_is_dropped(cb) === 1);
+  check('listbox single-click closes dropdown (accept)',
+    e.combobox_is_dropped(cb) === 0);
 
-  // Click outside listbox (px >= w) when dropped → cancel-close.
+  // Click outside listbox (px >= w) while dropped → cancel-close.
+  e.send_message(cb, CB_SHOWDROPDOWN, 1, 0);
   e.send_message(cb, WM_LBUTTONDOWN, 0, (250 & 0xFFFF) | ((FIELD_H + 5) & 0xFFFF) << 16);
   check('out-of-bounds click closes dropdown',
     e.combobox_is_dropped(cb) === 0);
