@@ -1044,3 +1044,37 @@ So bit-1 is **not** missing because of a SetRenderTarget gap — the SCR doesn't
 **Re-check needed:** is the `0x750a9a68` "gate object" we keep referring to actually the *same* sub-object whose +0x90 is being set by the 28 hits? The trace-at hit #1 shows `[esp+4] = 0x750a9a68` — yes, it IS. So the setter IS writing to the gate object's +0x90 with value 1, 28 times. Then **bit-1 of +0x90 SHOULD be set** after these calls. Either (a) the bit-1 we're checking is actually on a *byte* offset other than +0x90 (e.g. +0x91, +0x92), or (b) something else clears it between the setter calls and the fe13 predicate check.
 
 **Next step:** add `--watch-byte=GATE+0x90` (with GATE=0x750a9a68) and `--watch-byte=GATE+0x91/0x92/0x93` to see what byte the predicate at fe13 actually reads, and watch for clears. The predicate disasm needs another look — bit-1 of which byte exactly?
+
+**2026-04-27 cont.5 — KEY INSIGHT: slot 36 is `IDirect3DRMDevice::SetRenderMode(DWORD flags)`; fe13 checks for `BLENDED+SORTED` transparency mode.**
+
+Re-traced public setter `0x6479456e` with full arg dump (`--trace-at=0x745af56e`). 14 hits, **each on a different sub-object** (not all on the gate object 0x750a9a68 — only hit #1 was). Every call passes `value=0x00000001`. So the gate object's +0x90 was written *once* by hit #1 with value 1; no other writer touched it.
+
+Walked SCR fn `0x74419044` immediately preceding the slot-36 call (lines `0x74419156..0x74419173`):
+```
+push 0                          ; arg3
+push 0x3f800000                 ; arg2 = 1.0f (default)
+push 0x744c5ef4                 ; arg1 = "RenderMode"  ←
+mov ebx, [esi]                  ; ebx = vtable
+call 0x744094f0                 ; reads HKEY_CURRENT_USER for "RenderMode"
+add esp, 0xc
+call 0x7448e8ac                 ; FPU fistp → eax = int(value)
+push eax                        ; value
+push esi                        ; this
+call [ebx+0x90]                 ; slot 36
+```
+
+`0x74409f20` confirms the registry call uses `HKEY_CURRENT_USER` (constant `0x80000001`); `0x744c5ef4` is the literal string `"RenderMode"`. Adjacent debug-fmt strings: `Getting config value "%s"`, `Couldn't parse vector key "%s"`, `GetD3DRMDevice()->S...`, `Found "%f" in HKEY_CURRENT_U...`. So slot 36 of vtable `0x647df0f0` (Frame2-shape, 39 slots, `+0x90` setter, IID=`0x647e08f8`) is **`IDirect3DRMDevice::SetRenderMode(DWORD)`** — vtable is actually `IDirect3DRMDevice` (or v2/v3), not `IDirect3DRMFrame2` (slot count overlaps; the IID match nails it down).
+
+Per d3drmdef.h, `D3DRMRENDERMODE_BLENDEDTRANSPARENCY = 0x1` and `D3DRMRENDERMODE_SORTEDTRANSPARENCY = 0x2`. So:
+- bit 0 set ⇒ blended transparency enabled
+- bit 1 set ⇒ sorted transparency enabled
+- bits 0 AND 1 ⇒ both transparency modes (mode value 3)
+
+The fe13 predicate `test al, 0x1; test al, 0x2` is therefore **"are BOTH transparency modes active?"** — *not* "is rendering needed?". When false (default mode=1, only blended), fe13 returns 0 and the ff51 caller skips its branch. **This is the simple/common case, not a bug.**
+
+**This invalidates the 6-day investigation thread.** ff51 is **not** the missing render path — it's a transparency-sort optimization that's correctly skipped when the registry's RenderMode=1. The actual blank-screen bug is somewhere else entirely. The 16 hits/frame on ff51 + skip-body just means "16 transparency checks per frame, none needed." Real rendering must flow through the Execute/TLVertex/BeginScene path that we already see in COM trace (BeginScene/Execute/EndScene fire). The bug is **in our handlers' execution of the Execute buffer**, not in a missing init bit.
+
+**Drop fe13/ff51 thread.** Refocus on:
+1. Are `IDirect3DDevice_Execute` calls actually rasterizing geometry, or are we ignoring opcodes? `--trace-host=...` or step into our `$handle_IDirect3DDevice_Execute` and confirm we're processing TRIANGLE / PROCESSVERTICES opcodes (not just STATETRANSFORM, per the existing D3DIM matrix-table memory).
+2. Verify the canvas attached to the SCR's window receives any draw calls at all. If COM-level Execute fires but our handler does nothing, no pixels appear.
+3. Existing memory `project_d3dim_matrix_table.md` says rasterizer still ignores matrices and op=9 PROCESSVERTICES is next. **That is the actual gating issue for ROCKROLL** — implement op=9 there, then op=2 TRIANGLE, then transparency-sort path can stay skipped without hurting visible output.
