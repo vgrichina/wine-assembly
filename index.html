@@ -119,7 +119,51 @@
       gap: 3px;
       height: 22px;
     }
-    #taskbar .start-btn:active { border-style: inset; }
+    #taskbar .start-btn:active,
+    #taskbar .start-btn.open { border-style: inset; }
+    #start-menu {
+      position: absolute;
+      bottom: 28px;
+      left: 4px;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      font-family: "Microsoft Sans Serif", "MS Sans Serif", Tahoma, Arial, sans-serif;
+      font-size: 11px;
+      box-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+      display: none;
+      z-index: 100;
+      min-width: 180px;
+      padding: 2px;
+    }
+    #start-menu.open { display: block; }
+    #start-menu .item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px 4px 8px;
+      cursor: pointer;
+      color: #000;
+      text-decoration: none;
+    }
+    #start-menu .item:hover { background: #000080; color: #fff; }
+    #start-menu .item .ico { font-size: 14px; width: 16px; text-align: center; }
+    #start-menu .sep { height: 1px; background: #808080; border-bottom: 1px solid #fff; margin: 2px 1px; }
+    #start-menu .banner {
+      background: linear-gradient(to bottom, #000080, #1084d0);
+      color: #fff;
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-weight: bold;
+      font-size: 16px;
+      padding: 8px 4px;
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      bottom: 2px;
+      width: 22px;
+      letter-spacing: 1px;
+    }
+    #start-menu .items { margin-left: 24px; }
     .win-flag { display: inline-grid; grid-template-columns: 5px 5px; gap: 1px; }
     .win-flag span { width: 5px; height: 5px; display: block; }
     #task-buttons { display: flex; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
@@ -358,10 +402,35 @@ Resource-aware Win98 emulator
     </div>
   </div>
   <div id="taskbar">
-    <button class="start-btn"><span class="win-flag"><span style="background:#FF0000"></span><span style="background:#00FF00"></span><span style="background:#0000FF"></span><span style="background:#FFFF00"></span></span>Start</button>
+    <button class="start-btn" id="start-btn" onclick="toggleStartMenu(event)"><span class="win-flag"><span style="background:#FF0000"></span><span style="background:#00FF00"></span><span style="background:#0000FF"></span><span style="background:#FFFF00"></span></span>Start</button>
     <div id="task-buttons"></div>
     <div id="clock-area"><span id="clock"></span></div>
   </div>
+  <div id="start-menu">
+    <div class="banner">Wine&nbsp;Assembly</div>
+    <div class="items">
+      <a class="item" href="story.html"><span class="ico">&#128218;</span>The Story</a>
+      <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico">&#128187;</span>Source on GitHub</a>
+      <div class="sep"></div>
+      <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
+    </div>
+  </div>
+  <script>
+    function toggleStartMenu(e) {
+      if (e) e.stopPropagation();
+      const m = document.getElementById('start-menu');
+      const b = document.getElementById('start-btn');
+      const open = m.classList.toggle('open');
+      b.classList.toggle('open', open);
+    }
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('start-menu');
+      if (!m.classList.contains('open')) return;
+      if (e.target.closest('#start-menu') || e.target.closest('#start-btn')) return;
+      m.classList.remove('open');
+      document.getElementById('start-btn').classList.remove('open');
+    });
+  </script>
 
   <script src="lib/mem-utils.js?v=40"></script>
   <script src="lib/dib.js?v=40"></script>
