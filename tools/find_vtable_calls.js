@@ -78,11 +78,12 @@ function scanSection(sec) {
     const mod = mr >> 6;
     const rm = mr & 7;
     let disp, len;
-    if (mod === 1) { disp = buf.readInt8(sec.raw + off + 2); len = 3; }
+    if (mod === 0) { disp = 0; len = 2; }
+    else if (mod === 1) { disp = buf.readInt8(sec.raw + off + 2); len = 3; }
     else if (mod === 2) { disp = buf.readInt32LE(sec.raw + off + 2); len = 6; }
     else continue;
     if (rm === 4) continue; // SIB — skip (would need extra byte)
-    if (rm === 5 && mod === 0) continue;
+    if (rm === 5 && mod === 0) continue; // disp32-absolute, not [reg]
     const reg = regs32[rm];
     if (regFilter && !regFilter.has(reg)) continue;
     if (slotsArg) {
