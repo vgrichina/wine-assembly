@@ -404,6 +404,9 @@
                    (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
           (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000))))
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
+    ;; Maximized — flips the max button glyph to the restore (overlapping rects) form.
+    (if (call $wnd_max_get (local.get $hwnd))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 4)))))
     ;; Title
     (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
     (local.set $title_len (call $title_table_get_len (local.get $hwnd)))
@@ -619,6 +622,22 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))
+
+  ;; Per-window maximized state. Set by the WM_SYSCOMMAND handler after
+  ;; SC_MAXIMIZE / SC_RESTORE commits its geometry change. Read by the
+  ;; HTMAXBUTTON click handler (to flip SC_MAXIMIZE↔SC_RESTORE) and by
+  ;; $defwndproc_do_ncpaint (so the glyph reflects current state).
+  (func $wnd_max_get (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $MAX_TABLE) (local.get $idx))))
+  (func $wnd_max_set (param $hwnd i32) (param $val i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $idx))
+                        (local.get $val)))))
 
   ;; ---- Sysbutton press state (used by JS while user holds LMB on a
   ;; title-bar button). Setting to (hwnd, hit) makes the next ncpaint

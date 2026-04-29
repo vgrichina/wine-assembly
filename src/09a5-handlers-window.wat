@@ -1324,7 +1324,12 @@
                 (i32.const 0x0112) (i32.const 0xF020) (i32.const 0)))))
       (if (i32.eq (local.get $arg2) (i32.const 9))   ;; HTMAXBUTTON
         (then (drop (call $post_queue_push (local.get $arg0)
-                (i32.const 0x0112) (i32.const 0xF030) (i32.const 0)))))
+                (i32.const 0x0112)
+                ;; If already maximized, flip to SC_RESTORE (0xF120). Otherwise
+                ;; SC_MAXIMIZE (0xF030). Lets a second click un-maximize.
+                (select (i32.const 0xF120) (i32.const 0xF030)
+                        (call $wnd_max_get (local.get $arg0)))
+                (i32.const 0)))))
       (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_SETCURSOR (0x0020): wParam=hwnd under cursor, LOWORD(lParam)=hit code.
@@ -1358,13 +1363,14 @@
           ;; needs WM_MOVE + WM_SIZE so its wndproc relays out (otherwise the
           ;; back-canvas grows but the app keeps drawing in its old area).
           ;; SC_MINIMIZE just hides the window; no relayout needed.
-          (if (i32.or
-                (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
-                (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120)))
+          (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
             (then
-              (call $post_resize_messages (local.get $arg0)
-                (select (i32.const 2) (i32.const 0)
-                        (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))))))
+              (call $wnd_max_set (local.get $arg0) (i32.const 1))
+              (call $post_resize_messages (local.get $arg0) (i32.const 2))))
+          (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120))
+            (then
+              (call $wnd_max_set (local.get $arg0) (i32.const 0))
+              (call $post_resize_messages (local.get $arg0) (i32.const 0))))
           (global.set $eax (i32.const 0))
           (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
       (global.set $eax (i32.const 0))

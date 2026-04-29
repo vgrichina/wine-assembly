@@ -487,7 +487,8 @@
   ;;   bit 0: WM_NCPAINT pending; bit 1: WM_ERASEBKGND pending; bit 2: WM_NCCALCSIZE pending
   ;; 0x0000EE70  2KB     TITLE_TABLE    (256 entries × 8 bytes — WASM title ptr + len, ends 0xF670)
   ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
-  ;; 0x00010670  400B    Free
+  ;; 0x00010670  256B    MAX_TABLE      (256 × 1 byte — per-hwnd maximized flag, ends 0x10770)
+  ;; 0x00010770  144B    Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  ~2.7KB  Free (up to GUEST_BASE)
@@ -646,6 +647,10 @@
   ;; 256 entries × 1 byte = 0x100 (0xF170..0xF270)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
   (global $FLASH_TABLE i32 (i32.const 0x0000E970))
+  ;; MAX_TABLE — per-window maximized flag, parallel to WND_RECORDS slots.
+  ;; 256 entries × 1 byte (0 = normal, 1 = maximized). Toggled by the
+  ;; WM_SYSCOMMAND handler after $host_sys_command commits geometry.
+  (global $MAX_TABLE i32 (i32.const 0x00010670))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)
