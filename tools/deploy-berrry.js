@@ -30,8 +30,13 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools'
 // Directories that contain binary assets (base64-encoded)
 const BINARY_DIRS = ['binaries'];
 
-// Skip these binary subdirs (too large, not used by app, or 16-bit)
-const SKIP_BIN_DIRS = new Set(['installers', 'win98-16bit', 'demos', 'plus']);
+// Skip these binary subdirs (too large, not used by app, or 16-bit).
+// Default deploy ships only desktop-icon binaries; skip everything else.
+const SKIP_BIN_DIRS = new Set([
+  'installers', 'win98-16bit', 'demos', 'plus', 'plus98',
+  'shareware', 'wep32-community', 'screensavers', 'xp', 'win98-apps',
+  'help',
+]);
 
 // Skip individual large files (>500KB) that aren't essential
 const MAX_BINARY_SIZE = 500 * 1024;
