@@ -567,24 +567,36 @@
       (else (global.set $eip (local.get $fall)))))
   (func $th_block_end (param $op i32) (global.set $eip (local.get $op)))
   (func $th_loop (param $op i32)
-    ;; operand: 0=LOOP, 1=LOOPE, 2=LOOPNE
-    (local $target i32) (local $fall i32) (local $take i32)
+    ;; operand: low bits 0-1 = cc (0=LOOP, 1=LOOPE, 2=LOOPNE)
+    ;;         bit 4 (0x10) = addr-size override (0x67 prefix): use CX (16-bit) instead of ECX
+    (local $target i32) (local $fall i32) (local $take i32) (local $cc i32) (local $cx i32)
     (local.set $target (call $read_thread_word)) (local.set $fall (call $read_thread_word))
-    (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
-    (local.set $take (i32.ne (global.get $ecx) (i32.const 0)))
-    (if (i32.eq (local.get $op) (i32.const 1)) ;; LOOPE
+    (local.set $cc (i32.and (local.get $op) (i32.const 0x3)))
+    (if (i32.and (local.get $op) (i32.const 0x10))
+      (then
+        ;; addr16: decrement CX (low 16 of ECX), preserve high 16, test CX != 0
+        (local.set $cx (i32.and (i32.sub (i32.and (global.get $ecx) (i32.const 0xFFFF)) (i32.const 1)) (i32.const 0xFFFF)))
+        (global.set $ecx (i32.or (i32.and (global.get $ecx) (i32.const 0xFFFF0000)) (local.get $cx)))
+        (local.set $take (i32.ne (local.get $cx) (i32.const 0))))
+      (else
+        (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+        (local.set $take (i32.ne (global.get $ecx) (i32.const 0)))))
+    (if (i32.eq (local.get $cc) (i32.const 1)) ;; LOOPE
       (then (local.set $take (i32.and (local.get $take) (call $get_zf)))))
-    (if (i32.eq (local.get $op) (i32.const 2)) ;; LOOPNE
+    (if (i32.eq (local.get $cc) (i32.const 2)) ;; LOOPNE
       (then (local.set $take (i32.and (local.get $take) (i32.eqz (call $get_zf))))))
     (if (local.get $take)
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall)))))
 
-  ;; 216: JECXZ — jump if ECX==0 (target in next word, fallthrough in word after)
+  ;; 216: JECXZ / JCXZ — jump if ECX==0 (or CX==0 with 0x67 prefix; op bit 0)
   (func $th_jecxz (param $op i32)
-    (local $target i32) (local $fall i32)
+    (local $target i32) (local $fall i32) (local $zero i32)
     (local.set $target (call $read_thread_word)) (local.set $fall (call $read_thread_word))
-    (if (i32.eqz (global.get $ecx))
+    (if (i32.and (local.get $op) (i32.const 1))
+      (then (local.set $zero (i32.eqz (i32.and (global.get $ecx) (i32.const 0xFFFF)))))
+      (else (local.set $zero (i32.eqz (global.get $ecx)))))
+    (if (local.get $zero)
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall)))))
 
