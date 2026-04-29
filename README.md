@@ -2,6 +2,9 @@
 
 Run real Windows 98 executables in your browser. No emulation layer, no porting — just raw WebAssembly interpreting x86 machine code.
 
+**Live demo:** https://wine-assembly.berrry.app
+**Project story:** [PROJECT_STORY.md](PROJECT_STORY.md) — a retrospective of the first ~810 commits in 34 days.
+
 Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssembly Text (WAT). It loads unmodified Win32 `.exe` files, decodes x86 instructions into a Forth-style threaded code representation, and executes them while reimplementing the Win32 API surface needed by each application.
 
 ## What Works
@@ -13,7 +16,10 @@ Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssem
 - **SkiFree** — sprite animation, timer-driven gameplay
 - **Paint** — basic drawing (NT version via MFC42/MSVCRT DLL loading)
 - **Entertainment Pack** — Golf, Reversi, Pegged, Taipei, TicTactics, Rattler Race
-- **Space Cadet Pinball** — early stage support
+- **Space Cadet Pinball** — playable, table renders and physics run
+- **Winamp 2.95** — skinned UI, MP3 decode in flight (multi-thread)
+- **Plus! 98 screensavers** — Marbles (DirectDraw 8bpp), Organic Art (D3D Retained Mode in progress)
+- **MFC apps** — via real msvcrt.dll + mfc42u.dll loaded with relocations
 
 ## How It Works
 
@@ -35,7 +41,6 @@ Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssem
 
 ```bash
 bash tools/build.sh
-cd host
 python3 -m http.server 8080
 # Open http://localhost:8080/index.html
 ```
@@ -87,9 +92,11 @@ Everything else — x86 decoding, memory management, PE loading, Win32 API imple
 src/parts/          WAT source files (concatenated in filename order)
 src/api_table.json  Win32 API name -> handler ID mapping
 lib/                JS libraries (renderer, resource parser, DLL loader)
-host/               Browser frontend (index.html, host.js)
+index.html, host.js Browser frontend
 test/               CLI test runner and test binaries
 tools/              Build scripts, code generators, debug tools
+docs/               Memory map, design notes
+apps/               Per-app reverse-engineering progress (pinball.md, screensavers.md, ...)
 ```
 
 ## License
