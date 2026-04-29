@@ -786,6 +786,35 @@ So `0x010082f0` is `call PeekMessageA`. The watchpoint attributing writes to thi
 
 **Better approach**: drop the watchpoint and instead use `--break-once=0x010082e7` (just before PeekMessage) to capture msg.message field. The wndproc dispatches based on msg.message; the message that triggers [+0x172]=1 will fire much more often than WM_KEYDOWN. Likely candidates: WM_TIMER (0x113), WM_PAINT (0x0F), or a custom WM_USER+N. Inspect [ebp-0x18] (msg.message) at the start of each loop iteration.
 
+### 2026-04-29 (continued) — IT'S WM_NCPAINT (0x85), every iteration
+
+`--trace-at=0x010082cd` (the loop body — TranslateMessage call site, `lea eax,[ebp-0x1c]`) over 8000 batches captured 73 hits. ESP-relative dump shows IDENTICAL msg payload every single time:
+
+```
+[esp..]= 0x04e00458 0x000000a7  0x00010002  0x00000085  0x00000001  0x00000000
+                                ^msg.hwnd   ^msg.message ^wParam     ^lParam
+                                            = 0x85       = 1         = 0
+                                            WM_NCPAINT
+```
+
+(The first two words are PeekMessage args still on stack from the prior block; msg = ebp-0x1c = esp+8.)
+
+Source: PeekMessageA in `src/09a5-handlers-window.wat:961-973` does `nc_flags_scan(bit 1)` and synthesises a WM_NCPAINT (0x0085, wParam=1, lParam=0) when any window has NC_FLAGS bit 1 set. PM_REMOVE-clear is wired (line 968-969), but the WM_NCPAINT message gets re-set every loop — almost certainly because a wndproc handler calls `InvalidateRect`/`RedrawWindow` (or our default WM_NCPAINT handling re-sets the flag), so the queue never drains.
+
+**The dispatch chain we wanted to prove**:
+1. Loop iter delivers WM_NCPAINT (0x85)
+2. `DispatchMessageA` → pinball wndproc 0x01007264 → WM_NCPAINT handler
+3. That handler sets `[esi+0x172] = 1` (the gate)
+4. WM_KEYDOWN arrives later but its handler does `cmp [esi+0x172], 0; jnz bail` and bails
+
+This is consistent with all prior runtime evidence:
+- 6 dynamic writers; the dominant one (vtable `call esi` at 0x010082f0) was actually the post-PeekMessage landing of *the next iteration*, where DispatchMessage just returned from a WM_NCPAINT handler that set the flag.
+- Watch toggles cluster at increasing frequency (more NC_FLAGS bit 1 re-arms over time = more child windows accumulating).
+
+**Decisive next step**: identify why NC_FLAGS bit 1 re-arms every iter. Either (a) something inside the WM_NCPAINT handler re-invalidates, or (b) our PeekMessageA's `nc_flags_clear(tmp, bit 1)` only clears one window but the scan finds another. Add a quick `--trace-host=nc_flags_set` (if exposed) or instrument `$nc_flags_set` callers. Hypothesis (b) likely — multiple windows each re-arm independently.
+
+**If (b) confirmed**: a single application's NC_FLAGS bit 1 is supposed to be one-shot per Invalidate, not perpetually re-set. Check whether our DefWindowProc WM_NCPAINT path or any Invalidate-on-paint logic re-sets the flag. The invariant should be: WM_NCPAINT delivered → flag cleared → no more WM_NCPAINT until something explicitly invalidates again.
+
 ### Original "next concrete step" (kept for reference)
 
 check the other 22 WM_KEYDOWN references
