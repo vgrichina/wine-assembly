@@ -487,6 +487,12 @@
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $has_cap   (i32.and (local.get $style) (i32.const 0x00C00000)))
     (local.set $has_thick (i32.and (local.get $style) (i32.const 0x00040000)))
+    ;; Maximized windows are pinned to the work area — Win98 disables
+    ;; edge/corner resize until the user restores. Suppress the HT* resize
+    ;; codes by treating the frame as non-thick while maximized; the border
+    ;; band still classifies as HTBORDER so the cursor stays IDC_ARROW.
+    (if (call $wnd_max_get (local.get $hwnd))
+      (then (local.set $has_thick (i32.const 0))))
     (local.set $has_min   (i32.and (local.get $style) (i32.const 0x00020000)))
     (local.set $has_max   (i32.and (local.get $style) (i32.const 0x00010000)))
     ;; Title bar region: (3, 3)-(w-3, 3+18); button strip (3+2)..(3+16) high.
