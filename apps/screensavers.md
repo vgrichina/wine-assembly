@@ -1456,3 +1456,718 @@ Per-hit data:
 So the scene tree IS being built correctly with 7 frame→visual attachments. The render walk just doesn't enumerate them into Execute opcodes. The 1026 flushes per run all carry only `STATETRANSFORM(count=3) + EXIT`.
 
 **Real next step (now correctly framed).** The bug is in d3rm's per-frame visual enumeration — frames have visuals attached, but the renderer's traversal either (a) doesn't find the right frame chain (root scene frame ≠ traversed frame), or (b) walks frames but skips visuals due to a conditional that never opens (visibility flag, transform validity, viewport binding). With AddVisual now confirmed firing, the productive probe shifts to: instrument d3rm's per-frame `Tick` / render-walker (the fn that calls the buffer-flush at `0x647c3905`) and trace what it does with the 7 known frame ptrs — does it visit them at all? If it visits but emits nothing, what gate skips them?
+
+**2026-04-28 cont.15 — emit-batcher located: fn 0x647c3744 takes opcode as 2nd arg.**
+
+The flush at `0x647c3905` only emits `EXIT (0xb)` on its own. All other opcodes are queued by the **emit-batcher fn `0x647c3744`** which writes via `[esi+0x4c]` cursor, with current-opcode marker at `[esi+0x54]` and queued-flag at `[esi+0x44]`.
+
+**Batcher signature:** `void Batch(buffer*, BYTE opcode)` — opcode passed as 2nd arg `[ebp+0xc]`. Logic:
+- if `[esi+0x44]==0`: lazy-Lock the ExecBuffer, set up cursor at `[esi+0x4c]` with end at `[esi+0x50]`
+- compare new opcode byte against `*[esi+0x54]` (current group's opcode):
+  - same → coalesce, advance 8 bytes (next 8-byte record in same D3DINSTRUCTION group, count++)
+  - different → start new group, advance 12 bytes (4 header + 8 first record)
+- if cursor past end → flush, restart
+
+**Hit counts during ROCKROLL.SCR /s, 40K batches:**
+| Fn / VA | Hits | Meaning |
+|---|---|---|
+| `0x647c3744` (batcher entry) | 756 | called 2× per flush |
+| `0x647c3796` (batcher post-init) | 504 | non-first-call branch (lock already held) |
+| `0x647c3905` (flush) | 378 | flush calls |
+| `0x647c3916` (flush non-empty branch) | 252 | 67% of flushes carry buffer content |
+| any byte-immediate emit fn (`0x647af134`, `0x647be43d`, `0x647be4dc`, `0x6478e84c`) | 0 | dead — wrong code path entirely |
+
+So instructions ARE being queued via the batcher (756 calls = ~2 ops per flush + EXIT). The byte-immediate emit fns I scanned for (`c6 [reg] OP`) are **not** the active code path — d3rm in this DLL build emits via the parametric batcher only.
+
+**Decisive next probe.** Census which opcode values arg2 takes at `0x647c3744`. Either:
+1. Patch a `--trace-at=0x647c3744` and dump `[esp+8]` (the arg) — gives the histogram of opcodes ever queued.
+2. Find static callers of `0x647c3744` (they all `push imm8` immediately before the call) — read the literal opcodes from disasm.
+
+If the only opcodes queued are `STATETRANSFORM(8)` and one other, PROCESSVERTICES(9) is statically never requested → the bug is upstream in the visual-walker that decides what to emit, not in the emit machinery.
+
+**Project memory updated.**
+
+**2026-04-28 cont.16 — full emit chain mapped; chokepoint = vtable@0x647e0b40 slot 6.**
+
+Walking down from the batcher, mapped the entire d3rm emit pipeline by call-site opcode-push histogram:
+
+```
+                              CALLERS                          BATCHER             FLUSH
+fn 0x647af646 (rasterizer-mesh-render, slot 6 of vtable@0x647e0b40)
+  ├─ 0x647af6ff → calls 0x647af7a1 (geometry-emitter)
+  └─ 0x647af741 → calls 0x647af7a1 (geometry-emitter)
+
+fn 0x647af7a1 (geometry-emitter, 156-193 byte fn)
+  ├─ 0x647af83d  push 6/op=3 (TRIANGLE)         ─┐
+  ├─ 0x647af84f  push 1/op=9 (PROCESSVERTICES)  ─┼→ call 0x647c36e0 (emit-wrapper)
+  └─ 0x647af862  push 1/op=9 (PROCESSVERTICES)  ─┘
+
+fn 0x647c36e0 (emit-wrapper, opcode-discriminator)
+  ├─ if op∈{7,8} && [buf.+3c.+5c4]≠0: → 0x647a0a29 (fast-path; NO ExecBuf write)
+  └─ else: call 0x647c3744 (batcher)
+
+fn 0x647c3744 (batcher)
+  ├─ lazy-Lock ExecBuf, set cursor at [esi+0x4c], end at [esi+0x50]
+  ├─ coalesce same-opcode group at [esi+0x54]
+  └─ append 8 (coalesce) or 12 (new group) bytes; flush if past page end
+```
+
+**Opcode histogram across 49 callers of 0x647c36e0 (push imm8 nearest each call):**
+| op | name | callsites |
+|---|---|---|
+| 1 | POINT | 3 |
+| 2 | LINE | 1 |
+| 3 | TRIANGLE | 1 (in 0x647af7a1) |
+| 4 | MATRIXLOAD | 1 |
+| 5 | MATRIXMULTIPLY | 2 |
+| 6 | STATETRANSFORM | 4 |
+| 7 | STATELIGHT | 7 |
+| 8 | STATERENDER | 23 |
+| 9 | PROCESSVERTICES | 2 (both in 0x647af7a1) |
+
+**Runtime hit-count summary (ROCKROLL.SCR /s, 40K batches):**
+| Site | Hits | Notes |
+|---|---|---|
+| 0x647c36e0 (emit-wrapper) | 3780 | total emits attempted |
+| └─ STATELIGHT/STATERENDER fast path | 3024 | bypass ExecBuf |
+| └─ batcher path (op∉{7,8}) | 756 | mostly STATETRANSFORM |
+| 0x647c3744 (batcher) | 756 | confirms |
+| 0x647c3905 (flush) | 378 | flush calls |
+| 0x647c3905 +non-empty branch | 252 | 67% have content |
+| 0x647af7a1 (geometry-emitter) entry | 0 | **DEAD** |
+| 0x647af646 (vtable slot 6) entry | 0 | **DEAD** |
+
+**Single chokepoint identified: vtable@0x647e0b40 slot 6 dispatch never fires.**
+
+The struct at `0x647e0b20` has 50 data refs (mostly `push 0x647e0b20` as fn arg + `mov eax, [0x647e0b20]` then `call [eax+0x18]` = slot 6 of *another* primary vtable inside that struct's first field). The geometry vtable lives *inside* the struct at offset +0x20, so slot 6 dispatch is `call [structptr+0x38]` (0x20 + 6*4 = 0x38).
+
+**Next-session probe:** find `call [reg+0x38]` sites in d3rm and instrument them. With `find_vtable_calls --disp=0x38`, the histogram showed 21 hits — manageable. Per-callsite census via `--count` of post-call landings will pinpoint which (if any) invoke this vtable's slot 6 — and what condition gates it. If ZERO of the 21 sites resolve to this struct at runtime, the gate is in whoever should be passing this struct to a dispatcher (likely scene-tree → render-context bind during Tick).
+
+**2026-04-28 cont.17 — `call [reg+0x38]` site census: 3 of 21 fire, none dispatch slot 6 of vtable@0x647e0b40.**
+
+ROCKROLL.SCR /s, 40K batches, --count post-call landings of all 21 candidate sites:
+
+| site | hits | base reg |
+|---|---|---|
+| `0x6478e22c` | 5 | edx |
+| `0x647988bf` | **126** | ecx |
+| `0x647b2bac` | 10 | ecx |
+| (other 18 sites) | 0 each | mixed |
+
+Total 141 hits. None of them dispatch into our struct, since vtable@0x647e0b40 slot 6 (= fn `0x647af646`) had 0 hits. Either (a) these 3 active sites dispatch *different* vtables (whose slot at +0x38 is some other fn), or (b) the right struct's slot 6 dispatch uses a *different* displacement than +0x38.
+
+**Hypothesis revision:** The vtable layout assumption was: struct@0x647e0b20 with inline vtable at offset +0x20, slot 6 = +0x18 within vtable = +0x38 from struct base. But the access patterns from earlier (`mov eax,[0x647e0b20]; call [eax+0x18]`) suggest the "primary" vtable is at offset 0 of the struct's first dword (`[struct+0]` = pointer to a primary vtable), not at +0x20. So slot 6 of the *primary* vtable would be `call [reg+0x18]` after `mov reg, [structptr]`.
+
+The inline secondary vtable at struct+0x20 likely is reached via different code — could be a DDI (device-driver interface) callback installed in some other field, with a *different* dispatch displacement.
+
+**Next-session probe (revised again):** Disasm fn `0x647af646` to see what its `(this, ...)` arg structure expects, then look at the bytes immediately surrounding the vtable (`0x647e0b30..0x647e0b60`) — the surrounding fields may identify what kind of struct this is (callback list / DDI table / texture pool / etc.). The access pattern `[esi+0x13c]` snapshot evidence (cont.13) suggests this struct is **per-Frame** (not per-Device), and the rasterizer slot 6 may be installed into a *different* per-Frame struct that's not the same singleton at 0x647e0b20.
+
+Bottom line: the vtable@0x647e0b40 may not be the live rasterizer dispatch table at all — it may be the FALLBACK/null one used when no real device is attached. The 7 visuals attached via AddVisual go into Frame structs; rendering them requires a real Direct3D Device whose rasterizer vtable lives elsewhere (per-Device, populated at CreateDevice time).
+
+**2026-04-28 cont.18 — vtable layout corrected; slot 8 (not 6); abstract-base dispatch returns NOT_IMPLEMENTED.**
+
+Re-examined struct@`0x647e0b20` after seeing `mov eax,[0x647e0b20]; call [eax+0x18]` patterns. The struct's first dword is a **parent-class pointer** (`0x647e0fa0`), not the start of an inline vtable. The vtable starts at offset **+0x18**, not +0x20. Layout:
+
+```
+struct@0x647e0b20 ("mesh" subclass):
+  +0x00  parent-class ptr → 0x647e0fa0
+  +0x04  init fn
+  +0x08  size1 (0x18c)
+  +0x0c  size2 (0x48)
+  +0x10  zero
+  +0x14  zero
+  +0x18  method[0]  0x647aed3b
+  +0x1c  method[1]  0x647aee27
+  ...
+  +0x38  method[8]  0x647af646  ← what we were chasing as "slot 6"
+  +0x40  method[10] 0x647afa2c
+  +0x44  NULL terminator
+```
+
+So `call [reg+0x38]` is **method index 8** of whichever class struct `reg` points at. The 126-hit site `0x647988bf` (`mov ecx,[esi+0x18]; call [ecx+0x38]`) reads the class-ptr from instance `esi+0x18` and dispatches method 8.
+
+**Parent class@`0x647e0fa0`** layout same shape; its method 8 = fn `0x647c35f9`:
+```
+647c35f9  push 0x88760316          ; D3DRMERR_NOTIMPL
+647c35fe  call 0x64799d29          ; report-error
+647c3603  ret
+```
+
+**Pure-virtual stub. Returns "not implemented" and bails.**
+
+The mesh-render fn `0x647af646` (child method 8) had 0 hits, but the dispatch site fires 126x — meaning **every instance flowing through the 126-hit dispatch uses the parent (abstract) class, not the mesh subclass**. They all hit the NOTIMPL stub.
+
+**Smoking gun:** the 7 visuals attached via AddVisual are NOT mesh instances. They're plain frames, lights, or some other subclass whose method 8 isn't overridden. The geometry-emitter path (`0x647af7a1`) is unreachable because there are no mesh-class visuals in the scene.
+
+**Next-session probe:** at site `0x647988bf` snapshot `ecx` (class struct ptr) over multiple hits — `--trace-at-dump=0x647988bf:8` capturing the 4 bytes pointed-to-by-ecx — to identify *which* classes are actually rendering. If they're all `0x647e0fa0` (frame-as-visual base), then we need to find the mesh-instantiation path (CreateMesh / MeshBuilder) and see why the .X mesh files aren't being loaded into mesh instances. If a different class shows up, dump that struct and trace its class hierarchy.
+
+**2026-04-28 cont.19 — .X mesh files DO load via d3dxof.dll + MapViewOfFile, but mesh-render still 0 hits.**
+
+Traced the file-load path. The .X mesh files (`ro_pick.x`, `ro_git.x` for ROCKROLL) ARE present locally and ARE mapped successfully:
+
+```
+[LoadLibrary] d3dxof.dll loaded at 0x74fe8000, dllMain=0x74ff3040
+[fs] CreateFile("C:\ro_pick.x") → 0x70000004
+[API] GetFileSize(0x70000004, 0x00000000) → ret=0x74ff040a   ← in d3dxof.dll
+[API] CreateFileMappingA(0x70000004, …)  → 0xfb000001        ← in d3dxof.dll
+[API] MapViewOfFile(0xfb000001, FILE_MAP_READ, 0, 0, 0) → 0x7500a004   ← valid guest ptr
+```
+
+**d3dxof.dll** is the DirectX file format parser — it loads .X files via memory mapping (not ReadFile, which is why the cont.18 trace showed `CreateFile` without subsequent `ReadFile` for `.x` files). Our `fs_create_file_mapping` / `fs_map_view_of_file` host imports return valid guest pointers populated with the file's bytes (see `lib/filesystem.js:689-725`). So **the mesh data is in guest memory** — no asset-missing or read-failure issue.
+
+But the mesh-render fn `0x647af646` (child class@`0x647e0b20` method 8) still has 0 hits, while the parent class@`0x647e0fa0` method 8 (NOTIMPL stub) gets 126 dispatches. Something between "mapped .X bytes" and "mesh visual in scene" is failing.
+
+**Theories for cont.20:**
+
+1. **d3dxof.dll COM dispatch failing** — the X-file parser is COM-based (`IDirectXFile`, `IDirectXFileEnumObject`, etc.). If our COM trampoline path mishandles d3dxof's vtables, parsing returns errors and d3rm gets no geometry.
+
+2. **MeshBuilder::Load returning failure** — d3rm calls `IDirect3DRMMeshBuilder::Load(filename, ...)` to convert the .X file into a mesh. If this returns failure, the visual gets attached as a *frame*, not a mesh. The 7 AddVisual visuals would then all be frame-class instances → parent dispatch → NOTIMPL stub.
+
+3. **Mesh class registered but never instantiated** — the d3rm class system requires per-class factories. If the "mesh" subclass ctor fails or isn't called, no instance exists with class@`0x647e0b20`.
+
+**Next probes:**
+- Search d3dxof.dll for `CreateEnumObject` / `Load` paths and instrument with `--count` to see what fires.
+- Search d3rm for `IDirect3DRMMeshBuilder::Load` (look for "Couldn't load mesh from" string xref — already known to be in d3rm strings) — find the call site, set break, see if it's reached and what it returns.
+- Trace COM dispatch via `0xC0DE0000|api_id` markers (memory says trace-api decodes these) — focus on d3dxof and MeshBuilder methods.
+
+**2026-04-28 cont.20 — CreateMeshBuilder + Load fire 14×, all succeed; failure must be downstream of load.**
+
+Located mesh-load orchestration in **ROCKROLL.SCR** itself (not d3rm). Two relevant fns:
+
+1. **`0x7442578b`** (CreateMeshBuilder helper):
+   ```
+   mov ecx, [eax]; lea edx, [esp+0x30]; push edx; push eax
+   call [ecx+0x18]      ; IDirect3DRM::CreateMeshBuilder, slot 6
+   test eax, eax; jge short ok
+   push "Couldn't create meshbuilder"; call err_print
+   ```
+
+2. **`0x7442b680`** (mesh loader, prints "Loading mesh from %s" then calls method 6 on a wrapper):
+   ```
+   push name_buf; push 0x744ca9e4 ("Inform: Loading mesh"); push 3
+   call err_print
+   mov edx, [ebp+0x104]   ; vtable of C++ wrapper class
+   lea ebx, [ebp+0x104]   ; this
+   mov ecx, ebx; push eax; call [edx+0x18]   ; method-6 (Load)
+   ```
+
+**Hit counts (40K batches):**
+| addr | hits | meaning |
+|---|---|---|
+| `0x744257a7` (post-CreateMeshBuilder) | 14 | called 14× |
+| `0x744257ab` (failure branch) | 0 | **all succeed** |
+| `0x7442b799` (post-Load) | 14 | called 14× |
+
+So `IDirect3DRM::CreateMeshBuilder` succeeds 14 times AND `IDirect3DRMMeshBuilder::Load(.x)` succeeds 14 times. Yet d3rm's child mesh class method 8 (`0x647af646`) still has 0 hits and parent NOTIMPL fires 126x.
+
+**Missing step:** `IDirect3DRMMeshBuilder` is the *loader/builder*, not the *renderable*. To render, the SCR must either:
+- Call `MeshBuilder::CreateMesh` → produces `IDirect3DRMMesh` (the actual renderable)
+- Or attach the MeshBuilder *itself* via `AddVisual` (it implements IDirect3DRMVisual)
+
+If AddVisual receives a MeshBuilder (which is a "Visual" but possibly maps to a different render class than 0x647e0b20), the dispatch could land on yet another class whose method 8 isn't the geometry-emitter. d3rm.dll has multiple mesh classes (`GenericMesh`, `ExtMesh`, `mesh`, `MeshModifier` per strings).
+
+**Next-session probes:**
+- Check what fn is at `0x74425600` (called right after Load — likely AddRef or "verify mesh has geometry"); count its hits.
+- The actual visual added via AddVisual: dump the class-struct ptr `[obj+0x18]` at the AddVisual call site to identify which subclass — could be MeshBuilder's struct, not mesh's.
+- d3rm `find_string` for class-name signatures (`AVGenericMesh`, `AVExtMesh`, `AVmesh`) → find class struct addrs → count which one's slot 8 dispatches at runtime.
+- Verify SCR isn't using `IDirect3DRMMeshBuilder3::CreateMesh` — search SCR for method dispatches at slot offsets that match CreateMesh.
+
+**2026-04-28 cont.21 — class-info struct hunt: cont.20 was tracing the wrong class.**
+
+Re-derived d3rm class info table from name-string xrefs (`tools/find-refs.js`):
+
+| classinfo VA | name VA | name | parent classinfo | size |
+|---|---|---|---|---|
+| 0x647e0b20 | 0x64784034 | "Texture" | 0x647e0fa0 (Visual) | 0x18c |
+| 0x647e0b64 | 0x6478409c | "Wrap" | 0x647e0de0 | 0xb4 |
+| 0x647e0de0 | 0x64784260 | "Object200b20001" (root) | 0 | 0x34 |
+| 0x647e0ec8 | 0x647843bc | **"Mesh"** | 0x647e0fe8 (LitVisual) | 0x16c |
+| 0x647e0fa0 | 0x647844b0 | "Visual" | 0x647e0de0 | 0x9c |
+| 0x647e0fe8 | 0x647845d8 | "LitVisual" | 0x647e0fa0 | 0xa4 |
+
+**Mesh inheritance chain:** `Object → Visual → LitVisual → Mesh`.
+
+**Mesh vtable @ 0x647e0ed8 (slot N = +N*4):**
+| slot | fn | note |
+|---|---|---|
+| 2 | 0x647bfc76 | |
+| 3 | 0x647bfcab | |
+| 4 | 0x647b99d3 | NOTIMPL stub |
+| 5 | 0x647bfd81 | |
+| 6 | 0x647b99d3 | NOTIMPL |
+| 7 | 0x647b99d3 | NOTIMPL |
+| 8 | 0x647b99d3 | **NOTIMPL — even on Mesh class itself** |
+| 9 | 0x647bff37 | |
+| 10 | 0x647bff6b | |
+| 11 | 0x647b99d3 | NOTIMPL |
+| 12 | 0x647c0697 | |
+
+**0x647af646 (cont.20's "geometry emitter") is slot 10 of TEXTURE class @0x647e0b20, not Mesh.** All cont.20 hit-counts on that fn are irrelevant to the rendering bug — we were probing the wrong class entirely.
+
+**Reframed bug:** the 126x NOTIMPL hits aren't a missing slot-8 on Mesh — slot 8 IS NOTIMPL natively in d3rm. The render-walk must dispatch to a *different* slot (probably slot 5=0x647bfd81 or 9/10 for geometry). 126 / 7 ≈ 18 — likely an aggregate of NOTIMPL calls across many classes, not a single missing method.
+
+**Next-session probes:**
+1. Count hits on each real Mesh method (0x647bfc76, 0x647bfcab, 0x647bfd81, 0x647bff37, 0x647bff6b, 0x647c0697) under runtime to see which fire during Frame::Render.
+2. Find the actual render walker: search d3rm for a fn that loads classinfo+0x10+8*4 (slot 8) or similar — the dispatcher.
+3. Locate IDirect3DRMMeshBuilder class info (separate from Mesh) — SCR may AddVisual the builder, not the finalized mesh; MeshBuilder may override slot 8.
+
+**Mesh class info struct layout (from xref data dump):**
+- +0x00 parent_classinfo = 0x647e0fe8 (LitVisual)
+- +0x04 name_ptr = 0x647843bc ("Mesh")
+- +0x08 size = 0x16c, +0x0c alignment = 0x4c
+- +0x10..+0x18 zero (reserved)
+- +0x18+ method override table — pointers, with 0x647b99d3 as the NOTIMPL fallback sentinel
+
+**0x647c2a37 (Visual base slot 8) disasms as a real render-prep method** — touches `[obj+0x98]` flag, frustum-cull math on `[esi+0x110..0x11c]`, FPU compares against constants. Likely the inherited render method that Mesh would fall back to under classinfo-walk dispatch.
+
+**No "MeshBuilder" classinfo exists** in d3rm — only "Builder" string at 0x647834c4 with zero refs. The COM interface IDirect3DRMMeshBuilder is implemented by the Mesh class itself; a Mesh instance is both built (Load) and rendered (AddVisual).
+
+**Pivotal next-session probe:** stop static-vtable archaeology, switch to runtime. Set `--break=0x647b99d3` (NOTIMPL stub), inspect return addr → call site → ModRM displacement to learn *which slot index* the render walker actually invokes. The 126× NOTIMPL count must come from one call site; find it before more theorizing.
+
+**2026-04-28 cont.22 — d3rm uses DDraw directly, NOT d3dim.dll. Render pipeline clarification.**
+
+`tools/pe-imports.js d3rm.dll`: imports only `DirectDrawCreate` from DDRAW.dll, **no d3dim.dll import at all**. d3rm has its own software rasterizer built on top of DirectDraw surfaces.
+
+This means the entire memory thread "[D3DIM matrix table]" (Tier 1 STATETRANSFORM landed for d3dim) is on a **different rendering path**. d3rm rendering goes: SCR → d3rm → DDraw. d3rm builds and walks its own scene graph, calls DDraw to plot pixels/lines/triangles directly. There is no IDirect3DDevice / Execute Buffer involvement for d3rm.
+
+**0x647b99d3 is bare `ret` (not E_NOTIMPL)** — silent no-op. 99 vtable slots in d3rm point to it (per `xrefs.js`). Of 126x runtime hits, ~7 per frame × ~18 frames = matches AddVisual count × render walk frequency. Each frame, the visual-walk dispatches a method (probably "Render" or "ProcessVisual") that lands on the bare ret stub for Mesh-class visuals.
+
+**Conclusion of static phase:** further progress requires runtime instrumentation. Static archaeology has identified:
+- the right Mesh classinfo (0x647e0ec8)
+- the inheritance chain (Object → Visual → LitVisual → Mesh)
+- that 0x647b99d3 is `ret` (silent skip, not E_NOTIMPL crash)
+- that d3rm bypasses d3dim entirely (rasterizes onto DDraw)
+
+**Concrete next-session run:** `node test/run.js --exe=test/binaries/screensavers/ROCKROLL.SCR --break=0x647b99d3 --break-once --max-batches=200`. When bp hits, examine `dbg_prev_eip` to find the call site, decode the `call [reg+disp]`, learn the dispatch slot, then disasm that slot in Mesh classinfo to see which method got skipped. That's the actual missing renderable behavior.
+
+**2026-04-28 cont.23 — MAJOR CORRECTION: d3rm DOES use d3dim. The rendering path is the SAME as d3dim apps.**
+
+cont.22 was wrong. d3rm does not *statically* import d3dim.dll, but it dynamically obtains `IDirect3D2` via `IDirectDraw::QueryInterface` and creates `IDirect3DDevice2` from that. Long-run trace (20K batches) confirms ROCKROLL.SCR makes:
+- 40 × `IDirect3DDevice_BeginScene` / `EndScene`
+- 80 × `IDirect3DExecuteBuffer_Lock` / `Unlock` / `SetExecuteData` / `IDirect3DDevice_Execute`
+- 800 × `IDirect3DDevice2_SetRenderState`
+- 120 × `IDirect3DDevice_SetMatrix`
+- Loads `d3dxof.dll` for .X file parsing
+
+So **the d3rm rendering pipeline is: d3rm builds Execute Buffers and submits to `IDirect3DDevice2::Execute`** — exactly the d3dim path that the D3DIM Tier-1 work targeted. The `rasterizer-ignores-matrices` / `op=9 PROCESSVERTICES not handled` blocker from `project_d3dim_matrix_table` IS the same blocker for ROCKROLL.
+
+The whole class-info / vtable / 0x647b99d3 NOTIMPL theory was a dead-end. 0x647b99d3 has 0 hits over a 2000-batch run (--count=d3drm+0x647b99d3). The render walk inside d3rm doesn't hit those slots — it goes through Execute Buffer dispatch in our d3dim handler.
+
+**Real blocker:** our d3dim Execute Buffer handler in 09a-handlers.wat (or wherever IDirect3DDevice2_Execute lives) must process op 9 (PROCESSVERTICES) and op 6 (TRIANGLE) properly. With those, ROCKROLL would render.
+
+**Next-session run:** `node test/run.js --exe=ROCKROLL.SCR --args=/s --trace-api=IDirect3DDevice_Execute,IDirect3DExecuteBuffer_SetExecuteData --max-batches=20000`. Inspect the Execute Buffer contents (lpData + dwInstructionLength) at each Execute call — confirm which opcodes are present and which our handler skips.
+
+**2026-04-28 cont.24 — Execute Buffer DOES dispatch all opcodes; d3rm just NEVER emits geometry.**
+
+`--trace-dx` over 20K-batch ROCKROLL.SCR run shows `[dx] Exec` histogram:
+- **80× op=6 STATETRANSFORM, count=3 (size=8)**
+- **0× op=3 TRIANGLE, 0× op=9 PROCESSVERTICES, 0× op=1 POINT, 0× op=2 LINE**
+
+Each Execute Buffer is exactly 32 bytes: 4-byte op header + 3×8-byte STATETRANSFORM records + 4-byte EXIT. d3rm submits matrices only. Geometry opcodes never appear.
+
+Checked our handler: `09aa-handlers-d3dim.wat:219 $handle_IDirect3DDevice_Execute` dispatches all opcodes (1,2,3,4,5,6,7,8,9,12,14,11=EXIT) into specific helper fns. PROCESSVERTICES calls `$d3dim_exec_process_vertices` (`09ab:1083`) which composites WVP + transforms via `$vertex_project`. TRIANGLE calls `$d3dim_exec_triangles` (`09ab:894`) which culls + draws. **The pipeline is implemented end-to-end.** It just never receives geometry.
+
+Also no DrawPrimitive / DrawIndexedPrimitive API calls (0 hits). d3rm in this build path uses Execute Buffer exclusively — no fallback path being taken.
+
+PNG output: pure black 640×480. All 13 Present calls show `firstNonZero=-1, nzBytes=0` — back surfaces are entirely zero.
+
+**New blocker hypothesis:** d3rm decides "device cannot render this mesh" *before* building the geometry buffer. Likely culprits:
+1. **GetCaps mis-reports** dpcTriCaps / dwTextureCaps — d3rm checks for required caps and bails. Our `$d3dim_fill_device_desc` (`09ab:1190`) sets dpcTriCaps.dwSize=56 but leaves the caps fields zero (line 1220).
+2. **EnumTextureFormats no-op** — `$handle_IDirect3DDevice_EnumTextureFormats` (`09aa:368`) never invokes the callback. d3rm receives zero formats and refuses to texture-map → probably refuses to render.
+3. **CreateMatrix/SetMatrix handle scheme** — already reviewed, looks OK.
+4. **Materials/Lights** — 160 SetLightState + 4 GetMaterial. Could be that lighting setup fails.
+
+**Next-session steps:**
+1. Fill in real values for `dpcTriCaps.dwTextureCaps`, `dwShadeCaps`, `dwTextureFilterCaps`, etc. in `$d3dim_fill_device_desc` (zeros currently → no rendering capabilities advertised).
+2. Wire EnumTextureFormats to enumerate at least RGB565 and RGBA8888. The "(no callback)" comment at `09aa:362` says "d3drm and d3dim-based apps tolerate zero enumerations" — this may be wrong for ROCKROLL specifically.
+3. After (1)+(2), re-trace to see if geometry opcodes start appearing.
+
+**2026-04-28 cont.25 — caps hypothesis FALSIFIED. Caps are filled.**
+
+Reviewed `09a8-handlers-directx.wat:933 $fill_d3d_device_desc` — used when caller passes dwSize≥252 (DX5+ standard). Calls `$fill_primcaps` for both dpcLineCaps and dpcTriCaps with non-zero values:
+
+- dwMiscCaps=0x3F, dwRasterCaps=0x07FF, dwZCmpCaps=0xFF
+- dwShadeCaps=0x1FFFF, dwTextureCaps=0xFFFF, dwTextureFilterCaps=0xFF
+- dwSrcBlendCaps=0x1FFF, dwDestBlendCaps=0x1FFF, dwAlphaCmpCaps=0xFF
+- dwTextureBlendCaps=0xFFFF, dwTextureAddressCaps=0xFF
+
+So GetCaps returns plenty. The cont.24 hypothesis was wrong — only the size<252 fallback at `09ab:1206` lacks primcaps fields, and DX5 d3rm is unlikely to use that path.
+
+**Real next step:** trace inside d3rm's per-frame render fn to find where it decides "no geometry today." The 80 STATETRANSFORM-only buffers suggest d3rm IS reaching the render setup, IS computing matrices, and is then aborting before geometry walk. Two productive probes:
+
+1. Set bp on `IDirect3DExecuteBuffer_Lock` (origVA hits before each Execute Buffer is filled). Walk back caller via EBP frame chain — find the d3rm render fn that builds buffers. Disasm forward from there to locate the conditional that gates geometry-emit.
+
+2. Compare with a known-working d3rm path: the existing memory `[Organic Art engine]` says SCN-picker scene picks wrong file (OrgSuppList.txt missing). ROCKROLL doesn't use OrgSuppList. So that bug is independent. But d3rm's "list of meshes to render" might be empty at render time even if 14 were loaded — verify the AddVisual/Frame::AddChild step actually attaches the meshes.
+
+**Useful handoff queries:**
+- `node tools/find_string.js test/binaries/dlls/d3drm.dll "Visual"` — locate Visual string xrefs to find render-walker
+- `--count=d3drm+0x647c2a37` — that's Visual::slot8 fn (frustum cull, identified in cont.21). If 0 hits, render walker never visits any Visual; if >0, it's reached but bails.
+- `--trace-host=dx_trace --trace-dx-raw` — full hexdump of every Execute Buffer to confirm only STATETRANSFORM
+
+**2026-04-28 cont.25b — runtime hit-counts confirm: render walker never visits any loaded Mesh.**
+
+20K-batch ROCKROLL.SCR runs with `--count` on d3rm class-method override slots:
+
+| addr | class:slot | hits |
+|---|---|---|
+| 0x647c2a37 | Visual:slot8 (frustum-cull/render-prep, real impl) | **0** |
+| 0x647c28d0 | Visual:slot2 (AddRef?) | 109 |
+| 0x647c28de | Visual:slot3 (Release?) | 101 |
+| 0x647bfc76 | Mesh:slot0 override | **0** |
+| 0x647bfcab | Mesh:slot1 override | **0** |
+| 0x647bfd81 | Mesh:slot3 override | **0** |
+| 0x647bff37 | Mesh:slot7 override | **0** |
+| 0x647bff6b | Mesh:slot8 override | **0** |
+| 0x647c0697 | Mesh:slot11 override | **0** |
+
+So the 14 loaded mesh instances have refcount activity (~100 AddRef/Release on Visual base) but **none of their class-specific methods ever fire**. The render walker is not visiting them. Yet 80 STATETRANSFORM buffers DO fire, meaning d3rm's per-frame render setup IS running — just iterating an empty visual list.
+
+**Verified the cause is d3rm-internal, not in our COM interception:** zero IDirect3DRM* references exist in our `src/` (`grep -rn "IDirect3DRM\|AddVisual" src/` → empty). d3rm runs natively against the loaded DLL. Our handlers only catch DDraw + d3dim methods that d3rm *uses* downstream.
+
+**Sharper hypothesis:** the SCR calls IDirect3DRMFrame::AddVisual with the loaded MeshBuilder, but inside d3rm the AddVisual either (a) fails silently because of a missing capability or (b) attaches the visual to a non-rendering branch of the scene graph. Both lead to an empty visual list at render time.
+
+**Concrete next probe (small, surgical):** find d3rm's `IDirect3DRMFrame::AddVisual` impl entry (slot 32 in IDirect3DRMFrame vtable, `tools/find_vtable_calls.js d3drm.dll --slot=32`), `--count=` it to verify it actually fires the 14 expected times. If <14, the SCR isn't even calling AddVisual — search for what it's doing instead. If =14, the visual is being attached but rejected internally — bp inside the impl to find the rejection.
+
+**2026-04-28 cont.26 — ROCKROLL uses CUSTOM Visual classes via render callbacks. Not d3rm's built-in Mesh.**
+
+ROCKROLL.SCR strings expose its C++ class hierarchy via MSVC RTTI:
+- `.?AVGenericMesh@@`
+- `.?AVExtMesh@@`
+- `.?AVCDrawPrimVisual@@`
+
+These are **SCR-side classes**, not d3rm classes. Plus error strings:
+- `"Couldn't load mesh from %s (%s)"`
+- `"Loading %s as mesh"`
+- `"GetD3DRMDevice()->SetRenderMode(...)"` failed
+- `"...->CreateViewport(...)"` failed
+
+**Pattern:** ROCKROLL implements rendering through `IDirect3DRMUserVisual` + render callback, not through d3rm's own Mesh class. The SCR loads .X meshes (14× via MeshBuilder, succeeded), wraps them in custom CDrawPrimVisual / GenericMesh / ExtMesh objects deriving from IDirect3DRMVisual, registers a render callback, and inside the callback calls IDirect3DDevice2 methods to draw geometry.
+
+This explains:
+- 0 hits on d3rm Mesh class methods (cont.25b) — d3rm never iterates Mesh; SCR uses UserVisual.
+- 0 DrawPrimitive API calls — render callback either isn't firing, or fires and submits via ExecuteBuffer with PROCESSVERTICES+TRIANGLE which is what cont.24 expected to see but didn't.
+- 80 STATETRANSFORM-only Execute Buffers — d3rm sets matrices for the upcoming render walk but the per-Visual callback dispatch never produces geometry buffers.
+
+**Our codebase has ZERO IDirect3DRM interception** (`grep -rn "RM" src/api_table.json` finds no RM methods). d3rm runs natively, and the UserVisual callback path is opaque to API tracing.
+
+**Sharper next-step:** the UserVisual render callback is a guest fn pointer registered with d3rm. d3rm calls it during scene render. To verify the callback is being invoked, set `--break=` on the SCR's render callback fn. To find the SCR's callback, look for fns that:
+1. Are referenced as a fn pointer in .data (no direct callers in code)
+2. Take 5 args: `(this, lpData, dwIID, lpDevice, lpViewport)` — typical UserVisual callback signature
+
+`tools/find-refs.js test/binaries/screensavers/ROCKROLL.SCR <suspected_va>` to find pointer refs. Or scan for fns whose prologue matches the callback ABI and have zero direct call xrefs.
+
+Alternatively, add IDirect3DRMUserVisual to api_table.json + intercept SetCallback to log the registered callback's VA — surgical, gives us the callback's address directly.
+
+**2026-04-28 cont.27 — UserVisual hypothesis FALSIFIED. ROCKROLL uses Frame::AddVisual with MeshBuilder. Earlier "0x647b99d4 = triangle emitter" was ALSO wrong — it's a Release/cleanup fn.**
+
+20K-batch ROCKROLL.SCR `--count` matrix:
+
+| addr | role | hits |
+|---|---|---|
+| `0x64790e2c` | IDirect3DRM::CreateUserVisual | **0** |
+| `0x6478fa90` | IDirect3DRM::CreateFrame | 92 |
+| `0x6478fcf4` | IDirect3DRM::CreateMeshBuilder | 8 |
+| `0x647926d4` | Frame::AddVisual (vtable slot 18) | **4** |
+| `0x64791da1` | Frame::AddLight (vtable slot 12) | 206 |
+| `0x647924ab` | Frame::AddChild (vtable slot 17) | 0 |
+| `0x6478bc6f` | Frame::Load (vtable slot 35) | 0 |
+| `0x6478bf80` | Frame::SetName (vtable slot 32) | 0 |
+| `0x647bb74e` | visual-list iterator (per-frame render) | 40 |
+| `0x6479ff51` | per-mesh transform/preprocess | 40 |
+| `0x647b99d4` | (cont.7th: "triangle emit") — actually Release-style cleanup, not emit | 790 |
+| `0x647c2a37` | Visual:slot8 (frustum cull, real-impl override) | **0** |
+
+**Re-disasm of `0x647b99d4` (the supposed triangle emitter from cont.7th probe):**
+```asm
+647b99d4  mov eax, [esp+0x4]
+647b99d8  xor edx, edx
+647b99da  cmp eax, edx
+647b99dc  jz 0x647b9a00
+647b99de  cmp word [eax+0xa], dx          ; type==0?
+647b99e2  jnz 0x647b9a00
+647b99e4  mov ecx, [eax+0xc]              ; refcount
+647b99e7  test refcount; if >0 dec and store
+647b99ef  if refcount==0 && [eax+0x10]==0:
+647b99f9    push eax
+647b99fa    call 0x647b9a01                ; finalize/free
+647b99ff  ret
+```
+This is a Release/finalize helper — **not** an Execute Buffer triangle emitter. The 7th probe's note "kind==7||kind==8 → 0x647a0a29 = TRIANGLE/PROCESSVERTICES" needs re-verifying. The whole "find geometry emitter" chain was anchored on a misidentification.
+
+**What's verified now:**
+- Frame::AddVisual fires 4× per run. Scene graph IS being populated.
+- The render walker enters per frame (`0x647bb74e` 40×, `0x6479ff51` 40×). Avg 10 frames × 4 visuals = 40 — consistent.
+- Visual class real-impl slot 8 (`0x647c2a37` frustum-cull/render-prep) fires **0×**. So the per-Visual render method is NOT being invoked during scene walk, even though the iterator visits them.
+- No Execute Buffer ever contains TRIANGLE/PROCESSVERTICES (cont.24 still stands).
+
+**Sharper hypothesis (replaces cont.26 UserVisual story):** the visual-list iterator at `0x647bb74e` walks a list of 4 attached visuals each frame, but the inner conditional that gates per-Visual render-method invocation is unmet for all 4. Either `[edi+0xa4]==2` (subtype==2 == "skip") OR `[edi+0xac]==0` (no associated d3dim mesh-data) — both branches `jz 0x647bb78d` (skip emit). cont.27 still doesn't know which.
+
+**Concrete next probe — settle the predicate:**
+1. `--break=0x745d6768 --break-once` (= `0x647bb768 + 0xfe1b000`, the `cmp word [edi+0xa4], 0x2` site).
+2. At the prompt, `r` to read EDI, then `d EDI+0xa4 16` and `d EDI+0xac 16` to inspect both fields. If subtype==2 → trace upstream what writes `[obj+0xa4]=2` (likely a MeshBuilder::Init path that's wrong). If `[obj+0xac]==0` → trace upstream what should write the d3dim mesh pointer (likely a MeshBuilder→d3dim mesh conversion that we never implement).
+3. Re-find the actual triangle-emit fn by static search: pattern `c7 .. .. 03 08 ?? ??` (mov dword [reg+disp], 0x????0803 — D3DINSTRUCTION header for TRIANGLE op=3 size=8). Cross-check with PROCESSVERTICES (op=9, size=24): `c7 .. .. 09 18 ?? ??`.
+
+The work to add IDirect3DRMUserVisual handlers is dead — UserVisual is unused. Cancel that path. The real chase is finding why all 4 attached MeshBuilder visuals get gated out of per-Visual render dispatch.
+
+**2026-04-28 cont.28 — KEY ARCHITECTURAL FINDING: d3rm software-rasterizes; geometry NEVER goes through d3dim Execute Buffers.**
+
+`0x647bb74e` (cont.7th's "visual-list iterator") is also misidentified — re-disasm shows it ENDS with `[esi+0x840]=0; [esi+0x844]=0; free [esi+0x840]` (clears + frees the list after iteration) and calls `0x647b99d4` (refcount-dec) per element. This is a **deferred-RELEASE drain** of pending visual references at end-of-frame, not a render walker.
+
+Found the actual per-frame render driver at `0x64798521` (called via 4-byte stub `0x647988f5` which is the BeginScene-traceable caller frame). Its inner calls per frame:
+
+| addr | role | hits/20K |
+|---|---|---|
+| `0x647c2792` | predicate (abort frame if nonzero) | 84 |
+| `0x647c1d30` | matrix helper (compose WVP) | 82 |
+| `0x647c21ec` | **STATETRANSFORM emitter** — produces the 80 Execute Buffers | 80 |
+| `0x647a0434` | begin-scene shim ([edi+0x5b8] vtable[19]) | 80 |
+| `0x647b9663` | vertex preprocess (called per-Visual with `[arg+0xa0]`) | 78 |
+| `0x647b9574` | **`rep stosd` clear of `[ctx+0x44]` size `[ctx+0x3c]*[ctx+0x40]`** | 46 |
+| `0x647b9632` | **OR-combine of two `[ctx+0x44]` buffers, same size** | 44 |
+
+`0x647b9574` and `0x647b9632` are dead-giveaways: per-frame memset+OR over a `width*height*4` byte buffer at `[ctx+0x44]`. **d3rm has its own SOFTWARE RASTERIZER and writes pixels directly into a memory framebuffer, not into d3dim Execute Buffer triangle ops.**
+
+This finally explains everything:
+- Why Execute Buffers contain only STATETRANSFORM matrices: d3rm uses d3dim ONLY to push transform matrices to the (hardware-accel) device, but doesn't use d3dim for geometry submission.
+- Why no TRIANGLE/PROCESSVERTICES op ever appears: d3rm rasterizes triangles itself in software.
+- Why our PNG is all zero: software-rasterized framebuffer probably gets correctly written but never blitted to the DDraw surface — OR — the rasterizer's per-scanline output never reaches the surface Lock.
+
+cont.21's note "d3rm has its own software rasterizer on top of DirectDraw" was RIGHT, then retracted in cont.23. Now confirmed correct.
+
+**Concrete next probes:**
+1. Find d3rm's IDirectDrawSurface::Lock/Unlock callsites — this is where d3rm grabs the back-buffer to write rasterized pixels into. Trace `--trace-api=IDirectDrawSurface_Lock --trace-stack=IDirectDrawSurface_Lock:8`. The d3rm caller is the surface-blit step; understand what it copies.
+2. Verify `[ctx+0x44]` framebuffer addr — `--trace-at=d3drm+0x647b9574` (`rep stosd` clear) prints regs; EDX or ECX at entry holds ctx and `[ctx+0x44]` should be a guest pointer (probably 0x7500_xxxx range from heap_alloc). Dump it after the clear loop runs to see whether pixels get written.
+3. Walk forward from `0x647b9663` (vertex preprocess) inside the render driver — after 0x64798889 the driver does coordinate clipping then must reach a triangle-rasterize loop. Find where pixel writes land in `[ctx+0x44]`.
+4. The geometry pipeline is: project verts → clip → rasterize scanlines into `[ctx+0x44]`. Then somewhere d3rm Locks the back buffer surface and memcpys. If the framebuffer at `[ctx+0x44]` IS the DDraw surface bits (Lock'd once, kept), our DDraw Lock impl might give a different ptr each frame → writes go to a stale alloc.
+
+**Pivots:**
+- D3DIM Execute Buffer geometry handlers are NOT a blocker for d3rm screensavers — Tier-1 work helps static-d3dim apps (ARCHITEC, etc.) but not ROCKROLL.
+- ARCHITEC may also be d3rm-driven; verify with the same `0x647b9574` clear-fn count.
+- Real fix area: DDraw surface Lock/Unlock semantics + the d3rm software-rasterizer's framebuffer→surface copy step.
+
+**2026-04-28 cont.29 — cont.28 SOFTWARE-RASTERIZER HYPOTHESIS DISPROVEN. New picture: d3rm's geometry-emit code paths are dead at runtime.**
+
+Probes ran:
+1. `--trace-api=IDirectDrawSurface_Lock --trace-stack=IDirectDrawSurface_Lock:10` over 20K batches (40 frames). Only **3 surface Locks total, all during init** — none per-frame. Dest surfaces 0x7c3e6018/0x7c3e6058/0x7c3e6070, caller=0x7440f3f5 (looks like ddraw.dll internals). So d3rm does NOT lock the back buffer per frame, contradicting cont.28's "software framebuffer copied via Lock" theory.
+2. `--trace-dx-raw` over 20K batches dumped every Execute Buffer. ALL 80 ExecuteBuffer cycles contain literally `op=6(STATETRANSFORM) bSize=8 wCount=3 payload=24 [01,02 / 02,03 / 03,01]` followed by `op=11(EXIT)`. Three records: World→matrix2, View→matrix3, Projection→matrix1. Zero TRIANGLE, zero PROCESSVERTICES, zero POINT, zero LINE, zero anything.
+3. Per-frame D3D op histogram (40 frames): 40 BeginScene+EndScene+Flip, 40 Viewport_Clear, 80 ExecuteBuffer cycles (=2/frame), 120 SetMatrix (=3/frame), 800 SetRenderState (=20/frame), 160 SetLightState (=4/frame). **No DrawPrimitive ever.** (Confirmed by 0 hits on host_dx_trace kind=10 path.)
+4. Caller-census on the generic op-emit helper `0x647c36e0` (49 static callsites): only 6 sites fire — 3 in fn `0x64798dcd` pushing op=8 STATERENDER for state-IDs 7/14/23 (ZENABLE/FOGENABLE/...?), and 6 in fn `0x647c21ec` pushing op=6 STATETRANSFORM (3 records × 2 callsites that share one buffer). All other 43 callsites — including the geometry-emit candidates in `0x6479fxxx`/`0x647axxxx`/`0x647afxxxx` — are **dead code at runtime**.
+
+**Architecture map of d3rm's submit pipeline:**
+- `0x647c3744` is the streaming buffer-writer: appends an 8-byte record under a shared op header, locks the ExecuteBuffer on first call (via vtable[0x10]=Lock, hence the Lock count we already see), grows wCount, flushes via `0x647c3905` on overflow.
+- `0x647c3905` is the explicit submit/flush: writes EXIT(11) byte, calls vtable[0x14]=Unlock, vtable[0x18]=SetExecuteData, then vtable[0x20]=Execute.
+- `0x647c21ec` is the per-frame "push transform matrices" entry point — runs twice per frame, each time emitting 3 STATETRANSFORM records and triggering one flush.
+
+**The smoking gun is now:** d3rm's render loop never reaches the geometry-emitter functions in 0x6479fxxx/0x647axxxx. The frame ends after BeginScene → matrix push → EndScene → Flip with the back-buffer untouched. Either (a) every per-frame visual-iteration short-circuits at a predicate (similar to cont.27's `[edi+0xa4]==2; jz skip` hypothesis) before reaching geometry emit, or (b) there's a higher-level "device can render?" gate based on a caps flag we set wrong. Caps look fine on inspection (DP2|DPTLV|EXECSYS, all primcaps populated 0x07FF rasterCaps etc.), so (a) is more likely.
+
+**Concrete next probes:**
+1. `--break-once=d3drm+0x647c21ec` to catch the per-frame matrix-push entry. From there, walk caller via bp_first_caller — what's the per-frame render loop entry?
+2. Once render-loop entry known, --count fan-out across every basic block from there to find the predicate that skips geometry emission.
+3. Also worth: `--trace-at=d3drm+0x6479f7b1,d3drm+0x647af7d0` (geometry-emit candidates) — 0 hits confirms they're never reached at runtime, even if SOME visual existed.
+
+**Reverts cont.28 fully.** d3rm uses d3dim for matrix transforms only, but the geometry path is completely cold — not a software-rasterizer-into-surface pattern. The PNG is black because zero pixels are written anywhere — not d3dim, not software framebuffer, not GDI.
+
+**2026-04-28 cont.30 — geometry-emit chain located + confirmed dead. Bug = vtable@0x647e0b40 slot dispatch on non-Mesh visual.**
+
+Static analysis pinpointed the *only* fn in d3drm.dll that emits non-state D3DOP records:
+
+- **`0x647af238`** — writes a multi-record EB block: `SETSTATUS(op=0x0e bSize=0x18) + PROCESSVERTICES(op=9 bSize=0x10 wCount=1) + TRIANGLE(op=3 bSize=8 — DX2 layout, 3×WORD verts) + EXIT(op=0x0b)`. Found via `find_bytes c6400118` (PROCESSVERTICES size byte) — 1 hit only. No other fn in d3rm writes opcode 3 or 9.
+
+Call graph upward:
+
+```
+0x647af238 (geometry emit; 4-arg cdecl)
+   <- 0x647af210 (3-arg trampoline: push edx; push ecx; call 0x647af238; ret)
+       <- 0x647af134  (vtable slot 4 of vt@0x647e0b40, at +0x10)
+       <- 0x647af646  (vtable slot 6 of vt@0x647e0b40, at +0x18)
+       <- 0x647afa2c  (vtable slot 8 of vt@0x647e0b40, at +0x20)
+```
+
+**Critical: each of `0x647af134/0x647af646/0x647afa2c` has ZERO direct code xrefs and exactly ONE pointer ref each — all in vtable @ 0x647e0b40 (slots 4/6/8 = `+0x10`, `+0x18`, `+0x20`).** They are dispatched ONLY through that one vtable.
+
+Runtime hit-counts (ROCKROLL.SCR /s, 20000 batches ≈ 80 frames):
+
+| addr | fn | hits |
+|---|---|---|
+| 0x647c21ec | matrix-push entry | **80** |
+| 0x647c36e0 | state-emit wrapper | **1200** |
+| 0x647c3744 | inner non-7/8 op-emit | **240** (= 80×3 STATETRANSFORM) |
+| 0x647c3905 | EB flush | **120** |
+| 0x647af7a1 | state-render batch (9 STATERENDER) | **0** (dead) |
+| 0x647af238 | geometry emit | **0** |
+| 0x647af210 | trampoline | **0** |
+| 0x647af134 | vt slot 4 | **0** |
+| 0x647af646 | vt slot 6 | **0** |
+| 0x647afa2c | vt slot 8 | **0** |
+
+So the entire geometry chain is cold AND the equivalent state-render-batch fn `0x647af7a1` (which would emit 9 STATERENDER values per Mesh) is also cold — d3rm dispatches state ops only via the matrix-push path `0x647c21ec`, never via the per-Mesh setup `0x647af7a1`.
+
+**Conclusion (matches cont.17/18 with sharper resolution):** The bug is that the per-frame render walker invokes its `call [reg+disp]` Visual-render dispatch on each attached Visual, but the dispatch never lands on `0x647af646` (or its siblings `0x647af134`/`0x647afa2c`). For ROCKROLL's MeshBuilder visual, `[vtable+0x18]` resolves to a different fn — most likely an abstract base-class no-op in our DX/d3rm scaffolding, or an inheritance-broken slot that should chain to the Mesh implementation but doesn't.
+
+**Concrete next-session probe (cont.31):** find every static `call [reg+0x18]` and `call [reg+0x10]` site in d3drm whose `reg` came from a vtable load chain consistent with vt@0x647e0b40 (`tools/find_vtable_calls.js --slot=6 --slot=4 --slot=8`). For each candidate site, run a `--count` round; the alive caller is the one currently invoking a no-op slot. Then break inside that caller, dump the actual fn pointer at `[reg+0x18]` — that target VA tells us which class's `Render` is being invoked instead of Mesh's. The fix is almost certainly populating vtable slot 6 of the MeshBuilder/UserVisual vtable to chain to `0x647af646`, OR fixing wherever d3rm-level QueryInterface returns the parent-class iface when it should return the Mesh-derived iface.
+
+**2026-04-28 cont.31 — frame-Render entry located + early-exit predicate confirmed.**
+
+Live matrix-push caller is `0x64798521` (one of three; other two are dead). 16 frame Renders over 12000 batches.
+
+Disasm (`0x64798521`):
+- `0x64798547  call 0x64799d8d` — pre-check; if non-zero → exit `0x647988c9`.
+- `0x64798568  mov esi, [eax+0x34]` — frame's first child Visual; `0x6479856b cmp esi, ebx; jz 0x647988ec` exits if no children.
+- `0x64798577  call 0x647c2792 / jnz 0x647988ec` — second early-exit predicate.
+- `0x6479858f  call 0x647c1d30` then `0x64798598 call 0x647c21ec` (matrix push) — both unconditional.
+- After matrix push, per-Visual loop:
+  - `0x647985fb call 0x647b9663` (Visual processor — bbox/clip/transform fn from cont.27)
+  - `0x64798603 test eax,eax / jz 0x64798613` — if processor returned 0 (skip), enter "alt path" at 0x64798613; else go to geometry-emit at 0x6479864f.
+  - `0x64798613` path then checks `cmp [ecx+0xa4], [ecx+0xa0]` and jumps to 0x6479865c — also a skip.
+  - `0x6479864f` is the geometry-emit landing (where `0x647af238`-emit chain would fire).
+
+Hit counts (12000 batches, 16 frames):
+
+| addr | role | hits |
+|---|---|---|
+| 0x64798521 | Render entry | 16 |
+| 0x647988ec | early-exit | 16 |
+| 0x64798611 | jmp into geometry-emit path | **0** |
+| 0x64798613 | post-`jz` "alt" path | 15 |
+| 0x6479864f | geometry-emit landing | 0 |
+| 0x6479865c | "alt" inner-skip | 15 |
+| 0x64798669 | failure fork | 1 |
+
+**Confirmed:** every frame either early-exits at `0x647988ec` (16/16) or, in the visual loop, takes the skip branch at `0x64798603 jz` (15/16, with 1 failure). Geometry-emit (0x647af238) is never reached because `0x647b9663` returns 0 OR the early-exit fires first.
+
+The fact that frame-Render entries == early-exits (both 16) means every iteration takes the early-exit at `0x647988ec` — but the loop hit counts at 0x64798613/0x6479865c also = 15 each, which only adds up if 0x647988ec is reached **after** going through the visual loop. That fits: the loop iterates through children, and after the last child the `jmp/jcc` chain falls through to 0x647988ec as the natural fn epilogue.
+
+So real picture per frame: matrix push runs, visual loop iterates ~15 times across children, `0x647b9663` returns 0 every time (skip path), zero geometry emitted, fn exits.
+
+**Next-session task (cont.32):** disasm `0x647b9663`. It's the Visual processor that decides "render this Visual or skip". Find what predicate makes it return 0 — likely `[visual+OFFSET]` flag tied to mesh data being absent/uninitialized. Suspects: bbox not set, transformed-vertex cache empty, Mesh data pointer NULL. Once the failing predicate is found, trace upward to the missing initialization step (likely a SetData/Load call we no-op'd in d3rm COM thunks).
+
+**2026-04-28 cont.32 — frame Render's geometry dispatch traced. Per-Visual render IS being invoked, but lands on a non-emitting target.**
+
+Disasm of frame-Render (`0x64798521`) corrected from cont.31. The "alt path" at `0x64798613`/`0x6479865c` is not a skip — it falls through into a long body ending at `0x647988a4` where the per-Visual dispatch happens:
+
+```
+0x647988a4  test [ebp+0xc], 0x3     ; gate on caller's flags arg
+0x647988a8  jz   0x647988d0          ; skip dispatch if flags & 3 == 0
+0x647988aa  push [ebp+0xc]; push [ebp-0xc]; push [ebp-0x8]; push [ebp-0x14]; push [ebp-0x4]; push edi; push eax; push esi
+0x647988bd  call [ecx+0x38]          ; ecx = [esi+0x18] = visual's vtable; slot 14 (offset 0x38)
+0x647988c2  add esp, 0x20
+0x647988c5  test eax, eax
+0x647988c7  jz   0x647988d0          ; success → cleanup
+0x647988c9  mov eax, [0x647e7afc]    ; error → load global error code
+```
+
+Hit counts (12000 batches, 16 frames):
+
+| addr | role | hits |
+|---|---|---|
+| 0x647988a4 | gate test | 16 |
+| 0x647988aa | gate prep (taken) | 16 |
+| 0x647988d0 | post-dispatch cleanup (success) | 16 |
+| 0x647988c9 | error path | 0 |
+
+The gate IS taken every frame and the dispatch lands successfully. But 0x647af238 chain stays cold ⇒ `[ecx+0x38]` resolves to a fn that is NOT the geometry emitter. The actual target is whatever `[visual_vtable+0x38]` points to at runtime — likely a base-class no-op or a different visual subclass that doesn't emit geometry, OR a Mesh-render fn whose own emit-path is conditional on something else.
+
+**Cont.33 plan:** runtime dump `[ecx+0x38]` at the call site. Two ways:
+1. `--break=d3drm+0x647988aa` (fires before push prep) then in the debug prompt: `m32 ${esi}+0x18` to get vtable, then `m32 vtable+0x38` to get target VA.
+2. Or `--trace-at=d3drm+0x647988aa --trace-at-dump=ESI+0x18:4` to log the vtable ptr each frame, then a second pass dumps its `+0x38` slot.
+
+Once the target VA is known: if it's a stub/no-op in d3rm itself, that's the broken-inheritance bug — the Visual instance's vtable was constructed with a base-class slot where the Mesh subclass should have overridden it. Trace where the Visual vtable is built (likely `IDirect3DRMMeshBuilder_CreateMesh` / `IDirect3DRMFrame_AddVisual` or similar) and see which COM method we no-op'd.
+
+**2026-04-29 cont.33 — runtime vtable dump attempt: probe addressing problem.**
+
+Goal: dump `[esi+0x18]+0x38` at `0x647988bd` (`call [ecx+0x38]`) to identify the actual fn the per-Visual dispatch lands on.
+
+Attempts:
+- `--trace-at=d3drm+0x647988aa` — 0 trace lines emitted across 4000 batches even though `--count` shows the BB fires. Likely cause: `0x647988aa` is **inside** the BB that begins at `0x647988a4`; trace-at only fires on BB heads (per `feedback_trace_at_limits`).
+- `--trace-at=d3drm+0x647988a4` and `--trace-at=0x745b38a4` (runtime VA) — both produced no `[trace-at]`-prefixed lines either. The numbered `[N] EIP=...` lines in the log are ordinary verbose-tail output, not trace-at hits.
+
+Diagnosis pending: check whether trace-at output formatting changed (or whether my mapping was wrong). Try `--trace-at-dump=d3drm+0x647988a4:0` (zero len) to confirm the addr is recognized as a BB head, or read `test/run.js` lines for the trace-at handler to see its actual output prefix.
+
+**Cont.34 plan (concrete and low-risk):**
+1. Verify trace-at works at all in this session: pick a known-firing BB (e.g. `d3drm+0x647c21ec` matrix-push entry, which fires every frame) and confirm it produces output. If yes, the issue at `0x647988a4` is mapping; if no, trace-at infra is broken.
+2. Once trace-at firing is confirmed at a known-good addr, hop forward: `--trace-at=d3drm+0x647988a4` should also fire (same kind of BB head). Capture esi from that hit.
+3. Compute vtable VA = `*(u32*)(esi+0x18)`. Use `tools/dump_va.js` after the run captures it (the dump-va tool reads static PE only — for a runtime vtable allocated on the heap, instead use `--trace-at-dump=ESI+0x18:64` if supported, otherwise add a `--dump=GUEST_ADDR:LEN` post-run dump using the captured esi+0x18 value).
+4. The vtable's slot 14 (offset 0x38) is the dispatch target. If it's a fn at d3rm-base + something < 0x647af200, it's a base-class no-op; if it's outside .text (heap thunk address), our COM thunking is broken; if it's a real d3rm fn but not the geometry chain, then walk that fn to see what it does instead.
+
+Stopping here without a code change. cont.34 is purely instrumentation-side: get the vtable target VA. No source edits in this session.
+
+**2026-04-29 cont.34 — runtime vtable target captured. The "visual" is a Viewport, dispatches via `[viewport+0x1bc]+0x30`.**
+
+Trace-at sanity-check passed at matrix-push (0x647c21ec → 28 hits). Failure at 0x647988a4 in cont.33 was because `--trace-at` only takes ONE addr (first only) and 0x647988aa was inside a non-head BB; need to choose a real BB head.
+
+Captured visual struct via `--trace-at=d3drm+0x647987ae --trace-at-dump=0x750a9a68:0x60` (15 hits). Key fields:
+
+```
+struct @ 0x750a9a68 (esi):
+  +0x00  vtable_a    = 0x7500c138   (heap, mutable per-instance)
+  +0x18  vtable_b    = 0x745fb8f8   ← runtime addr; =d3rm+0x647e08f8 in image
+  +0x1bc (not in 96-byte dump, but read in target fn)
+```
+
+**Vtable @ d3rm+0x647e08f8 (image VA):** dump shows it's the Viewport/Camera class vtable. Slot 14 (`+0x38`) = **`0x6479fcd6`**.
+
+Disasm of `0x6479fcd6` (the per-frame render target):
+```
+push ebp; mov ebp,esp; push esi
+mov esi, [eax+0x1bc]        ; eax=this; [this+0x1bc] = inner device ctx
+mov eax, [ebp+0x24]
+and eax, 0x3                ; gate on flags & 3
+cmp eax, 0x3
+... dispatch by flags ...
+call [eax+0x30]             ; eax = [esi]; slot 12 of device-ctx vtable
+xor eax, eax                ; always returns 0 (success)
+ret
+```
+
+**New mental model:** The "visual" attached to the root Frame is actually a **Viewport** object, NOT a Mesh. Viewport::Render forwards rendering to a device-context object stored at `[this+0x1bc]`, calling slot 12 of THAT object's vtable. The geometry-emit chain at `0x647af238` (vtable @0x647e0b40 slots 4/6/8) is for a different class (likely Mesh subclass) — it would only fire if the device-ctx walker enumerates scene meshes and dispatches into them.
+
+So the cold geometry-emit chain isn't the bug — it's the *consequence*. The real questions:
+1. Is `[esi+0x1bc]` populated correctly (non-NULL device ctx)? If NULL, the inner `mov eax, [esi]` crashes.
+2. What is `[device_ctx+0]+0x30`? Dump that vtable target — that's the actual scene walker.
+3. Does the scene walker iterate meshes and dispatch into their vtables (slots 4/6/8 of @0x647e0b40)?
+
+**Cont.35 plan:**
+1. trace-at `d3drm+0x6479fcd6` (target entry — should be a BB head). Dump 4 bytes from `viewport+0x1bc` to get device ctx ptr. esi is captured by trace-at regs.
+2. Then dump 4 bytes from `device_ctx+0` to get its vtable, then dump `vtable+0x30` to get the scene walker fn.
+3. Walk the scene-walker fn statically. Look for indirect calls that enumerate visuals — `call [reg+0x18]` style on Mesh-like objects. Find why those aren't reaching `0x647af238`.
+
+This shifts the bug location from "Visual vtable misconstructed" (cont.31/32 hypothesis) to "device-context render walker truncated or scene-list empty". A scene with zero attached meshes would render only background, matching the PNG's all-black output.
+
+**Likely root cause now:** `IDirect3DRMFrame::AddVisual` (or `IDirect3DRMMeshBuilder::CreateMesh` → AddVisual chain) is no-op or partial in our COM thunks, so the scene's mesh list is empty. The render walker iterates 0 meshes and exits silently. Verify by tracing AddVisual in our COM table.
+
+**2026-04-29 cont.35 — device-context wrapper located. The dispatch lands on a synthetic D3DRM COM vtable slot 12.**
+
+trace-at on `d3drm+0x6479fcd6` (Viewport::Render dispatch target) captured eax=this=0x750aada0 (Viewport `this`) over 15 hits.
+
+Dump of Viewport struct @0x750aada0:
+- +0x00: 0x74e0f968   (parent class metadata — d3rm-image addr)
+- +0x04: 0x7500c138   (per-instance vtable in heap)
+- +0x14: refcount/index 0x15
+- +0x18: 0x745fbf68   (= d3rm+0x647e0bf8, ANOTHER class meta)
+- +0x1bc: **0x7c3e6090** ← device-context COM wrapper
+
+Dump of wrapper @0x7c3e6090 (in COM_WRAPPERS region 0x07FF0000+):
+```
++0x00: 0x7451267c    ← synthetic vtable A
++0x04: 0x00000012    ← DX_OBJECTS slot id 18
++0x08: 0x745126f4    ← synthetic vtable B
++0x0c: 0x00000013    ← slot id 19
++0x10: 0x745129fc    ← synthetic vtable C
++0x14: 0x00000014    ← slot id 20
+```
+
+This is our standard COM-multi-iface layout: 3 (vtable, slot_id) pairs sharing one underlying object. The three vtables likely correspond to IDirect3DRMDevice, IDirect3DRMDevice2, and an aggregated iface (Unknown or DirectDrawSurface). Slot ids 18-20 are sequential DX_OBJECTS table entries.
+
+The dispatch reads `[wrapper]` = `0x7451267c` (vtable A), then `call [vtable+0x30]` = slot 12. Vtable A is in the synthetic COM thunk region (0x745126xx), generated by our DX/D3DRM scaffolding.
+
+**Bug isolated to:** synthetic vtable A's slot 12 (offset 0x30) for the d3rm Device interface. It returns success but does no geometry work.
+
+**Cont.36 plan:**
+1. Identify which iface vtable A corresponds to. Inspect `lib/host-imports.js` or wherever DX_OBJECTS vtables are constructed — find the table that produces thunks at 0x745126xx and read slot 12's handler name.
+2. The d3rm interfaces and their slot 12 candidates:
+   - IDirect3DRMDevice slot 12 = `Render` (after IUnknown 3 + IDirect3DRMObject 5 + AddRef/Release inheritance...). Need to count exact methods.
+   - More likely: this is `IDirect3DRMViewportRender` or similar device-render slot.
+3. Once the API name is known, implement it: it must walk the scene's Frame tree, enumerate Visuals, and dispatch each Visual's vtable at the right offset to invoke the geometry-emit chain `0x647af238` (which we proved is the only TRIANGLE-emitting fn in d3rm).
+4. Alternative: since d3rm internally walks the scene and builds D3DIM ExecuteBuffers, the cleanest fix may be to invoke d3rm's *own* internal scene walker. That walker is in the same DLL — we just need to call into it from our stub. Find the d3rm-internal "Device::Render" implementation by xref'ing the wrapper construction: where is `0x7c3e6090` initialized, and what was the original d3rm fn that should have been wired to slot 12?
+
+**Critical insight:** Our scaffolding *thinks* it's emulating d3rm by intercepting all its COM calls and forwarding to ddraw. But d3rm has its OWN sw-rasterizer and scene walker in `d3drm.dll`. Instead of stubbing, we should let the **real d3rm code** run for Device::Render, only intercepting the eventual ddraw/d3dim calls it makes downstream. The stub is the bug — d3rm has the implementation we need.
