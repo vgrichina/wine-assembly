@@ -19,7 +19,7 @@ const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
 
 // Text file extensions (served as-is)
-const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css']);
+const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md']);
 
 // Skip these root text files
 const SKIP_FILES = new Set(['package.json', 'package-lock.json']);
