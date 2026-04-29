@@ -866,6 +866,42 @@ In our emu, the message pump fires WM_NCPAINT (re-armed by every `SetWindowTextA
 
 **Decisive next step**: when WM_KEYDOWN arrives, instrument [+0x172] read at the gate-check site (0x01018e12). If it reads 1 at that moment, we know the keydown landed inside a held-lock window. Then trace prev_eip back to identify which message handler took the lock.
 
+### 2026-04-29 (continued) — WM_USER (0x400) self-post loop starves WM_KEYDOWN
+
+`--trace-api=DispatchMessageA --trace-api-dedup` reveals the dominant traffic in the pump:
+
+```
+DispatchMessageA(hwnd=0x00010002 msg=0x0085 wP=0x01)         ; WM_NCPAINT (chrome)
+DispatchMessageA(hwnd=0x00010004 msg=0x0400 lP=0x0121fd04)   ; WM_USER repeated
+DispatchMessageA(hwnd=0x00010004 msg=0x0400 lP=0x0121fd04)   ; ...
+DispatchMessageA(hwnd=0x00010004 msg=0x0400 lP=0x0121fd04)   ; 160+ in a row
+...
+DispatchMessageA(hwnd=0x00010003 msg=0x03bd lP=0x01269224)   ; another WM_USER
+DispatchMessageA(hwnd=0x00010002 msg=0x000f)                 ; WM_PAINT
+```
+
+**Pinball's physics tick is implemented as a self-posted WM_USER (0x400) message** to a hidden child hwnd 0x10004, with the lParam=0x0121fd04 pointing at a tick-context struct. The handler at 0x01018e00..0x01018e5a (the 5-case gated dispatcher) is likely this WM_USER handler — each case dispatches a vmethod on a different child of the obj passed in lParam.
+
+**The bug**: our PeekMessageA priority is:
+1. pending_child_create / size / wm_size
+2. nc_flags_scan(bit 4 / 1 / 2) — WM_NCCALCSIZE / WM_NCPAINT / WM_ERASEBKGND
+3. **post_queue** ← pinball's WM_USER lives here, refilled by its own handler
+4. pending_input_packed (cached host input)
+5. **host_check_input** ← WM_KEYDOWN never reached while post_queue non-empty
+
+When pinball's WM_USER handler reposts WM_USER for the next tick, post_queue is never empty, so `host_check_input` is starved → injected WM_KEYDOWN never enters the message stream.
+
+In real Win98, the system queue (hardware input) and the application queue (PostMessage) are interleaved by GetMessage with their own ordering rules. Posted messages of the same priority don't starve hardware input indefinitely. We've collapsed this into a strict-priority order that doesn't model the real interleaving.
+
+Imports check confirms pinball does NOT use GetAsyncKeyState/GetKeyState (it imports only `GetKeyNameTextA`), so it relies entirely on WM_KEYDOWN through the message pump.
+
+**Fix candidates** (all in PeekMessageA, `src/09a5-handlers-window.wat`):
+- (a) Check `host_check_input` BEFORE draining post_queue — gives hardware input top priority, easiest fix but inverts standard Win32 priority.
+- (b) Round-robin: alternate post_queue and host_check_input every other call. Approximates the real interleave.
+- (c) Cap post_queue drain rate per pump entry — drain at most N posts before letting host_check_input poll.
+
+(a) is the safest first attempt. Real Win98 doesn't actually prioritise hardware input over posted messages in PeekMessage — the standard ordering is sent > posted > hardware > paint > timer. But our emu lacks the WM_QUIT/SendMessage interleave that gives hardware input air to breathe in real life. Inverting to hardware-first should get pinball flippers working without breaking apps that don't rely on the strict priority.
+
 ### Original "next concrete step" (kept for reference)
 
 check the other 22 WM_KEYDOWN references
