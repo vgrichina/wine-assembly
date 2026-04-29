@@ -758,6 +758,38 @@ Hypothesis: in real Win98 the lock is held only briefly per-physics-tick, with s
 
 **Decisive next step**: locate where `[0x010082f0 call esi]` is called from (the physics-tick loop entry) and verify whether it's gated on a frame-rate timer. Also compare invocation count: if our emu runs the physics function 1000× per real-Win98 frame, that's the entire bug.
 
+### 2026-04-29 (continued) — `0x010082f0` is the MESSAGE PUMP, not a physics-step
+
+Disassembly of fn `0x010082ab` (enclosing 0x010082f0):
+```
+010082b5  cmp [0x1024fec], edi    ; bail if state==0
+010082bb  jz 0x10082fd
+010082bd  cmp [0x1024fd8], edi    ; bail if demo-flag != 0
+010082c3  jnz 0x10082fd
+010082c5  mov esi, [0x1001160]    ; esi = PeekMessageA (USER32 IAT[4])
+010082cb  jmp 0x10082e7           ; first iter: skip Translate/Dispatch
+loop:
+010082cd  lea eax, [ebp-0x1c]; push eax
+010082d1  call [0x1001164]         ; TranslateMessage
+010082d7  lea eax, [ebp-0x1c]; push eax
+010082db  call [0x1001168]         ; DispatchMessageA  ← runs the wndproc
+010082e1  cmp [ebp-0x18], 0x12     ; check WM_QUIT
+010082e5  jz exit
+010082e7  push 0x1; push edi*3; lea+push msg
+010082ef  push eax; call esi       ; PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE=1)
+010082f2  test eax; jnz loop       ; loop while messages available
+```
+
+So `0x010082f0` is `call PeekMessageA`. The watchpoint attributing writes to this site reflects the THREADED-CODE block layout: the actual writer is inside `DispatchMessageA → wndproc → some handler that sets [+0x172]=1`, and execution lands back at `0x010082f2` (post-call landing site of PeekMessage, the next basic-block entry). The threaded-code emulator credits the write to the next block, which makes it LOOK like 0x010082f0 wrote — but it's really a wndproc-internal write whose block was inlined/coalesced.
+
+**This rules out the "frame-rate timer" hypothesis**. The setter is somewhere INSIDE a wndproc message handler. To find the actual writer, we need to break inside DispatchMessageA right before it returns to 0x010082f2 and instrument every store to [+0x172] inside that nested call.
+
+**Better approach**: drop the watchpoint and instead use `--break-once=0x010082e7` (just before PeekMessage) to capture msg.message field. The wndproc dispatches based on msg.message; the message that triggers [+0x172]=1 will fire much more often than WM_KEYDOWN. Likely candidates: WM_TIMER (0x113), WM_PAINT (0x0F), or a custom WM_USER+N. Inspect [ebp-0x18] (msg.message) at the start of each loop iteration.
+
+### Original "next concrete step" (kept for reference)
+
+check the other 22 WM_KEYDOWN references
+
 ### Original "next concrete step" (kept for reference)
 
 check the other 22 WM_KEYDOWN references — sort the call sites by enclosing function and look for one that ISN'T gated by state==1. Particularly suspect: any wndproc registered for a child HWND, or anything dispatched from a worker thread. Also check for `GetAsyncKeyState` / `GetKeyState` imports in pinball.exe — pinball was a fast-path game and may poll keys directly.
