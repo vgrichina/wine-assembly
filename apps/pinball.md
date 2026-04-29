@@ -815,6 +815,57 @@ This is consistent with all prior runtime evidence:
 
 **If (b) confirmed**: a single application's NC_FLAGS bit 1 is supposed to be one-shot per Invalidate, not perpetually re-set. Check whether our DefWindowProc WM_NCPAINT path or any Invalidate-on-paint logic re-sets the flag. The invariant should be: WM_NCPAINT delivered → flag cleared → no more WM_NCPAINT until something explicitly invalidates again.
 
+### 2026-04-29 (continued) — WM_NCPAINT re-armer is `SetWindowTextA("Frames/sec=...")`
+
+`--trace-api=InvalidateRect,RedrawWindow,SetWindowTextA,UpdateWindow` over a 4000-batch run shows:
+```
+[API #52581] SetWindowTextA(hwnd=0x10002, text="Frames/sec = 1.92")
+[API #55849] SetWindowTextA(hwnd=0x10002, text="Frames/sec = 6.15")
+[API #60253] SetWindowTextA(hwnd=0x10002, text="Frames/sec = 6.38")
+... 8+ calls in 4000 batches, ~one per ~4000 instructions ...
+```
+
+Pinball updates the title bar with FPS continuously. Our `$handle_SetWindowTextA` at `src/09a-handlers.wat:1521` calls `nc_flags_set(hwnd, 1)` to seed WM_NCPAINT for chrome redraw. That's the perpetual re-arm.
+
+This is benign — exactly mirrors real Win32 (SetWindowText invalidates the caption non-client area). NOT the gate setter.
+
+### 2026-04-29 (continued) — `[esi+0x172]` is a re-entrancy lock, not a "physics busy" flag
+
+Disassembly of fn at 0x01017793 (one of the static `[+0x172]=1` setters):
+```asm
+01017793  push ebp; mov ebp,esp
+           push ecx; push esi; push edi
+           mov esi, ecx                  ; thiscall: this in ecx
+           xor edi, edi
+           cmp [esi+0x172], edi          ; CHECK GATE
+           jnz 0x1017878                 ; bail if non-zero (RE-ENTRY)
+           cmp [esi+4e], edi             ; secondary check
+           jnz 0x1017878
+           ... long body ...
+01017868  mov dword [esi+0x172], 0x1    ; SET GATE (lock acquire)
+           call 0x100c0be                ; deeper work
+           pop ebx; pop edi; pop esi
+           leave; ret 4
+```
+
+**Same shape as fn 0x01018d72 and 0x01018e12**: every gated method does `if (this->gate==0) { ...work...; this->gate=1; deeper(); }`.
+
+`xrefs` and `find-refs` find ZERO references to any of these fns — they're all reached via vtable dispatch. They're virtual methods of one class.
+
+**Reframed mental model**: `[esi+0x172]` is a **re-entrancy lock** for a class of game-object methods, not a physics-tick busy flag. The pattern is "call a method on this object; if the method-chain is already active, bail; otherwise, run, mark active, descend; some terminal code clears the flag on the way back up."
+
+WM_KEYDOWN's flipper handler calls one of these methods. If the lock is held (because the same object is currently in a method-chain triggered by a prior message — likely WM_TIMER or our high-rate WM_NCPAINT), the keydown bails.
+
+### 2026-04-29 (continued) — Why our emu blocks but real Win98 doesn't
+
+In real Win98, the message pump runs at a few hundred Hz with idle gaps. The lock is acquired briefly per-method-chain, released, and most WM_KEYDOWN deliveries land while the lock is clear.
+
+In our emu, the message pump fires WM_NCPAINT (re-armed by every `SetWindowTextA("Frames/sec=...")`) so the wndproc dispatches a method on the gated object that takes the lock. The chain runs to completion synchronously; lock releases; pump exits; physics tick recomputes FPS; calls SetWindowText; pump runs again with a fresh WM_NCPAINT; lock taken again.
+
+**The blocking question**: is the WM_KEYDOWN delivery being scheduled to land *while* the lock is held? Our PostMessage-via-host_check_input route should land the keydown BETWEEN pump invocations (not during one), so the lock should be clear when the keydown handler runs. UNLESS the keydown handler itself calls a gated method that's RE-entering its own previously-active chain — e.g., WM_NCPAINT triggered method X on the object, and the keydown handler calls method Y on the SAME object, but our pump delivers them in the same iteration?
+
+**Decisive next step**: when WM_KEYDOWN arrives, instrument [+0x172] read at the gate-check site (0x01018e12). If it reads 1 at that moment, we know the keydown landed inside a held-lock window. Then trace prev_eip back to identify which message handler took the lock.
+
 ### Original "next concrete step" (kept for reference)
 
 check the other 22 WM_KEYDOWN references
