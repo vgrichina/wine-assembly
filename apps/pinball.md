@@ -505,9 +505,230 @@ So state→1 demotion exists (via 0x010153b0). It's called from the main wndproc
 
 **Strong candidate for real flipper-fire:** 0x01016ea1 / 0x01016e24 dispatch msg 0x3e8/0x3ea inside fns 0x01016df5 (left flipper actuator) / 0x01016e72 (right). These are stored as callbacks via `push 0x1016df3; push edi; call [0x1001304]` at 0x01016fe5 — looks like a deferred-execution scheduler (push float-time arg, push object, push callback fn, call dispatch). So flippers are SCHEDULED actions, not directly fired from the keyboard dispatcher. That means the keyboard dispatcher's msg 0x3e8/0x3ea sends are upstream of the actuator — the gate at state==1 still applies and we're back to the same wall.
 
-**Verdict:** further investigation needs hands-on patching (e.g. write 1 to [0x1025568] before the keypress arrives) to verify whether the state gate is THE problem or just A problem. That's the cleanest experiment but requires either a `--poke ADDR=VAL@BATCH` flag in test/run.js or a binary patch. Out of scope for this iteration.
+**Verdict:** further investigation needs hands-on patching (e.g. write 1 to [0x1025568] before the keypress arrives) to verify whether the state gate is THE problem or just A problem. That's the cleanest experiment but requires either a `--poke ADDR=VAL@BATCH` flag in test/run.js or a binary patch.
 
-**Next concrete step:** check the other 22 WM_KEYDOWN references — sort the call sites by enclosing function and look for one that ISN'T gated by state==1. Particularly suspect: any wndproc registered for a child HWND, or anything dispatched from a worker thread. Also check for `GetAsyncKeyState` / `GetKeyState` imports in pinball.exe — pinball was a fast-path game and may poll keys directly.
+### 2026-04-29 — DEEPER FINDINGS: gate is real, but cause is BALL PHYSICS
+
+Avoiding the need for `--poke`: a second F2 keypress mid-test forces state 2→1 transitively (state setter wrapper 0x010153b0 unconditionally sets state=1). Test schedule:
+```
+5000:F2,5500:Space,5700:Space-up,7000:F2,7100:Z,7300:Z-up,8000:/,8100:/-up
+```
+
+State watch log:
+- batch 109: 0→3 (init)
+- batch 1061: 3→1 (auto, demo loop)
+- batch 2123: 1→2 (auto, demo continues)
+- batch 5015: 2→1 (F2 #1)
+- batch 6161: 1→2 (~1100 batches after, even though Space was held only 200 batches)
+- batch 7001: 2→1 (F2 #2)
+- batch 8051: 1→2 (~1050 batches later)
+
+`--count` results during this run (Z at 7100 when state==1, / at 8000 when state==1):
+| Probe | Hits | Meaning |
+|---|---|---|
+| 0x010150c7 | 1 | RIGHT flipper match in dispatcher (Z) |
+| 0x010150ed | 1 | LEFT flipper match in dispatcher (/) |
+| 0x010187d6 | 32 | runtime obj msg-router entry |
+| 0x01018e12 | 1 | msg 0x3e8 (right flipper) handler entry |
+| 0x01018ef4 | 29 | "no handler" exit branch |
+| 0x01018e68 | 3 | post-gate continuation |
+| 0x01016c24 | **0** | static vtable @ 0x010026e0 slot 0 (the "expected" handler) |
+
+**The keyboard dispatcher reaches the right flipper handler** (msg 0x3e8 → 0x01018e12). It does NOT route through 0x01016c24. At runtime, `[0x1025658] = 0x01269624` (the GAME object), whose vtable@0x01002790 has slot 0 = 0x010187d6 — a totally different class than the static vtable I'd been examining. So the static vtable I dumped earlier (0x010026e0) is for a DIFFERENT class instance (probably one of the static flipper-component vtables); the runtime receiver is the "TableInfo" or game-aggregator object.
+
+**The gate inside the msg handler:**
+```
+01018e12  cmp dword [esi+0x172], 0x0
+01018e19  jnz 0x01018ef4         ; bail if [esi+0x172] != 0
+01018e1f  mov esi, [esi+0x2a]    ; else delegate to child object
+```
+
+At trace-at hit (Z keypress, state==1): **`[0x01269624 + 0x172] = 0x00000001`** — i.e. the "ball deployed" flag is already set, so the handler bails. PNG inspection confirms: dispatcher reaches handler, but no flipper animation visually.
+
+**Single writer of `[obj+0x172] = 1`:**
+```
+01017868  mov dword [esi+0x172], 0x1
+```
+inside fn 0x01017793. That fn's prologue is `cmp [esi+0x172], edi (0); jnz exit`, then it does ball-launch work (pushes msg 0x23 to a child, schedules msg 0x3f3 deferred), and finally sets `[esi+0x172]=1` as a "done" guard so it doesn't re-run.
+
+So `[esi+0x172]` = "ball already deployed" once-only flag. **Flipper msg 0x3e8 only fires when this is 0** — i.e. ONLY during pre-deployment. Combined with the state==1 dispatcher gate, the binary genuinely refuses flipper input both before and after ball deployment in this code path.
+
+### Resolution: the keyboard handler at 0x010150c7 is a PRE-DEPLOYMENT path (plunger-area control)
+
+The ONLY way real Win98 pinball can have working flippers during play is if there's a SECOND flipper-fire entry point that I haven't found, OR the runtime object reassignment we observed is wrong.
+
+Hypotheses ranked:
+1. **`[0x1025658]` is reassigned during play** — pre-deployment it's the "ball-trough/plunger" object with msg 0x3e8 = "deploy"; post-deployment it should be reassigned to the "play-table" object with msg 0x3e8 = "fire right flipper". Our emulator may not be performing this reassignment because some init/handler isn't running.
+2. **The state==1 gate is real-but-narrow** — state 1 might genuinely mean "between balls / pre-launch" and there's a separate state==2 input path I missed despite four passes. Worth re-grepping the disasm with new lenses (look for any code that reads `[0x1025658]` during state 2).
+3. **Physics: ball drains too fast.** State stays at 1 in real pinball during play because the ball is bouncing around. Our emulator transitions 1→2 about 1000 batches after entering 1 — even if no Space was pressed (e.g. the auto-cycle 1061→2123 with no input). That's suspicious; suggests the game enters state 2 whenever an internal event ID (0x42 from 0x010118f5) fires, and that event might fire too eagerly.
+
+**Decisive next experiment:** trace the call stack into 0x01011987 (event 0x42 handler that sets state=2). If the caller is the spring-release routine, state→2 is "ball launched" and we need to find the post-launch flipper path. If the caller is a timer or "ball drained" handler, state→2 means "ball drained" and the bug is upstream physics.
+
+```bash
+node test/run.js --exe=test/binaries/pinball/pinball.exe \
+  --break-once=0x01011987 --trace-stack=0x01011987:12 \
+  --input='5000:keydown:0x71,5010:keyup:0x71,5500:keydown:0x20,5700:keyup:0x20' \
+  --max-batches=8000
+```
+
+Look at the stack frame chain to identify what triggered the state transition. If it's a physics tick / drain event, the bug is much deeper than keyboard input — it's the entire ball-physics chain.
+
+### 2026-04-29 — Caller of state-2 setter identified: spring-release event 0x42
+
+Disasm of fn 0x01011985 (the event handler whose internal call site 0x01011b4f writes state=2):
+```
+01011998  mov eax, [ebp+0x8]      ; event id arg
+0101199b  sub eax, 0x42
+010119a1  jz  0x01011b3b           ; event 0x42 → "ball launched"
+010119a7  dec eax
+010119a8  jnz default              ; default for non-0x42, non-0x43
+
+01011b3b: ; event 0x42 handler (ball launched)
+01011b3b  mov ecx, [0x1023eec]
+01011b41  fldz
+01011b43  mov eax, [ecx]
+01011b45  push ecx; fstp; push 0x14; call [eax]    ; vtable[0]: msg 0x14 (with float 0)
+01011b4d  push 0x2
+01011b4f  call 0x101461a                            ; setState(2) ← OUR TRANSITION
+01011b54  ; then notify ball-physics objects via msg 0x3fe (1022)
+```
+
+So **state→2 happens immediately on spring-release (event 0x42)**, dispatched from the spring-release routine at 0x010118f5. The state machine is intentional: state 2 = "ball launched, physics simulation running."
+
+### 2026-04-29 — Both KEYDOWN and KEYUP dispatchers state==1 gated; no second path
+
+Re-examined WM_KEYUP dispatcher 0x010152e4: identical state==1 gate at 0x010152e9. KEYUP dispatches msg 0x3e9 (right release) / 0x3eb (left release) instead of 0x3e8/0x3ea. So 4 flipper messages total (fire/release × left/right), all gated on state==1, all routed to runtime obj at [0x1025658]. No alternate state==2 path.
+
+### 2026-04-29 — Default message handler 0x100c0be drops flipper msgs
+
+When msg 0x3e8 reaches the game object's dispatch table at 0x010187d6, post-launch [esi+0x172]=1 forces it to the no-handler exit at 0x01018ef6, which is `push [ebp+0x8]; call 0x100c0be; xor eax,eax; ret 0x8`. fn 0x100c0be only handles msg 0x3f3 — for msg 0x3e8/0x3ea/0x3e9/0x3eb it falls through to `pop ebp; ret 0x4` without doing anything. So after launch, flipper msgs are SILENTLY DROPPED at every layer.
+
+### 2026-04-29 — Conclusive observation: this binary version has no post-launch flipper input
+
+After exhaustive analysis:
+- Keyboard dispatcher gates flipper firing on state==1 (pre-launch only).
+- Game object's msg dispatcher gates flipper handling on `[obj+0x172]==0` (pre-deployment only).
+- After ball launch (event 0x42), state goes to 2 AND `[obj+0x172]` goes to 1, both permanently for the rest of the ball.
+- No alternate input path exists for state 2: keyup/keydown dispatchers are the only WM_KEYDOWN/WM_KEYUP handlers in the only wndproc; no key-polling APIs imported; no msg-broadcast or state-2-specific msg id discovered for flipper firing.
+
+**Possibilities at this point:**
+- (i) The binary `test/binaries/pinball/pinball.exe` is a stripped/demo build that genuinely has flippers disabled in-play. Compare against a known-good Win98 SE pinball.exe SHA256.
+- (ii) The "real" flipper input flows through an utterly different mechanism we missed (e.g. accelerator table lookup before the wndproc gets WM_KEYDOWN, or a TranslateMessage-side hook). Worth dumping the accelerator table at runtime via `--break-api=TranslateAcceleratorA`.
+- (iii) Real Win98 pinball assigns flipper keys to LEFT-SHIFT (VK_LSHIFT=0xA0) and RIGHT-SHIFT (VK_RSHIFT=0xA1), not Z/`/`. Our `[0x01028238]=0x5A (Z)` and `[0x0102823c]=0xBF (/)` may be uninitialized garbage or a custom keymap from a default INI we're not reading correctly. Check what initializes these — search for stores into 0x01028238/0x0102823c.
+
+**Cheap next experiment:** sha256 the binary, then probe the keymap initialization:
+```bash
+shasum -a 256 test/binaries/pinball/pinball.exe
+node tools/find_field.js test/binaries/pinball/pinball.exe 0x28238 --op=write
+node tools/find_field.js test/binaries/pinball/pinball.exe 0x28238 --base=ds  # if base=ds wasn't covered
+```
+If keys are loaded from .ini, check what file/section: `--trace-api=GetPrivateProfileStringA --trace-fs`. If the user customized keymap file says LEFT-SHIFT, that might be the correct entry — and our test using Z/`/` is exercising a degenerate "menu only" path.
+
+### 2026-04-29 — INI keymap strings located, msg-id assignments corrected
+
+Binary identity: `sha256 = 2bbc8234685fe2f6324040af6ea20123cf00c4a56882ce0d9074f0beefac67bc`. (Match this against any clean Win98 SE pinball.exe to confirm we have an unmodified binary.)
+
+INI key-name strings located in `.text`:
+- 0x010014ac: `"Plunger key"`
+- 0x010014b8: `"Right Flipper key"`
+- 0x010014cc: `"Left Flippper key"`  ← original binary has a 3-p typo!
+- 0x010014e0: `"Players"`
+- 0x010014e8: `"FullScreen"`
+
+WritePrivateProfileString sequence at 0x01005620 pairs values with names:
+| Slot | Key name | Runtime value |
+|---|---|---|
+| 0x01028234 | (preceding) | — |
+| 0x01028238 | "Left Flippper key" (typo'd) | 0x5A = **'Z'** |
+| 0x0102823c | "Right Flipper key" | 0xBF = **'/'** (VK_OEM_2) |
+| 0x01028240 | "Plunger key" | 0x20 = Space |
+| 0x01028244 | ... | 0x58 = X |
+
+So the keymap is **standard Win98 pinball: Z = left flipper, / = right flipper, Space = plunger**, exactly as the test assumes. Earlier in this doc I had RIGHT/LEFT swapped — corrected mapping:
+- **msg 0x3e8** = LEFT flipper FIRE (paired with [0x01028238] = Z)
+- **msg 0x3ea** = RIGHT flipper FIRE (paired with [0x0102823c] = /)
+- msg 0x3e9 = LEFT flipper RELEASE (keyup of Z)
+- msg 0x3eb = RIGHT flipper RELEASE (keyup of /)
+
+The state==1 gate behavior and post-launch silent-drop conclusion are unchanged — only the L/R labels were inverted.
+
+### Summary of where to look next
+
+1. **Compare binary sha256** against a known-good Win98 SE pinball.exe. If our binary is correct, the runtime behavior we're observing must be reproducible on real Win98 — meaning the "post-launch flippers don't work via WM_KEYDOWN" conclusion has to be wrong, and we're missing a path.
+2. **Check the accelerator table** — Pinball might use `TranslateAcceleratorA` to convert keys to WM_COMMAND messages BEFORE the wndproc sees WM_KEYDOWN. Run with `--trace-api=TranslateAcceleratorA,LoadAcceleratorsA` to see if the game ever loads/uses one. If yes, the dispatch path is not WM_KEYDOWN at all post-launch.
+3. **Reassignment of [0x1025658]** — search for stores to that address; if it's reassigned during play to a different game-object (e.g. a "physics-active flipper bank" object), the runtime msg dispatch path changes. `node tools/find_field.js test/binaries/pinball/pinball.exe 0x25658 --op=write` (if not already done with raw-VA find).
+4. **Audit `[obj+0x172]` logic** — 33 read sites, 2 zero-writers, 1 one-writer (0x01017868). The 33 sites might include test-and-set patterns that demote the flag mid-play. Worth tracing reads vs writes during a full simulated game.
+
+### 2026-04-29 — Two ruled out: accelerator dispatch, runtime obj reassignment
+
+Probed both:
+- **TranslateAcceleratorA / LoadAcceleratorsA**: never called (verified via `--trace-api=TranslateAcceleratorA,LoadAcceleratorsA` over 2000 batches). Pinball does not use Win32 accelerator tables. So all input must flow through WM_KEYDOWN/WM_KEYUP and the dispatcher we already analyzed.
+- **[0x01025658] reassignment during play**: only 3 stores in code (all in fn 0x010155c0, the game-init routine). Runtime watch confirms it's set ONCE at batch 762 (0 → 0x01269624) and never reassigned, despite multiple F2 presses. So the runtime msg receiver is stable.
+
+This eliminates the "second input path" hypothesis. There is genuinely only ONE WM_KEYDOWN dispatch path in pinball, and only ONE message receiver, and both are gated as documented.
+
+**At this point, only two possibilities remain credible:**
+1. The binary is broken/stripped/different from a known-good Win98 pinball.exe. Compare sha256 `2bbc8234685fe2f6324040af6ea20123cf00c4a56882ce0d9074f0beefac67bc` against a Win98 SE install reference.
+2. Real-Win98 pinball really IS gated this way, and the implication is that flippers genuinely don't fire post-launch. That contradicts decades of player experience and is implausible.
+
+The contradiction is unresolvable from static analysis alone. A definitive answer requires either:
+- A working Win98 emulator (e.g. 86Box) running the same binary, with kbd input recorded and the dispatcher's state==1 gate observed at the EXACT instant a flipper press is processed mid-play.
+- Comparison against a binary known to work in the wine-assembly emulator (an alternate pinball.exe).
+- Examining the state-machine in much greater detail — there may be a transient state==1 window post-each-flipper-fire that demotes back to 2, allowing flippers to fire one-shot via brief state==1 windows.
+
+This investigation has reached its natural end pending external reference data.
+
+### 2026-04-29 — Quantified the dispatch chain: case-handler reached, gate at [+0x172] always blocks
+
+Used `--count` (basic-block-entry probes only) to measure each step of the WM_KEYDOWN → flipper dispatch chain over 10000 batches with input `F2 → Z → / → Space → F2 → Z → /`:
+
+| Probe | Hits | Meaning |
+|---|---|---|
+| `0x010150c7` | 2 | Z key matched `[0x01028238]` (left flipper key) — twice (within state==1 windows) |
+| `0x01018e12` | 2 | Jump-table case 0 (msg 0x3e8 LEFT flipper) entered — exactly matches Z presses ✓ |
+| `0x01018e4f` | **0** | Post-gate path (chain to child + broadcast) — NEVER FIRES |
+| `0x01018ef4` | 32 | Bail/return path — fires constantly |
+| `0x01018e3f` | 2 | Jump-table case 2 (msg 0x3ea RIGHT flipper) — fires twice too (probably from internal cleanup, not user input — `/` key never even reached its dispatcher cmp) |
+
+**This means:**
+- The dispatcher chain is structurally correct: `WM_KEYDOWN(Z) → vkey-to-internal-key → cmp [0x01028238] → call vtable[0]([0x01025658]) → jump table[msg-0x3e8] → case 0 at 0x01018e12`. Two Z presses produced two case-0 entries.
+- At `0x01018e12`, the gate `cmp [esi+0x172], 0x0 ; jnz 0x1018ef4` ALWAYS bails. The fall-through to the child broadcast at `0x01018e4f` never fires.
+- esi at this point = `0x01269624` (root game obj, set once at batch 762 and never reassigned).
+- So `[0x01269796] != 0` at every dispatcher invocation.
+
+### Disassembly of the case-0 handler (msg 0x3e8 LEFT flipper)
+
+```
+01018e12  cmp dword [esi+0x172], 0x0   ; gate
+01018e19  jnz 0x1018ef4                ; bail if non-zero
+01018e1f  mov esi, [esi+0x2a]          ; chain to child[0x2a]
+01018e22  jmp short 0x1018e4f          ; → broadcast msg=1 to child's vtable[0]
+01018e4f  fld dword [ebp+0xc]
+01018e52  push ecx; fstp [esp]
+01018e56  push 0x1                     ; msg=1
+01018e58  jmp short 0x1018e68          ; → call [eax]
+```
+
+Root vtable[0] at `0x010187d6` is a switch-by-msg dispatcher with jump table at `0x01018f05` (14 entries) and case-index table at `0x01018f3d` (msg-0x3e8 → idx).
+
+### [esi+0x172] toggle behavior
+
+Watchpoint on `0x01269796` (= root obj + 0x172) over 8000 batches with F2+Space input shows it changes **15+ times** — not a one-shot flag, it's actively toggled during gameplay. Static analysis: 3 writers (`0x010188d2 mov [esi+0x172],ebx`, `0x0101ab45 mov [esi+0x172],ebx`, `0x01017868 mov dword [esi+0x172],0x1`). The two ebx-writers must be running mid-game, since the field returns to non-zero each time we sample it during a dispatcher hit.
+
+Hypothesis: `[esi+0x172]` is a "input lock" that's set whenever physics is busy/animating, briefly cleared between frames. Our keydown happens to land during the locked window every time — which would mean a frame-rate / scheduling mismatch in our emulator: physics runs continuously without yielding back the input-clear window that would let WM_KEYDOWN through.
+
+If that's right, the fix isn't in input handling — it's in the timer/scheduler that calls `0x010188d2` (which clears [+0x172]). If that timer fires too rarely (or never), the gate stays set forever.
+
+### Next concrete steps
+
+1. **Trace WHEN [esi+0x172] is non-zero vs. zero** during a full F2→Space→Z sequence: log every change with batch number AND the value (0 vs 1). The watchpoint logs detect changes but don't print new value — extend the watch to print value, or use --break-once on each writer.
+2. **Look at fn enclosing 0x010188d2** (entry 0x0101884d) and 0x0101ab45 (entry 0x0101aaf5) — these clear the gate. What event triggers them? If they're physics-step callbacks, the question becomes whether our scheduler ever calls them.
+3. **Caller census on the [+0x172] writers**: `node tools/caller_census.js --exe=test/binaries/pinball/pinball.exe --module=exe --callee=0x0101884d` — count how often each caller fires during gameplay.
+4. **Compare timer/scheduler tick rate**: `--trace-api=SetTimer,timeGetTime,GetTickCount` to see how often the game expects the physics tick.
+
+### Original "next concrete step" (kept for reference)
+
+check the other 22 WM_KEYDOWN references — sort the call sites by enclosing function and look for one that ISN'T gated by state==1. Particularly suspect: any wndproc registered for a child HWND, or anything dispatched from a worker thread. Also check for `GetAsyncKeyState` / `GetKeyState` imports in pinball.exe — pinball was a fast-path game and may poll keys directly.
 
 For now, the pixel-rect playable test (`test/test-pinball-playable.js`) reports 8/9 but the "PASS" for `/` is **not** real flipper movement. The test needs tighter bounding boxes (just the flipper triangles ±5px) to be a true regression detector.
 
