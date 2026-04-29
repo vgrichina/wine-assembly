@@ -1,6 +1,6 @@
 # Wine-Assembly — The Whole Story
 
-*A retrospective from initial commit (2026-03-26) to today (2026-04-15). 430 commits in 21 days.*
+*A retrospective from initial commit (2026-03-26) to today (2026-04-28). ~810 commits in 34 days.*
 
 ---
 
@@ -15,11 +15,13 @@ This is the kind of project that "shouldn't" be a 3-week sprint. It started as a
 ## 1. The arc, in five acts
 
 ```
-Act I    Mar 26-28   Decoder, lazy flags, FPU, SEH    →  Notepad runs
-Act II   Mar 29-31   DLL loader, GDI, MSPaint MFC     →  CRT init completes
-Act III  Apr 01-04   Multi-app shell, COM, NSIS       →  23 PASS / 12 FAIL
-Act IV   Apr 05-09   Controls-as-windows refactor     →  Logic into WAT
-Act V    Apr 10-15   DDraw, audio, dialogs, Winamp    →  Skinned UIs + sound
+Act I     Mar 26-28   Decoder, lazy flags, FPU, SEH        →  Notepad runs
+Act II    Mar 29-31   DLL loader, GDI, MSPaint MFC         →  CRT init completes
+Act III   Apr 01-04   Multi-app shell, COM, NSIS           →  23 PASS / 12 FAIL
+Act IV    Apr 05-09   Controls-as-windows refactor         →  Logic into WAT
+Act V     Apr 10-15   DDraw, audio, dialogs, Winamp        →  Skinned UIs + sound
+Act VI    Apr 16-21   Message-queue routing, perf, dialogs →  AoE/MCM boot; D3DIM rasterizer
+Act VII   Apr 22-28   D3DIM real, TileWorld, comboboxes    →  Plus!98 + DX SDK in flight
 ```
 
 ### Commit cadence
@@ -47,6 +49,25 @@ Act V    Apr 10-15   DDraw, audio, dialogs, Winamp    →  Skinned UIs + sound
 04-13 ██████████                     10
 04-14 █████████                       9
 04-15 ███████████████████            19   ◄ kill JS fallbacks, dialog WAT-native
+04-16 ████████████████████████████████████████████████  48 ◄ memory relocation +32MB, operand-size audit,
+                                                              message-queue Phases 0-7, AoE main loop
+04-17 ████████                        8
+04-18 ███████████████████████████    27   ◄ MCM hInstance fix, per-module rsrc
+04-19 ███████████████████████████████████  35  ◄ D3DIM real: viewports, lights, Execute opcodes;
+                                                    8bpp surface GDI round-trip
+04-20 ████████████████████████████████████████████████  48 ◄ D3DIM rasterizer + back-face cull,
+                                                              85× SetDIBitsToDevice perf, scrollbars
+04-21 ██████████████████████████     26
+04-22 ███████████████████████        23   ◄ Notepad dialogs: About/Find/Open/Font/Color render
+04-23 █████████████                  13
+04-24 ███████████████████████        23   ◄ D3DIM Execute ops, real matrix table, STATETRANSFORM
+04-25 █████████                       9   ◄ TileWorld boots end-to-end (SDL 1.x via real semaphores)
+04-26 ████████████████████████████████████████████████████████  56 ◄ typed API tracing, real MessageBoxA,
+                                                                       FPU env ops, paint flag table,
+                                                                       dialog focus traversal
+04-27 █████████████████████████████████████████████  45   ◄ combobox state machine, WS_POPUP shell,
+                                                              double-translation fix cluster
+04-28 ███████████████████████        23   ◄ maximize/restore, 0x67/GS trap, pinball combo dropdown
 ```
 
 ---
@@ -283,6 +304,125 @@ DirectDraw, audio, full skinned UIs, and a final cleanup pass.
 
 ---
 
+## Act VI — "Make the platform real" (Apr 16–21)
+
+The post-foundation push. Act V finished JS-side cleanup; Act VI is when the harder Win32 surface — message routing, dialog modality, real D3D rasterization — gets serious.
+
+**Apr 16 (48 commits): the biggest single day since Apr 3.**
+- **Memory layout relocated +32MB** — DX_OBJECTS/COM_WRAPPERS moved to high memory (0x7FF0000); g2w bounds expanded; FLASH_TABLE addr fixed.
+- **Comprehensive x86 operand-size audit**: 31 new handlers; 8/16-bit ALU precision fixes; 0x66 prefix coverage on XCHG/TEST/CMPXCHG/XADD.
+- **Message-queue routing Phases 0-7**: non-client messages, titlebar buttons, focus, ShowWindow, WM_SETCURSOR — everything that used to fire synchronously now goes through the queue.
+- AoE enters its main loop (MapViewOfFile, 128MB memory).
+- Auto-generate COM vtable init from `api_table.json` — adding a new interface no longer requires manual ID fixups.
+- W95FA + Fixedsys Excelsior fonts bundled for the Win98 look.
+- TreeView renderer; FlashWindow with real per-window state; ncpaint reuses whole-window DC.
+- File reorg: per-binary notes → `apps/`, design docs → `docs/`, scratch → `scratch/`.
+- Memory-map documentation (`docs/memory-map.md`).
+
+**Apr 17–18:**
+- Decoder: `emit_sib_or_abs` hoisted before `te()` in 26 memory-operand sites — fixes a recurring class of "data-address as 2nd opcode arg" bugs.
+- Solitaire activation chain restored after the memory relocation regression.
+- MCM: `LoadStringA` ignored hInstance — strings live in `lang.dll`. Per-module resource lookup honors hInstance now.
+- `InstallType=Full` registry seed makes MCM's CD-check pass.
+
+**Apr 19 (35 commits): D3DIM gets real.**
+- **8bpp surface GDI round-trip via palette export** — guest GDI calls on DDraw surface DCs route to per-slot canvas with DIB sync.
+- D3DIM: viewports bind to device on AddViewport/SetCurrentViewport; real `IDirect3DLight` Set/GetLight state.
+- DDraw GetCaps fills `dwVidMemTotal/Free` and `dwZBufferBitDepths`; reports `DDCAPS_3D` so MCM passes its 3D gate.
+- **Aux COM wrappers** so QI on a child surface returns a fresh slot, not the parent's.
+- INI reads fall back to VFS file when no localStorage override — `.scn`/`.ini` assets "just work".
+- DirectDrawCreateClipper, EnumDisplayModes continuation.
+- Plus!98 Organic Art `DefaultScene=Architecture` registry seed.
+
+**Apr 20 (48 commits): rasterizer + chrome polish.**
+- **D3DIM flat triangle rasterizer** with back-face culling per `D3DRENDERSTATE_CULLMODE`.
+- **85× faster `SetDIBitsToDevice`** hot path; PROF_SDI instrumentation.
+- IDirectDrawSurface2 vtable (GetDDInterface, PageLock, PageUnlock).
+- Default 8bpp palette installed at SetDisplayMode.
+- Chrome: scrollbar arrow buttons with pressed state, listbox WS_VSCROLL strip, page-up/down on track, thumb drag via generalized capture.
+- Title-bar sysbuttons get pressed visuals.
+- **Real `ExcludeClipRect`/`IntersectClipRect`** — chain-of-Path2D HRGN.
+- Modal CACA0006 pump drains nc_flags + paint queue.
+- XLAT (0xD7).
+- Test harness: pixel-diversity gate, two-signal blank detection.
+
+**Apr 21:**
+- DirectX SDK Samples added to launcher; `ddex3`/`ddex5` unblocked.
+- DDraw QI(DDRAW2) must not upgrade vtable in-place; primary-surface creation resizes main window.
+- BltFast / Blt / ColorFill trace categories.
+- `bsearch` with CACA000C continuation; `exit/_exit` halts the loop.
+- `tools/find_field.js` — scan .text for `[reg+disp]` accesses.
+- Menu dropdown bypasses window clipRgn when painting to overlay.
+
+---
+
+## Act VII — "The long tail" (Apr 22–28)
+
+Now everything below the main daily-drivers gets its own session: comboboxes, dialog chrome, screensaver investigations, the Plus!98 Organic Art chain, audio decode, focus traversal. The tooling story compounds — `--trace-stack`, `--count`, `module+0xVA` syntax, typed API args/returns, `caller_census.js`, `find_vtable_calls.js`.
+
+**Apr 22:**
+- **Notepad's full dialog suite renders** — About (chrome+title+version), Find, Open/Save, Font, Color all paint correctly with title bars.
+- DX QI must upgrade vtable for Surface↔Texture roundtrips.
+- `tools/find_string.js` + `tools/file2va.js` — string-driven xref hunts.
+- `--trace-api-counts`: end-of-run histogram.
+- SearchPath long→8.3 fallback (Plus!98 screensaver meshes).
+- SEH EH3 frame_ebp = `seh_rec+0x10` (was +0xC).
+- DXException identified as app-internal; Edit WM_KILLFOCUS on click + drag-select capture.
+
+**Apr 23:**
+- DDraw `Blt` does nearest-neighbor stretch when src/dst rects differ — fixes WIN98.SCR doubled-logo / black-bottom-half.
+- Per-hwnd back-canvas pre-filled opaque black so `GetDC(desktop)→BitBlt` captures aren't transparent.
+- SystemMetrics CX/CYSCREEN driven from host canvas size.
+- MSPaint: deep-hit-test input routing + always-on child clipping.
+- D3DIM viewport `dwHeight` stored; V3 Set/GetViewport stubs.
+
+**Apr 24 (23 commits): D3DIM Execute ops land.**
+- **Real matrix handle table + STATETRANSFORM dispatch** (`feat(d3dim): real matrix handle table + STATETRANSFORM dispatch`).
+- Execute ops POINT, LINE, MATRIXLOAD, MATRIXMULTIPLY, **PROCESSVERTICES**, BRANCHFORWARD, SETSTATUS.
+- Polyline = MoveTo + LineTo chain.
+- `RegDeleteKey{A,W}`, `RegDeleteValue{A,W}`.
+- Window resize edges; min/max gate on style; gray disabled glyph.
+- SendMessage preserves caller GP regs across sync x86 wndproc dispatch.
+- `--trace-dx-raw`, `--thread-slices=N`, final thread dump.
+
+**Apr 25:**
+- **TileWorld boots end-to-end** via real semaphores (SDL 1.x).
+- **Per-thread thread-cache partition** at 0x80000 — fixes TWorld picker wedge where main+T1 caches collided.
+- BitBlt silent-clips dst to back-canvas (saves Winamp T4).
+- VirtualQuery, VkKeyScanW, MapVirtualKeyW, ShowOwnedPopups.
+
+**Apr 26 (56 commits): the trace + plumbing megaday.**
+- **Typed API trace**: args/returns via `args:[{name,type[,out:true]}]` in `api_table.json`; out-params decoded post-handler; `--trace-stack`, filter, `--trace-api-dedup`.
+- `--trace-callstack=N` (shadow ret-addr stack via CALL/RET hooks); `--trace-wave`, `--trace-thread`, `--trace-yield`, `--audio-stats`, `--break-thread`; multi-addr `--watch`/`--trace-at`.
+- **Real modal `MessageBoxA` dialog** + CACA0006 auto-pop fix.
+- **Paint queue replaced with per-WND flag table** (Win32-style).
+- Dialog focus traversal — Tab/Shift+Tab/Enter/Space; pixel-stipple focus rect; BM_SETCHECK enforces radio mutex on BS_AUTORADIOBUTTON.
+- **FPU**: FLDENV/FNSTENV/FRSTOR/FNSAVE/FBLD/FBSTP.
+- Per-thread hwnd allocator partition; bp/watchpoint propagation to worker WASM instances.
+- `tools/dump_va.js`, `tools/vtable_dump.js`.
+- Calc: erase static rect on repaint + grey back-canvas pre-fill; WS_EX_CLIENTEDGE statics paint as white sunken frames.
+- `route gdi_bitblt + gdi_stretch_blt through _drawWithClip`; descendants always clipped regardless of zOrder.
+
+**Apr 27 (45 commits): comboboxes + double-translation cluster.**
+- **Combobox real dropdown state machine** + listbox delegation; CBS_DROPDOWN edit child + EM_SETLIMITTEXT; CB/LB GETITEMDATA + SETITEMDATA.
+- **WS_POPUP shell substrate** for dropdown windows; combo_popup_wndproc (class 9); listbox migrates under shell on dropdown open.
+- One dropdown open at a time; close on outside click / Tab / single-click accept.
+- Dialog scope of modal pump nc_flags drain; style + title propagate onto dialog hwnd.
+- **Double-translation fix cluster**: `wsprintfW` args, `GetFileVersionInfo*`/`VerQueryValue`, SEH C++ FuncInfo/TryBlockMap, `CompareString A/W` cchCount2 offset, DDBLTFX.dwFillColor at +80, `_XcptFilter` cdecl stub leaked retaddr/args.
+- WAT bool coercion in `i32.and`; CBT hook fires for child CreateWindowEx.
+- Listbox skips WM_PAINT when WS_VISIBLE is off; word-wrap statics; combobox stub.
+
+**Apr 28 (today, 23 commits):**
+- **Maximize/restore**: post WM_MOVE+WM_SIZE on SC_MAXIMIZE/SC_RESTORE; toggle SC_MAXIMIZE↔SC_RESTORE on second click; redraw chrome after resize-driven back-canvas realloc; suppress edge-resize while maximized; flat (not 3D-bevel) maximize/restore glyphs.
+- **Decoder: centralize segment-override** + trap 0x67/GS — exposes apps that need real fs/gs handling rather than silent reinterpretation.
+- Pinball Player Controls dialog: combobox dropdown — POST notifications + popup zorder + popup-shell click forwarding; keyboard fix populates the dialog correctly.
+- Walk children by parent linkage when seeding paint flags.
+- `tools/find_vtable_calls.js` (scan PE for `call dword [reg+disp]` by slot); `tools/caller_census.js` (per-callsite hit counts via `--count`); `module+0xVA` syntax in `--break`/`--count`/`--trace-at`.
+- Pinball: ball_count theory corrected; the real bug is a Z-only flipper.
+- `deploy-berrry`: skip non-desktop binary dirs.
+
+---
+
 ## 2. Architecture today
 
 ```
@@ -339,7 +479,9 @@ src/parts/
 ├─ 09a5-handlers-window.wat    │  (broken out by area)
 ├─ 09a6-handlers-crt.wat       │
 ├─ 09a7-handlers-dispatch.wat  │
-├─ 09a8-handlers-directx.wat   ┘
+├─ 09a8-handlers-directx.wat   │
+├─ 09aa-handlers-d3dim.wat     │
+├─ 09ab-handlers-d3dim-core.wat┘
 ├─ 09b-dispatch.wat            ┐
 ├─ 09b2-dispatch-table.gen.wat │  dispatch + window mgr
 ├─ 09c-help.wat                │
@@ -396,12 +538,26 @@ Real DLL pipeline  MS Paint NT (MFC42 + MSVCRT)     ✅ basic drawing
                    RegEdit                          ✅ basic
                    Win98 Tour                       ✅
 DirectDraw / D3D   Marbles screensaver              ✅ rendering (8bpp + palette)
-                   Plus! 98 screensavers            🟡 most boot
-                   D3DIM screensavers               🟡 phase 0/0.5: vtables stub-out
-Audio              Winamp 2.95                      🟡 UI works, MP3 streaming
-                                                       in progress (WHDR_DONE today)
-Heavy              Space Cadet Pinball              🟡 boots, Player 1 label OK
-                   Winamp installer (NSIS)          🟡 TreeView OK, zlib path stuck
+                   Plus! 98 screensavers            🟡 most boot, render varies
+                   DirectX SDK Samples              🟡 ddex3/ddex5 unblocked;
+                                                       D3DIM rasterizer real
+                   D3DIM screensavers               🟡 Execute opcodes + matrix
+                                                       table land; geometry path
+                                                       still gated for some scenes
+Audio              Winamp 2.95                      ✅ skin + MP3 playback —
+                                                       2000 batches emit ~99.7%
+                                                       of demo.mp3 PCM
+Games / heavy      Tile World                       ✅ boots end-to-end (SDL 1.x)
+                   Space Cadet Pinball              🟡 boots, Player Controls
+                                                       dialog now populates;
+                                                       gameplay gated on Z-only
+                                                       flipper bug
+                   Age of Empires                   🟡 enters main loop; VFS gates
+                   Microsoft Combat Flight Sim       🟡 reaches 3D-gate filter
+                   RollerCoaster Tycoon             🟡 past video-mode probe
+                   Winamp installer (NSIS)          🟡 TreeView OK, zlib stuck
+Notepad dialogs    About / Find / Open / Font /     ✅ all render with chrome,
+                   Color                                title, controls
 Web shell          Multi-app desktop with PE icons  ✅ icons extracted from each
                                                        exe at load
 ```
@@ -461,12 +617,23 @@ tools/pe-imports.js         PE import table dumper (--all, --dll=NAME)
 tools/pe-sections.js        PE section header dumper
 tools/render-png.js         Headless PNG renderer
 tools/check-parens.js       WAT paren balance checker
-tools/find-refs.js          Reference finder
+tools/find-refs.js          Reference finder (data-VA pointer literals)
+tools/find_field.js         ModRM [reg+disp] scanner (struct field accesses)
+tools/find_string.js        String→VA hunt; pair with xrefs.js
+tools/file2va.js            File offset ↔ VA conversion
+tools/find_fn.js            Walk back from interior VA to fn entry
+tools/find_vtable_calls.js  Locate `call dword [reg+disp]` by slot/disp
+tools/dump_va.js            Static PE byte peek (BSS-aware)
+tools/vtable_dump.js        Dump fn-pointer slots + first instr per slot
+tools/caller_census.js      Per-callsite hit counts via --count
+tools/disasm_fn.js          Disasm at VA(s); warns on mid-instruction starts
+tools/xrefs.js              Find branches/loads/stores referencing a VA
 tools/deploy-berrry.js      Ship to berrry.app with sha256-diff incremental
                             uploads (Apr 11)
-test/run.js                 Headless emulator with rich --trace flags
-test/test-all-exes.js       Smoke test suite — 23 PASS / 12 FAIL / 10 WARN
-                            baseline (Apr 3); has only grown since
+test/run.js                 Headless emulator with rich --trace flags +
+                            module+0xVA syntax + typed --trace-api
+test/test-all-exes.js       Smoke test suite — pixel-diversity gate +
+                            two-signal blank detection; per-exe budgets
 ```
 
 The `--trace-*` family in particular pays compounding interest. Every time someone added a new category instead of a one-off `console.log`, future investigations got faster.
@@ -476,39 +643,43 @@ The `--trace-*` family in particular pays compounding interest. Every time someo
 ## 6. The numbers
 
 ```
-Lines of WAT            36,052     (30 files in src/parts)
-Lines of JS support     16,384     (lib/ + test/ + tools/)
-Commits                 430
-Days                    21
-Avg commits/day         ~20
-Peak day                49 (Apr 3)
+Lines of WAT            48,320     (32 files in src/)
+Lines of JS support     26,212     (lib/ + test/ + tools/)
+Commits                 ~810
+Days                    34
+Avg commits/day         ~24
+Peak day                56 (Apr 26)
 Test binaries           50+ exes (98 apps, EP, NT, XP, Plus!, screensavers,
-                                   installers, Winamp plugins)
-Per-app investigations  24 *.md files at repo root
+                                   installers, Winamp plugins, DX SDK,
+                                   Tile World, AoE, RCT, MCM)
+Per-app investigations  31 *.md files in apps/
 ```
 
 ---
 
 ## 7. What's in flight right now
 
-1. **Winamp MP3 streaming** — deferred WHDR_DONE just reinstated; survey dialog routing bug still open (`winamp.md`).
-2. **D3D Immediate Mode** — phase 0/0.5 vtable stubs done; needs real device state engine (`direct3d-im.md`).
-3. **NSIS installer** — TreeView fine, zero file extraction; suspected zlib decompression bug in x86 emu (`winamp-installer.md`).
-4. **Pinball gameplay** — boots and shows table, full game loop not yet driving.
-5. **CRT unblocks for MCM** — reaches KVDD.DLL video init (700+ API calls deep) but needs more 16-bit thunking.
+1. **Plus!98 Organic Art / D3DRM screensavers** — vtable mapped, scene-population path traced; geometry-emit gate at `[entry+0x84]==scene-root` never satisfied for ROCKROLL/ARCHITEC/CA_2001 — bug is upstream in scene-population, not the renderer (`apps/screensavers.md`).
+2. **D3D Immediate Mode** — Execute opcodes (POINT/LINE/MATRIXLOAD/MULT/PROCESSVERTICES/STATETRANSFORM/BRANCHFORWARD), real matrix table, flat triangle rasterizer with back-face cull all land. Next: per-scene texture/light state for non-architecture screensavers (`apps/direct3d-im.md`).
+3. **Pinball gameplay** — Player Controls dialog now populates after combobox dropdown work; gameplay still gated on Z-only flipper bug (root cause: `ball_count` permanently 1 due to demo-resetter) (`apps/pinball.md`).
+4. **MSPaint NT** — chrome complete (title, menu, palettes); CFrameWnd::OnCreate still the blocker for fully driving the document area (`apps/mspaint-nt.md`, `apps/mspaint-win98.md`).
+5. **MCM** — past 3D-gate filter and CD-check; method[23] device-registration is the next bail (`apps/mcm.md`).
+6. **NSIS installer** — TreeView fine, zero file extraction; suspected zlib decompression bug (`apps/winamp-installer.md`).
 
 ---
 
 ## 8. The narrative arc
 
-This is what 21 days of disciplined "fail-fast, fix-the-real-bug, no-silent-stubs" looks like. Every act made the next one cheaper:
+This is what 34 days of disciplined "fail-fast, fix-the-real-bug, no-silent-stubs" looks like. Every act made the next one cheaper:
 
 - Act I built the foundation that made everything else *possible*.
 - Act II proved real DLLs could be loaded, opening the door to MFC apps.
 - Act III turned a notepad emulator into a hosted Win32 platform with COM, registry, VFS, threading, and a multi-app desktop.
 - Act IV pulled the UI logic out of JS and put it in WAT — the architecturally important inflection point. Suddenly children, menus, dialogs, and chrome all spoke the same language as the guest. Bugs that crossed the JS/WAT boundary disappeared because the boundary moved down to GDI primitives.
 - Act V exploited the Act IV foundation to tackle DirectDraw, audio, skinned windows, and modal-dialog edge cases that would have been unmanageable with the old split.
+- Act VI made the platform plausibly Win32: messages routed through a real queue, the x86 decoder's operand-size matrix audited end-to-end, the memory map relocated to be honest about ranges, and D3DIM grew a real rasterizer.
+- Act VII is "the long tail" — comboboxes with WS_POPUP shells, dialog focus traversal, FPU env ops, MessageBoxA as a real modal, per-thread cache partitions. The hot bugs no longer crash the foundation; they crash the eighth-most-used Win32 feature in someone's screensaver.
 
-Today's last commit is "Delete dead JS edit paint path." That is the shape of a mature codebase: things being *removed* because they're no longer needed.
+The recent commit cadence — combobox state machines, a Z-only-flipper bug rooted out via tooling, a maximize/restore fix that exists *because there was a back-canvas to realloc* — is what a mature codebase looks like. The questions are no longer "does this work" but "why doesn't *this specific scene* render."
 
-The next inflection point is probably full D3D Immediate Mode (real geometry, not just vtable round-trips) and finishing the audio pipeline so Winamp plays a song end-to-end. After that, the remaining bottleneck is whatever the next exe demands — and there are 50+ in the test suite waiting their turn.
+The next inflection point is whichever of {full D3DRM scene-graph emission, Winamp end-to-end audio, NSIS zlib path, MFC's CFrameWnd::OnCreate} unlocks the most other binaries when it falls. The tools (`caller_census.js`, `find_vtable_calls.js`, typed `--trace-api`, `module+0xVA`) increasingly let an investigation happen in one session instead of three.
