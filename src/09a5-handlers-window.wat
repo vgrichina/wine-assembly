@@ -748,6 +748,33 @@
     (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; Hardware input (host_check_input) BEFORE post_queue — pinball self-posts
+    ;; WM_USER physics ticks; if post_queue drains first, injected WM_KEYDOWN
+    ;; never enters the stream. Real Win98 interleaves system-queue and posted.
+    (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
+      (then
+        (local.set $packed (global.get $pending_input_packed))
+        (global.set $pending_input_packed (i32.const 0)))
+      (else
+        (local.set $packed (call $host_check_input))
+        (if (i32.ne (local.get $packed) (i32.const 0))
+          (then
+            (global.set $pending_input_hwnd (call $host_check_input_hwnd))
+            (global.set $pending_input_lparam (call $host_check_input_lparam))))))
+    (if (i32.ne (local.get $packed) (i32.const 0))
+    (then
+    (local.set $tmp (global.get $pending_input_hwnd))
+    (if (i32.eqz (local.get $tmp))
+    (then (local.set $tmp (global.get $main_hwnd))))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
+    (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
+    (i32.shr_u (local.get $packed) (i32.const 16)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+    (global.get $pending_input_lparam))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire
     ;; PostMessage(WM_COMMAND, Deal) during WM_CREATE to create game objects,
     ;; and the subsequent WM_SIZE needs those objects to exist for layout.
@@ -824,32 +851,8 @@
     ;; msg_phase 5/6 (WM_ERASEBKGND + WM_PAINT bootstrap) retired in Phase 2;
     ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
     ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
-    ;; Poll for input events — consume pending cache first, then host
-    (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
-      (then
-        (local.set $packed (global.get $pending_input_packed))
-        (global.set $pending_input_packed (i32.const 0)))
-      (else
-        (local.set $packed (call $host_check_input))
-        (if (i32.ne (local.get $packed) (i32.const 0))
-          (then
-            (global.set $pending_input_hwnd (call $host_check_input_hwnd))
-            (global.set $pending_input_lparam (call $host_check_input_lparam))))))
-    (if (i32.ne (local.get $packed) (i32.const 0))
-    (then
-    (local.set $tmp (global.get $pending_input_hwnd))
-    (if (i32.eqz (local.get $tmp))
-    (then (local.set $tmp (global.get $main_hwnd))))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
-    (i32.and (local.get $packed) (i32.const 0xFFFF)))            ;; msg
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
-    (i32.shr_u (local.get $packed) (i32.const 16)))              ;; wParam
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-    (global.get $pending_input_lparam))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No input — deliver WM_PAINT if pending (lowest priority per Win32 spec)
+    ;; Hardware input was consumed at top of fn; no second poll here.
+    ;; Deliver WM_PAINT if pending (lowest priority per Win32 spec)
     (if (global.get $paint_pending)
     (then
     (global.set $paint_pending (i32.const 0))
@@ -987,31 +990,13 @@
     ;; Phases 0-4 (activation) delivered synchronously during CreateWindowExA.
     ;; Phases 5/6 (WM_ERASEBKGND/WM_PAINT bootstrap) retired in Phase 2 —
     ;; NC_FLAGS bit 1 + $paint_pending provide equivalent delivery.
-    ;; Check posted message queue
-    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-      (then
-        ;; Dequeue into lpMsg
-        (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))                        ;; hwnd
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))  ;; msg
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.load (i32.const 0x408)))  ;; wParam
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.load (i32.const 0x40C))) ;; lParam
-        ;; If PM_REMOVE (arg4 & 1), shift queue
-        (if (i32.and (local.get $arg4) (i32.const 1))
-          (then
-            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-          )
-        )
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
-        (return)
-      )
-    )
-    ;; Poll host for input events (with PM_NOREMOVE cache)
-    ;; host_check_input always dequeues from JS. To support PM_NOREMOVE,
-    ;; we cache the event in WAT globals; a subsequent PM_REMOVE consumes the cache.
+    ;;
+    ;; Hardware input (host_check_input) is checked BEFORE post_queue because
+    ;; apps like pinball self-post WM_USER physics ticks at a high rate; if
+    ;; post_queue is drained first, injected WM_KEYDOWN never enters the
+    ;; stream. Real Win98 interleaves system-queue (hardware) and per-thread
+    ;; queue (PostMessage) — we approximate this by giving hardware first
+    ;; refusal each PeekMessage call.
     (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
       (then
         ;; Cached event from a previous PM_NOREMOVE call
@@ -1052,6 +1037,28 @@
             (return)
           )
         )
+      )
+    )
+    ;; Check posted message queue (after hardware input — see note above)
+    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+      (then
+        ;; Dequeue into lpMsg
+        (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))                        ;; hwnd
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))  ;; msg
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.load (i32.const 0x408)))  ;; wParam
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.load (i32.const 0x40C))) ;; lParam
+        ;; If PM_REMOVE (arg4 & 1), shift queue
+        (if (i32.and (local.get $arg4) (i32.const 1))
+          (then
+            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
+            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+          )
+        )
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+        (return)
       )
     )
     ;; WM_PAINT if pending (lowest priority)
