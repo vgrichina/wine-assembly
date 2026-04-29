@@ -132,38 +132,39 @@
       box-shadow: 2px 2px 4px rgba(0,0,0,0.3);
       display: none;
       z-index: 100;
-      min-width: 180px;
+      min-width: 200px;
       padding: 2px;
+      flex-direction: row;
+      align-items: stretch;
     }
-    #start-menu.open { display: block; }
-    #start-menu .item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 4px 12px 4px 8px;
-      cursor: pointer;
-      color: #000;
-      text-decoration: none;
-    }
-    #start-menu .item:hover { background: #000080; color: #fff; }
-    #start-menu .item .ico { font-size: 14px; width: 16px; text-align: center; }
-    #start-menu .sep { height: 1px; background: #808080; border-bottom: 1px solid #fff; margin: 2px 1px; }
+    #start-menu.open { display: flex; }
     #start-menu .banner {
-      background: linear-gradient(to bottom, #000080, #1084d0);
+      background: linear-gradient(to bottom, #1084d0, #000080);
       color: #fff;
       writing-mode: vertical-rl;
       transform: rotate(180deg);
       font-weight: bold;
-      font-size: 16px;
-      padding: 8px 4px;
-      position: absolute;
-      left: 2px;
-      top: 2px;
-      bottom: 2px;
-      width: 22px;
-      letter-spacing: 1px;
+      font-size: 18px;
+      padding: 10px 4px;
+      width: 26px;
+      letter-spacing: 2px;
+      flex: 0 0 auto;
+      text-align: center;
     }
-    #start-menu .items { margin-left: 24px; }
+    #start-menu .items { flex: 1; padding: 2px 0; }
+    #start-menu .item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 16px 5px 8px;
+      cursor: pointer;
+      color: #000;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    #start-menu .item:hover { background: #000080; color: #fff; }
+    #start-menu .item .ico { font-size: 16px; width: 18px; text-align: center; }
+    #start-menu .sep { height: 1px; background: #808080; border-bottom: 1px solid #fff; margin: 3px 4px; }
     .win-flag { display: inline-grid; grid-template-columns: 5px 5px; gap: 1px; }
     .win-flag span { width: 5px; height: 5px; display: block; }
     #task-buttons { display: flex; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
