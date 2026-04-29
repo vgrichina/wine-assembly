@@ -726,6 +726,38 @@ If that's right, the fix isn't in input handling — it's in the timer/scheduler
 3. **Caller census on the [+0x172] writers**: `node tools/caller_census.js --exe=test/binaries/pinball/pinball.exe --module=exe --callee=0x0101884d` — count how often each caller fires during gameplay.
 4. **Compare timer/scheduler tick rate**: `--trace-api=SetTimer,timeGetTime,GetTickCount` to see how often the game expects the physics tick.
 
+### 2026-04-29 (continued) — More [+0x172] writers found via runtime watchpoint EIPs
+
+Earlier static analysis (find_field with op=write/imm) only caught 3 sites because it scanned for ModRM `[reg+0x172]` patterns. Runtime watchpoint with old/new value logging reveals the FULL set of writers, including ones that escape ModRM scanning:
+
+| Writer EIP | Sets | Note |
+|---|---|---|
+| `0x010082f0 call esi` (block tail) | 0→1 | Vtable call inside a "physics-tick" loop. Most active. Caller sets up [ebp-0x1c] struct from import call to `[0x1001168]` (a kernel32 fn — IAT slot 0xdc/4=#55), then `cmp [ebp-0x18], 0x12; jz bail` and pushes args including the struct ptr to call esi. |
+| `0x010188d2 mov [esi+0x172], ebx` | 1→0 | found by find_field, msg-handler cleanup |
+| `0x010188ff mov [eax], ebx` (eax=&[esi+0x172]) | 1→0 | NOT found by find_field — uses `lea eax,[esi+0x172]` then indirect store. Only fires after `cmp [eax], ebx; jz bail` (semi-gate: requires currently-set). |
+| `0x01014d77 and [eax+0x172], 0x0` | 1→0 | NOT found by find_field — `and ...,0x0` instead of mov. Caller fn at 0x01014d72 reads `[0x01025658]` (= root game obj 0x01269624). Looks like a "ball-reset/end-of-life" handler. |
+| `0x01017868 mov dword [esi+0x172], 0x1` | 0→1 | one-shot deploy setter |
+| `0x0101ab45 mov [esi+0x172], ebx` | 1→0 | found by find_field |
+
+Watchpoint timeline (input: F2@2000, Space@4000):
+```
+1057  0→1 @ 0x010087e9    physics-set
+1064  1→0 @ 0x01018ef4    msg-handler clear (prev_eip 0x0101886d ≈ 0x010188d2 site)
+1095  0→1 @ 0x010082f2    physics-set (most common path)
+1574  1→0 @ 0x01018657    fn 0x01014d72 path (and 0x0 clear)
+1578  0→1 @ 0x010082f2
+... toggles continue at increasing frequency until F2 at batch 2000 ...
+1988  0→1 @ 0x010082f2
+2003  1→0 @ 0x01018ef4
+2010  0→1 @ 0x010082f2    ← Z keydown lands here (or shortly after)
+```
+
+**Reframed bug**: this isn't a missing-path issue. The setter at `0x010082f0 call esi` is the LOCK ACQUIRE, the various clear sites are LOCK RELEASE. In the sampling, the lock is held the vast majority of the time. The dispatcher fires when WM_KEYDOWN is delivered (which Pinball processes via `GetMessage` → main loop → keyboard handler), and that always lands during a held-lock window.
+
+Hypothesis: in real Win98 the lock is held only briefly per-physics-tick, with substantial idle between ticks. Our emulator runs the physics loop continuously (no scheduler yields), so the lock is held nearly all the time. WM_KEYDOWN inputs slip through real-Win98's idle gaps but never ours.
+
+**Decisive next step**: locate where `[0x010082f0 call esi]` is called from (the physics-tick loop entry) and verify whether it's gated on a frame-rate timer. Also compare invocation count: if our emu runs the physics function 1000× per real-Win98 frame, that's the entire bug.
+
 ### Original "next concrete step" (kept for reference)
 
 check the other 22 WM_KEYDOWN references — sort the call sites by enclosing function and look for one that ISN'T gated by state==1. Particularly suspect: any wndproc registered for a child HWND, or anything dispatched from a worker thread. Also check for `GetAsyncKeyState` / `GetKeyState` imports in pinball.exe — pinball was a fast-path game and may poll keys directly.
