@@ -383,12 +383,133 @@ The earlier note from line 14 said "the path that delivers / does NOT go through
 
 **--count=0x01015072 under F2+Space+Z and F2+Space+/ both = 0**, so neither key reaches what we previously called "process_key". Either that fn was renamed/inlined, or both keys flow through a different dispatcher now. Need to identify the actual runtime key-dispatch entry first.
 
-**Next concrete step:** trace where Z and / **diverge** in the post-keydown path.
-1. `--trace-host=window_post_message` (or whatever delivers WM_KEYDOWN) for both Z and / runs, diff the outputs.
-2. Or set `--break-api=PostMessageA` on a tiny Z-only run and a /-only run, capture lParam (scan code in bits 16-23) and hwnd targeting.
-3. Find pinball's wndproc (default-window for the playfield) and disasm its WM_KEYDOWN case to see how it routes scancodes — there may be a per-key trampoline table indexed by scancode that has a stale/missing entry for 0x2C (Z) but a valid one for 0x35 (/).
+**REVISED (2026-04-28, fourth pass) — both flippers broken; Z vs / asymmetry was a test artifact:**
 
-For now, the pixel-rect playable test (`test/test-pinball-playable.js`) is the regression detector — currently 8/9 with Z as the single failing check.
+Visual inspection of `scratch/pinball_play_{rest,left,right}.png` shows **no flipper animation in any frame**. The 8/9-pass result for `/` was a false positive: changes in the bottom quadrant (ball motion, light flicker, sidebar text transitioning from "F2 Starts New Game" → "Player 1's Score") happen to clear the noise+200 threshold for the right rect but not the left. Neither key actually swings a flipper.
+
+**Root cause located at 0x01015072 (the keydown dispatcher):**
+
+The game wndproc (`1c7c22a0-9576-11ce-bf80-44455354`, wndProc=0x01007a3e) dispatches WM_KEYDOWN at 0x01007d1a:
+```
+01007d1a  test edi, 0x40000000   ; lParam bit 30 (prev key state)
+01007d20  jnz 0x1007d28          ; skip if repeat
+01007d22  push ebx               ; ebx = wParam
+01007d23  call 0x01015072        ; key dispatcher
+```
+
+`call 0x01015072` IS reached for every keydown (verified `--count=0x01015072` = 3 for F2+Space+/). But the dispatcher exits early without dispatching:
+```
+01015074  push ebp; mov ebp,esp; sub esp,0xe0
+01015085  cmp [0x1024fd8], 0     ; demo flag — must be 0
+0101508e  jnz exit
+01015094  cmp [0x1025570], 0     ; pause flag — must be 0
+0101509a  jnz exit
+010150a0  cmp dword [0x1025568], 0x1
+010150a7  jz  body                ; only enters body if state == 1
+010150a9  push 0xff; call 0x1014743; jmp exit
+```
+
+**Verified runtime state mid-gameplay** (after F2+Space, batch 7900):
+- `[0x1024fd8] = 0` ✓
+- `[0x1025570] = 0` ✓
+- `[0x1025568] = 2` ✗ — dispatcher requires 1, gets 2 → keypresses dropped
+
+So during ball-in-play, `[0x1025568]` holds value 2, causing every key (Z, /, etc.) to fall into the `push 0xff; call 0x1014743` path which doesn't fire flippers. The `--count=0x010150bf=1` reading earlier was the body running ONCE, probably for Space (plunger) before ball deploy when `[0x1025568]` was still 1.
+
+**State machine writers** (xrefs to 0x1025568):
+- 0x0101472f: `mov [0x1025568], esi` — generic setter, takes new state as arg
+- 0x01014748: read-side dispatcher in `0x01014743` — handles values 0/1/2/3/4 with different sub-behaviors
+- 0x010150a0 / 0x010152e9: keydown / keyup dispatch gate (require ==1)
+- 0x01015771: `cmp [0x1025568], 0x2`
+
+So the state values mean different game phases. State 1 = "interactive input accepted" (likely between plunger ready and ball-in-play). State 2 = "ball in play" (current observed mid-gameplay). The keydown dispatcher's `== 1` check is wrong for state 2 — but that's how the real binary is written, so on real Win98 flippers must work via a *different* path that doesn't gate on state==1, OR the value 2 we observe is itself wrong.
+
+**Disasm of 0x01014743 (the read-side dispatcher) — state==2 branch:**
+```
+01014748  mov eax, [0x1025568]
+0101474d  test eax, eax
+0101474f  jz   0x101478b      ; state 0 → fall through to ret
+01014751  jle  0x101478b      ; (signed; same)
+01014753  cmp eax, 0x2
+01014756  jle  0x1014792      ; state 1 or 2 → jmp 0x101478e (return)
+                              ; ⇒ STATE 2 IS A NO-OP HERE
+01014758  cmp eax, 0x3
+0101475b  jz   0x1014775      ; state 3 path
+0101475d  cmp eax, 0x4
+01014760  jnz  0x101478b      ; default
+01014762  ...                 ; state 4 path: subtract arg from [0x1025574] counter
+```
+0x01014792 just `xor eax,eax; jmp ret`. So the fallback dispatcher does NOTHING for state 2 either — there's no hidden flipper path here.
+
+**State transition map (verified runtime via --watch-byte=0x1025568 --watch-log):**
+- batch 109: 0 → 3 (set from 0x01015771-area on game start)
+- batch 1061: 3 → 1 (during F2/Space sequence — "ball ready in plunger")
+- batch 2123: 1 → 2 (call site at 0x01011b4d: `push 2; call 0x101461a`) — "ball launched, in play"
+
+State 2 is established by EXPLICIT code at 0x01011b4d (inside fn 0x01011987) immediately after the spring releases. So the binary really does enter state 2 during normal play.
+
+**This is the contradiction:** the binary unambiguously transitions to state 2 during gameplay, AND the keydown/keyup dispatchers (0x01015072 / 0x010152e4) both gate on state==1, AND the read-side dispatcher 0x01014743 has no flipper handler for state 2. Either:
+1. There's a SECOND keyboard input path we haven't found (some other window's wndproc, an accelerator table, or a DirectInput poll loop). WM_KEYDOWN is referenced at 23 sites in `.text` (per `tools/find_bytes.js --imm32=0x100`) — only one of which is in the main game wndproc at 0x01007a3e. Worth auditing the others.
+2. State 2 should NOT be entered yet — maybe `[0x1024ff8]` (a flag tested at 0x01015106 right before the post-flipper code) gates further state advancement on real hardware, and our emulator sets it too eagerly.
+3. There's a separate input-polling thread that reads the keyboard state directly (GetAsyncKeyState / DirectInput) bypassing the message pump.
+
+**Option 3 ruled out:** `node tools/pe-imports.js test/binaries/pinball/pinball.exe --all | grep -iE "asynckey|getkey|directinput|dinput"` reports only `GetKeyNameTextA` (formatting helper), no `GetAsyncKeyState`/`GetKeyState`/DirectInput imports. Pinball is purely WM_KEYDOWN driven.
+
+**Option 1 also ruled out:** `node tools/find_bytes.js test/binaries/pinball/pinball.exe --imm32=0x01007a3e` returns exactly 1 hit (the RegisterClass call at 0x01008654). I checked all 23 `imm32=0x100` sites in `.text`, found their enclosing functions, and searched for pointer literals to each. None of the candidate functions appear as a wndproc pointer. The 0x100 references in those functions are unrelated subtractions (e.g. SC_MAXIMIZE/SC_MINIMIZE switch in WM_SYSCOMMAND code, generic `sub eax, 0x100` arithmetic). **Pinball has exactly one wndproc.**
+
+**Verified flipper key codes at runtime** (dump of 0x01028230):
+```
+0x01028238  5a 00 00 00   ; right flipper = 0x5A = 'Z'
+0x0102823c  bf 00 00 00   ; left flipper  = 0xBF = VK_OEM_2 ('/')
+```
+So the keycode comparisons at 0x010150bf and 0x010150e5 ARE correctly initialized. The gate state==1 at 0x010150a0 is the only thing blocking input.
+
+**So we're at a real impasse:** the binary genuinely transitions to state 2 during play, the keydown/keyup dispatchers and the read-side dispatcher all gate flipper handling on state==1, there's no second wndproc, and there's no key-polling. The only remaining possibilities:
+
+(a) **State 2 should NOT be entered yet.** The transition `1 → 2` at 0x01011b4d happens inside fn 0x01011987 — likely a WM_TIMER tick or a "ball plunger released" event. If our emulator delivers this trigger too eagerly (e.g. a timer firing before the game expects, or a phantom plunger-release WM_KEYUP), state advances prematurely. Check via `--break=0x01011b4d` and inspect what triggered the call (caller chain via `--trace-stack`).
+
+(b) **State 2 → 1 demotion is missing.** Real pinball may temporarily flip back to state 1 when a key arrives, or there's a "wait for ball-settled" path that demotes 2→1 that we don't reach. The watch log shows state stays at 2 across 20000 batches with no reverse transition — so either the real game also stays at 2 forever (and (a) is the real bug) or there's a path our emulator doesn't trigger.
+
+(c) **The dispatcher has been mis-disassembled.** I read `74 0c` at 0x010150a7 as `jz 0x10150b5` (state==1 → flipper body). That's standard Intel encoding. Confirmed by following both branches (flipper body vs `push 0xff; call 0x1014743`). No mis-decode.
+
+**Most likely root cause: option (a).** Pre-launch (state 1), our emulator sees the spring-release trigger fire correctly. But the post-launch event handler at 0x01011987 may not be matched by the right "ball settled" demotion event that real Win98 would deliver.
+
+**Call chain confirmed:**
+- fn 0x01011985 (hot-patch entry of 0x01011987) is reached via exactly ONE caller: 0x01011e2b inside fn 0x01011bb5.
+- fn 0x01011bb5 is THE game-event dispatcher: 51 callers all push event ids (0x42, 0x43, 0x2f, etc.) and call it. It routes via `cmp edi, 0x2f / cmp edi, ...` switch.
+- At 0x01011e2b the dispatch is `push esi; push edi; call 0x01011985` — so 0x01011985 receives 2 args (event id + game object). At watch hit time, this is the path that pushes state 1→2.
+- Major call site: 0x010118f5 inside the spring-release routine: `push 0x42; call 0x1011bb5` — pushing event 0x42 routes through the dispatcher to 0x01011985 which sets state=2.
+
+**No state==2 flipper handler exists anywhere in pinball.exe.** Confirmed by:
+- xrefs to [0x1025568]: only 7 sites total, all read-or-write the variable but none branch on state==2 to fire flippers.
+- The keydown dispatcher 0x01015072 calls helper 0x100e1b0 BEFORE the state-1 gate — but 0x100e1b0 is a UI shortcut switch (M/D/Space etc., handles game commands like New Ball / Show Score, not flipper firing), and it ALSO early-exits if `[[0x1023bbc]+6] != 0`.
+
+**Conclusion:** the binary really has only state==1 as the input-accepting state, and our emulator is leaving state==2 stuck on. Either the real game spends most of its time in state 1 (with brief 1→2→1 transitions per ball-launch that we're not completing), or there's an external trigger we're missing that demotes state back to 1.
+
+**State-1 setters identified.** Seven callers of state setter 0x0101461a (pushes new state value):
+| Site | Pushes | Purpose |
+|---|---|---|
+| 0x01011b4f | 2 | "ball launched" handler (called via game-event dispatcher 0x1011bb5 with event 0x42 from spring-release) |
+| 0x010147b3 | 2 | another state→2 path |
+| 0x01015829 | 2 | another state→2 path |
+| 0x01014786 | 4 | state→4 (counter-decrement path) |
+| 0x010155e9 | 1 or 3 | state→1 OR state→3 depending on flag |
+| 0x010153bd | 1 | **state→1** ("ready new ball") — fn 0x010153b0, takes pause-flag arg, posts msg 0x3f6. Called from 4 sites: 0x01007999 (main wndproc), 0x01008812 (main wndproc), 0x0101585b, 0x01016ef5. |
+| 0x01018930 | ? | TBD |
+
+So state→1 demotion exists (via 0x010153b0). It's called from the main wndproc, presumably WM_COMMAND handlers for "New Ball" / F2 / Space — i.e. the player has to MANUALLY launch a new ball after each ball drains, and during the launch period state==1 lets flippers test.
+
+**This means:** there's no "ball is in play but flippers should still work" code path in this binary at all. **Real-Win98 pinball ALSO has flippers gated on state==1.** So players can only press flippers while the ball is in the plunger lane (state 1), not after launch (state 2)?? That contradicts how the game obviously plays. So either:
+1. The "flipper fire" path I identified (0x010150c7 / 0x010150ed at msg 0x3e8/0x3ea) is NOT actually flipper-fire, but some other thing (maybe "table tilt" / "nudge"). The actual flipper fire might be at one of the OTHER `push 0x3e8` sites: 0x01016ea1, 0x0101f67b, 0x0101faaf, 0x0101ffc5.
+2. The state machine is more nuanced — perhaps state 2 transitions to state 1 mid-play in a way I haven't captured because my test never actually let the ball settle.
+
+**Strong candidate for real flipper-fire:** 0x01016ea1 / 0x01016e24 dispatch msg 0x3e8/0x3ea inside fns 0x01016df5 (left flipper actuator) / 0x01016e72 (right). These are stored as callbacks via `push 0x1016df3; push edi; call [0x1001304]` at 0x01016fe5 — looks like a deferred-execution scheduler (push float-time arg, push object, push callback fn, call dispatch). So flippers are SCHEDULED actions, not directly fired from the keyboard dispatcher. That means the keyboard dispatcher's msg 0x3e8/0x3ea sends are upstream of the actuator — the gate at state==1 still applies and we're back to the same wall.
+
+**Verdict:** further investigation needs hands-on patching (e.g. write 1 to [0x1025568] before the keypress arrives) to verify whether the state gate is THE problem or just A problem. That's the cleanest experiment but requires either a `--poke ADDR=VAL@BATCH` flag in test/run.js or a binary patch. Out of scope for this iteration.
+
+**Next concrete step:** check the other 22 WM_KEYDOWN references — sort the call sites by enclosing function and look for one that ISN'T gated by state==1. Particularly suspect: any wndproc registered for a child HWND, or anything dispatched from a worker thread. Also check for `GetAsyncKeyState` / `GetKeyState` imports in pinball.exe — pinball was a fast-path game and may poll keys directly.
+
+For now, the pixel-rect playable test (`test/test-pinball-playable.js`) reports 8/9 but the "PASS" for `/` is **not** real flipper movement. The test needs tighter bounding boxes (just the flipper triangles ±5px) to be a true regression detector.
 
 ### Test
 
