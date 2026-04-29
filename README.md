@@ -84,7 +84,7 @@ The entire interpreter is written in WAT (WebAssembly Text Format) — no C, no 
 - Input handling (keyboard, mouse)
 - Timer management
 
-Everything else — x86 decoding, memory management, PE loading, Win32 API implementation, structured exception handling, sprintf — is implemented in ~13,000 lines of hand-written WAT.
+Everything else — x86 decoding, memory management, PE loading, Win32 API implementation, structured exception handling, sprintf — is implemented in ~48,000 lines of hand-written WAT, compiling to a ~230 KB `.wasm` module.
 
 ## Project Structure
 
