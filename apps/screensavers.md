@@ -2171,3 +2171,59 @@ The dispatch reads `[wrapper]` = `0x7451267c` (vtable A), then `call [vtable+0x3
 4. Alternative: since d3rm internally walks the scene and builds D3DIM ExecuteBuffers, the cleanest fix may be to invoke d3rm's *own* internal scene walker. That walker is in the same DLL — we just need to call into it from our stub. Find the d3rm-internal "Device::Render" implementation by xref'ing the wrapper construction: where is `0x7c3e6090` initialized, and what was the original d3rm fn that should have been wired to slot 12?
 
 **Critical insight:** Our scaffolding *thinks* it's emulating d3rm by intercepting all its COM calls and forwarding to ddraw. But d3rm has its OWN sw-rasterizer and scene walker in `d3drm.dll`. Instead of stubbing, we should let the **real d3rm code** run for Device::Render, only intercepting the eventual ddraw/d3dim calls it makes downstream. The stub is the bug — d3rm has the implementation we need.
+
+**2026-04-29 cont.36 — corrected cont.35; localized geometry-emit gap to a single d3rm fn.**
+
+cont.35 was wrong about a "synthetic vtable stub". The vtables at runtime 0x745126xx ARE our standard COM thunks (heap-allocated by `$init_com_vtable`), and slot 12 of vtable A = api_id 1198 = `IDirect3DViewport3_Clear`. The dispatcher fn at d3rm+0x6479fcd6 is just a per-frame Clear wrapper — Clear is dispatched correctly via our handlers; not the bug site.
+
+Real findings via `--trace-dx`:
+
+- 80 ExecIn calls, 100% from caller `d3rm+0x647c3971` (single site), 80 Exec instructions, 100% `op=6 STATETRANSFORM`.
+- Zero PROCESSVERTICES, zero TRIANGLE, zero MATRIXLOAD/MULT, zero STATERENDER.
+- This matches the long-standing observation in `project_organic_art_engine.md` and `project_d3dim_matrix_table.md`: matrices flow, geometry never emits.
+
+`d3rm+0x647c3905` is a small ExecuteBuffer-finalize fn:
+```
+arg this = esi (command-builder struct)
+  [esi+0x44] = "has commands" flag — early-bail if 0
+  [esi+0x4c] = write pointer
+  [esi+0x48] = buffer base
+  [esi+0x8]  = IDirect3DExecuteBuffer
+  [esi+0x00] = IDirect3DDevice
+flow:
+  emit 0x0b (D3DOP_EXIT) to *[esi+0x4c], advance +4
+  call execBuf->Unlock      (slot 5 = vtbl+0x14)
+  build D3DEXECUTEDATA on stack, dwSize=0x30, instr length = curOff - base
+  call execBuf->SetExecuteData (slot 6 = vtbl+0x18); bail on nonzero
+  call device->Execute(execBuf, viewport, D3DEXECUTE_CLIPPED) (slot 8 = vtbl+0x20)
+```
+
+So the builder accumulates ops via OTHER d3rm fns BEFORE this finalize site, then this fn appends EXIT and submits. Since only STATETRANSFORM ever lands in the buffer, the upstream emit of geometry/process-vertices never runs.
+
+**cont.37 plan:** find the d3rm fn that writes op=9 (PROCESSVERTICES) or op=3 (TRIANGLE) into the buffer. Two approaches:
+1. `node tools/find_bytes.js test/binaries/dlls/d3drm.dll <hex>` for a `mov byte [reg], 9` or `mov byte [reg], 3` pattern — find every static "emit op N" site, then which call into the builder.
+2. Watch the buffer with `--watch-byte=<bufferBase>` after MATRIXLOAD/STATETRANSFORM emits and see what fn would have written PROCESSVERTICES next but didn't — i.e. break at the visual-enumeration loop and see what it does NOT call.
+
+Most likely approach: use approach 1 to enumerate the static emit sites, then `--count` each call site to see which ones execute at runtime (a hot one that should run but doesn't = the gap). The visual enumerator probably gates on `[mesh+offset] != 0` — and our COM constructor for IDirect3DRMMesh / IDirect3DRMMeshBuilder isn't populating that field.
+
+**2026-04-29 cont.37 — geometry-emit subsystem proven entirely cold; localized to which finalize path runs.**
+
+`tools/caller_census.js` on `d3rm+0x647c3905` (ExecuteBuffer-finalize):
+
+| caller | hits | what it emits |
+|---|---|---|
+| 0x64798d17 | 16 | calls `0x64798db1` (emit-STATETRANSFORM helper) then finalize |
+| 0x647c269b | 32 | optional `0x647c36e0` then finalize — no geometry helper |
+| 10 other sites | 0 | (would emit lights, viewports, geometry, etc.) |
+
+48 total = 16 + 32. Both live callers are matrix/state-only paths.
+
+`--count` on the geometry-emit subsystem (cache lookup wrapper `0x647af210`, build fn `0x647af238`, parent visit fn `0x647af134`, helper `0x647af02b`, PROCESSVERTICES inline-emit `0x647af491`):
+**all five = 0 hits**. The entire mesh→exec-buffer pipeline is never entered.
+
+So the bug isn't in the emit code itself or in the Render dispatch — the app's render call never reaches the visual-enumeration code path. It dispatches into a different (matrix-only) sub-pipeline of d3rm.
+
+**cont.38 plan — narrow what's missing in the app's call sequence:**
+1. Trace EVERY COM api call from ROCKROLL with `--trace-host` or `--trace-api` filtered to `IDirect3DRM*` and `IDirect3D*`. The expected sequence per frame is roughly: `IDirect3DRMViewport::Clear` → `IDirect3DRMViewport::Render(rootFrame)` → (internal: walk frames, call `IDirect3DRMVisual::Render` per mesh) → `IDirect3DDevice::Execute`. If `Viewport::Render` is missing, the app uses a different render entrypoint (perhaps `IDirect3DRMDevice2::Update` — which I suspect we stub).
+2. The two live finalize callers (0x64798d17, 0x647c269b) sit inside fns that update camera/viewport matrices. The 16 hits suggests Viewport::Configure/SetCamera, the 32 hits suggests Frame::Render or Frame::Move (per-frame transforms). What's missing is the actual mesh-render call.
+3. Likely culprit on our side: `IDirect3DRMFrame::AddVisual` — if our handler doesn't actually link the visual into the frame's visual list, the per-frame walker finds nothing and skips geometry. Verify by inspecting the AddVisual handler in `src/09a8-handlers-directx.wat`.
