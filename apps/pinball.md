@@ -281,13 +281,114 @@ So ball_count is **permanently 1**. The first plunge legitimately registers as "
 
 **No write happens during F2.** The F2 path runs a "soft reset" fn ending at 0x01009a1f (`mov [esi+0x6], edi` clears the gate byte + zeros many other [esi+...] fields) but never re-runs vtable[0](0x3f5, ...). And even at batch 2122, the float arg already floors to 1 — so even if F2 re-fired the setter, it would set 1 again.
 
-**Two open questions:**
-1. Where does the float arg to `vtable[0](0x3f5, ...)` come from? In real pinball, default = 3.0. Possible sources: (a) hardcoded literal, (b) registry/INI, (c) PINBALL.DAT-derived. Registry probe trace shows `HKCU\...\Plus!\Pinball\SpaceCadet\Pinball Data → not found` (returns empty) — could be the bug if pinball expects nonempty bytes there for ball_count.
-2. Is this an emu regression at all, or a longstanding "1 ball default" quirk? Compare with original pinball.exe behaviour or check if a recent change to registry/INI handling started returning empty where it used to return 3.
+**Origin of float=1.0 — TRACED (2026-04-28, second pass):**
 
-**Next concrete step:** trace the call site of `vtable[0](0x3f5, ...)` — set `--trace-at=0x010187d6 --trace-callstack=8` and filter by ecx==0x01269634 or by msg_id=0x3f5; the float parameter at `[esp+8]` (cdecl) tells us where 1.0 originates. If it's from a static load of a `.data` constant, dump that VA. If it's from a computation, trace upward.
+Correction to earlier note: writer is in case body for msg=**0x3f6** (not 0x3f5). Idx-byte table `[0x1018f3d]` maps `msg-0x3e8 = 0xe → idx 8 → case at 0x01018916`. Inside that body:
 
-For now, the pixel-rect playable test (`test/test-pinball-playable.js`) is the regression detector.
+```
+01018935  mov eax, [esi+0x5a]          ; existing slot ptr
+01018938  cmp eax, ebx                 ; ebx = 0
+0101893a  jz 0x101895c                 ; if no existing slot, jump to fresh-init
+... [recursive call branch] ...
+0101895c  push ecx                     ; jz target — fresh-init branch
+0101895d  fldz; fstp [esp]             ; push 0.0
+01018962  mov ecx, esi
+01018964  push 0x400; mov [esi+0x3e],ebx; call 0x10187d6  ; recurse with msg=0x400 (init scene)
+01018971  fldz; ... lots of float setup ...
+0101898d  fld dword [ebp+0xc]          ; load caller's float arg
+01018990  fstp qword [esp]
+01018993  call [0x1001310]             ; floor() (msvcrt import)
+0101899b  call 0x1021166               ; ftol() (internal)
+010189a0  cmp eax, edi
+010189a2  mov [esi+0xd6], eax          ; ← the writer
+```
+
+Caller (verified by --break=0x0101895c, ESP+0x20 = 0x3f800000 = 1.0f):
+
+```
+010153b0 (fn entry)
+...
+010153d8  fild dword [0x1028234]       ; load INT from global → float
+010153de  mov eax, [ecx]               ; vtable
+010153e0  push ecx; fstp [esp]         ; push float
+010153e4  push 0x3f6                   ; msg
+010153e9  call [eax]                   ; vtable[0](0x3f6, float)
+```
+
+So the float = `(float)int_at_0x01028234`. The int there is **1**, hence float=1.0, hence ball_count=1.
+
+**Origin of int at 0x01028234:** It's the registry value `HKCU\Software\Microsoft\Plus!\Pinball\Players`. Settings-init fn at 0x01005f6b:
+
+1. Hardcoded preset: `inc esi; mov [0x1028234], esi` (0x01005f80, 0x0100607c) sets it to **1**.
+2. Read overlay: `push [0x1028234]` (default), `push "Players"`, `push 0`, `call 0x1003588`, `mov [0x1028234], eax` (0x010060e4..0x01006100). When registry is missing, the storage helper falls through to default → eax=1.
+
+`--trace-reg` confirms: `query HKCU\Software\Microsoft\Plus!\Pinball\Players -> not found`. Never written by the app.
+
+**Diagnosis:** The misread is calling `[obj+0xd6]` "ball_count", but the registry source name is **"Players"** — i.e. the player count (1-4). With Players=1, the gate `ball_index+1 == ball_count` becoming `current_player+1 == num_players` evaluates true at end-of-ball-1 → demo trigger. The actual *ball count per game* must live in another field that we haven't located, or the gate semantics aren't what we think.
+
+**REVISED (2026-04-28, third pass) — gate full disasm + ball_count theory invalidated:**
+
+Disasm of the firing site at 0x010128fb–0x0101291d (entry of the fn is 0x010128be):
+
+```
+010128ec  mov eax, [esi+0x146]      ; live balls_remaining
+010128f2  dec eax
+010128f3  push eax
+010128f4  mov ecx, esi
+010128f6  call set_balls_remaining(eax)  ; 0x010175aa — also stores back to [esi+0x146]
+010128fb  mov ecx, [0x1025040]
+01012901  mov eax, [ecx+0xda]       ; curr_player
+01012907  inc eax
+01012908  cmp eax, [ecx+0xd6]       ; num_players
+0101290e  jnz next_ball              ; not last player → continue
+01012910  cmp [ecx+0x146], ebx (0)
+01012916  jnz next_ball              ; balls_remaining still > 0 → continue
+01012918  mov eax, [0x1023d0c]
+0101291d  mov [eax+0x6], 1           ; GAME OVER → arm demo-resetter
+```
+
+So the gate is the **legitimate** game-over: last player + 0 balls left. Both halves are needed.
+
+**Empirical state at runtime (verified by --dump after 5500 batches with F2+Space):**
+
+```
+OBJ_5040 = [0x01025040] = 0x01269634
+[obj+0xd6]  = 0x00000001   ; num_players = 1 (from registry "Players" default)
+[obj+0xda]  = 0x00000000   ; curr_player = 0
+[obj+0x146] = 0x00000003   ; balls_remaining = 3 ✓
+[obj+0x14a] = 0x00000003   ; balls_per_game template = 3 ✓
+```
+
+So [esi+0x146] **is** correctly initialized to 3 at game start. Source: case body for msg=0x3f6 at 0x01018a2f does `mov eax, [esi+0x14a]; mov [esi+0x146], eax; call set_balls_remaining` — copies the template into the live counter. The constructor at 0x0101ab67 (entry is the table-class ctor) hardcodes `[esi+0x14a] = 3` and `[esi+0xda] = 0` (0x0101abeb..0x0101abf2).
+
+**Verdict: the "ball_count permanently 1" framing was wrong.** The 1 is `num_players` (Players=1, single-player default), and 3 is the real balls-per-game (correctly initialized).
+
+**Verified with --count=0x01012918 under F2+Space+Z+/ over 9000 batches: zero hits.** The demo-resetter does not fire on the first plunge. The earlier "first plunge → game over" theory was a misread — that pattern only fires during the **demo's** own ball cycle, which is correct demo behavior.
+
+### Real playability bug (2026-04-28, third pass)
+
+`test/test-pinball-playable.js` shows 8/9 pass:
+- ✓ Game reaches gameplay; F2 + Space-plunge works
+- ✓ RIGHT flipper (/, VK_OEM_2 = 0xBF): signal 366px ≫ noise 128px
+- ✗ LEFT flipper (Z, VK_Z = 0x5A): signal **0px**, noise 0px — Z press has no effect at all
+
+So the bug is asymmetric **per-key**: / works, Z doesn't. Both keys share the same MapVirtualKeyA scan↔VK tables (0x380 forward, 0x3A0 reverse, in `09a7-handlers-dispatch.wat`):
+- VK_Z (0x5A) → scan 0x2C ✓ (table at 0x380 byte 0x19)
+- VK_OEM_2 (0xBF) → scan 0x35 ✓ (explicit case)
+- Reverse: scan 0x2C → 0x5A ✓; scan 0x35 → 0xBF ✓
+
+So tables are clean. The asymmetry must be downstream of the table — either in pinball's runtime dispatch (different code path for left vs right flipper), or in our key-delivery (host_check_input / WM_KEYDOWN injection) treating one key differently.
+
+The earlier note from line 14 said "the path that delivers / does NOT go through process_key at 0x01015072". The recent combobox/popup zorder fix (commit 46f0178) likely fixed `/` via that path. Z is still on whatever broken path was there originally.
+
+**--count=0x01015072 under F2+Space+Z and F2+Space+/ both = 0**, so neither key reaches what we previously called "process_key". Either that fn was renamed/inlined, or both keys flow through a different dispatcher now. Need to identify the actual runtime key-dispatch entry first.
+
+**Next concrete step:** trace where Z and / **diverge** in the post-keydown path.
+1. `--trace-host=window_post_message` (or whatever delivers WM_KEYDOWN) for both Z and / runs, diff the outputs.
+2. Or set `--break-api=PostMessageA` on a tiny Z-only run and a /-only run, capture lParam (scan code in bits 16-23) and hwnd targeting.
+3. Find pinball's wndproc (default-window for the playfield) and disasm its WM_KEYDOWN case to see how it routes scancodes — there may be a per-key trampoline table indexed by scancode that has a stale/missing entry for 0x2C (Z) but a valid one for 0x35 (/).
+
+For now, the pixel-rect playable test (`test/test-pinball-playable.js`) is the regression detector — currently 8/9 with Z as the single failing check.
 
 ### Test
 
