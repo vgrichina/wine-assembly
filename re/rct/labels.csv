@@ -1,0 +1,57 @@
+offset,name,comment
+0x4382ca,init_orchestrator,outer init function called from PE entry chain
+0x43830a,call_slow_init,call 0x43868f - the slow init
+0x43868f,slow_init,calls many init subroutines incl 0x4361c9 0x4445cd 0x44469e 0x430291
+0x4361c9,init_8b8f34_table,fast: stores 16384 pointers to 0x8b8f34
+0x4445cd,sprite_insert_caller,calls 0x44469e
+0x44469e,sprite_insert_outer,calls 0x4446b4
+0x4446b4,sprite_insert_loop,builds tile-map linked lists at 0x8d8fce
+0x430291,init_jump_table_dispatch,calls 0x4302aa which dispatches via [0x4302d8+ebx*4]
+0x4302aa,scripted_init_dispatcher,reads bytecode from [0x57043c] dispatches on byte
+0x4311c2,render_one_cell,sets viewport to 1x1 at cursor then walks tiles - per-cell driver
+0x431245,tile_walker_entry_a,4 static callers no xref to enclosing fn
+0x431266,tile_walker_entry_b,calls 0x431323 once or twice (twice if width>0x180)
+0x431323,tile_walker_outer,outer loop ECX from [0x5706a4] step 0x20 calls 0x43679a
+0x43679a,rotation_dispatcher,jmp [0x4367b0+ecx*4]
+0x4367b0,rotation_table,4 entries: 0x4367c0 0x436833 0x4368ad 0x436923
+0x4367c0,rotation0,
+0x436833,rotation1,loop counter dx = ([edi+0xa]+0x460)>>5 ~38 iters
+0x4368ad,rotation2,
+0x436923,rotation3,
+0x444374,tile_renderer,reads [0x8d8fce+eax*2] follows linked list calls [0x5a7980+ebp*4]
+0x4443bd,tile_renderer_sprite_loop,sprite linked-list entry tile_id != -1 path
+0x444437,tile_renderer_dispatch,call [0x5a7980+ebp*4] - the only pixel-writing site - HIT 0 TIMES IN 300K BATCHES
+0x44444e,tile_renderer_bail,return / bail on bounds or visibility fail
+0x43643c,sprite_bounds_check,
+0x4366e6,scene_walker,tail-jumped from 0x43643c
+0x438248,game_tick,reached when init completes (never reached in our runs)
+0x42f676,file_checksum_verify,not the bottleneck despite name pattern - on read paths but cheap vs decompress
+0x42f6cc,checksum_inner_loop,add al [edi]; rol eax 3; inc edi; loop
+0x42f5a5,rle_decompress_loop,Phase A bottleneck - call 0x42f5b0; mov [esi] al; inc esi; loop
+0x42f5b0,rle_codec_state,dispatch on [0x56f8be] state byte
+0x42f5d0,rle_repeat_mode,
+0x42f5e5,rle_opcode_fetch,read next opcode byte
+0x42f535,buffered_file_reader,refills 1KB buffer at [0x56f8c0] via 0x408176
+0x408154,file_seek_or_size,probably _lseek SEEK_END
+0x408110,file_seek,probably _lseek
+0x408176,file_read,probably _read or fread
+0x42f1ab,checksum_caller_1,
+0x42f9a4,checksum_caller_2,
+0x42fa3f,checksum_caller_3,
+0x0054dc7c,sprite_renderer_type0,push esi; test+0xc 0x80; sub-dispatch via [0x5d2750+sprite[0x31]*4]
+0x00438cec,sprite_renderer_type1,unverified
+0x0042d466,sprite_renderer_type2,unverified
+0x0042ddc9,sprite_renderer_type3,unverified
+0x56f8b4,active_file_handle,used by checksum verifier
+0x56f8c0,checksum_io_buffer,1KB read buffer for hashing
+0x56fd45,checksum_mode_flag,toggles 0x1a655 sign in hash combine
+0x5706a4,viewport_x_origin_cursor,global x cursor read by 0x4311c2 - NEGATIVE -4811 in stuck state
+0x5706a6,viewport_y_origin_cursor,global y cursor read by 0x4311c2 - 667 in stuck state
+0x5706a8,viewport_x_size,
+0x5706b0,render_target_struct,16-byte struct +0=fb_ptr +4=vp.left +6=vp.top +8=vp.w +a=vp.h +c=pitch +e=zoom +10=aux +18=next
+0x8c8f38,render_target_ptr,set by 0x431323 / 0x4311c2
+0x8d8fc8,rotation_index,dispatched on by 0x43679a
+0x8d8fce,tile_map,16384 entries x 2B sprite-id heads
+0x69e1e4,sprite_array,5000 sprites x 256B = 1.25MB - +0x16/+0x18/+0x1a/+0x1c are visibility bounds
+0x5a7980,sprite_renderer_dispatch_table,4 entries indexed by sprite[0]
+0x5d2750,sprite_type0_subdispatch_table,indexed by sprite[0x31] inside type-0 renderer
