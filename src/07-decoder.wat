@@ -623,14 +623,20 @@
       ;; Propagate segment prefix to global for ModRM decoder
       (global.set $d_seg (local.get $prefix_seg))
 
-      ;; 0x67 (address-size override) is parsed but not implemented.
+      ;; 0x67 (address-size override) is parsed but not implemented for ModRM.
       ;; Decoding 16-bit addressing as 32-bit ModRM/SIB silently corrupts
-      ;; EAs, so trap explicitly until 16-bit addressing exists.
+      ;; EAs, so trap explicitly until 16-bit addressing exists. The exception
+      ;; is LOOP/LOOPE/LOOPNE (0xE0..0xE2) and JCXZ (0xE3): these have no
+      ;; ModRM, the prefix only swaps the implicit counter ECX→CX, which is
+      ;; handled by passing an addr16 flag through to handlers 46 / 216.
       (if (local.get $prefix_67)
         (then
-          (call $host_log_i32 (i32.const 0xCA5E0067))
-          (call $host_log_i32 (global.get $d_pc))
-          (unreachable)))
+          (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xE0)) (i32.le_u (local.get $op) (i32.const 0xE3)))
+            (then) ;; allow — handled in the LOOP/JCXZ blocks below
+            (else
+              (call $host_log_i32 (i32.const 0xCA5E0067))
+              (call $host_log_i32 (global.get $d_pc))
+              (unreachable)))))
 
       ;; ---- NOP (0x90) ----
       (if (i32.eq (local.get $op) (i32.const 0x90)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode)))
@@ -1204,6 +1210,8 @@
           (local.set $disp (call $sign_ext8 (call $d_fetch8)))
           ;; E2=LOOP, E1=LOOPE, E0=LOOPNE
           (local.set $imm (i32.sub (i32.const 0xE2) (local.get $op))) ;; 0=LOOP, 1=LOOPE, 2=LOOPNE
+          ;; bit 4 = addr16 (0x67 prefix): use CX instead of ECX as counter
+          (if (local.get $prefix_67) (then (local.set $imm (i32.or (local.get $imm) (i32.const 0x10)))))
           (call $te (i32.const 46) (local.get $imm))
           (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
           (call $te_raw (global.get $d_pc))
@@ -1213,7 +1221,8 @@
       (if (i32.eq (local.get $op) (i32.const 0xE3))
         (then
           (local.set $disp (call $sign_ext8 (call $d_fetch8)))
-          (call $te (i32.const 216) (i32.const 0))
+          ;; bit 0 = addr16 (0x67 prefix → JCXZ tests CX instead of ECX)
+          (call $te (i32.const 216) (if (result i32) (local.get $prefix_67) (then (i32.const 1)) (else (i32.const 0))))
           (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
           (call $te_raw (global.get $d_pc))
           (local.set $done (i32.const 1)) (br $decode)))
