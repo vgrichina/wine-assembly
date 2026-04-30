@@ -12,6 +12,9 @@
   ;; log_block(eip, esp) — invoked at the top of each decoded block when
   ;; trace_esp_flag is non-zero and EIP is inside [trace_esp_lo, trace_esp_hi].
   ;; Host default is a no-op; test/run.js --trace-esp wires it up.
+  (import "host" "log_eip" (func $host_log_eip (param i32)))
+  ;; log_eip(eip) — invoked at block entry when trace_eip_flag is non-zero and
+  ;; EIP is inside [trace_eip_lo, trace_eip_hi]. test/run.js --trace-eip-range wires it up.
   (import "host" "crash_unimplemented" (func $host_crash_unimplemented (param i32 i32 i32 i32)))
   (import "host" "message_box" (func $host_message_box (param i32 i32 i32 i32) (result i32)))
   (import "host" "exit" (func $host_exit (param i32)))
@@ -999,6 +1002,12 @@
   (global $trace_esp_flag (mut i32) (i32.const 0))
   (global $trace_esp_lo (mut i32) (i32.const 0))
   (global $trace_esp_hi (mut i32) (i32.const 0))
+
+  ;; --trace-eip-range: when flag=1, the run loop calls $host_log_eip(eip) at each
+  ;; block boundary whose EIP falls inside [lo, hi]. hi=0 means "no upper bound".
+  (global $trace_eip_flag (mut i32) (i32.const 0))
+  (global $trace_eip_lo (mut i32) (i32.const 0))
+  (global $trace_eip_hi (mut i32) (i32.const 0))
 
   ;; 1KB scratch for UTF-16→ANSI conversion in Unicode text handlers (ExtTextOutW,
   ;; TextOutW, etc.). Below GUEST_BASE so guest cannot reach via image-relative pointers.

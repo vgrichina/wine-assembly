@@ -95,6 +95,14 @@
                 (i32.or (i32.eqz (global.get $trace_esp_hi))
                         (i32.le_u (global.get $eip) (global.get $trace_esp_hi))))
             (then (call $host_log_block (global.get $eip) (global.get $esp))))))
+      ;; --trace-eip-range: emit eip at block entry for in-range EIPs.
+      (if (global.get $trace_eip_flag)
+        (then
+          (if (i32.and
+                (i32.ge_u (global.get $eip) (global.get $trace_eip_lo))
+                (i32.or (i32.eqz (global.get $trace_eip_hi))
+                        (i32.le_u (global.get $eip) (global.get $trace_eip_hi))))
+            (then (call $host_log_eip (global.get $eip))))))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -304,6 +312,12 @@
     (global.set $trace_esp_flag (local.get $flag))
     (global.set $trace_esp_lo (local.get $lo))
     (global.set $trace_esp_hi (local.get $hi)))
+
+  ;; --trace-eip-range wiring. Pass hi=0 to leave upper bound open.
+  (func (export "set_trace_eip_range") (param $flag i32) (param $lo i32) (param $hi i32)
+    (global.set $trace_eip_flag (local.get $flag))
+    (global.set $trace_eip_lo (local.get $lo))
+    (global.set $trace_eip_hi (local.get $hi)))
 
   ;; Hit counters: set_count writes addr into slot N and zeros its count,
   ;; bumping $hit_count_n so the run loop includes this slot. Caller passes

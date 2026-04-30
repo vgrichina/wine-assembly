@@ -70,6 +70,7 @@ const QUIET_API = hasFlag('quiet-api');               // --quiet-api: suppress [
 const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
+const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -181,6 +182,9 @@ function deferredResolveAddrs() {
       if (d.spec && /\+/.test(d.spec)) d.addr = resolveAddr(d.spec) >>> 0;
     }
   }
+  if (TRACE_EIP_RANGE && /\+/.test(TRACE_EIP_RANGE)) {
+    parseTraceEipRange(TRACE_EIP_RANGE);
+  }
 }
 const breakThreadFilter = BREAK_THREAD ? parseInt(BREAK_THREAD.replace(/^T/i, ''), 10) : null;
 let traceAtHits = 0;
@@ -204,6 +208,22 @@ if (TRACE_ESP !== null) {
     traceEspLo = parseInt(parts[0], 16) >>> 0;
     traceEspHi = parts[1] ? (parseInt(parts[1], 16) >>> 0) : 0;
   }
+}
+
+// --trace-eip-range=LO-HI: split on the LAST `-` so module+0xVA-module+0xVA parses
+// (each side may itself contain no dash). Empty "--trace-eip-range" = whole space.
+let traceEipLo = 0, traceEipHi = 0, traceEipOn = false;
+function parseTraceEipRange(spec) {
+  if (!spec) return;
+  const dash = spec.lastIndexOf('-');
+  const loSpec = dash > 0 ? spec.slice(0, dash) : spec;
+  const hiSpec = dash > 0 ? spec.slice(dash + 1) : '';
+  traceEipLo = resolveAddr(loSpec) >>> 0;
+  traceEipHi = hiSpec ? (resolveAddr(hiSpec) >>> 0) : 0;
+}
+if (TRACE_EIP_RANGE !== null) {
+  traceEipOn = true;
+  parseTraceEipRange(TRACE_EIP_RANGE);
 }
 
 async function main() {
@@ -789,6 +809,12 @@ async function main() {
       prevBlockEsp = esp;
       prevBlockEip = eip;
       traceEspCount++;
+    };
+  }
+
+  if (traceEipOn) {
+    h.log_eip = (eip) => {
+      logs.push(`[EIP] ${hex(eip >>> 0)}`);
     };
   }
 
@@ -2011,6 +2037,10 @@ async function main() {
     if (traceEspOn && batch === 0 && instance.exports.set_trace_esp) {
       instance.exports.set_trace_esp(1, traceEspLo, traceEspHi);
     }
+    // --trace-eip-range: arm range once. Re-arm after deferred resolve if module-relative.
+    if (traceEipOn && batch === 0 && instance.exports.set_trace_eip_range) {
+      instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
+    }
     // Hit counters: register once
     if (countAddrs.length && batch === 0 && instance.exports.set_count) {
       for (let i = 0; i < countAddrs.length; i++) {
@@ -2237,8 +2267,22 @@ async function main() {
         console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
         {
           const key = fileName.toLowerCase().replace(/\.[^.]+$/, '');
-          moduleBases[key] = { loadAddr: result.loadAddr, origBase: result.origBase };
+          const peOff2 = dllBytesArr[0x3C] | (dllBytesArr[0x3D] << 8) | (dllBytesArr[0x3E] << 16) | (dllBytesArr[0x3F] << 24);
+          const dllOrigBase = dllBytesArr[peOff2 + 52] | (dllBytesArr[peOff2 + 53] << 8) | (dllBytesArr[peOff2 + 54] << 16) | (dllBytesArr[peOff2 + 55] << 24);
+          moduleBases[key] = { loadAddr: result.loadAddr, origBase: dllOrigBase };
           deferredResolveAddrs();
+          if (instance.exports.set_bp) {
+            if (breakAddrs.length) instance.exports.set_bp(breakAddrs[0]);
+            else if (traceAtAddr) instance.exports.set_bp(traceAtAddr);
+          }
+          if (countAddrs.length && instance.exports.set_count) {
+            for (let i = 0; i < countAddrs.length; i++) {
+              instance.exports.set_count(i, countAddrs[i]);
+            }
+          }
+          if (traceEipOn && instance.exports.set_trace_eip_range) {
+            instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
+          }
         }
         // Patch the new DLL's imports against all previously loaded DLLs
         pdi(instance.exports, memory.buffer,
