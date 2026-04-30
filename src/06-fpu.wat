@@ -960,7 +960,8 @@
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
     (call $set_reg (local.get $op) (local.get $v)) (return_call $next))
   (func $th_test_m8_i8 (param $op i32)
-    (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (local.get $op))) (return_call $next))
+    (call $set_flags_logic (i32.and (call $gl8 (call $read_addr)) (local.get $op)))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
 
   ;; 125: jmp [mem] — for jmp through IAT or vtable
   ;; operand=ignored, mem_addr in next thread word
@@ -1149,7 +1150,7 @@
     (local $addr i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (drop (call $do_alu32 (i32.const 4) (call $gl8 (local.get $addr)) (call $read_thread_word)))
-    (return_call $next))
+    (global.set $flag_sign_shift (i32.const 7)) (return_call $next))
   ;; 139: shift [base+disp]. op=base, next word=shift_info (type<<8|count), next word=disp.
   ;; Wait — ea_from_op reads disp as first word. So: op=base, word1=disp (from ea_from_op), word2=shift_info.
   ;; Actually let me not use ea_from_op here for flexibility. op=base, w1=disp, w2=shift_type<<8|count.

@@ -920,6 +920,30 @@
             (global.set $flag_a (i32.const 0)) (global.set $flag_b (local.get $old)) (global.set $flag_res (local.get $r))))
     (call $gs8 (local.get $addr) (local.get $r)) (return_call $next))
 
+  ;; 281: 16-bit unary memory: operand = unary_type (0=inc,1=dec,2=not,3=neg), addr in next word
+  ;; Counterpart of th_unary_m32 for the 0x66 prefix variant of FF /0, FF /1, F7 /2, F7 /3.
+  ;; Without this, "dec word [esp]" mis-decodes as "dec dword [esp]" and trashes loop counters
+  ;; whose pushed-edx upper 16 bits aren't zero (RCT rotation1 stuck for ~30M iters).
+  (func $th_unary_m16 (param $op i32)
+    (local $addr i32) (local $old i32) (local $r i32)
+    (local.set $addr (call $read_addr))
+    (local.set $old (i32.and (call $gl16 (local.get $addr)) (i32.const 0xFFFF)))
+    (if (i32.eq (local.get $op) (i32.const 0))
+      (then (local.set $r (i32.and (i32.add (local.get $old) (i32.const 1)) (i32.const 0xFFFF)))
+            (call $set_flags_inc (local.get $old) (local.get $r))
+            (global.set $flag_sign_shift (i32.const 15))))
+    (if (i32.eq (local.get $op) (i32.const 1))
+      (then (local.set $r (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFFFF)))
+            (call $set_flags_dec (local.get $old) (local.get $r))
+            (global.set $flag_sign_shift (i32.const 15))))
+    (if (i32.eq (local.get $op) (i32.const 2))
+      (then (local.set $r (i32.and (i32.xor (local.get $old) (i32.const 0xFFFF)) (i32.const 0xFFFF)))))
+    (if (i32.eq (local.get $op) (i32.const 3))
+      (then (local.set $r (i32.and (i32.sub (i32.const 0) (local.get $old)) (i32.const 0xFFFF)))
+            (call $set_flags_sub (i32.const 0) (local.get $old) (local.get $r))
+            (global.set $flag_sign_shift (i32.const 15))))
+    (call $gs16 (local.get $addr) (local.get $r)) (return_call $next))
+
   ;; --- LEA ---
   (func $th_lea (param $op i32) (call $set_reg (local.get $op) (call $read_thread_word)) (return_call $next))
 

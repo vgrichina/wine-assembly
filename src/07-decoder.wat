@@ -377,6 +377,12 @@
     (call $te (i32.const 69) (local.get $uop))
     (call $te_raw (local.get $a)))
 
+  ;; 16-bit memory unary (inc/dec/not/neg word [mem]) — used for 0x66 prefix on FF /0, FF /1, F7 /2, F7 /3
+  (func $emit_unary_m16 (param $uop i32) (local $a i32)
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te (i32.const 281) (local.get $uop))
+    (call $te_raw (local.get $a)))
+
   ;; TEST [mem32], reg
   (func $emit_test_m32_r (param $reg i32) (local $a i32)
     (if (call $mr_simple_base)
@@ -954,7 +960,9 @@
                   (else (call $te (i32.const 66) (global.get $mr_val)))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 2)))
-                  (else (call $emit_unary_m32 (i32.const 2))))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $emit_unary_m16 (i32.const 2)))
+                    (else (call $emit_unary_m32 (i32.const 2))))))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 3)) ;; NEG
             (then
@@ -964,7 +972,9 @@
                   (else (call $te (i32.const 67) (global.get $mr_val)))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 3)))
-                  (else (call $emit_unary_m32 (i32.const 3))))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $emit_unary_m16 (i32.const 3)))
+                    (else (call $emit_unary_m32 (i32.const 3))))))))
               (br $decode)))
           ;; MUL/IMUL/DIV/IDIV — distinguish 8-bit (0xF6) from 32-bit (0xF7)
           (if (i32.eq (local.get $op) (i32.const 0xF6))
@@ -1022,7 +1032,9 @@
                 (then (if (local.get $prefix_66)
                   (then (call $te (i32.const 202) (global.get $mr_val)))
                   (else (call $te (i32.const 64) (global.get $mr_val)))))
-                (else (call $emit_unary_m32 (i32.const 0))))
+                (else (if (local.get $prefix_66)
+                  (then (call $emit_unary_m16 (i32.const 0)))
+                  (else (call $emit_unary_m32 (i32.const 0))))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 1)) ;; DEC r/m32 (or r/m16 with 66h)
             (then
@@ -1030,7 +1042,9 @@
                 (then (if (local.get $prefix_66)
                   (then (call $te (i32.const 203) (global.get $mr_val)))
                   (else (call $te (i32.const 65) (global.get $mr_val)))))
-                (else (call $emit_unary_m32 (i32.const 1))))
+                (else (if (local.get $prefix_66)
+                  (then (call $emit_unary_m16 (i32.const 1)))
+                  (else (call $emit_unary_m32 (i32.const 1))))))
               (br $decode)))
           (if (i32.eq (global.get $mr_reg) (i32.const 2)) ;; CALL r/m32
             (then
