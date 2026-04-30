@@ -23,6 +23,19 @@
   So the dispatch path resolves `SC3.SC4`, calls `0x0042f986`, then fails at `0x00430344` because `word [0x00836522]` was never initialized to the expected scenario-selection value.
 - `0x00430344` is part of the `0x004302aa` command interpreter. The sibling handler at `0x0043015c` performs the same "build scenario path -> call 0x0042f986 -> compare against `[0x00836522]`" sequence, which strongly suggests `0x00836522` is not random scratch but a real scenario-selection state slot that some earlier init/UI path should populate.
 
+**2026-04-30 update — first real rendered frame recovered from the live branch.**
+
+- Artifact-level proof finally split the renderer from the presenter:
+  - DirectDraw dump at batch window `28200` shows:
+    - `slot 8` (`640x480 offscreen`) is non-zero: `firstNonZero=434`, `checksum=365446`
+    - `slot 4` (`640x480 primary`) is still all-zero
+  - So RCT's software renderer *is* producing pixels, but the primary surface path is not what the headless compositor sees.
+- A targeted headless fallback in `test/run.js` now uses the non-zero fullscreen offscreen surface when the primary remains zero at PNG-capture time.
+- Result: `final.png` is no longer the untouched Win98 teal background. With the fallback active, the image contains a real multi-color game frame (`48225` bytes instead of the prior tiny uniform-teal PNG; teal pixel count drops from `307200/307200` to `0/307200`).
+- This does **not** prove the canonical primary-surface present path is correct yet; it proves the game frame exists and the missing leg is the present/compositing path from the live offscreen buffer to the visible output.
+
+**Meaning:** the investigation can now stop blaming the software renderer itself. The remaining correctness work is to replace the current compatibility fallback with a proper present path that promotes the real game buffer to the visible surface without needing PNG-time intervention.
+
 **2026-04-30 follow-up — two stale assumptions corrected, one host-side bug fixed.**
 
 - The `0x00430344` trace needs careful reading: that address is the `pop eax` immediately before the compare, not the compare itself. Live trace shows stack-top `0x00000003` at `0x00430344`, so after the pop the compare is effectively `cmp ax, [0x00836522]` with both sides = `3`. The old "slot stays zero" theory is stale on the current branch.
