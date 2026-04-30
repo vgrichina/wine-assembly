@@ -2875,3 +2875,37 @@ Hypothesis (a) (action invokes YYERROR macro skipping yyerror) and (b) are dropp
 **cont.56 plan:**
 1. Identify the parser entry point that detects "no action available" → goto syntax-error block. From the disasm, the only static jmp/jcc into 0x5c50765a's *block* (the error label) is from another place in yyparse. Run `tools/xrefs.js d3dxof.dll 0x5c50765a` (got 0 — so it's reached by a jmp/jcc whose target is *some address in this block, not necessarily 0x5c50765a*; look for branches to 0x5c507655 (the preceding `jmp 0x5c507705`) — that's the static jmp that flows into 0x5c50765a as fallthrough? No — 0x5c507655 is `jmp 0x5c507705`, unconditional, so 0x5c50765a is dead unless reached by another jmp). Need `tools/xrefs.js` for 0x5c50765a..0x5c50765c range — caller is presumably the action-table-lookup default-case in yyparse.
 2. Once the entry to the error block is found, instrument the (state, token) pair right before — that pair is what's missing from yytable. Cross with x-file grammar to decide: missing token, missing rule, or pre-error grammar mistake (e.g. a TYPE token mis-classified by lexer).
+
+**cont.55b — failing (state, token) captured: state=0x28, token=0xff.**
+
+`tools/find-refs.js d3dxof.dll 0x5c50765a` finds 4 conditional jumps to yyerrlab, all from the action-table dispatch at 0x5c50745a..0x5c507486:
+
+```
+5c507455  mov edi, 0x18e               ; YYLAST
+5c50745a  movsx ecx, word [yypact+ebx*2]   ; ecx = yypact[state]
+5c507462  cmp ecx, ebp                 ; vs YYPACT_NINF (=0)
+5c507464  jz  yyerrlab                 ; (1) state has no action
+5c50746a  add ecx, eax                 ; ecx += token
+5c50746c  js  yyerrlab                 ; (2) signed-neg out-of-bounds
+5c507472  cmp ecx, edi
+5c507474  jg  yyerrlab                 ; (3) past YYLAST
+5c50747a  movsx esi, word [yycheck+ecx*2]
+5c507484  cmp esi, eax
+5c507486  jnz yyerrlab                 ; (4) yycheck mismatch
+5c50748c  movsx ecx, word [yytable+ecx*2]   ; valid action
+```
+
+`--trace-at=d3dxof+0x5c50745a` (7 hits before error path takes over):
+
+| Hit | EBX (state) | EAX (token) |
+|---:|---|---|
+| 1–6 | 0x28 | 0x0b |
+| **7** | **0x28** | **0xff** |
+
+State 0x28 = 40 (mid-template, inside field-list). After hit #7, EIP leaves d3dxof; the next trace returns to viewer.exe at 0x04200358 — that's MessageBoxA / parser-failed return path. So the failing dispatch is **(state=0x28, token=0xff)**.
+
+Token id 0xff is YYUNDEFTOK-shaped. Hypothesis: d3xof's binary lexer returns 0xff for an X-file binary token-tag it doesn't recognise. Six valid tokens of type 0x0b shifted in (likely INTEGER_LIST values inside Header template body), then a binary tag arrives that the binary lexer (mode=0) fails to map and emits 0xff.
+
+**cont.56 plan:**
+1. Read d3xof's binary lexer (mode=0, entry at 0x5c506e95) and find where it emits token 0xff. The X-file binary tokens are 16-bit tags 0x0001..0x000a: NAME, STRING, INTEGER, GUID, INTEGER_LIST, FLOAT_LIST, OBRACE, CBRACE, OPAREN, CPAREN. Anything outside that range or any TOKEN_RESERVED_ID (0x0010-0x001b for keywords like `template`, `array`) that the binary lexer doesn't handle → 0xff fallback.
+2. Capture the actual byte sequence in the templates buffer at the point of error (cont.54 noted EDX=cursor at 0x47d47d). Decode the next 1-2 16-bit tags to know which tag value the binary lexer choked on. That tag value is either (a) a legal binary tag that d3xof's lexer mishandles, (b) garbage from a misalignment caused by an earlier mis-decode, or (c) end-of-buffer sentinel that should be EOF/0 but lexer returns 0xff.
