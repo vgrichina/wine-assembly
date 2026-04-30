@@ -212,7 +212,10 @@ if (TRACE_ESP !== null) {
 
 // --trace-eip-range=LO-HI: split on the LAST `-` so module+0xVA-module+0xVA parses
 // (each side may itself contain no dash). Empty "--trace-eip-range" = whole space.
-let traceEipLo = 0, traceEipHi = 0, traceEipOn = false;
+// Module-relative specs are gated until deferredResolveAddrs() succeeds — otherwise
+// pre-DLL-load batches would fire against an unresolved 0,0 range (= match-all).
+let traceEipLo = 0, traceEipHi = 0, traceEipOn = false, traceEipArmed = false;
+const traceEipModuleRel = TRACE_EIP_RANGE && /\+/.test(TRACE_EIP_RANGE);
 function parseTraceEipRange(spec) {
   if (!spec) return;
   const dash = spec.lastIndexOf('-');
@@ -220,6 +223,9 @@ function parseTraceEipRange(spec) {
   const hiSpec = dash > 0 ? spec.slice(dash + 1) : '';
   traceEipLo = resolveAddr(loSpec) >>> 0;
   traceEipHi = hiSpec ? (resolveAddr(hiSpec) >>> 0) : 0;
+  // Resolution succeeded if either bound is non-zero, OR no module prefix at all
+  // (caller passed bare hex / empty for match-all).
+  if (!/\+/.test(spec) || traceEipLo !== 0 || traceEipHi !== 0) traceEipArmed = true;
 }
 if (TRACE_EIP_RANGE !== null) {
   traceEipOn = true;
@@ -2037,8 +2043,9 @@ async function main() {
     if (traceEspOn && batch === 0 && instance.exports.set_trace_esp) {
       instance.exports.set_trace_esp(1, traceEspLo, traceEspHi);
     }
-    // --trace-eip-range: arm range once. Re-arm after deferred resolve if module-relative.
-    if (traceEipOn && batch === 0 && instance.exports.set_trace_eip_range) {
+    // --trace-eip-range: arm only when resolution succeeded (skip at batch=0 if
+    // module-relative range hasn't resolved yet — late LoadLibrary path re-arms).
+    if (traceEipOn && traceEipArmed && batch === 0 && instance.exports.set_trace_eip_range) {
       instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
     }
     // Hit counters: register once
@@ -2280,7 +2287,7 @@ async function main() {
               instance.exports.set_count(i, countAddrs[i]);
             }
           }
-          if (traceEipOn && instance.exports.set_trace_eip_range) {
+          if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }
         }

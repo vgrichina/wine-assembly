@@ -2682,3 +2682,196 @@ Both modes are dispatched correctly *and* both still result in `"syntax error" +
 4. **Stack-pointer drift between yacc actions.** The parser uses `[esp+0x14]` / `[esp+0x18]` / `[esp+0x1c]` as locals (cont.47-ish disasm). If a reduce action calls into `0x5c507337` (yyerror) and the call's stdcall arg-pop is wrong, ESP is corrupted on return → next lexer call returns to wrong site → garbage token stream.
 
 cont.53 starts with hypothesis #1: dump the four parser tables at runtime and compare to a static disasm dump.
+
+**2026-04-30 cont.53 — tables and templates buffer are pristine; hypothesis #1 falsified.**
+
+Tooling fix (commit incidentally produced by this session): `--trace-at-dump=` and `--count=` now accept `module+0xVA` syntax, and module bases registered by lazy `LoadLibraryA` (e.g. `d3dxof.dll`) trigger a deferred re-resolve + WASM `set_bp` re-arm. Previously, module-relative specs were resolved once at startup before lazy DLL loads, leaving probes silently dangling. Edits in `test/run.js`: `traceAtDumps` keeps the original `spec` string, `deferredResolveAddrs()` re-resolves both trace-at-dump and breakpoint set, and the `LoadLibrary` yield handler re-runs deferred resolve and re-sets `set_bp`.
+
+Probe: `--trace-at=0x74fef361 --trace-at-dump=0x74ffd308:48,0x74ffd460:48,0x74ffd9d8:48,0x74ffd6b8:48,0x74fefd5b:48` (raw runtime VAs, d3dxof base 0x74fe8000, delta 0x18ae8000). 16 hits across the 20k-batch run (the screensaver retries Load repeatedly, well beyond cont.48's 4-hit observation).
+
+Per-hit hexdump compared with `tools/dump_va.js test/binaries/dlls/d3dxof.dll`:
+
+| Table | Static @ origVA | Runtime @ runtimeVA | Match |
+|---|---|---|---|
+| `yystos` 0x5c515308 | `00 00 3d 00 00 00 29 00 2a 00 ...` | identical | ✓ |
+| `yytable` 0x5c515460 | `36 01 00 00 0e 00 00 00 00 00 ...` | identical | ✓ |
+| `yycheck` 0x5c5159d8 | `02 00 3d 00 01 00 01 00 ...` | identical | ✓ |
+| `yydefact` 0x5c5156b8 | `16 00 50 00 01 00 4c 00 ...` | identical | ✓ |
+| `yyaction-jump` 0x5c507d5b (32-bit fnptrs) | `d1 74 50 5c, 44 77 50 5c, 1a 7c 50 5c, ...` (`0x5c5074d1`, `0x5c507744`, `0x5c507c1a`...) | `d1 f4 fe 74, 44 f7 fe 74, 1a fc fe 74, ...` (`0x74fef4d1`, `0x74fef744`, `0x74fefc1a`...) | ✓ relocated by +0x18ae8000 |
+
+All five tables byte-identical between hits 1, 2, ... (across both binary RegisterTemplates and text GetNextDataObject parse calls). **Tables are not corrupted, not misrelocated.**
+
+Also dumped the templates buffer that d3rm passes to RegisterTemplates: static `d3drm.dll!0x647e1250` (`78 6f 66 20 30 33 30 32 62 69 6e 20 30 30 36 34 1f 00 01 00 06 00 00 00 48 65 61 64 65 72 0a 00 05 00 43 ab 82 3d da 62 cf 11 ab 39 00 20 af 71 e4 33 28 00 ...`) vs runtime `0x745fc250` — byte-identical for 64+ bytes. So the input bytes are intact end-to-end.
+
+**Smoking gun must therefore be in parser/lexer logic execution, not data.** Remaining hypotheses (from cont.52, narrowed):
+- (#3) `movsx word` sign-extension miscompile in the action/check tables. The parser's primary table read is `movsx ecx, word [0x5c515460+ebx*2]` (and similar for yycheck which has signed sentinels like 0x47, 0x47 ≥ 0 ok, but yydefact entries can be negative). If our emulator's `movsx r32, m16` implementation is broken on a specific edge (e.g. high-bit set), a single mis-extended action becomes a wild jump.
+- (#4) ESP drift between yacc reduce actions. The reduce dispatcher `jmp [0x5c507d5b + eax*4]` lands on action handlers that may push/pop different counts; if stdcall arg-pop is wrong somewhere in those branches, esp drifts and the next yacc loop iteration corrupts.
+- New (#5): the lexer's lookup table for keyword tokens (e.g., "template", "Header") may use an `_strcmpi`/local string-compare that we emulate incorrectly, causing every keyword to resolve to the wrong token even though the byte-stream is legal.
+
+**cont.54 plan — instrument the actual token stream returned by the lexer:**
+1. Trace EAX immediately after each lexer call. The parser body has `call 0x5c506e2d / mov [0x5c51a8d8], eax` patterns. Find the post-call landing for the *first* parse and `--trace-at` it with a small dump of `[0x5c51a8d8]` (yychar) on each hit. The first 5-10 tokens reveal whether the binary lexer is yielding the canonical X-file binary stream tokens or something divergent.
+2. Compare against the canonical first-tokens of `xof 0303bin` template stream:
+   - `template` keyword → token id (read from yytname symbol table; or look at d3xof's lexer string table).
+   - `Header` identifier → id 0x29 typically (first non-keyword in our yystos dump shows 0x29 at offset +6, which is yacc state 6 = identifier-leaf).
+   - GUID `<43AB823D-...>` → id 0x3d (= 61, matches yystos[0]=0x3d offset +2).
+3. If lexer returns wrong token ids → bug is in lexer (#5). Disasm `0x5c506e2d` and trace its keyword-match path.
+4. If lexer returns correct tokens → bug is in parser action — instrument the reduce dispatcher `0x74fef4ca jmp [0x74fefd5b + eax*4]` and trace EAX (rule#) and ESP each iteration. ESP drift will show as monotonic walk; correct path keeps ESP at fn-entry sp − 0x10 (parser allocates 0x10 locals).
+5. Quick parallel: check our `movsx r32, m16` decoder/handler in WAT (`07-decoder.wat` for decode; `05-alu.wat` for execution). The `0F BF` opcode prefix path. A unit test could feed `[0x80 0x00]` (= -32768) through `movsx ecx, word ptr [...]` and verify ECX = 0xFFFF8000.
+
+Tactical preference: probe (1) first — costs one trace-at + small dump; outcome bins the entire investigation.
+
+**2026-04-30 cont.53b — DX SDK sample survey: `viewer.exe` is the minimal d3xof repro.**
+
+Smoke-tested every exe in `test/binaries/dx-sdk/bin/` (`--max-batches=8000`, no extra args). Categorising by behaviour:
+
+| Bucket | Samples |
+|---|---|
+| **d3drm Load failure (same root cause as RockRoll)** | `viewer.exe` → `MessageBox("Failed to load camera.x")` after 674 API calls + 11 batches. `bellhop.exe` stalls at 185 API calls (T1 yield=1 — likely d3rm load yield, needs follow-up). |
+| Runs cleanly to batch cap | `boids`, `flip2d`, `flip3dtl`, `palette`, `wormhole`, `ddex3` (DDraw-only or D3D Immediate, no .x files). |
+| Stuck in PeekMessage / Flip loop (likely DDraw vs render-loop quirks, NOT the d3xof bug) | `donut`, `donuts`, `stretch`, `tunnel`, `twist`, `globe`, `ddex1`, `ddex2`, `ddex4`, `ddex5`. |
+
+`viewer.exe` is now the canonical d3xof repro: a self-contained DX5 SDK sample that imports `Direct3DRMCreate`, calls `IDirect3DRMMeshBuilder::Load("camera.x")`, and pops a MessageBox on failure. No screensaver scene-picker / no scene-file VFS games / no Plus!98 wrapper. cont.54+ should switch to `viewer.exe` for instrumentation — same parser bug, ~1/30 the noise. Sample command: `node test/run.js --exe=test/binaries/dx-sdk/bin/viewer.exe --max-batches=8000 --trace-at=...`.
+
+Globe/donut/stretch failures are likely a separate bucket (DDraw flip / page-lock / vsync emulation), not relevant to the d3xof investigation. They're a useful future target but should be tracked in a separate doc.
+
+**2026-04-30 cont.53c — viewer.exe verified as cont.54 instrumentation target.**
+
+Tooling fix #2: lazy `LoadLibrary` was registering `moduleBases[key]` with `origBase: undefined` (the `result` from `lib/dll-loader.js#loadDll` returns only `{loadAddr, dllMain}`, not `origBase`). `resolveAddr` then computed `va - undefined + loadAddr` = NaN, hitting the silent `parseInt(s, 16) >>> 0 = 0` fallback. Fix: read PE OptionalHeader.ImageBase (offset PE+52) from `dllBytesArr` in the LoadLibrary handler before populating `moduleBases`. Now `module+0xVA` works for any DLL whether statically linked, EXE-imported, or dynamically `LoadLibraryA`'d.
+
+Verified on viewer.exe (d3dxof base 0x9b7000, delta 0x4b7000):
+```
+node test/run.js --exe=test/binaries/dx-sdk/bin/viewer.exe --max-batches=8000 \
+  --trace-at=d3dxof+0x5c507361 \
+  --trace-at-dump=d3dxof+0x5c515308:48,d3dxof+0x5c5159d8:48,d3dxof+0x5c507d5b:48
+```
+
+Outputs:
+- `[TRACE-AT #1] EIP=0x009be361` (single hit, vs. RockRoll's 16 retries) — RegisterTemplates fires once, fails, viewer pops MessageBox.
+- yystos at 0x009cc308 = `00 00 3d 00 00 00 29 00 ...` ✓ static-identical
+- yycheck at 0x009cc9d8 = `02 00 3d 00 01 00 ...` ✓ static-identical
+- yyaction-jump at 0x009bed5b: pointers correctly relocated by +0x4b7000 (e.g. `0x5c5074d1 → 0x009be4d1`).
+
+So same cont.53 finding holds across two completely different load addresses (delta 0x18ae8000 in RockRoll vs delta 0x4b7000 in viewer). **Confirms tables/templates buffer aren't position-dependent corruption.** The bug is in parser logic, deterministic regardless of load base.
+
+cont.54 will use `viewer.exe`. Single parse, 1 RegisterTemplates call, no D3DRMCreate scene-walker noise — strict superset: any failure-mode found here also explains RockRoll/Geometry/Jazz/etc.
+
+**2026-04-30 cont.54 — lexer is correct; parser hits YYABORT via state-stack underflow without ever calling yyerror.**
+
+Tooling: extended deferred-resolve to also re-arm `set_count` after lazy LoadLibrary (previously `module+0xVA` count probes silently logged 0 because count addrs were sent to WASM at batch=0 with NaN→0). Now `--count=d3dxof+0xVA` works.
+
+**Lexer-mode labels in cont.48/52 were swapped.** d3xof's header parser at `0x5c508145..0x5c508189` shows: `txt ` → mode=1 (edi), `bin ` → mode=0 (ebx). And the lexer dispatch at `0x5c506e60`: `mov ecx, [eax+8]; jz call 0x5c506e95; cmp ecx, 1; jnz call 0x5c5071bf`. So **`0x5c506e95` is the BINARY-lexer** (mode=0), **`0x5c5071bf` is TEXT-lexer** (mode=1) — opposite of what cont.48 documented. All prior counts and language about "291 binary-lexer / 92 text-lexer" should have their labels flipped.
+
+**Viewer parse profile** (1× RegisterTemplates on the binary-format templates buffer `xof 0302bin 0064`):
+
+| Probe | Hits | Meaning |
+|---|---|---|
+| Lexer entry `0x5c506e2d` | 93 | total lexer calls |
+| Binary-lexer body `0x5c506e95` | 92 | all main tokens via correct mode |
+| Text-lexer body `0x5c5071bf` | 0 | mode dispatch correct |
+| Mode≥2 path `0x5c506e7d` | 0 | no mode mismatch |
+| Parser entry `0x5c507361` | 1 | one parse call |
+| YYABORT epilogue `0x5c507739` | 1 | parser returns 1 |
+| `yyerror("syntax error")` call `0x5c507667` | 0 | **never called** |
+| `mov [cc34], 1` setter callers (12 sites) | 0 each | parser actions never set the lexer pushback flag |
+
+`--trace-at` on the parser's post-lexer-call landing `0x5c5073bd` captured 93 token returns; the first 30 are textbook canonical X-file binary token IDs:
+
+```
+#1 EAX=0x1f (TOKEN_TEMPLATE)         #2 EAX=0x01 (TOKEN_NAME, ECX=6 → "Header")
+#3 EAX=0x0a (TOKEN_OBRACE {)         #4 EAX=0x05 (TOKEN_GUID — 16 bytes follow)
+#5 EAX=0x28 (TOKEN_WORD)             #6 EAX=0x01 (NAME, ECX=5 → "major")
+#7 EAX=0x14 (TOKEN_SEMICOLON ;)      #8 EAX=0x28 (WORD)
+...                                  #92 EAX=0x14 (SEMI)
+#93 EAX=0xff (lexer "stop" sentinel)
+```
+
+The byte stream walked correctly through the templates buffer (EDX cursor monotonically advanced from 0x47d262 to 0x47d47d across hits #1..#92). **The lexer is fine.**
+
+**YYABORT predecessor.** `--break=d3dxof+0x5c507739 --break-once` reports `dbg_prev_eip=0x009be6bf` = `d3dxof+0x5c5076bf`:
+
+```
+5c5076bf  cmp esi, 0x5c51a8e0   ; esi = yyssp; 0x5c51a8e0 = yyssa base
+5c5076c5  jbe 0x5c507739        ; if yyssp ≤ base → YYABORT (state stack empty)
+```
+
+At the abort: `EBX=0x28 ESI=0x009d18e0 (= runtime base of yyssa, exactly empty) EDI=0x18e (yystos size 398)`. So parser drained the state stack down to base while in the error-recovery loop at `0x5c50769e`. Recovery loop fired **6 iterations** (count of `0x5c50769e`), with state-stack-empty fallthrough hit **7 times** (0x5c5076bf).
+
+**The puzzle:** recovery loop ran but `yyerror` was never called. Normal Bison flow is `[error detected] → call yyerror → set yyerrstatus=3 → enter recovery loop → pop until shift-on-error available → if empty, YYABORT`. Here `yyerror=0` hits. Either:
+- (a) An action handler explicitly invoked `YYERROR` macro (jumps to recovery without yyerror) — common in Bison %destructor / mid-rule actions.
+- (b) A reduce action returned an error code that the parser body translates into "go to recovery loop" via a non-yyerror path.
+- (c) Count probe at 0x5c507667 is unreliable (it's mid-block; cont.49 already noted counts only fire on canonical block entries) and yyerror actually DID fire. To verify, `--break=d3dxof+0x5c507667 --break-once` would be definitive.
+
+Token #92's normal NAME→SEMI sequence (decoded as `<TYPE> <name>;` field declaration) suggests the parser was mid-way through a template body. The state value `EBX=0x28` at YYABORT entry matches state values seen mid-stream during normal parsing. So abort happened in a "field-list closed, expecting `}` or another field" boundary — likely after a reduce action triggered YYERROR.
+
+**cont.55 plan:**
+1. **Verify yyerror reachability** with `--break=d3dxof+0x5c507667 --break-once`. If it does fire, count probes simply lied (mid-block); if it doesn't, hypothesis (a) or (b) is right.
+2. **Find the YYERROR-jumping reduce action.** Bison `YYERROR` typically expands to `goto yyerrlab1`. Search d3xof.text for branches into the recovery loop entry block (0x5c50768d..0x5c50769e). Each such branch is a candidate action site; hit-count them.
+3. **Once the triggering action is found**, disasm it to see what condition tripped (likely a string-table lookup, a heap-alloc, or a sub-parser call returning failure).
+4. **Cross-check via the templates buffer offset**. EDX at #92 = 0x47d47d (cursor right after "minor" field's SEMI). Decode the next bytes (0x47d47d onwards) to know what the parser was about to consume; the failing reduce action operates on the LAST token (SEMI at #92) and the prior names — likely `Header` template's last field reduces a "field declaration" into a "field list", and that reduce action validates the field type-name against an internal type-id table. If the type lookup fails (e.g. "BYTE" not in d3xof's static type-id map), action triggers YYERROR.
+
+Tactical: probe (1) costs nothing and bins the rest of the investigation. Run it first.
+
+**2026-04-30 cont.54b — yyerror probe + recovery-loop ingress: counts unreliable, bp shows execution touches post-yyerror landing.**
+
+Probe results:
+
+| Probe | Method | Result |
+|---|---|---|
+| `--break=d3dxof+0x5c507667 --break-once` (yyerror call site) | bp | **never fires** — but bp lands on instruction boundary, may have mid-block-cache issue. |
+| `--break=d3dxof+0x5c50765b --break-once` (syntax-error block start: `cmp eax, [yyerrstatus]`) | bp | **never fires** |
+| `--break=d3dxof+0x5c50768d --break-once` (post-yyerror, `mov esi, [yyssp]`) | bp | **fires** — `dbg_prev_eip=0x009be66c` = `d3dxof+0x5c50766c` (right after yyerror call). |
+| `--trace-at=d3dxof+0x5c50769e` (recovery loop body) | trace | 6 hits with EBX=0x28, ESI walking down 0x009d18ea→0x009d18e0 (5 stack levels → empty). |
+
+**Contradiction.** Recovery-loop and post-yyerror landing are reached, but `0x5c50765b`/`0x5c507667` (the only static path to `0x5c50766c`) never break. Either:
+- The execution path reaches 0x5c50768d via some other route I haven't mapped (no static xrefs found by `tools/find-refs.js` to 0x5c50766c, 0x5c50767e, 0x5c50765b — but find-refs.js searches absolute literals + Jcc rel32; if a path uses computed jump or fall-through from a block whose entry I haven't probed, refs would miss it).
+- OR the WASM block-cache has fused 0x5c50765b..0x5c50768d into one block, the bp at 0x5c50765b never fires because the bp check happens at block-entry only, and the block actually starts somewhere else (e.g. 0x5c507650 where `mov eax, [yyerrstatus]` looks like a multi-pred join). Need to probe 0x5c507650 (the literal byte sequence preceding 0x5c50765b in our disasm — but that disasm garbage-decoded since 0x5c507650 is actually data/padding from the previous fn).
+
+**Status snapshot (cont.50→cont.54b):**
+- d3xof RegisterTemplates parses the binary templates buffer (`xof 0302bin 0064`) using the correct binary-lexer (mode=0). 92 valid X-file binary tokens flow through the lexer.
+- Tables (yystos/yytable/yycheck/yydefact/yyaction-jump) and templates buffer are **byte-identical** to static PE; correctly relocated regardless of load base (verified at deltas 0x18ae8000 and 0x4b7000).
+- Parser exits via YYABORT at 0x5c507739 (state-stack underflow at 0x5c5076c5) after recovery loop pops the state stack 6 times to empty.
+- yyerror call at 0x5c507667 unconfirmed (bp didn't fire, but post-call landing is reached) — may be count/bp probe limitation on mid-block instructions.
+
+**Confirmed tooling fixes shipped:**
+- `--trace-at-dump=` now accepts `module+0xVA` (was: addr-only).
+- `--count=` and `--break=` now re-resolve module bases when DLLs are lazily LoadLibrary'd. Previously, `module+0xVA` specs registered before the lazy-load silently logged 0.
+- LoadLibrary path now reads PE ImageBase from DLL bytes to populate `moduleBases[name].origBase` (was undefined → resolveAddr returned NaN).
+- After deferred resolve, `set_bp(traceAtAddr)` and `set_count(i, ...)` are re-armed inside the LoadLibrary handler so probes light up immediately on the first execution after the DLL is mapped.
+
+**cont.55 plan (revised):** the count/bp instability around mid-block addresses is now the dominant source of confusion. Rather than chasing yyerror reachability further:
+1. Add a `--trace-eip-range=LO-HI` flag that logs every EIP in the range during one batch — gives a deterministic list of executed instructions in the parser-error region without bp-cache caveats.
+2. Walk the executed-EIP set against the disasm to deterministically map the path `<some action> → recovery loop → YYABORT`.
+3. With the path known, identify the YYERROR-jumping action and inspect what it tested.
+
+Alt: run viewer under a debugger that fully supports per-instruction stepping (extend `--trace-host` or write a Mini-step helper). For now, the cleanest path is the EIP-range trace.
+
+**2026-04-30 cont.55 — `--trace-eip-range` shipped; closes the yyerror-reachability puzzle.**
+
+New flag `--trace-eip-range=LO-HI` (`module+0xVA-module+0xVA` works) logs every block-entry EIP inside the range. Module-relative ranges arm only after deferred resolve so pre-LoadLibrary batches don't fire on a 0/0 match-all range. Verification on viewer.exe parser-error region (`d3dxof+0x5c507650-d3dxof+0x5c507760`):
+
+| d3dxof VA | Hits | Decoded |
+|---|---:|---|
+| 0x5c50765a | 1 | error block start: `cmp [yyerrstatus], 0` |
+| 0x5c507660 | (jnz)|  → 0x5c50767e if already in error mode |
+| 0x5c507662 | 1 | `push "syntax error"` |
+| 0x5c507667 | (mid-block) | `call yyerror` |
+| 0x5c50766c | 1 | post-yyerror: `inc yynerrs` |
+| 0x5c50768d | 1 | `mov esi, [yyssp]` (yyerrlab1 init) |
+| 0x5c50769e | 6 | `movsx eax, word [esi]` — state-stack pop loop body |
+| 0x5c5076ad/b1/b5 | 7/7/3 | yytable[state+YYERROR] checks |
+| 0x5c5076bf | 7 | `cmp esi, yyssa; jbe → YYABORT` |
+| 0x5c5076c7 | 6 | pop one state (`dec esi; dec esi; sub edx, 0x10`) |
+| 0x5c507705 | 151 | (NOT error-path — `jmp` target from 0x5c507655 = generic reduce-resume; fires per shift/reduce) |
+| 0x5c507739 | 1 | YYABORT epilogue ✓ |
+
+**Resolved the cont.54b contradiction.** `0x5c50765a` and `0x5c50766c` *do* fire — exactly once each. The hypothesis that yyerror is never called was wrong; it was bp/count probe limitations on mid-block addresses (block-cache fusion), exactly as cont.54b suspected. So flow is **standard Bison**:
+
+```
+parse-error detected → yyerror("syntax error") → yyerrstatus=3 → recovery loop pops 6 states → state stack hits yyssa → YYABORT
+```
+
+Hypothesis (a) (action invokes YYERROR macro skipping yyerror) and (b) are dropped. The remaining puzzle is **why the parser detected a syntax error in the first place** — i.e. which (state, lookahead) pair has no shift/reduce action in `yytable`.
+
+**cont.56 plan:**
+1. Identify the parser entry point that detects "no action available" → goto syntax-error block. From the disasm, the only static jmp/jcc into 0x5c50765a's *block* (the error label) is from another place in yyparse. Run `tools/xrefs.js d3dxof.dll 0x5c50765a` (got 0 — so it's reached by a jmp/jcc whose target is *some address in this block, not necessarily 0x5c50765a*; look for branches to 0x5c507655 (the preceding `jmp 0x5c507705`) — that's the static jmp that flows into 0x5c50765a as fallthrough? No — 0x5c507655 is `jmp 0x5c507705`, unconditional, so 0x5c50765a is dead unless reached by another jmp). Need `tools/xrefs.js` for 0x5c50765a..0x5c50765c range — caller is presumably the action-table-lookup default-case in yyparse.
+2. Once the entry to the error block is found, instrument the (state, token) pair right before — that pair is what's missing from yytable. Cross with x-file grammar to decide: missing token, missing rule, or pre-error grammar mistake (e.g. a TYPE token mis-classified by lexer).
