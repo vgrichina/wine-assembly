@@ -2227,3 +2227,190 @@ So the bug isn't in the emit code itself or in the Render dispatch — the app's
 1. Trace EVERY COM api call from ROCKROLL with `--trace-host` or `--trace-api` filtered to `IDirect3DRM*` and `IDirect3D*`. The expected sequence per frame is roughly: `IDirect3DRMViewport::Clear` → `IDirect3DRMViewport::Render(rootFrame)` → (internal: walk frames, call `IDirect3DRMVisual::Render` per mesh) → `IDirect3DDevice::Execute`. If `Viewport::Render` is missing, the app uses a different render entrypoint (perhaps `IDirect3DRMDevice2::Update` — which I suspect we stub).
 2. The two live finalize callers (0x64798d17, 0x647c269b) sit inside fns that update camera/viewport matrices. The 16 hits suggests Viewport::Configure/SetCamera, the 32 hits suggests Frame::Render or Frame::Move (per-frame transforms). What's missing is the actual mesh-render call.
 3. Likely culprit on our side: `IDirect3DRMFrame::AddVisual` — if our handler doesn't actually link the visual into the frame's visual list, the per-frame walker finds nothing and skips geometry. Verify by inspecting the AddVisual handler in `src/09a8-handlers-directx.wat`.
+
+**2026-04-29 cont.38 — caps-hardening fix (no behavior change); ExecuteBuffer content fully dissected.**
+
+**Fix applied:** `src/09ab-handlers-d3dim-core.wat` `$d3dim_fill_device_desc` — for the partial-fill path (172 ≤ dwSize < 252) now calls `$fill_primcaps` for both `dpcLineCaps` (+44) and `dpcTriCaps` (+100) instead of writing only their dwSize. Both 56-byte ranges fit even in dwSize=172. This was a real latent bug (zero TriCaps would gate triangle emission for callers passing the smaller layout), but it does **not** unblock ROCKROLL — meaning ROCKROLL goes through the full-size path (dwSize ≥ 252) where caps were already populated.
+
+**Asset trace** (`--trace-fs`): file IO is healthy. ROCKROLL successfully opens `ro_pick.x`, `ro_git.x`, `ro_tex01.gif`, `ro_back.gif` via CreateFile; CreateFileMapping succeeds. The .X-file mesh data IS being read into d3dxof.dll. We have zero IDirectXFile* handlers, but d3dxof.dll runs its own COM internally without needing us to provide them.
+
+**ExecuteBuffer content** (`--trace-dx-raw`): every buffer is identical, 28 bytes:
+```
+op=6(STATETRANSFORM) bSize=8 wCount=3 payload=24 |
+  01 00 00 00 02 00 00 00   ; D3DTRANSFORMSTATE_WORLD       = matrix handle 2
+  02 00 00 00 03 00 00 00   ; D3DTRANSFORMSTATE_VIEW        = matrix handle 3
+  03 00 00 00 01 00 00 00   ; D3DTRANSFORMSTATE_PROJECTION  = matrix handle 1
+op=11(EXIT)
+```
+2 buffers/frame × 16 frames = 32 cycles. Render states / lights flow as direct API calls (320× SetRenderState, 64× SetLightState per run) — not through the buffer.
+
+**Per-frame d3rm sequence is short by exactly one step**: BeginScene → Clear → 3×SetMatrix → ~20×SetRenderState → 4×SetLightState → 2× [Lock → write transforms → Unlock → SetExecuteData → Execute] → EndScene. The expected step between Unlock and Execute — appending PROCESSVERTICES + TRIANGLE for the visual's mesh — never runs. Whatever gates that emit decides "no geometry" before the writer fns 0x647af238 / 0x647af491 are entered.
+
+**cont.39 plan:**
+1. Find d3rm's per-visual render fn. The two live finalize call sites have parent fns:
+   - parent of `0x64798d17` ends at `0x64798d43` (small fn, no geom-emit calls visible — likely Viewport-level)
+   - parent of `0x647c269b` ends at `0x647c26a5` (also small, no geom-emit calls)
+2. The "real" per-mesh render fn is one of the 10 cold callers. Disasm each cold caller's parent and look for the one that disasm-references mesh struct fields (vertex pointer, face count) — that's the visual submit fn.
+3. Once located, run with `--break=` on its entry. If it never fires, the upstream walker is the gap (most likely: real d3rm scene-graph walker is gated on `IDirect3DDevice` flag we set wrong, or on a IDirect3DRMVisual vtable slot that real d3rm reads from a struct we never wrote into). If it does fire but bails early, instrument to find the early-bail check.
+4. Alternative: focus on `IDirect3DDevice2_GetCaps` arg dump first to verify dwSize path. Add a one-shot console.log in `$d3dim_fill_device_desc` reporting the dwSize value to know which fill path runs. Cheap, removes one variable.
+
+**2026-04-29 cont.39 — pivot: ROCKROLL doesn't use d3rm at all.**
+
+API histogram across 88K calls of a 40K-batch run shows **zero IDirect3DRM* invocations**. d3drm.dll is loaded (import-bound) but never called into. Cont.36-38's investigation of d3rm finalize call sites and Visual::Render vtable was mis-directed — those code paths are statically dead in this app.
+
+**Actual rendering API:** DX3 IM via IDirect3DDevice (v1) + IDirect3DDevice2 (v2 for SetRenderState/SetLightState). Histogram per 127 frames:
+- 127× BeginScene / EndScene / Flip
+- 5× CreateExecuteBuffer (handles 0x7c3e60b0, 0x7c3e6120, 0x7c3e6190, 0x7c3e6200, 0x7c3e6270)
+- 254× ExecuteBuffer Lock / Unlock / SetExecuteData / Execute distributed across all 5 (32, 48, 58, 58, 58)
+- 381× SetMatrix, 15× CreateMatrix
+- 2540× SetRenderState (direct, not buffered)
+- 508× SetLightState (direct)
+- 259× SetViewport, 127× Clear
+- 0× DrawPrimitive (DX5+ method, not used)
+
+**Buffer content is the same on every Execute — STATETRANSFORM (W/V/P matrix handles 1/2/3) + EXIT, 28 bytes**, regardless of which of the 5 buffers fired. So **none of the 5 execute buffers ever receive TRIANGLE or PROCESSVERTICES ops**. In DX3 IM the *only* way to render geometry is via these ops (no DrawPrimitive yet) — so by design this app is pushing zero triangles per frame and 127 cleared/flipped frames is exactly the observed black output.
+
+**Texture path is also empty:** 0× CreateTexture, 0× Load on IDirect3DTexture2, only 7× IDirect3DTexture2_QueryInterface and 7× Release. No texture binding flows through SetRenderState (TEXTUREHANDLE) either — verified by checking buffer content (no STATERENDER ops at all). So either textures fail to allocate (CreateSurface for DDSCAPS_TEXTURE bails, surface QI to texture fails silently) and the app's "ready to render" gate stays false, OR the geometry path is conditional on some other init step we're failing.
+
+**cont.40 plan — find what gates the geometry-emit:**
+1. Instrument SetExecuteData with full LPD3DEXECUTEDATA dump (dwInstructionOffset, dwInstructionLength, dwInstructionCount, ops vertex range). Look for any call where dwInstructionLength ≠ 28. If all five buffers genuinely declare length=28, the app is gating geometry emit upstream of all SetExecuteData callers.
+2. Diff init-time CreateSurface descriptors — find the one(s) requesting DDSCAPS_TEXTURE. If our CreateSurface handler returns failure for texture caps, that's the gate.
+3. Add a `--trace-host=com_dx_*` wide net to see every COM method our handlers fire (and every QI miss returning E_NOINTERFACE) — a single missed QI for IDirect3DTexture2 from a DDraw surface would silently disable texture-bound geometry rendering.
+4. Cheapest first probe: grep CreateSurface descriptor flag bits over the 23 CreateSurface calls; correlate with the ones that have surface→texture QI follow-ups vs. those that don't. If the texture-caps surface is created but never QI'd to texture interface, the QI handler returned failure.
+
+**2026-04-29 cont.40 — RETRACT cont.39 pivot. d3rm IS the renderer.**
+
+Cont.39 concluded "0× IDirect3DRM* calls" — but `--trace-api` only logs the COM methods *we stub*. d3drm.dll is loaded as a real DLL (origBase=0x64780000, runtime base=0x7459b000, delta=0xFE1B000), so its internal calls are invisible to the API tracer. The 88K-call histogram is the d3rm→d3dim downward traffic only.
+
+Confirmed via `--trace-dx`: every `IDirect3DDevice_Execute` ExecIn shows `caller=0x745de971 caller2=0x745dd6a0` — both inside d3rm.dll. Translated to d3rm origVA: caller=0x647C3971, caller2=0x647C2685. So d3rm internally calls Execute on the device with a buffer it built itself. Cont.36–38's investigation of d3rm Visual::Render and the geometry-emit subsystem was correctly targeted.
+
+**Restated cont.36–38 finding, now reinforced:** d3rm runs through 127 frames. For every frame, d3rm builds an Execute buffer containing only `STATETRANSFORM (W/V/P, 28 bytes)` + `EXIT (4 bytes, total 32)`. It never writes TRIANGLE or PROCESSVERTICES ops into the buffer.
+
+Where d3rm gates geometry emit:
+- It DOES emit STATETRANSFORM, so the W/V/P matrix table is being managed (CreateMatrix×15, SetMatrix×381 outbound to d3dim).
+- It does NOT emit PROCESSVERTICES (no vertices submitted, hence no TRIANGLE follow-up).
+- The geometry-emit subsystem in d3rm at d3rm+0x647c3905 (cont.36-37 cold-path) is therefore NOT being reached on any of the 127 frames.
+
+**cont.41 plan — find the gate inside d3rm's frame loop:**
+1. Set `--break=d3rm+0x647c3971` (one frame's Execute callsite). Walk back EBP to identify the per-frame render loop in d3rm. The loop's body must contain: matrix setup → conditional geometry-emit → SetExecuteData → Execute. The conditional is the gate.
+2. Use `--count=d3rm+0x647c3905,d3rm+ALT1,d3rm+ALT2,...` to confirm the geometry-emit fn is statically dead (0 hits) while the matrix-emit fn fires 254× per run. We already have evidence cont.37 ⇒ this matches.
+3. Find the geometry-emit fn's static call sites with `tools/find-refs.js d3rm.dll d3rm+0x647c3905 --code-only`. Each call site sits inside a conditional. Print the conditional bytes and identify the test (likely a flag in IDirect3DRMVisual or the frame's mesh-list head being NULL).
+4. Cross-reference: the COM fn we DO see called is IDirect3DRMFrame3_AddVisual / IDirect3DRMMeshBuilder3_*. If those weren't called, the frame's visual list is empty ⇒ no geometry to emit. Verify by adding IDirect3DRMFrame3_AddVisual to the trace stub set (we may already trace it, just need to inspect).
+5. If AddVisual IS being called: scene loaded, geometry exists, but the gate is on something else (visibility flag, LOD selection, transform validity).
+6. If AddVisual is NOT being called: app's scene-load path failed silently. Look at IDirect3DRMMeshBuilder3_Load / LoadFromFile — does it return success but produce an empty mesh?
+
+**2026-04-29 cont.41 — multi-app sweep: the bug is systemic, not ROCKROLL-specific.**
+
+Ran the same `--trace-dx-raw --max-batches=8000` probe across other d3rm screensavers in the Plus!98 set:
+
+| Screensaver | Reaches Execute? | Buffer content |
+|---|---|---|
+| ROCKROLL.SCR | yes | STATETRANSFORM (W=mh2, V=mh3, P=mh1) + EXIT, 32B |
+| GEOMETRY.SCR | yes | **identical** 32B payload |
+| JAZZ.SCR | yes | **identical** 32B payload |
+| SCIFI.SCR | no — stuck in CreateDevice/GetCaps retry loop |
+| FALLINGL.SCR | no — same retry loop |
+| OASAVER.SCR | no — same retry loop |
+| CITYSCAP.SCR | no d3rm activity (cartoon/2D screensaver — uses DDraw only) |
+| CATHY.SCR | no d3rm activity (cartoon/2D) |
+
+**Three independent d3rm scenes (ROCKROLL/GEOMETRY/JAZZ) all submit byte-identical Execute buffers.** The payload `01 00 00 00 02 00 00 00 02 00 00 00 03 00 00 00 03 00 00 00 01 00 00 00` decodes as 3× D3DSTATE pairs: `(D3DTRANSFORMSTATE_WORLD, mh=2)`, `(VIEW, mh=3)`, `(PROJECTION, mh=1)`. That's d3rm's per-frame matrix-binding init, fired BEFORE per-mesh geometry emit. So all three apps complete d3rm's init phase but bail out before the geometry-emit phase begins.
+
+Three different scenes producing three identical 32-byte buffers means the divergence point is **inside d3rm itself**, not the app — d3rm has the Frame::Render path and is choking on something we provide upstream. Hypotheses, ranked:
+- (a) **Visual list is empty.** d3rm's IDirect3DRMFrame3::AddVisual was never wired (silent failure in MeshBuilder3::Load → returned NULL mesh → AddVisual rejected the NULL). All three apps would hit this if our MeshBuilder/Texture path is broken.
+- (b) **Picking/visibility cull rejects everything.** d3rm computes view-frustum culling using the bound viewport rect; if our SetViewport handler stores wrong `dvScaleX/dvScaleY/dwClip*` values, the frustum is degenerate and every visual culls.
+- (c) **Texture-load failure short-circuits the mesh's "ready" state.** Cont.39 noted 0× CreateTexture/Load — meshes that need a texture but can't bind one might be marked "dirty" and skipped from the emit pass.
+
+**The fact that the SAME 32-byte buffer appears across 3 scenes that should differ wildly (rock instruments, jazz notes, abstract geometry) is the smoking gun: hypothesis (a) is most likely** — the meshes never even get registered as visuals in their respective frames, so d3rm has nothing to walk in the per-frame visual list.
+
+**SCIFI/FALLINGL/OASAVER stuck in CreateDevice retry loop** is a separate bug: our IDirect3D2::EnumDevices or IDirect3DDevice2::GetCaps is reporting caps that d3rm rejects; it then retries with different requested caps, reaching the same answer, and never proceeds. That's a smaller, more localized fix (compare what wine-d3rm probes vs. what our GetCaps fills).
+
+**cont.42 plan — verify hypothesis (a):**
+1. Add a one-line hit-counter on d3rm's IDirect3DRMMeshBuilder3::Load (origVA TBD via `tools/find_string.js d3drm.dll "MeshBuilder"` + vtable walk). If it fires N times for N expected meshes but returns failure, our Load implementation is broken. If it fires 0 times, the app is using a different load path (LoadFromResource / LoadMesh-on-Frame / X-file parser).
+2. Add a hit-counter on d3rm's IDirect3DRMFrame3::AddVisual. Hit count = 0 confirms no visuals registered.
+3. Find the d3rm internal flag that gates "did this mesh produce vertices" and trace_at it.
+4. As a workaround for (a), if d3rm's mesh-load path requires DirectX surfaces that we're failing to provide, identify the failing primitive (texture create? IDirect3DRMMeshBuilder3::SetTexture?) and fix the host stub.
+
+**2026-04-29 cont.42 — Gemini consult: the gate at `[eax+0x5c4]` is the smoking gun.**
+
+Sent disasm of d3rm flush-fn (0x647c3905) and append-state-op fn (0x647c36e0) to Gemini for a second opinion. Key insights:
+
+1. **STATETRANSFORM (op=6) bypasses the gate.** In 0x647c36e0, opcode 6 fails both `cmp edx,8` and `cmp edx,7`, so it jumps to `0x647c3726` (a separate batcher shim). Matrices are always emitted regardless of device caps. That's why we see the 32-byte matrix-only buffer succeed.
+
+2. **STATELIGHT (7) and STATERENDER (8) hit the `[eax+0x5c4]` gate.** If the gate is non-zero, d3rm thinks the device supports a "fast path" (DrawPrimitive-like) and routes RenderStates to a different emitter (`0x647a0a29`), which **bypasses the Execute Buffer entirely**. Mesh-renderer (vtable@0x647e0b40 slot 6) sees the "fast-path" bit and either fails silently or uses an emitter that never fires for our stubbed device.
+
+3. **`[esi+0x1d4]` = CDirect3DRMContext** (emission scratchpad), with `[ctx+0x3c]` = IDirect3DDevice ptr, `[+0x44]` = writes-pending counter, `[+0x4c]` = write head into the locked Execute buffer.
+
+4. **The `[eax+0x5c4]` field is inside d3dim's IDirect3DDevice struct** (the implementation-private extension). Our COM wrapper is only 8 bytes wide, so reads at +0x5c4 land in **adjacent slot memory** in our COM_WRAPPERS table — probably hitting the next slot's vtable/refcount and returning a non-zero value. That trips the fast-path branch and silently disables geometry emission.
+
+**Concrete fix Gemini suggests:**
+- Thicken the device wrapper to ≥ 1.5KB (alloc per-device backing in `dx_create_com_obj` or `IDirect3D2_CreateDevice`).
+- Explicitly zero `[device+0x5c4]` to force d3rm onto the legacy Execute Buffer path for ALL opcodes.
+
+**cont.43 plan — verify before fixing:**
+1. `--trace-at=d3drm+0x647c36f8 --trace-at-dump=...` at the `cmp dword [eax+0x5c4], 0x0` instruction. Dump 32 bytes around `[eax+0x5c4]` to see what value d3rm actually reads. If it's non-zero (and not consistently 0xCAFE-pattern from our COM wrapper init), Gemini's hypothesis is confirmed.
+2. If confirmed: identify the device wrapper allocator and bump the size; zero the +0x5c4 region. Alternatively, route d3rm reads at this offset through a special path that always returns 0.
+3. Re-run ROCKROLL/GEOMETRY/JAZZ. If geometry now appears in the Execute buffer (TRIANGLE/PROCESSVERTICES ops), the fix is correct. If only one of the three benefits, there's a second gate.
+4. If the gate IS zero in our trace but geometry still doesn't appear, the bug is elsewhere (likely the visual walker that calls into the mesh-render slot 6).
+
+**2026-04-29 cont.43 — Gemini's diagnosis half-right; verified with hit counts.**
+
+Hit-counted the gate paths in 0x647c36e0 (state-append fn) over a 12K-batch ROCKROLL run:
+
+| Block | Meaning | Hits |
+|---|---|---|
+| 0x647c36e0 | fn entry | 480 |
+| 0x647c36f5 | state ∈ {7,8} reached gate | 384 |
+| 0x647c3701 | fast-path (gate non-zero, post-jz-not-taken) | 384 |
+| 0x647c3726 | fallback (state ∉ {7,8} OR gate=0) | 96 |
+| 0x647c3744 | fallback's inner | 96 |
+| 0x647c3905 | flush | 48 |
+
+`0x647c3701 == 0x647c36f5` ⇒ the `jz [eax+0x5c4]==0 → bail` is **never taken** ⇒ gate IS non-zero. Confirms Gemini's structural diagnosis: d3rm takes the fast path for all 384 STATELIGHT/STATERENDER appends, bypassing the Execute Buffer.
+
+But Gemini's specific FIX ("zero +0x5c4 in the COM wrapper") is misaimed — `eax = [ctx+0x3c]` is NOT our 8-byte COM device wrapper. It points into d3rm's own internal `CDirect3DRMDevice` struct (heap-allocated by d3rm during init, filled by d3rm). The +0x5c4 byte is set BY d3rm itself — we can't directly write to it without intercepting d3rm's internal state.
+
+That's also confirmed by post-run dump: `mem[0x7c3e8038 + 0x5c4] = 0x00...` (our device wrapper's +0x5c4 IS zero, but d3rm reads from a different pointer).
+
+**The render-state fast path already works in our emulator.** Our API histogram shows 2540× SetRenderState + 508× SetLightState + 381× SetMatrix — these are the d3rm fast-path emissions hitting our DX_OBJECTS handlers correctly. So fast-path for state IS functional.
+
+**What's broken is the geometry-emit fast path.** d3rm's per-mesh emitter would normally call `IDirect3DDevice2::DrawPrimitive` (or similar) directly when the same gate is set. Our API histogram shows **0× DrawPrimitive** in 88K calls. So a parallel gate (or precondition) for geometry is failing — different from the state gate.
+
+**Refined hypothesis:** d3rm's geometry-emit path requires:
+- (i) at least one mesh registered as a visual on the active frame (AddVisual succeeded),
+- (ii) the mesh has non-empty geometry (X-file load produced vertices/faces),
+- (iii) one of: a valid texture handle binding OR a "no-texture" fallback enabled,
+- (iv) the device's "ready for geometry" sub-flag (likely a different offset in the same internal struct as +0x5c4) is set.
+
+**cont.44 plan:**
+1. Find the d3rm fn that calls `IDirect3DDevice2::DrawPrimitive` (vtable slot for DrawPrimitive on IDirect3DDevice2 vtable). Use `tools/find_vtable_calls.js` on d3drm.dll for the known DrawPrimitive vtable slot.
+2. Hit-count its callers. Determine if the fn itself is reached (just fails to fire DrawPrimitive) or if it's never entered.
+3. If never entered: walk backward to find the gate. Likely a `[ctx+OFFSET] != 0` test where OFFSET corresponds to "visual list head" or "mesh-builder count".
+4. If entered but DrawPrimitive call doesn't fire: the gate inside it is a per-mesh "ready" flag — check what mesh-builder field gates it.
+
+**2026-04-29 cont.44 — geometry-emit fns ALL never entered; X-file parse succeeds.**
+
+Hit-counted all 16 `call [reg+0x74]` (slot 29 = IDirect3DDevice2::DrawPrimitive) sites in d3rm.dll. **Every one = 0 hits.** Then hit-counted the 8 distinct enclosing fns:
+- 0x647a4beb, 0x647a955a, 0x647afed6, 0x647b8cec, 0x647c5fe8, 0x647c6b77, 0x647c72f4, 0x647cbf34 — all **0 hits**.
+
+So d3rm's per-visual "render fn" family is statically dead. The bug is upstream — d3rm's per-frame visual walker never iterates a non-empty list, so it never dispatches to any render fn. Once that's fixed, ANY of the 16 DrawPrimitive sites might fire.
+
+**Eliminated as causes:**
+- File I/O: trace-fs+trace-api confirms ROCKROLL.SCN parses correctly, ro_pick.x and ro_git.x are mapped via CreateFileMappingA→MapViewOfFile (we don't see ReadFile because d3rm uses memory-mapped I/O), and the mapped content begins with `xof 0302txt 0032` — valid X-file magic. So the mesh data is reaching d3rm's parser as raw bytes.
+- ro_tex01.gif loads via plain ReadFile in 0x1000-byte chunks. Texture path looks healthy.
+
+**Open question:** the X-file content is reaching d3rm as bytes, but is d3rm's parser successfully producing a mesh-builder with vertices? If parser silently fails (e.g. on a template GUID it doesn't recognize, or our heap allocator fragmenting its parse-time buffer), the mesh-builder would have 0 vertices and AddVisual would either reject NULL meshes or accept-but-skip-empty.
+
+**cont.45 plan — pinpoint where d3rm bails between "X-file mapped" and "render fn entered":**
+1. Find d3rm's "Direct3DRMCreate" entry (origVA via export table) and its CreateMeshBuilder3 dispatch. Hit-count both.
+2. Find d3rm's per-frame walker fn — it must be reached 127× (matches BeginScene count), and inside it, the visual-list iteration head pointer test gates everything. Locate the test, read the list-head pointer at runtime — if NULL, AddVisual was never called (or returned failure).
+3. Walk ROCKROLL.EXE imports of d3rm: only `Direct3DRMCreate` is imported. So app calls IDirect3DRM3 vtable methods. Locate the IDirect3DRM3 vtable in d3rm.rdata (look for the QI/AddRef/Release/CreateMeshBuilder3 sequence) and hit-count CreateMeshBuilder3 + Load + AddVisual entries.
+4. As parallel signal: instrument the X-file parser's "vertex emit" inner loop. If parser runs but emits 0 vertices, the mesh-data dispatch is wrong (template GUID mismatch, header-only file, etc.).
+
+**Cumulative state** (cont.36 → cont.44):
+- ROCKROLL/GEOMETRY/JAZZ all reach 127 frames/second (BeginScene/EndScene/Flip cycle works).
+- d3rm renders 32-byte STATETRANSFORM-only buffers per frame, identical across all 3 apps.
+- Render-state fast path fires correctly (2540× SetRenderState observed). 
+- Geometry fast path completely silent (0× DrawPrimitive, 0 enters of any of d3rm's 8 mesh-render fns).
+- Asset I/O for meshes (X-files) and textures (GIFs) succeeds at the file/mapping level.
+- The bug sits between "asset bytes available to d3rm parser" and "visual added to frame's render list" — within d3rm's internal mesh-builder/AddVisual path. Need to instrument d3rm-internal entry points (no longer findable via API trace since d3rm is real not stubbed).
