@@ -2557,3 +2557,47 @@ These are **statics in d3xof's .data**. The parser is heavily stateful and share
 3. Likely candidate: a "templates table exhausted" exit returns 1 because our walker entered with parser state already done. State `[0x5c51cc18]` may already be at end after RegisterTemplates' first parse, so re-entries hit the "nothing more to do" branch which returns 1 (legitimately error from caller's POV).
 4. If that's it, the bug is that **RegisterTemplates and GetNextDataObject share the same parser statics** → only first call works. This is correct per spec; our problem may be that d3rm's internal use expects a *fresh* parser per file. Investigate whether GetNextDataObject creates a new parser context that we're not honoring (different `ecx` thisptr → different state pointer).
 5. Quick check: `0x5c5085a1` takes `ecx=esi`, where esi is the iterator obj (different per call). The parser fn 0x5c507361 uses GLOBALS not [esi+...] — that's the bug per d3xof's design. So the iterator's [esi+0x4] state field must encode the result, but our walker takes path that sets state=2 because parser returned 1 (intended-as-sentinel). Need to re-read the walker logic with this lens.
+
+**2026-04-29 cont.49 — parser exit instrumented; eax=1 reached via the `push 0x1; pop eax` epilogue.**
+
+Walked all 25+ rets in the d3xof parser fn region (0x5c507361..0x5c5085a0). The parser body's exit epilogue at `0x5c507739..0x5c507743` decodes as:
+
+```
+5c50772a  33 c0           xor eax, eax              ; success
+5c50772c  eb 0e           jmp 0x5c50773c            ; → pop edi/esi/ebp/ebx; ret
+5c50772e  68 bc 16 50 5c  push 0x5c5016bc           ; error path A
+5c507733  e8 ff fb ff ff  call 0x5c507337           ; emit error
+5c507738  59              pop ecx
+5c507739  6a 01           push 0x1                  ; ← runtime hits 4×
+5c50773b  58              pop eax                   ; eax = 1
+5c50773c  5f              pop edi
+... ret
+```
+
+Branches reaching the eax=1 path (static analysis):
+- `0x5c507404 jnb 0x5c50772e` — buffer cursor overflow.
+- `0x5c507639 jnb 0x5c50772e` — same overflow check.
+- `0x5c5076e0 jnb 0x5c50772e` — yet another overflow check.
+- `0x5c5076c5 jbe 0x5c507739` — state-stack underflow (esi <= base 0x5c51a8e0).
+- `0x5c50771b je 0x5c507739` — last-token sentinel (eax=[0x5c51a8d8]==0).
+
+Runtime counts (delta=0x18ae8000):
+- `0x74fef739` (push 0x1; pop eax): **4 hits** ✓
+- `0x74fef72e`, `0x74fef716`, `0x74fef719`, `0x74fef67e`, `0x74fef687`: 0 hits.
+
+All five static predecessors show 0 hits, yet the epilogue fires 4 times. The `0x74fef739` address isn't strictly a jump target either (mid-block), but the WAT block-cache evidently picks up its instructions. So either:
+- (a) My disasm of branches is incomplete (some path I haven't found bypasses the show jcc's), or
+- (b) Counts only fire reliably on canonical basic-block entries our decoder picks (call-return landings, branch targets, fn entries) and these mid-epilogue probes are dropping in/out depending on cache layout.
+
+Given the pattern (push 0x1; pop eax IS measured 4×, but no predecessor count fires), (b) is more likely — the d3xof parser body is hot, our block cache has it as one giant block crossing all the "exit" cmp/jcc sequences, and only the jcc *targets* register as cache entries.
+
+**cont.50 plan:**
+1. Use `--trace-at` on the actual parser-body entry `0x74fef361` and dump key globals on each call:
+   - `[0x5c51a8d8]` (last-token, runtime VA `0x74fff8d8` after delta)
+   - `[0x5c51cc18]` (cursor)
+   - `[0x5c51cc20]` (template table base)
+   - `[0x5c51a6c0]` (depth counter)
+2. Compare globals **between** the 4 calls (1× RegisterTemplates, 3× GetNextDataObject). If RegisterTemplates already left the cursor at end-of-buffer, GetNextDataObject re-enters with a stale state and immediately exits.
+3. Also dump the templates buffer 0x647e1250 (in d3rm .data) to confirm bytes match the .dll's static template buffer.
+4. **Most-likely root cause:** RegisterTemplates is *supposed* to update an internal "templates registered" list, then return success. Each subsequent CreateEnumObject is supposed to set up a fresh per-iterator parsing context (cursor pointing at the .x file's byte stream — *not* the templates buffer). If our flow somehow re-uses the templates-buffer cursor for the .x file enumeration, the parser sees end-of-buffer immediately. Investigate `0x5c508297` (called from CreateEnumObject) — does it set `[0x5c51cc18]` to the .x file content or to the templates buffer?
+5. Bisect: run with --break-api=`HeapAlloc` or --trace-host wrapping d3xof's internal alloc fn `0x5c50671c` to verify per-iterator state is allocated and not aliasing the global parser cursor.
