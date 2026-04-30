@@ -354,8 +354,8 @@ async function main() {
     'OutputDebugStringA', 'MessageBoxA',
   ];
 
-  // DX_OBJECTS is at WASM addr 0xE970 (below GUEST_BASE); 32 entries × 32 bytes.
-  // Matches src/09a8-handlers-directx.wat layout.
+  // DX_OBJECTS lives in high WASM memory on this branch.
+  // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07FF0000).
   const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
     6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3' };
   function dxLookupThis(thisGuest, dv, g2w) {
@@ -365,8 +365,8 @@ async function main() {
       wa = g2w(thisGuest);
       slot = dv.getUint32(wa + 4, true);
     } catch (_) { return null; }
-    if (slot >= 32) return null;
-    const entry = 0xE970 + slot * 32;
+    if (slot >= 256) return null;
+    const entry = 0x07FF0000 + slot * 32;
     const type = dv.getUint32(entry, true);
     if (!type) return null;
     const rc = dv.getUint32(entry + 4, true);
@@ -2469,8 +2469,84 @@ if (VERBOSE) {
     dumpSEH(true);
   }
 
+  const getDxSurfaceManifest = () => {
+    const mem = new Uint8Array(memory.buffer);
+    const dv = new DataView(memory.buffer);
+    const DX_BASE = 0x07FF0000;
+    const DX_SLOTS = 256;
+    let paletteWa = 0;
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
+      const ptr = dv.getUint32(entry + 20, true);
+      if (type === 3 && ptr) { paletteWa = ptr; break; }
+    }
+    const surfaces = [];
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
+      const flags = dv.getUint32(entry + 28, true);
+      if (type !== 2 || !flags) continue;
+      const w = dv.getUint16(entry + 12, true);
+      const h = dv.getUint16(entry + 14, true);
+      const bpp = dv.getUint16(entry + 16, true);
+      const pitch = dv.getUint16(entry + 18, true) || Math.ceil(w * bpp / 32) * 4;
+      const dib = dv.getUint32(entry + 20, true);
+      if (!w || !h || !dib) continue;
+      let firstNonZero = -1;
+      let checksum = 0;
+      const sampleBytes = Math.min(pitch * Math.min(h, 16), 0x4000);
+      for (let i = 0; i < sampleBytes; i++) {
+        const v = mem[dib + i];
+        if (firstNonZero < 0 && v !== 0) firstNonZero = i;
+        checksum = (checksum + v) >>> 0;
+      }
+      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum, paletteWa });
+    }
+    return { mem, surfaces };
+  };
+
+  const paintDxSurfaceToCanvas = (canvas, surface, mem) => {
+    const ctx2d = canvas.getContext('2d');
+    const img = ctx2d.createImageData(surface.w, surface.h);
+    const data = img.data;
+    for (let y = 0; y < surface.h; y++) {
+      const srcRow = surface.dib + y * surface.pitch;
+      for (let x = 0; x < surface.w; x++) {
+        const di = (y * surface.w + x) * 4;
+        let r = 0, g = 0, b = 0;
+        if (surface.bpp === 8) {
+          if (surface.paletteWa) {
+            const pi = mem[srcRow + x];
+            r = mem[surface.paletteWa + pi * 4];
+            g = mem[surface.paletteWa + pi * 4 + 1];
+            b = mem[surface.paletteWa + pi * 4 + 2];
+          } else {
+            r = g = b = mem[srcRow + x];
+          }
+        } else if (surface.bpp === 16) {
+          const px = mem[srcRow + x * 2] | (mem[srcRow + x * 2 + 1] << 8);
+          r = (px >> 11) << 3; g = ((px >> 5) & 0x3F) << 2; b = (px & 0x1F) << 3;
+        } else if (surface.bpp === 24) {
+          b = mem[srcRow + x * 3]; g = mem[srcRow + x * 3 + 1]; r = mem[srcRow + x * 3 + 2];
+        } else if (surface.bpp === 32) {
+          b = mem[srcRow + x * 4]; g = mem[srcRow + x * 4 + 1]; r = mem[srcRow + x * 4 + 2];
+        }
+        data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
+      }
+    }
+    ctx2d.putImageData(img, 0, 0);
+  };
+
   if (PNG_OUT && renderer) {
     renderer.repaint();
+    const { mem, surfaces } = getDxSurfaceManifest();
+    const primary = surfaces.find(s => (s.flags & 1) && s.w === 640 && s.h === 480);
+    const fallback = surfaces.find(s => (s.flags & 4) && s.w === 640 && s.h === 480 && s.firstNonZero >= 0);
+    if (primary && primary.firstNonZero < 0 && fallback) {
+      paintDxSurfaceToCanvas(renderer.canvas, fallback, mem);
+      console.log(`  PNG fallback used offscreen slot ${fallback.slot} because primary slot ${primary.slot} is still zero`);
+    }
     const pngBuf = renderer.canvas.toBuffer('image/png');
     fs.writeFileSync(PNG_OUT, pngBuf);
     console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
@@ -2526,8 +2602,8 @@ if (VERBOSE) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0xE970;
-    const DX_SLOTS = 32;
+    const DX_BASE = 0x07FF0000;
+    const DX_SLOTS = 256;
     const manifest = [];
     // Read the primary palette WASM addr by scanning palette-type entries in
     // the live DX table. Palette slots have type=3 and store their palette
