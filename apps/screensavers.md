@@ -2508,3 +2508,52 @@ Inside `0x647d0868`:
 3. At the bail, dump regs + the parser cursor (likely an EBP/EBX-based pointer into the template buffer). The byte at the cursor reveals which token confused the parser.
 4. Compare expected token byte vs actual — if matches a known X-file marker (e.g. `0x10` = TOKEN_TEMPLATE, `0x05` = TOKEN_GUID, `0x06` = TOKEN_OPEN_BRACE), the parser's state machine took a wrong branch — bug is in d3xof's prior-token logic or our emulator's miscompiled instruction. If doesn't match, the cursor is wrong (off-by-one, alignment, etc).
 5. Sanity check: copy the same 0xcce-byte buffer out and feed it to a known-good x86 d3xof.dll under Wine + a real RegisterTemplates harness. If real Wine ALSO fails, the buffer is malformed (unlikely but possible). If real Wine succeeds, our emulator is corrupting the buffer in transit — verify g2w mapping at `0x647e1250` returns identical bytes to the .data dump.
+
+**2026-04-29 cont.48 — bail localized: d3xof binary parser returns EAX=1 → BADVALUE.**
+
+Reorientation. cont.47 was right about the d3xof object but wrong about which method was called. Re-disasm of d3rm at `0x647d07db`:
+- `push edx; push eax; mov ecx, [eax]; call [ecx+0xc]` → 1 arg + thisptr, slot 3 (offset 0xc). With ret 8, this is `IDirectXFileEnumObject::GetNextDataObject(LPDIRECTXFILEDATA*)`, not RegisterTemplates.
+
+Mapped d3xof runtime VAs (base 0x74fe8000, delta 0x18ae8000) and used `--count` to verify each function actually executes:
+
+| Fn | OrigVA | RuntimeVA | Hits |
+|---|---|---|---|
+| DirectXFileCreate | 0x5c505fa8 | 0x74fedfa8 | 1 |
+| IDirectXFile::RegisterTemplates (slot 5) | 0x5c50620e | 0x74fee20e | 1 |
+| IDirectXFile::CreateEnumObject (slot 3) | 0x5c50604e | 0x74fee04e | 3 |
+| IDirectXFileEnumObject::GetNextDataObject (slot 3) | 0x5c50638e | 0x74fee38e | 3 |
+| Template walker (`call 0x5c5085a1`) | 0x5c5085a1 | 0x74ff05a1 | 4 |
+| Parser entry stub (`call 0x5c50733a`) | 0x5c50733a | 0x74fef33a | 4 |
+| Parser body (0x5c507361) | 0x5c507361 | 0x74fef361 | 4 |
+| Lexer (`0x5c506e2d`) | 0x5c506e2d | 0x74feee2d | 387 |
+
+So 1× RegisterTemplates + 3× GetNextDataObject all fire, the parser body actually runs (387 lexer calls), but the **walker exits via state=2** every single time:
+
+| Walker exit path | OrigVA | RuntimeVA | Hits |
+|---|---|---|---|
+| state=2 (BADVALUE) | 0x5c5085da | 0x74ff05da | **4** |
+| state=1 (success) | 0x5c5085d1 | 0x74ff05d1 | 0 |
+| state=0 (eof) | 0x5c5085c6 | 0x74ff05c6 | 0 |
+| list-read fall-through | 0x5c5085ee | 0x74ff05ee | 0 |
+| buffer-overflow | 0x5c50772e | 0x74fef72e | 0 |
+
+`--trace-at=0x74ff05b8` (post-`call 0x5c50733a` landing) confirms **EAX=1 every call** at the walker's `test eax, eax; jnz state=2`. So the parser doesn't return an X-file error code — it just returns 1.
+
+That means either:
+- (i) Parser's success exit is `xor eax, eax; ret`, but our emulator's path through it is taking a *different* exit that returns 1 (e.g. a sentinel "no more tokens" path normally meant for inner state machines).
+- (ii) Parser's body has a self-test that returns 1 if some global state mismatch is detected — and our emulator is corrupting that global.
+
+Notable parser globals (set in parser entry block 0x5c507361):
+- `[0x5c51cc18]` → token-stream cursor, init = `0x5c51a8e0`.
+- `[0x5c51cc20]` → templates table base, init = `0x5c51acc8`.
+- `[0x5c51a8d8]` → last-token (init `-1`).
+- `[0x5c51cc1c]`, `[0x5c51a6c0]` → init 0 (depth/flag).
+
+These are **statics in d3xof's .data**. The parser is heavily stateful and shares the same statics across all 4 calls. After 1× RegisterTemplates the statics are mutated; subsequent CreateEnumObject reuses them.
+
+**cont.49 plan:**
+1. Disasm full body of `0x5c507361` past 0x5c507450 to find every `ret` and the eax value preceding it. Tools cap is ~60-80 instructions per call — chain disasm calls or enlarge `count` arg further. (The fn is large; `0x5c5085a1 - 0x5c507361 = 0x123c` bytes ≈ 1k+ insts.)
+2. Once every ret-with-eax is enumerated, set `--trace-at` on the ret addresses to find which one fires.
+3. Likely candidate: a "templates table exhausted" exit returns 1 because our walker entered with parser state already done. State `[0x5c51cc18]` may already be at end after RegisterTemplates' first parse, so re-entries hit the "nothing more to do" branch which returns 1 (legitimately error from caller's POV).
+4. If that's it, the bug is that **RegisterTemplates and GetNextDataObject share the same parser statics** → only first call works. This is correct per spec; our problem may be that d3rm's internal use expects a *fresh* parser per file. Investigate whether GetNextDataObject creates a new parser context that we're not honoring (different `ecx` thisptr → different state pointer).
+5. Quick check: `0x5c5085a1` takes `ecx=esi`, where esi is the iterator obj (different per call). The parser fn 0x5c507361 uses GLOBALS not [esi+...] — that's the bug per d3xof's design. So the iterator's [esi+0x4] state field must encode the result, but our walker takes path that sets state=2 because parser returned 1 (intended-as-sentinel). Need to re-read the walker logic with this lens.
