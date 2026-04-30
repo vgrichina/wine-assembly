@@ -354,8 +354,8 @@ async function main() {
     'OutputDebugStringA', 'MessageBoxA',
   ];
 
-  // DX_OBJECTS is at WASM addr 0xE970 (below GUEST_BASE); 32 entries × 32 bytes.
-  // Matches src/09a8-handlers-directx.wat layout.
+  // DX_OBJECTS lives in high WASM memory on this branch.
+  // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07FF0000).
   const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
     6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3' };
   function dxLookupThis(thisGuest, dv, g2w) {
@@ -365,8 +365,8 @@ async function main() {
       wa = g2w(thisGuest);
       slot = dv.getUint32(wa + 4, true);
     } catch (_) { return null; }
-    if (slot >= 32) return null;
-    const entry = 0xE970 + slot * 32;
+    if (slot >= 256) return null;
+    const entry = 0x07FF0000 + slot * 32;
     const type = dv.getUint32(entry, true);
     if (!type) return null;
     const rc = dv.getUint32(entry + 4, true);
@@ -2039,8 +2039,15 @@ async function main() {
       console.log(`[${batch}] >> ${hex(eipBefore)} ESP=${hex(instance.exports.get_esp())}`);
     }
 
-    // Fire multimedia timer callback if due (timeSetEvent fires asynchronously on real Win32)
-    if (instance.exports.fire_mm_timer && !hasFlag('no-timer')) {
+    // Default to message-loop delivery for multimedia timers. The guest already
+    // synthesizes MM_TIMER (0x7FF0) in PeekMessageA/GetMessageA, which matches
+    // how our Win32-facing code expects timeSetEvent callbacks to arrive.
+    // Injecting the callback asynchronously here as well causes duplicate
+    // dispatch for apps that pump messages, including RCT and Abe.
+    //
+    // `--async-mm-timer` keeps the old path available for experiments on
+    // binaries that truly need out-of-band timer delivery.
+    if (instance.exports.fire_mm_timer && hasFlag('async-mm-timer') && !hasFlag('no-timer')) {
       const comBefore = instance.exports.guest_read32(0x003fea90);
       const fired = instance.exports.fire_mm_timer();
       const comAfter = instance.exports.guest_read32(0x003fea90);
@@ -2462,8 +2469,84 @@ if (VERBOSE) {
     dumpSEH(true);
   }
 
+  const getDxSurfaceManifest = () => {
+    const mem = new Uint8Array(memory.buffer);
+    const dv = new DataView(memory.buffer);
+    const DX_BASE = 0x07FF0000;
+    const DX_SLOTS = 256;
+    let paletteWa = 0;
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
+      const ptr = dv.getUint32(entry + 20, true);
+      if (type === 3 && ptr) { paletteWa = ptr; break; }
+    }
+    const surfaces = [];
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
+      const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
+      const flags = dv.getUint32(entry + 28, true);
+      if (type !== 2 || !flags) continue;
+      const w = dv.getUint16(entry + 12, true);
+      const h = dv.getUint16(entry + 14, true);
+      const bpp = dv.getUint16(entry + 16, true);
+      const pitch = dv.getUint16(entry + 18, true) || Math.ceil(w * bpp / 32) * 4;
+      const dib = dv.getUint32(entry + 20, true);
+      if (!w || !h || !dib) continue;
+      let firstNonZero = -1;
+      let checksum = 0;
+      const sampleBytes = Math.min(pitch * Math.min(h, 16), 0x4000);
+      for (let i = 0; i < sampleBytes; i++) {
+        const v = mem[dib + i];
+        if (firstNonZero < 0 && v !== 0) firstNonZero = i;
+        checksum = (checksum + v) >>> 0;
+      }
+      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum, paletteWa });
+    }
+    return { mem, surfaces };
+  };
+
+  const paintDxSurfaceToCanvas = (canvas, surface, mem) => {
+    const ctx2d = canvas.getContext('2d');
+    const img = ctx2d.createImageData(surface.w, surface.h);
+    const data = img.data;
+    for (let y = 0; y < surface.h; y++) {
+      const srcRow = surface.dib + y * surface.pitch;
+      for (let x = 0; x < surface.w; x++) {
+        const di = (y * surface.w + x) * 4;
+        let r = 0, g = 0, b = 0;
+        if (surface.bpp === 8) {
+          if (surface.paletteWa) {
+            const pi = mem[srcRow + x];
+            r = mem[surface.paletteWa + pi * 4];
+            g = mem[surface.paletteWa + pi * 4 + 1];
+            b = mem[surface.paletteWa + pi * 4 + 2];
+          } else {
+            r = g = b = mem[srcRow + x];
+          }
+        } else if (surface.bpp === 16) {
+          const px = mem[srcRow + x * 2] | (mem[srcRow + x * 2 + 1] << 8);
+          r = (px >> 11) << 3; g = ((px >> 5) & 0x3F) << 2; b = (px & 0x1F) << 3;
+        } else if (surface.bpp === 24) {
+          b = mem[srcRow + x * 3]; g = mem[srcRow + x * 3 + 1]; r = mem[srcRow + x * 3 + 2];
+        } else if (surface.bpp === 32) {
+          b = mem[srcRow + x * 4]; g = mem[srcRow + x * 4 + 1]; r = mem[srcRow + x * 4 + 2];
+        }
+        data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
+      }
+    }
+    ctx2d.putImageData(img, 0, 0);
+  };
+
   if (PNG_OUT && renderer) {
     renderer.repaint();
+    const { mem, surfaces } = getDxSurfaceManifest();
+    const primary = surfaces.find(s => (s.flags & 1) && s.w === 640 && s.h === 480);
+    const fallback = surfaces.find(s => (s.flags & 4) && s.w === 640 && s.h === 480 && s.firstNonZero >= 0);
+    if (primary && primary.firstNonZero < 0 && fallback) {
+      paintDxSurfaceToCanvas(renderer.canvas, fallback, mem);
+      console.log(`  PNG fallback used offscreen slot ${fallback.slot} because primary slot ${primary.slot} is still zero`);
+    }
     const pngBuf = renderer.canvas.toBuffer('image/png');
     fs.writeFileSync(PNG_OUT, pngBuf);
     console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
@@ -2511,45 +2594,47 @@ if (VERBOSE) {
     console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
   }
 
-  // Dump all DirectDraw surfaces' current DIB contents as PNGs. The DX_OBJECTS
-  // table lives at WASM 0x07FF0000; each 32-byte slot is a surface entry when
-  // flags (+28) is non-zero. Layout: +12 w(u16), +14 h(u16), +16 bpp(u16),
-  // +18 pitch(u16), +20 DIB ptr (WASM addr), +28 flags (1=primary 2=backbuf 4=offscr).
-  // For 8bpp surfaces we need the palette; $dx_primary_pal_wa holds the current
-  // primary palette's 256-entry data (PALETTEENTRY format: R,G,B,flags).
-  if (DUMP_DDRAW && createCanvas) {
+  // Dump all DirectDraw surfaces' current DIB contents as PNGs. Use the same
+  // low-memory DX_OBJECTS table that dxLookupThis() uses for live tracing so
+  // the diagnostic dump stays in sync with the current branch layout. When
+  // canvas is unavailable, fall back to PPM + a metadata manifest.
+  if (DUMP_DDRAW) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
     const DX_BASE = 0x07FF0000;
-    // Read the primary palette WASM addr from the WAT global by probing memory
-    // near the first primary surface; we can't read globals from JS without an
-    // export, so for 8bpp we scan surfaces and reuse whichever palette_wa we
-    // find on a palette-type entry. Palette entries aren't differentiated in
-    // flags, but their DIB ptr (+20) points at 1024 bytes of palette data.
+    const DX_SLOTS = 256;
+    const manifest = [];
+    // Read the primary palette WASM addr by scanning palette-type entries in
+    // the live DX table. Palette slots have type=3 and store their palette
+    // bytes at +20.
     let paletteWa = 0;
-    // First pass: find primary surface → it knows the palette indirectly.
-    // Simpler: search the SetPalette-side state by trawling DX_OBJECTS for a
-    // slot whose flags==0 (palette slots don't set surface-type flags) but
-    // whose +20 is a valid pointer. Good enough for diagnostic dumps.
-    for (let slot = 0; slot < 256; slot++) {
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
-      const flags = dv.getUint32(entry + 28, true);
+      const type = dv.getUint32(entry, true);
       const ptr = dv.getUint32(entry + 20, true);
-      const w = dv.getUint16(entry + 12, true);
-      if (!flags && ptr && !w) { paletteWa = ptr; break; }
+      if (type === 3 && ptr) { paletteWa = ptr; break; }
     }
     let count = 0;
-    for (let slot = 0; slot < 256; slot++) {
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
       const flags = dv.getUint32(entry + 28, true);
-      if (!flags) continue;
+      if (type !== 2 || !flags) continue;
       const w = dv.getUint16(entry + 12, true);
       const h = dv.getUint16(entry + 14, true);
       const bpp = dv.getUint16(entry + 16, true);
       const pitch = dv.getUint16(entry + 18, true) || Math.ceil(w * bpp / 32) * 4;
       const dib = dv.getUint32(entry + 20, true);
       if (!w || !h || !dib) continue;
+      let firstNonZero = -1;
+      let checksum = 0;
+      const sampleBytes = Math.min(pitch * Math.min(h, 16), 0x4000);
+      for (let i = 0; i < sampleBytes; i++) {
+        const v = mem[dib + i];
+        if (firstNonZero < 0 && v !== 0) firstNonZero = i;
+        checksum = (checksum + v) >>> 0;
+      }
       const rgba = new Uint8Array(w * h * 4);
       for (let y = 0; y < h; y++) {
         const srcRow = dib + y * pitch;
@@ -2577,16 +2662,31 @@ if (VERBOSE) {
           rgba[di] = r; rgba[di + 1] = g; rgba[di + 2] = b; rgba[di + 3] = 255;
         }
       }
-      const c = createCanvas(w, h);
-      const cctx = c.getContext('2d');
-      const img = cctx.createImageData(w, h);
-      img.data.set(rgba);
-      cctx.putImageData(img, 0, 0);
       const kind = (flags & 1) ? 'primary' : (flags & 2) ? 'backbuf' : (flags & 4) ? 'offscreen' : 'other';
-      const outFile = path.join(DUMP_DDRAW, `dx_${slot.toString().padStart(2, '0')}_${kind}_${w}x${h}_${bpp}bpp.png`);
-      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      manifest.push({ slot, kind, w, h, bpp, pitch, dib, flags, firstNonZero, checksum, sampleBytes });
+      const base = path.join(DUMP_DDRAW, `dx_${slot.toString().padStart(2, '0')}_${kind}_${w}x${h}_${bpp}bpp`);
+      if (createCanvas) {
+        const c = createCanvas(w, h);
+        const cctx = c.getContext('2d');
+        const img = cctx.createImageData(w, h);
+        img.data.set(rgba);
+        cctx.putImageData(img, 0, 0);
+        fs.writeFileSync(base + '.png', c.toBuffer('image/png'));
+      } else {
+        // Canvas isn't available in some sandboxes; emit a simple binary PPM
+        // so surface inspection still works without native deps.
+        const header = Buffer.from(`P6\n${w} ${h}\n255\n`, 'ascii');
+        const rgb = Buffer.allocUnsafe(w * h * 3);
+        for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+          rgb[j] = rgba[i];
+          rgb[j + 1] = rgba[i + 1];
+          rgb[j + 2] = rgba[i + 2];
+        }
+        fs.writeFileSync(base + '.ppm', Buffer.concat([header, rgb]));
+      }
       count++;
     }
+    fs.writeFileSync(path.join(DUMP_DDRAW, 'manifest.json'), JSON.stringify(manifest, null, 2));
     console.log(`Dumped ${count} DirectDraw surfaces to ${DUMP_DDRAW}/ (paletteWA=0x${(paletteWa>>>0).toString(16)})`);
   }
 

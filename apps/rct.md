@@ -23,6 +23,77 @@
   So the dispatch path resolves `SC3.SC4`, calls `0x0042f986`, then fails at `0x00430344` because `word [0x00836522]` was never initialized to the expected scenario-selection value.
 - `0x00430344` is part of the `0x004302aa` command interpreter. The sibling handler at `0x0043015c` performs the same "build scenario path -> call 0x0042f986 -> compare against `[0x00836522]`" sequence, which strongly suggests `0x00836522` is not random scratch but a real scenario-selection state slot that some earlier init/UI path should populate.
 
+**2026-04-30 update — first real rendered frame recovered from the live branch.**
+
+- Artifact-level proof finally split the renderer from the presenter:
+  - DirectDraw dump at batch window `28200` shows:
+    - `slot 8` (`640x480 offscreen`) is non-zero: `firstNonZero=434`, `checksum=365446`
+    - `slot 4` (`640x480 primary`) is still all-zero
+  - So RCT's software renderer *is* producing pixels, but the primary surface path is not what the headless compositor sees.
+- A targeted headless fallback in `test/run.js` now uses the non-zero fullscreen offscreen surface when the primary remains zero at PNG-capture time.
+- Result: `final.png` is no longer the untouched Win98 teal background. With the fallback active, the image contains a real multi-color game frame (`48225` bytes instead of the prior tiny uniform-teal PNG; teal pixel count drops from `307200/307200` to `0/307200`).
+- This does **not** prove the canonical primary-surface present path is correct yet; it proves the game frame exists and the missing leg is the present/compositing path from the live offscreen buffer to the visible output.
+
+**2026-04-30 update — present-path split proven with live artifacts.**
+
+- On the current PR branch, end-of-run DirectDraw dump at batch window `28200` now emits real surface artifacts:
+  - `slot 4` (`640x480 primary`) stays all-zero
+  - `slot 7` (`128x64 offscreen`) stays all-zero
+  - `slot 8` (`640x480 offscreen`) is non-zero (`firstNonZero=434`, `checksum=365446`)
+- That means RCT's software renderer is filling the fullscreen offscreen game buffer while the canonical primary surface remains untouched.
+- The corrected PNG fallback order now proves the offscreen buffer contains a visible frame:
+  - before the fix, `final.png` was 100% Win98 teal
+  - after repaint-first / offscreen-fallback-last ordering, `final.png` becomes a non-teal multi-color image and the log explicitly reports:
+    `PNG fallback used offscreen slot 8 because primary slot 4 is still zero`
+
+**Meaning:** the remaining bug is no longer "RCT does not render". It is specifically "the real game buffer is not being promoted to the canonical primary/present path on this branch." The next correctness step is to replace the PNG-time compatibility fallback with a real runtime `slot 8 -> slot 4` / visible-output present path.
+
+**Meaning:** the investigation can now stop blaming the software renderer itself. The remaining correctness work is to replace the current compatibility fallback with a proper present path that promotes the real game buffer to the visible surface without needing PNG-time intervention.
+
+**2026-04-30 follow-up — two stale assumptions corrected, one host-side bug fixed.**
+
+- The `0x00430344` trace needs careful reading: that address is the `pop eax` immediately before the compare, not the compare itself. Live trace shows stack-top `0x00000003` at `0x00430344`, so after the pop the compare is effectively `cmp ax, [0x00836522]` with both sides = `3`. The old "slot stays zero" theory is stale on the current branch.
+- `FindFirstFile("C:\\Scenarios\\*.SC4")` was genuinely wrong in the host layer. Before this pass, VFS enumeration followed host insertion/order and returned:
+  `sc10, sc11, sc15, sc17, sc4, sc8, sc9, sc0, sc3`.
+  That is a bad fit for Win98-era app expectations and clearly wrong for RCT's scenario scan. `VirtualFS.findFirstFile()` now sorts matches case-insensitively with numeric ordering, so the same probe now starts:
+  `sc0, sc3, sc4, sc8, sc9, sc10, sc11, sc15, sc17`.
+- The timer fix still matters directionally: the default guest-loop MM timer path reaches the known runtime renderer (`0x0043688e`, `0x00444374`), while forced `--async-mm-timer` diverges earlier. But the remaining render blocker is not the scenario compare.
+- The viewport/off-map diagnosis still reproduces on the live binary after the timer fix. Trace-at on `0x00444374` with dumps of `0x5706a4` / `0x5706b0` shows a stable render-target like:
+  - `left = 0xEDE0` (signed `-4640`)
+  - `top = 0x029B` (`667`)
+  - `w = 0x001D` (`29`)
+  - `h = 0x0085` (`133`)
+  - `pitch = 0x0263` (`611`)
+
+  So the software renderer is still walking a clipped/off-screen strip instead of a visible viewport when `0x444374` runs.
+
+**Action landed this pass:**
+
+1. `lib/filesystem.js` — deterministic case-insensitive natural sort in `findFirstFile()` / `findNextFile()` results, fixing the bad `*.SC4` enumeration order.
+2. `test/run.js` — `--dump-ddraw-surfaces` now reads the live low-memory DX table (`0xE970`, 32 slots) instead of the stale old high-memory table, so future surface dumps match the current branch layout.
+
+**Next concrete probe:** trace who writes the `0x5706a4` / `0x5706a6` viewport globals on the default timer path and compare their source data before `0x431323` / `0x4311c3` against expected on-screen values. The scenario compare is no longer the primary suspect; the viewport-construction path is.
+
+**New lead (2026-04-30, high priority): multimedia timer is still double-dispatched in the harness.**
+
+- `test/run.js` is the **only** caller of `instance.exports.fire_mm_timer()`, and it was doing so unconditionally before every batch.
+- The guest already has a second `timeSetEvent` path: `GetMessageA` / `PeekMessageA` call `$timer_check_due`, which synthesizes internal `0x7FF0` MM_TIMER messages that `DispatchMessageA/W` turn into the 5-arg `TimeProc` callback.
+- This is not a theoretical concern. `abe.md` already documents the same bug shape: JS-side `fire_mm_timer` + guest-side `0x7FF0` caused the timer callback to run twice per tick and corrupted guest state. A follow-up fix (`b152575`) saved caller-saved regs across the async path, but it did **not** remove the duplicate dispatch itself.
+- RCT's known hot path still fits that failure mode better than the viewport theory: it relies on `mm_timer`, `InterlockedExchange`, and busy-wait/tick pacing in the runtime path; duplicate timer callbacks can advance frame/tick state too fast, fire re-entrant work in the wrong place, and explain both the black-frame present loop and the `SC3.SC4` handoff state never stabilizing.
+
+**Action landed:** `test/run.js` now leaves multimedia timer delivery to the guest message loop by default. The old async injection path is still available behind `--async-mm-timer` for experiments on binaries that genuinely need out-of-band callback delivery.
+
+**Validate once `test/binaries/shareware/rct/English/RCT.exe` is present locally:**
+
+1. Baseline with the new default:
+   `node test/run.js --exe=test/binaries/shareware/rct/English/RCT.exe --max-batches=120000 --batch-size=5000 --count=0x438248,0x43867d --trace-host=gdi_set_dib_to_device`
+2. Compare against forced async delivery:
+   `node test/run.js --exe=test/binaries/shareware/rct/English/RCT.exe --async-mm-timer --max-batches=120000 --batch-size=5000 --count=0x438248,0x43867d --trace-host=gdi_set_dib_to_device`
+3. If the default path is right, expect at least one of:
+   - `word [0x00836522]` becomes non-zero before the `0x00430344` compare path
+   - the black full-screen presents stop being solid black
+   - the runtime no longer enters the same fatal branch at batch `1407`
+
 **Status (2026-04-29):** RCT was regressed by commit 44a423c ("trap 0x67/GS"). The blanket `unreachable` on the addr-size-override prefix is a false positive for `LOOP/LOOPE/LOOPNE/JCXZ` (E0–E3): those have no ModRM, the prefix only swaps the implicit counter ECX→CX. RCT hits this in a `mov cx,N ; … ; 67 e2 f5` init pattern at `0x00452260` (and elsewhere) and crashed at batch 12473 with `[i32] 0xCA5E0067`. Decoder now bypasses the trap when the post-prefix opcode is in `0xE0..0xE3`, packing an `addr16` flag into the operand of handler 46 (LOOP, bit 4) and handler 216 (JCXZ, bit 0). Handlers updated to decrement/test CX (low 16 of ECX) when the flag is set, preserving the high half. RCT now runs through 200k batches with no crash, completes all init APIs, loads `SC3.SC4`, and enters the scene-render walker.
 
 **Status (2026-04-17):** Implicit-show activation chain (commit e33deb0) makes CreateWindowExA with WS_VISIBLE deliver WM_ACTIVATEAPP/ACTIVATE/SETFOCUS/SIZE synchronously, matching real Win32. RCT's video-mode probe at `0x009026af` now sees `[0x568504]` populated (640) by the WM_SIZE handler at `0x0040418e`, so the fatal `jmp 0x555ab6` at 0x9026fd no longer fires. Game progresses past PostQuitMessage into the main WinMain loop and starts running game ticks.
