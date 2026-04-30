@@ -56,6 +56,7 @@ class WineAssembly {
       },
     };
     self._helpCtx = ctx;
+    self.hostCtx = ctx;
     const base = createHostImports(ctx);
     const h = base.host;
 
@@ -632,8 +633,10 @@ class WineAssembly {
         try { eip = self.instance.exports.get_eip(); } catch {}
         try { yr = self.instance.exports.get_yield_reason(); } catch {}
         const eipHex = '0x' + (eip >>> 0).toString(16).padStart(8, '0');
-        console.error('WASM crash:', e, 'EIP=' + eipHex, 'yield=' + yr);
-        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' yield=' + yr);
+        const unimpl = self.hostCtx && self.hostCtx.lastUnimplemented;
+        const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
+        console.error('WASM crash:', e, 'EIP=' + eipHex, 'yield=' + yr, tag);
+        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' yield=' + yr + tag);
         self.running = false;
         return;
       }
