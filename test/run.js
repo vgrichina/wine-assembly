@@ -176,13 +176,18 @@ function deferredResolveAddrs() {
     const r = resolveAddrList(COUNT_SPEC);
     countAddrs.length = 0; r.forEach(v => countAddrs.push(v));
   }
-  // (TRACE_AT_DUMP, WATCH, etc. could also be module-relative; extend here as needed.)
+  if (TRACE_AT_DUMP && /\+/.test(TRACE_AT_DUMP)) {
+    for (const d of traceAtDumps) {
+      if (d.spec && /\+/.test(d.spec)) d.addr = resolveAddr(d.spec) >>> 0;
+    }
+  }
 }
 const breakThreadFilter = BREAK_THREAD ? parseInt(BREAK_THREAD.replace(/^T/i, ''), 10) : null;
 let traceAtHits = 0;
 const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
-  return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 64, prev: null };
+  const addr = /\+/.test(a) ? 0 : (parseInt(a, 16) >>> 0); // resolved later if module-relative
+  return { addr, spec: a, len: parseInt(l) || 64, prev: null };
 }) : [];
 const showCStringAddrs = SHOW_CSTRING ? SHOW_CSTRING.split(',').map(s => parseInt(s, 16) >>> 0) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
@@ -2223,6 +2228,11 @@ async function main() {
         const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm } = require('../lib/dll-loader');
         const result = ld(instance.exports, memory.buffer, dllBytesArr);
         console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
+        {
+          const key = fileName.toLowerCase().replace(/\.[^.]+$/, '');
+          moduleBases[key] = { loadAddr: result.loadAddr, origBase: result.origBase };
+          deferredResolveAddrs();
+        }
         // Patch the new DLL's imports against all previously loaded DLLs
         pdi(instance.exports, memory.buffer,
           [{ name: fileName, bytes: dllBytesArr }],
