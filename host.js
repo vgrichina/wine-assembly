@@ -628,8 +628,12 @@ class WineAssembly {
           }
         }
       } catch (e) {
-        console.error('WASM crash:', e);
-        self.logToUI('ERROR: ' + e.message);
+        let eip = 0, yr = 0;
+        try { eip = self.instance.exports.get_eip(); } catch {}
+        try { yr = self.instance.exports.get_yield_reason(); } catch {}
+        const eipHex = '0x' + (eip >>> 0).toString(16).padStart(8, '0');
+        console.error('WASM crash:', e, 'EIP=' + eipHex, 'yield=' + yr);
+        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' yield=' + yr);
         self.running = false;
         return;
       }
