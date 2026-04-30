@@ -4,6 +4,25 @@
 **Image base:** 0x00400000
 **Data files:** `test/binaries/shareware/rct/Data/` — CSG1.DAT, CSG1i.DAT, CSS*.DAT, etc.
 **Window:** Fullscreen 640x480 8bpp (Chris Sawyer's custom engine)
+**Status (2026-04-30):** PR #1 fixed the `0x67` `LOOP/LOOPE/LOOPNE/JCXZ` decoder trap. With that in place, RCT gets past the splash, loads `SC3.SC4`, and enters the auto-demo/runtime path. The active investigation is now firmly in runtime/render/game-tick, not startup: `timeGetTime` is advancing, the `1x1` viewport write at `0x004311c2` appears intentional and is not the main bug, and `0x0043867d` is active but not the root deadlock. Presentation is also no longer a one-shot init artifact: repeated full-screen `SetDIBitsToDevice` calls occur, but the output remains black. The first hard failure currently seen is the fatal path at batch `1407`, where `0x00430344` compares the `SC3.SC4` scenario result against `word [0x00836522]`; that word stays zero, so the scenario handoff never reports success.
+
+**Current fatal-path evidence (2026-04-30):**
+
+- `timeGetTime` is not frozen in the headless path. A `--count=0x438248,0x43867d` run over 120k batches ended with `0x00438248 = 180` and `0x0043867d = 1466`, so the 25 ms pacing loop at `0x0043867d` is entered and exited repeatedly.
+- The pure-GDI present path is active. `--trace-host=gdi_set_dib_to_device` over the same 120k-batch run shows repeated `640x480x8` full-screen presents, all returning `0x1e0` (`cLines=480`). The back-canvas PNG is still solid black, so the next rendering question is now "why are repeated presents black?" rather than "are presents happening at all?"
+- The first fatal flag flip is earlier than the steady-state black-frame runs suggest. `--watch=0x560194 --watch-value=0x1` fires at batch `1407`, with `prev_eip=0x00555a9f` and live stack:
+
+```
+0x00430344 -> 0x004302a9 -> 0x0043870d -> 0x0043830f -> PostQuitMessage
+```
+
+- The compare site is concrete. Batch-1410 dumps show:
+  - `0x008e1ac8 = "C:\\Scenarios\\SC3.SC4\0"`
+  - `0x00836522..0x0083653f = all zero`
+
+  So the dispatch path resolves `SC3.SC4`, calls `0x0042f986`, then fails at `0x00430344` because `word [0x00836522]` was never initialized to the expected scenario-selection value.
+- `0x00430344` is part of the `0x004302aa` command interpreter. The sibling handler at `0x0043015c` performs the same "build scenario path -> call 0x0042f986 -> compare against `[0x00836522]`" sequence, which strongly suggests `0x00836522` is not random scratch but a real scenario-selection state slot that some earlier init/UI path should populate.
+
 **Status (2026-04-29):** RCT was regressed by commit 44a423c ("trap 0x67/GS"). The blanket `unreachable` on the addr-size-override prefix is a false positive for `LOOP/LOOPE/LOOPNE/JCXZ` (E0–E3): those have no ModRM, the prefix only swaps the implicit counter ECX→CX. RCT hits this in a `mov cx,N ; … ; 67 e2 f5` init pattern at `0x00452260` (and elsewhere) and crashed at batch 12473 with `[i32] 0xCA5E0067`. Decoder now bypasses the trap when the post-prefix opcode is in `0xE0..0xE3`, packing an `addr16` flag into the operand of handler 46 (LOOP, bit 4) and handler 216 (JCXZ, bit 0). Handlers updated to decrement/test CX (low 16 of ECX) when the flag is set, preserving the high half. RCT now runs through 200k batches with no crash, completes all init APIs, loads `SC3.SC4`, and enters the scene-render walker.
 
 **Status (2026-04-17):** Implicit-show activation chain (commit e33deb0) makes CreateWindowExA with WS_VISIBLE deliver WM_ACTIVATEAPP/ACTIVATE/SETFOCUS/SIZE synchronously, matching real Win32. RCT's video-mode probe at `0x009026af` now sees `[0x568504]` populated (640) by the WM_SIZE handler at `0x0040418e`, so the fatal `jmp 0x555ab6` at 0x9026fd no longer fires. Game progresses past PostQuitMessage into the main WinMain loop and starts running game ticks.
@@ -18,15 +37,15 @@ Fix (two parts, across `src/07-decoder.wat` + `src/05-alu.wat`):
 
 **Gemini cross-check.** Ran `gemini -p` over the whole decoder/ALU/FPU trio to audit the pattern; confirmed all 26 sites + 10 handlers. Report saved to `/tmp/claude-rev/decoder-review.md` (one-off, not kept).
 
-**Next:** finally investigate whether game frames are actually landing on the primary DDraw surface (the prior `SetDIBitsToDevice=nonZero:false` observation from 2026-04-16 likely still holds now that we're deep into the frame loop). Also: any other app previously written off as "random cache corruption" (Pinball, DX games) should be re-tested since this bug was lurking for every SIB-addressed two-way mem instruction.
+**Next:** stay on the runtime/render/game-tick path. The current questions are why `word [0x00836522]` never flips nonzero before the fatal compare at `0x00430344`, and why repeated full-screen `SetDIBitsToDevice` still produces black output even though `timeGetTime` is advancing and the game is clearly past splash/init. Also: any other app previously written off as "random cache corruption" (Pinball, DX games) should be re-tested since this bug was lurking for every SIB-addressed two-way mem instruction.
 
-**Frame-presentation observation (2026-04-29).** With the 0x67 fix in place, the run reaches the scene walker and stays there indefinitely. API trace tail shows: `SC3.SC4` opened (#6354), 394× `ReadFile` + 1× rewind `SetFilePointer` + 393× `ReadFile` + `CloseHandle` (#7145) — the scenario file is read twice (size probe + body). After #7145 there are **no further API calls** for at least 200k batches, including zero `PeekMessageA`. Hot EIPs are concentrated in:
+**Frame-presentation observation (2026-04-29).** This was the first post-`0x67` snapshot, before the later runtime trace showed repeated full-screen presents. At this point the run reached the scene walker and stayed there indefinitely. API trace tail shows: `SC3.SC4` opened (#6354), 394× `ReadFile` + 1× rewind `SetFilePointer` + 393× `ReadFile` + `CloseHandle` (#7145) — the scenario file is read twice (size probe + body). After #7145 there are **no further API calls** for at least 200k batches, including zero `PeekMessageA`. Hot EIPs are concentrated in:
 
 - `0x00436640` — sprite-list walker (8-byte records; `[esi+1]&0x80` is the end-of-list bit; recurses via dispatch table at `[edi+0x59fa74]`, 16 slots).
 - `0x00436868` — 2×2 tile-quad painter (calls `0x00444374` four times per quad).
 - `0x00444374` — per-tile/sprite renderer (`movzx ax,word [0x8d8fce + idx*2]` is the tile→sprite-id map lookup; bounds-checks against `0x1000`; falls through to a heavy draw subroutine).
 
-Lock/Unlock/Blt/StretchDIBits/BitBlt/SetDIBitsToDevice fire only during init (1 each); none fire during the steady-state loop. The walker isn't visibly stuck on a single EIP — it cycles through ~25 distinct PCs in `0x436xxx`/`0x444xxx` — so it's *doing work* but never returning out to the WM pump. Two leading hypotheses:
+In that earlier trace, Lock/Unlock/Blt/StretchDIBits/BitBlt/SetDIBitsToDevice fired only during init (1 each); none appeared during the steady-state loop. Later tracing on the current line superseded that single-present picture: repeated full-screen `SetDIBitsToDevice` does happen, but the image remains black. The walker isn't visibly stuck on a single EIP — it cycles through ~25 distinct PCs in `0x436xxx`/`0x444xxx` — so it's *doing work* but never returning out to the WM pump. Two leading hypotheses:
 
 1. **Slow-but-correct rendering.** RCT's demo scenario draws a deeply-recursive scene tree; under interpreter overhead a single frame may take >>300k batches. If that's the cause, eventually a present chain will fire — needs a much longer run (~5M batches) to confirm.
 2. **Walker termination bug.** A bad write somewhere clobbers the end-of-list flag (`byte[esi+1]&0x80`) so the walker never stops. Would explain "lots of work, no API calls". Diagnose with `--watch-byte=<scene-list-end>` once the list root is identified, or `--break=0x004366e3` (walker exit) + step through sibling chain length.
@@ -66,7 +85,7 @@ Trace summary (after the cache-guard fix shipped in 0004f79):
 7. Shutdown pump (PeekMessage/IsWindow/Translate/Dispatch ×4, DefWindowProc) drains.
 8. After WinMain returns, EIP lands in a fill helper at 0x008fa0d5 with EDI=0, EDX=0xfffffeef (a 4-billion-iter spin) — looks like stale-register execution after an incorrect return target or CRT exit path that we mis-dispatch. Interpreter-visible infinite loop, not an RCT bug per se.
 
-**Key observation:** `SetDIBitsToDevice` fires **exactly once** in the entire 49k-batch run (at the first Unlock, with `nonZero=false`). No frames are ever actually rendered to the back-canvas, which is why the PNG stays black. The game quits before it ever presents real content.
+**Key observation in the 2026-04-16 trace:** `SetDIBitsToDevice` fired **exactly once** in that 49k-batch run (at the first Unlock, with `nonZero=false`). That specific "only once" observation is no longer current on the active RCT line: later tracing shows repeated full-screen `SetDIBitsToDevice`, but no non-black output yet.
 
 **Why it quits is the real mystery:**
 - The 95-byte GAME.CFG write is a config-save. RCT demo's WinMain probably saves cfg whenever WinMain unwinds.
@@ -189,7 +208,10 @@ The game now starts up fully. Prior "memory collision" and "stuck at 0x00440b9f"
 | 0x00403C7D | WndProc |
 | 0x00403B2E | PeekMessage-based message check (called from main loop) |
 | 0x004010FC | Main function: calls init check, game init, game tick loop |
+| 0x00430344 | Current first hard failure: fatal branch compares the `SC3.SC4` scenario result against `word [0x00836522]`, which is still zero at batch 1407 |
+| 0x004311C2 | `1x1` viewport write that appears intentional, not the main bug |
 | 0x00438248 | Main game tick function |
+| 0x0043867D | Active runtime/render path site, but not the root deadlock |
 | 0x0042F5A5-0x0042F5D9 | CSG sprite decompression inner loop |
 | 0x00444600-0x0044463E | Rendering copy loop (memcpy-like, fires per frame) |
 | 0x0040C7A6 | mm_timer callback (InterlockedExchange at 0x00562F2C) |
