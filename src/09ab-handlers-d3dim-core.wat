@@ -1216,8 +1216,12 @@
     (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 7))          ;; POINT|SPOT|DIRECTIONAL
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))          ;; RGB lighting model
     (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 8))          ;; numLights
-    (i32.store (i32.add (local.get $wa) (i32.const 44)) (i32.const 56))         ;; dpcLineCaps.dwSize
-    (i32.store (i32.add (local.get $wa) (i32.const 100)) (i32.const 56))        ;; dpcTriCaps.dwSize
+    ;; dpcLineCaps and dpcTriCaps full body (56 bytes each) — both ranges
+    ;; fit inside the smallest valid dwSize (172). d3rm gates the triangle
+    ;; emit path on dpcTriCaps.dwShadeCaps != 0; leaving zero makes it skip
+    ;; geometry submission entirely.
+    (call $fill_primcaps (i32.add (local.get $desc) (i32.const 44)))
+    (call $fill_primcaps (i32.add (local.get $desc) (i32.const 100)))
     (i32.store (i32.add (local.get $wa) (i32.const 156)) (i32.const 0xD00))     ;; DeviceRenderBitDepth
     (i32.store (i32.add (local.get $wa) (i32.const 160)) (i32.const 0x500))     ;; DeviceZBufferBitDepth
     (i32.store (i32.add (local.get $wa) (i32.const 168)) (i32.const 0xFFFF))    ;; dwMaxVertexCount
