@@ -2414,3 +2414,40 @@ So d3rm's per-visual "render fn" family is statically dead. The bug is upstream 
 - Geometry fast path completely silent (0× DrawPrimitive, 0 enters of any of d3rm's 8 mesh-render fns).
 - Asset I/O for meshes (X-files) and textures (GIFs) succeeds at the file/mapping level.
 - The bug sits between "asset bytes available to d3rm parser" and "visual added to frame's render list" — within d3rm's internal mesh-builder/AddVisual path. Need to instrument d3rm-internal entry points (no longer findable via API trace since d3rm is real not stubbed).
+
+**2026-04-29 cont.45 — app uses IDirect3DRM v1, not v3; Load is never called on either interface.**
+
+`Direct3DRMCreate` (origVA `0x6478f112` → inner `0x6478f11f`) allocates a 0x428-byte multi-interface object and writes three vtable ptrs:
+- `[obj+0x08] = 0x647e01f8` — IDirect3DRM (v1, 35 slots)
+- `[obj+0x14] = 0x647e0288` — IDirect3DRM2 (35 slots)
+- `[obj+0x20] = 0x647e0318` — IDirect3DRM3 (36 slots)
+
+Returns `obj+0x8` (v1 ptr). All three vtables share `slot 0=QueryInterface=0x6478f24e`, `slot 1=AddRef=0x6478f213`, `slot 2=Release=0x6478f326`.
+
+Hit counts over 12K-batch ROCKROLL run (`--count d3drm+...`):
+
+| Slot | v1 fn | v3 fn | v1 hits | v3 hits |
+|---|---|---|---|---|
+| 0 QI | 0x6478f24e | (same) | 6 | — |
+| 4 CreateFrame | 0x6478fa90 | 0x6478fb83 | **40** | 0 |
+| 6 CreateMeshBuilder | 0x6478fcf4 | 0x6478fdc1 | **6** | 0 |
+| 13 CreateMaterial | 0x6479025c | — | **2** | — |
+| 21/33 Load | 0x6479100e | 0x647917c3 | **0** | 0 |
+| 22/34 Tick | 0x647914b5 | 0x647914b5 (shared) | 0 | 0 |
+| 14 CreateDevice | 0x64790340 | — | 0 | — |
+
+ROCKROLL.EXE imports only `Direct3DRMCreate` and uses **IDirect3DRM v1** for everything — no v2/v3 calls observed (every IDirect3DRM3 slot we tested = 0 hits). 40 frames + 6 mesh builders + 2 materials, but **0 Load calls on the IDirect3DRM interface itself**.
+
+**Where the X-file actually loads:** `IDirect3DRMMeshBuilder::Load` is a method on the *returned* MeshBuilder, not on IDirect3DRM. The MeshBuilder is allocated by `0x647a7247` (a generic class-registry constructor) using class descriptor `0x647e0a10`. The descriptor's first dword `0x647e0fe8` is NOT a vtable (slot 1 points into .data, slot 2 = 0xa4). So the MeshBuilder's vtable isn't directly retrievable via the descriptor — it's installed by the constructor based on class GUID lookup.
+
+**Eliminated:** the cont.36–37 "geometry-emit" vtable (`0x647e0b40`, slot 6 `Render = 0x647af646`) is statically dead under ROCKROLL — every slot (0x647af134/0x647af5f2/0x647af646/0x647afa2c/0x647aeede) = 0 hits. So either:
+- (i) registered visuals use a DIFFERENT mesh-render vtable (mesh-builder vs. mesh — d3rm has both), and the dead vtable is for a different visual class we never instantiate; or
+- (ii) the visual-list head pointer on the active frame is NULL, so the per-frame walker exits before any vtable dispatch.
+
+The fact that CreateFrame fires 40× while no Load fires in the IDirect3DRM root means the app is building a frame hierarchy first, then expecting to populate meshes via `IDirect3DRMMeshBuilder::Load` calls (the MeshBuilder vtable's own Load slot, not the root). If those Load calls succeed, frames get visuals via `IDirect3DRMFrame::AddVisual` (a frame-vtable method).
+
+**cont.46 plan — locate IDirect3DRMMeshBuilder vtable and hit-count Load:**
+1. Identify the MeshBuilder vtable. Approach A: set `--watch-byte` on `[esi]` after a CreateMeshBuilder return; the value written is the vtable ptr. Concretely, break at `0x6478fd2d (mov [esi], eax)` once and dump `*eax` to read the vtable ptr. Approach B: scan d3rm's .data for vtable patterns where `slot 0 / slot 1 / slot 2` look like QI/AddRef/Release for the MeshBuilder class (different fns from RM's 0x6478f24e). Filter by "vtable's slot count matches IDirect3DRMMeshBuilder3 size (~50)". Approach C: find d3rm string "Mesh.X" or X-file template GUIDs and trace which fn parses them.
+2. Once vtable located, hit-count its Load slot (typically slot 14 for IDirect3DRMMeshBuilder3; differs for v1/v2). If 0 hits — app uses a different load path (e.g., enumerates X-file via IDirectXFile directly). If non-zero — Load fires but produces empty mesh: instrument the vertex-emit inner loop.
+3. Parallel: locate IDirect3DRMFrame vtable (returned by CreateFrame slot 4 = 0x6478fa90). Hit-count its `AddVisual` slot. If 0 — geometry never gets attached to frames, confirming hypothesis (a) from cont.41.
+4. Cheaper alt: add a one-shot `--break=d3drm+0x6478fd2d` at MeshBuilder ctor return point, dump the returned object's `*[obj]` to console, exit. Three lines of evidence: MB vtable address, allowing direct vtable_dump.
