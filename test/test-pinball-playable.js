@@ -12,21 +12,19 @@
 // hard enough to dominate the count. Splitting forces both halves to
 // actually move when their own key is held.
 //
-// Schedule (timings calibrated to ShowWindow(game) firing at batch
-// ~10548 — keys delivered before that go to the splash window 0x10001
-// and die in DefWindowProc, never reaching the game wndproc):
-//   12000 : F2 (start new game)
-//   12500 : keydown Space (plunger, build power)
-//   14500 : keyup   Space (deploy ball)
-//   14700 : png "rest"      (no key held — baseline animation noise)
-//   14800 : png "rest2"     (still no key held — measures noise floor)
-//   14810 : keydown Z       (left flipper)
-//   15000 : png "left"      (Z held)
-//   15010 : keyup   Z
-//   15200 : png "settle"    (back to rest)
-//   15210 : keydown /       (right flipper, VK_OEM_2 = 0xBF)
-//   15400 : png "right"     (/ held)
-//   15410 : keyup   /
+// Schedule:
+//   5000  : F2 (start new game)
+//   5500  : keydown Space (plunger, build power)
+//   7500  : keyup   Space (deploy ball)
+//   7700  : png "rest"      (no key held — baseline animation noise)
+//   7800  : png "rest2"     (still no key held — measures noise floor)
+//   7810  : keydown Z       (left flipper)
+//   8000  : png "left"      (Z held)
+//   8010  : keyup   Z
+//   8200  : png "settle"    (back to rest)
+//   8210  : keydown /       (right flipper, VK_OEM_2 = 0xBF)
+//   8400  : png "right"     (/ held)
+//   8410  : keyup   /
 //
 // Pass criteria (per side):
 //   - the side's bottom-quadrant pixel diff with key held is at least
@@ -65,22 +63,22 @@ for (const p of [restPng, rest2Png, leftPng, settlePng, rightPng]) {
 }
 
 const inputSpec = [
-  `12000:keydown:113`,          // VK_F2 — new game
-  `12010:keyup:113`,
-  `12500:keydown:32`,           // VK_SPACE — plunger
-  `14500:keyup:32`,
-  `14700:png:${restPng}`,
-  `14800:png:${rest2Png}`,
-  `14810:keydown:90`,           // 'Z' — left flipper
-  `15000:png:${leftPng}`,
-  `15010:keyup:90`,
-  `15200:png:${settlePng}`,
-  `15210:keydown:191`,          // VK_OEM_2 ('/') — right flipper
-  `15400:png:${rightPng}`,
-  `15410:keyup:191`,
+  `5000:keydown:113`,           // VK_F2 — new game
+  `5010:keyup:113`,
+  `5500:keydown:32`,            // VK_SPACE — plunger
+  `7500:keyup:32`,
+  `7700:png:${restPng}`,
+  `7800:png:${rest2Png}`,
+  `7810:keydown:90`,            // 'Z' — left flipper
+  `8000:png:${leftPng}`,
+  `8010:keyup:90`,
+  `8200:png:${settlePng}`,
+  `8210:keydown:191`,           // VK_OEM_2 ('/') — right flipper
+  `8400:png:${rightPng}`,
+  `8410:keyup:191`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --input='${inputSpec}' --max-batches=15500 --stuck-after=15500`;
+const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --input='${inputSpec}' --max-batches=8500 --stuck-after=8500`;
 console.log('$', cmd);
 
 let out = '';
