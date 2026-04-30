@@ -3506,7 +3506,7 @@
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
       (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
       (if (local.get $ch)
-        (then (call $paint_flag_set (local.get $ch))))
+        (then (call $paint_flag_set_inv (local.get $ch))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $walk))))
 
@@ -5526,7 +5526,7 @@
     ;; Queue an initial WM_PAINT so the control draws on next GetMessage
     ;; cycle — same path CreateWindowExA takes for guest-created children.
     (if (i32.and (local.get $style) (i32.const 0x10000000))  ;; WS_VISIBLE
-      (then (call $paint_flag_set (local.get $hwnd))))
+      (then (call $paint_flag_set_inv (local.get $hwnd))))
     (local.get $hwnd)
   )
 

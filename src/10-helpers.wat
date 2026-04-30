@@ -621,6 +621,16 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 1)))
 
+  ;; $paint_flag_set_inv(hwnd): mark slot dirty AND seed update rgn so the
+  ;; region-driven WM_PAINT pump (host_next_dirty_hwnd) sees this hwnd. Use
+  ;; this for WAT-internal paint triggers that don't go through Win32
+  ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
+  ;; region pump silently drops the paint.
+  (func $paint_flag_set_inv (param $hwnd i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (call $paint_flag_set (local.get $hwnd))
+    (call $host_invalidate (local.get $hwnd)))
+
   ;; $paint_flag_clear_hwnd(hwnd): clear the slot bit for hwnd if any.
   (func $paint_flag_clear_hwnd (param $hwnd i32)
     (local $idx i32)

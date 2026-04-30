@@ -2044,7 +2044,7 @@
     (block $done (loop $push_loop
       (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
       (br_if $done (i32.eq (local.get $i) (i32.const -1)))
-      (call $paint_flag_set (call $wnd_slot_hwnd (local.get $i)))
+      (call $paint_flag_set_inv (call $wnd_slot_hwnd (local.get $i)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
@@ -3370,7 +3370,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_flag_set (global.get $next_hwnd))
+    (call $paint_flag_set_inv (global.get $next_hwnd))
     ))
     ;; Store parent hwnd (hWndParent = [esp+36])
     (call $wnd_set_parent (global.get $next_hwnd)

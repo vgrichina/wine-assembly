@@ -430,7 +430,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_flag_set (global.get $next_hwnd))
+    (call $paint_flag_set_inv (global.get $next_hwnd))
     ;; Build CREATESTRUCT at image_base+0x100 for this child. Must run BEFORE
     ;; frame cleanup — needs [esp+24..esp+48]. MFC SDI passes a CCreateContext*
     ;; as lpParam (arg 12) so CView::OnCreate can call CDocument::AddView.
@@ -539,7 +539,7 @@
     (block $done (loop $push_loop
       (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
       (br_if $done (i32.eq (local.get $i) (i32.const -1)))
-      (call $paint_flag_set (call $wnd_slot_hwnd (local.get $i)))
+      (call $paint_flag_set_inv (call $wnd_slot_hwnd (local.get $i)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
@@ -852,24 +852,23 @@
     ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
     ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
     ;; Hardware input was consumed at top of fn; no second poll here.
-    ;; Deliver WM_PAINT if pending (lowest priority per Win32 spec).
-    ;; Region-driven discovery via host_next_dirty_hwnd is wired but not yet
-    ;; the primary path — switching priority broke mspaint child rendering
-    ;; (WAT-internal child paints don't validate the rgn, leading to dropped
-    ;; or looping paints). Foundation stays for future Step 2 completion.
-    (if (global.get $paint_pending)
-    (then
-    (global.set $paint_pending (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver WM_PAINT to child window from paint queue
-    (local.set $tmp (call $paint_flag_take))
+    ;; Deliver WM_PAINT — region-driven discovery via host_next_dirty_hwnd is
+    ;; the primary path (Phase A of paint refactor). PAINT_FLAGS and
+    ;; $paint_pending mirror the rgn map (every set bit corresponds to a
+    ;; non-empty _updateRgns entry, courtesy of $paint_flag_set_inv +
+    ;; host_invalidate seeding). We pre-validate full-client at dispatch to
+    ;; mimic the legacy paint_flag_take atomic clear-on-dispatch contract:
+    ;; WAT-internal control wndprocs paint via host_gdi_* without
+    ;; BeginPaint/EndPaint, so no one would otherwise validate the rgn.
+    (local.set $tmp (call $host_next_dirty_hwnd))
     (if (local.get $tmp)
     (then
+    (call $paint_flag_clear_hwnd (local.get $tmp))
+    (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 0))))
+    (drop (call $host_validate_rect (local.get $tmp)
+            (i32.const 0) (i32.const 0)
+            (i32.const 32767) (i32.const 32767)))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
