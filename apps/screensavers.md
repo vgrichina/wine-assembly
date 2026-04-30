@@ -2451,3 +2451,60 @@ The fact that CreateFrame fires 40× while no Load fires in the IDirect3DRM root
 2. Once vtable located, hit-count its Load slot (typically slot 14 for IDirect3DRMMeshBuilder3; differs for v1/v2). If 0 hits — app uses a different load path (e.g., enumerates X-file via IDirectXFile directly). If non-zero — Load fires but produces empty mesh: instrument the vertex-emit inner loop.
 3. Parallel: locate IDirect3DRMFrame vtable (returned by CreateFrame slot 4 = 0x6478fa90). Hit-count its `AddVisual` slot. If 0 — geometry never gets attached to frames, confirming hypothesis (a) from cont.41.
 4. Cheaper alt: add a one-shot `--break=d3drm+0x6478fd2d` at MeshBuilder ctor return point, dump the returned object's `*[obj]` to console, exit. Three lines of evidence: MB vtable address, allowing direct vtable_dump.
+
+**2026-04-29 cont.46 — Gemini consult + runtime probe: MeshBuilder::Load returns 0x88760314 for every call.**
+
+Gemini provided the IDirect3DRMMeshBuilder vtable layout (50 slots: QI/AddRef/Release at 0..2, IDirect3DRMObject base at 3..10, Load at slot 11, AddVertex/AddFace/AddFaces at 23..25). Located the runtime vtable via `--trace-at=d3drm+0x6478fd44 --trace-at-dump=<eax>:32` after CreateMeshBuilder returns:
+
+- **MeshBuilder vtable @ 0x647df9b8** (49 slots, QI=0x64791da1)
+- **Frame vtable @ 0x647df388** (50 slots, shares slots 0..10 — same Object base)
+
+Hit counts on MeshBuilder vtable:
+- slot 11 Load = **6 hits** (one per CreateMeshBuilder)
+- slot 23 AddVertex / 24 AddFace / 25 AddFaces = **0 hits** each
+- slot 1 AddRef = 77, slot 2 Release = 234, slot 6 SetAppData = 3
+
+Hit counts on Frame vtable:
+- slot 11 AddChild / slot 18 AddVisual = **0 hits each**
+- slot 12 AddLight = 3 hits
+- slot 19 GetChildren / slot 23 GetParent = 16 each
+
+**Smoking gun: Load EVERY call returns 0x88760314.** Trace-at at the post-call epilog `0x6478a1c4` (right before `mov eax,esi; ret 0x18` in `$IDirect3DRMMeshBuilder::Load`) shows EAX=ESI=0x88760314 for all 6 calls. So the X-file load fails inside the parser, and the app — seeing the failure — never calls AddVisual/AddChild to attach the empty mesh-builder to a frame. That's why the visual list stays empty and d3rm emits only matrix transforms.
+
+`0x88760314` is a D3DRMERR_* HRESULT (D3DRM error space `0x88760000 | code`). Common candidates: D3DRMERR_BADFILE/D3DRMERR_FILEBADRESOURCE/D3DRMERR_NOTFOUND. The .X files ARE successfully mmapped (confirmed cont.44), so the failure is downstream — likely in d3xof.dll's IDirectXFile parsing, or in d3rm's CoCreateInstance(CLSID_CDirectXFile) which our COM/CoCreate dispatch may stub-fail.
+
+Frame method hit profile is consistent with the diagnosis: 16× GetChildren/GetParent (app walks the frame tree it built) but 0× AddChild/AddVisual (no leaves attached). The 40 frames are isolated nodes; the 6 mesh-builders are empty objects nobody references.
+
+**cont.47 plan — find what 0x88760314 means and where in Load it's raised:**
+1. `tools/find_string.js d3drm.dll` for "BADFILE"/"FILEBAD"/"NOTFOUND" to confirm the error code mapping. Or grep d3rm .text for `b8 14 03 76 88` (mov eax, 0x88760314) to find every site that raises it.
+2. Walk `0x64792acc` (Load delegate, called from slot 11) to find the early-bail. Hit-count internal sub-fns to localize where 0x88760314 first appears.
+3. If failure is in CoCreateInstance(IDirectXFile): inspect our CoCreateInstance handler to see if CLSID_CDirectXFile maps to d3xof.dll. The DLL is already loaded (cont.44 saw it via DLL imports), but its class factory must be wired in our COM dispatch.
+4. If failure is in d3xof.dll's parsing: instrument IDirectXFile::CreateEnumObject / IDirectXFileEnumObject::GetNextDataObject and see which template GUID rejects.
+5. As parallel fast-fail check: load `ro_pick.x` directly with the DirectX SDK XOF tool / a known-good X-file parser to confirm the file isn't malformed (host-side sanity).
+
+**2026-04-29 cont.47 — root cause: `IDirectXFile::RegisterTemplates` returns `DXFILEERR_BADVALUE`.**
+
+Walked the Load delegation chain through d3rm:
+- `MeshBuilder::Load` (slot 11, fn 0x6478a18f) → `0x64792acc` → `0x647ce0c5` → `0x647cdf1d` → `0x647d0868` (the X-file driver).
+
+Inside `0x647d0868`:
+1. First call: `LoadLibraryA("d3dxof.dll")` → handle 0x74fe8000 ✓; `GetProcAddress(handle, "DirectXFileCreate")` → 0x74fedfa8 ✓ (verified via trace-at on `0x647d0ab9`).
+2. `DirectXFileCreate(&[0x647e74f4])` (call to cached fn ptr at `0x647d0ae5`) → returns **0** (S_OK) ✓; IDirectXFile object stored at `[0x647e74f4]`.
+3. `IDirectXFile::RegisterTemplates(buffer=0x647e1250, size=0xcce)` (vtable slot 5 at `[ecx+0x14]`) → returns **0x88760362 = DXFILEERR_BADVALUE**. ← **first failure point.**
+4. `jl` taken → fn resets `[0x647e74f4]=0` and returns `0x88760314`.
+5. Calls 2-6 reach the same RegisterTemplates path (since `[0x647e74f4]` was reset to 0 each time after RegisterTemplates failure)... actually verified: `IDirectXFileEnumObject::GetNextDataObject` (vtable slot 3 at `[ecx+0xc]`) also returns 0x88760362 → same root cause. Without registered templates, the enum can't recognize any data block.
+
+**Templates buffer is structurally valid:** dump of `0x647e1250` starts with the X-file header magic `xof 0302bin 0064`, followed by a `Header` template definition. So the bytes ARE the canonical D3DRM template set; the rejection is inside d3dxof.dll's binary template parser.
+
+**This is now an emulation bug in d3dxof.dll's parsing path** (real DLL, runs under our x86 emulator). Possible causes ranked:
+- (a) d3dxof.dll uses an unimplemented/buggy x86 instruction (uncommon but possible — the parser is tight code with shifts/masks).
+- (b) d3dxof.dll's heap allocations (HeapAlloc/HeapCreate) returning wrong values. We already implement these.
+- (c) String/byte read at the boundary of d3rm's data section (templates buffer at `0x647e1250` is in d3rm.dll's `.data`, mapped at runtime base `0x745fc...`). If d3xof reads past the first byte but lands on a non-mapped address, parser bails.
+- (d) Some compiler intrinsic (e.g. _stricmp) has wrong behavior on our emulator — d3xof would compare keyword tokens like "template" or "Header".
+
+**cont.48 plan:**
+1. Find d3dxof.dll's `IDirectXFile::RegisterTemplates` impl. Walk its export `DirectXFileCreate` to locate the IDirectXFile vtable, dump slot 5. Then disasm to find the bail returning 0x88760362.
+2. Hit-count every `mov eax, 0x88760362` site in d3xof.dll (`tools/find_bytes.js d3dxof.dll b862037688`) — should narrow to one or two parser bail sites.
+3. At the bail, dump regs + the parser cursor (likely an EBP/EBX-based pointer into the template buffer). The byte at the cursor reveals which token confused the parser.
+4. Compare expected token byte vs actual — if matches a known X-file marker (e.g. `0x10` = TOKEN_TEMPLATE, `0x05` = TOKEN_GUID, `0x06` = TOKEN_OPEN_BRACE), the parser's state machine took a wrong branch — bug is in d3xof's prior-token logic or our emulator's miscompiled instruction. If doesn't match, the cursor is wrong (off-by-one, alignment, etc).
+5. Sanity check: copy the same 0xcce-byte buffer out and feed it to a known-good x86 d3xof.dll under Wine + a real RegisterTemplates harness. If real Wine ALSO fails, the buffer is malformed (unlikely but possible). If real Wine succeeds, our emulator is corrupting the buffer in transit — verify g2w mapping at `0x647e1250` returns identical bytes to the .data dump.
