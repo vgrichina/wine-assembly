@@ -1521,3 +1521,94 @@ The slots at `[game+0xf4]` should be set during table initialization (PINBALL.DA
 - `0x2800`: Palette table (4 entries × 8 bytes: handle + count)
 - `0x2830`: Palette data (4 × 1024 bytes, 256 RGBX entries each)
 - Handles: 0x000A0001–0x000A0004
+
+## Flipper Input Investigation (2026-04-30)
+
+Multi-session deep-dive into "L-flipper Z keypress reaches game wndproc but no visible motion." Final understanding: the input chain is **fully functional end-to-end**; the actual blocker is upstream in the game-state machine.
+
+### Verified call chain (Z keypress → flipper sub-object dispatch)
+
+1. **Wndproc 0x01007a3e WM_KEYDOWN at 0x01007d1a**: tests `KF_REPEAT` (lParam bit 30); on first press unconditionally `call 0x1015072` for every key. **No alternate state-2 keydown handler exists.**
+2. **Keydown handler 0x01015072**: state gates at 0x01015085, 0x01015094, 0x010150a0 (all must pass). The critical gate is `cmp dword [0x1025568], 0x1; jz 0x10150b5` (state==1 required to proceed).
+3. **L-flipper compare 0x010150bf**: `cmp esi, [0x1028238]; jnz R-flip-cmp`. ESI = pressed VK; `[0x1028238]` is L-flipper VK config, runtime-initialized to 0x5A=Z at batch 1521 by EIP 0x01003588.
+4. **L-flipper call site 0x010150d7**: `push 0x3e8; mov eax,[ecx]; call [eax]; jmp 0x10152d1`. ECX = `[0x1025658]` = the dispatch object (runtime addr 0x01269634).
+5. **Vtable `0x01002790`**: slot 0 = `0x010187d6` (input dispatcher).
+6. **Slot 0 prologue (0x010187d6)**: `mov esi, ecx; mov ecx, [ebp+8]; lea eax, [ecx-0x3e8]; cmp eax, 0x18; ja 0x1018ef6; movzx eax, byte [eax+0x1018f3d]; jmp [0x1018f05+eax*4]`. ECX = msgID (loaded from first stack arg), ESI = `this`. Range-checked switch on (msgID-0x3e8) via byte-index table at 0x1018f3d → jump-target table at 0x1018f05.
+7. **L-raise case body 0x01018e12**: `cmp [esi+0x172], 0; jnz bail; mov esi, [esi+0x2a]; jmp 0x1018e4f`. Loads L-flipper sub-object pointer from `[this+0x2a]`.
+8. **Common merge 0x01018e4f**: pushes float arg + `push 0x1` (normalized "raise" command) → `0x01018e68` final dispatch to sub-object's slot 0.
+
+### Empirical probe (input='5500:keydown:90,5800:keyup:90', state==1 window 5001-6269)
+
+```
+0x010150bf (L-flip cmp)        = 1
+0x010150e0 (post-call landing) = 1   msgID 0x3e8
+0x010187d6 (slot 0 entry)      = 21
+0x01018e12 (L-raise case)      = 1   ✓
+0x01018e1f (no bail path)      = 1   [this+0x172]==0
+0x01018e4f (common merge)      = 1   ✓
+0x01018e68 (final dispatch)    = 3
+0x01018ef4 (function tail)     = 19
+```
+
+**The full L-raise path executes successfully.** Sub-object's slot 0 IS called with the normalized raise command. PNG snapshot during state==1 still shows no visible flipper motion — this is a downstream rendering / animation issue, NOT an input pipeline issue.
+
+### State machine `[0x1025568]` — the real chokepoint
+
+Single store at EIP 0x0101472f inside fn 0x0101461a (state-setter). 7 callers pass values 1-4:
+
+| Site | Arg | Likely role |
+|------|-----|-------------|
+| 0x01011b4f | 2 | Per-tick game logic (auto-progress) |
+| 0x01014786 | 4 | Counter-decrement fallback path |
+| 0x010147b3 | variable | State save/restore |
+| 0x010153bd | 1 | F2 reset (called from keydown handler at 0x01015072 via 0x010152e6) |
+| 0x010155e9 | 1 or 3 | Init / phase change |
+| 0x01015829 | 2 | After slot 0 call with msgID 0x400 |
+| 0x01018930 | edi | Slot 0 internal |
+
+Observed transitions (with `--watch=0x01025568 --watch-log`):
+- batch 219: 0→1 (init complete, EIP 0x010155ee)
+- batch 3397: 1→2 (auto-progress, no input, EIP 0x01011b54 = post-call of 0x01011b4f)
+- batch 5001 (with F2 keypress): 2→1 (EIP 0x010153c2 = F2 reset)
+- batch 6269 (no input): 1→2 (auto-progress again, ~770 batches after F2)
+
+### Tail-merge gotcha at 0x010150e0
+
+`push 0x3ec; jmp 0x10150dc` at 0x0101516e shares the L-flipper site's `mov eax,[ecx]; call [eax]; jmp 0x10152d1` epilogue, returning to 0x010150e0. So a `--count` hit on 0x010150e0 with msgID 0x3ec ≠ L-flipper raise; that's the launch-key path (cmp@0x01015156 against `[0x1028240]`=Space=0x20 → push 0x3ec). Always disasm the full call window before assuming a return-address means a specific code path.
+
+### push-imm for raise/lower across the binary (`tools/find_bytes.js --push=0x3e8`)
+
+| Site | Enclosing fn | Role |
+|------|--------------|------|
+| 0x010150d7 | 0x01015072 (keydown handler) | User-input L-flipper raise |
+| 0x01016ea1 | 0x01016e72 | Programmatic L-flipper auto-raise (timer-driven, calls `[0x1001304]`) |
+| 0x0101f67b | 0x0101f5f3 | Dialog code (0x3e8 is a control ID coincidence, not a flipper msg) |
+| 0x0101faaf | 0x0101fa65 | Dialog |
+| 0x0101ffc5 | 0x0101fde3 | Dialog |
+
+For 0x3ea (R-flipper raise) only 2 push sites: 0x010150ff (keydown) and 0x01016e24 (timer auto-raise).
+
+### Cascade VK→msgID map (post-R-flipper compare in fn 0x01015072)
+
+After `cmp esi, [0x102823c]; jnz` falls through, a chain of `sub esi, N; jz target` tests cumulative VK values:
+- 0x42 (B) → action @ 0x01015266
+- 0x48 (H) → action @ 0x01015236
+- 0x4D (M) → action @ 0x010151ff
+- 0x52 (R) → action @ 0x010151f5
+- 0x7A (F11) → action @ 0x010151e5
+- 0x7B (F12) → action @ 0x01015146 (`call [eax+0x4]` = vtable slot 1)
+
+Plus a separate `cmp esi, [0x1028240]` at 0x01015156 → `push 0x3ec; jmp 0x10150dc` (launch / Space).
+
+### Conclusions and next-session direction
+
+The "no visible flipper motion" is **not** an input-routing bug. The chain works. Three remaining angles:
+
+1. **State==1 too brief**: in our run, state==1 windows are only ~770 batches, and even within them the game shows "Awaiting Deployment" (ball not yet on plunger?). On real Pinball, state==1 likely persists through entire ball-in-play. Investigate what writes 2 to state at 0x01011b4f (per-tick logic) — likely a timer or message we're delivering wrong, prematurely advancing the state machine.
+2. **Sub-object's slot 0 may be a no-op**: the L-flipper sub-object at `[this+0x2a]` receives msg=1 (raise) but its slot 0 might check additional state (e.g., "ball-on-flipper" or "physics-active") and silently no-op when those aren't true.
+3. **Per-frame physics/render not running**: even if sub-object's slot 0 sets a "raise pending" flag, an animation tick fn must read it and update the sprite. That tick may be gated on game-active state.
+
+**Probes to start with next session**:
+- `--break-once=pinball+0x01011b54` (post-call of state→2 from per-tick logic) with callstack dump — find what triggers premature 1→2 advance.
+- Disasm L-flipper sub-object's slot 0 (need to dump `[0x01269634+0x2a]` at runtime then look up its vtable[0]) — see what gating it does.
+- `--trace-host=ddraw_blt,gdi_bitblt` for ~500 batches around Z keypress — see if any draw lands in the L-flipper rect.
