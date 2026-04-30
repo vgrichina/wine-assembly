@@ -34,6 +34,20 @@
 - Result: `final.png` is no longer the untouched Win98 teal background. With the fallback active, the image contains a real multi-color game frame (`48225` bytes instead of the prior tiny uniform-teal PNG; teal pixel count drops from `307200/307200` to `0/307200`).
 - This does **not** prove the canonical primary-surface present path is correct yet; it proves the game frame exists and the missing leg is the present/compositing path from the live offscreen buffer to the visible output.
 
+**2026-04-30 update — present-path split proven with live artifacts.**
+
+- On the current PR branch, end-of-run DirectDraw dump at batch window `28200` now emits real surface artifacts:
+  - `slot 4` (`640x480 primary`) stays all-zero
+  - `slot 7` (`128x64 offscreen`) stays all-zero
+  - `slot 8` (`640x480 offscreen`) is non-zero (`firstNonZero=434`, `checksum=365446`)
+- That means RCT's software renderer is filling the fullscreen offscreen game buffer while the canonical primary surface remains untouched.
+- The corrected PNG fallback order now proves the offscreen buffer contains a visible frame:
+  - before the fix, `final.png` was 100% Win98 teal
+  - after repaint-first / offscreen-fallback-last ordering, `final.png` becomes a non-teal multi-color image and the log explicitly reports:
+    `PNG fallback used offscreen slot 8 because primary slot 4 is still zero`
+
+**Meaning:** the remaining bug is no longer "RCT does not render". It is specifically "the real game buffer is not being promoted to the canonical primary/present path on this branch." The next correctness step is to replace the PNG-time compatibility fallback with a real runtime `slot 8 -> slot 4` / visible-output present path.
+
 **Meaning:** the investigation can now stop blaming the software renderer itself. The remaining correctness work is to replace the current compatibility fallback with a proper present path that promotes the real game buffer to the visible surface without needing PNG-time intervention.
 
 **2026-04-30 follow-up — two stale assumptions corrected, one host-side bug fixed.**
