@@ -2601,3 +2601,84 @@ Given the pattern (push 0x1; pop eax IS measured 4×, but no predecessor count f
 3. Also dump the templates buffer 0x647e1250 (in d3rm .data) to confirm bytes match the .dll's static template buffer.
 4. **Most-likely root cause:** RegisterTemplates is *supposed* to update an internal "templates registered" list, then return success. Each subsequent CreateEnumObject is supposed to set up a fresh per-iterator parsing context (cursor pointing at the .x file's byte stream — *not* the templates buffer). If our flow somehow re-uses the templates-buffer cursor for the .x file enumeration, the parser sees end-of-buffer immediately. Investigate `0x5c508297` (called from CreateEnumObject) — does it set `[0x5c51cc18]` to the .x file content or to the templates buffer?
 5. Bisect: run with --break-api=`HeapAlloc` or --trace-host wrapping d3xof's internal alloc fn `0x5c50671c` to verify per-iterator state is allocated and not aliasing the global parser cursor.
+
+**2026-04-30 cont.50 — cursor-not-reset hypothesis FALSIFIED; parser is YACC; failure is "syntax error" + YYABORT.**
+
+Disassembled the parser entry. The first 0x35 bytes do *exactly* the cursor reset that cont.49 hypothesized was missing:
+
+```
+5c507361  sub  esp, 0x10
+5c507364  or   eax, -1
+5c50736c  mov  [0x5c51a8d8], eax        ; yychar = -1
+5c507377  mov  [0x5c51cc1c], 0          ; yynerrs = 0
+5c50737d  mov  [0x5c51a6c0], 0          ; yyerrstatus = 0
+5c507383  mov  dword [0x5c51cc18], 0x5c51a8e0   ; yyssp = yyssa (state stack base)
+5c50738d  mov  [0x5c51cc20], 0x5c51acc8         ; yyvsp = yyvsa (value stack base)
+5c507395  mov  [0x5c51a8e0], bp                 ; *yyssa = 0 (initial state)
+```
+
+So all four globals from cont.49's plan are *unconditionally* reinitialized on entry. The four parse calls each start from a clean state — staleness is not the bug.
+
+**The parser is YACC-generated** — proven by two error strings emitted via `0x5c507337` (yyerror):
+- `0x5c5016bc` = `"yacc stack overflow"`
+- `0x5c5016d0` = `"syntax error"`
+
+The four "tables" referenced in the body are classic Bison artifacts:
+- `0x5c515308` = yystos (state→default-action), `0x5c515460` = yytable, `0x5c5159d8` = yycheck, `0x5c5156b8` = yydefact
+- The reduce dispatcher at `0x5c5074ca jmp [0x5c507d5b+eax*4]` is the per-rule action switch.
+
+**cont.51 — runtime counts on both error landings:**
+
+```
+0x74fef361 (parser entry)            = 4   ✓
+0x74fef72e ("yacc stack overflow")   = 0
+0x74fef66c (post syntax-error call)  = 4   ← every call
+0x74fef739 (push 0x1; pop eax)       = 4   ✓
+0x74fef72a (xor eax,eax success)     = 0
+```
+
+So **every parse hits "syntax error" exactly once**, then bails via the YYABORT path. Concretely:
+1. Parser starts; lexer returns tokens normally for a while (cont.48: 387 lexer hits across 4 parses ≈ 97 each).
+2. At some point lexer returns a token that doesn't fit the current state — yyerror("syntax error") fires (`0x5c507662`).
+3. yyerrstatus is set to 3 (recovery mode).
+4. Parser shifts error tokens until lexer returns 0 (EOF).
+5. At `0x5c507681 cmp [yyerrstatus], 3 / jge 0x5c507719`, we enter the YYABORT branch: `cmp eax,0 / jz 0x5c507739` — eax==0 (EOF in error state) → push 1 / pop eax / ret.
+
+**This invalidates the entire "shared cursor" theory** from cont.46–49. RegisterTemplates and GetNextDataObject each get a fresh parser; both fail. The bug is *one token deep into each parse*: the lexer is yielding a token sequence that's locally invalid LALR.
+
+**cont.52 plan — instrument the lexer's first-divergence token:**
+
+Lexer is at `0x5c506e2d`; on entry it dispatches on `[eax+8]` (mode):
+- mode=0 → text-mode lexer at `0x5c506e95`
+- mode=1 → binary-mode lexer at `0x5c5071bf`
+- mode≥2 → return 0xFF (the parser would treat that as "unknown" → instant syntax error).
+
+Templates magic is `xof 0303bin 0032` (binary mode); .x files are `xof 0302bin 0064` / `xof 0302txt 0064`. So mode comes from header parsing in the iterator init (`0x5c508297` and friends). If our flow leaves `[parser_ctx+8]` at the wrong value (e.g., 0 = text) while the buffer is binary-formatted, the text lexer chokes on byte 0 and emits garbage.
+
+Probes for cont.52:
+1. `--count` on `0x5c506e6f` (mode==1 dispatch), `0x5c506e75` (mode call binary lexer), `0x5c506e7d` (mode≥2 → return 0xFF), `0x5c506e95` entry (text lexer). Expectation if mode is correct: text-lexer hit count ≈ 0, binary-lexer hits = 387, mode-mismatch path = 0.
+2. If 0xFF return path fires, the iterator init left mode=2+. Walk back to where `[parser_ctx+8]` is set in `0x5c508297`/`0x5c5082xx`.
+3. Trace the first 5 lexer return EAX values via `--trace-at` on the post-call landing inside the parser at `0x5c5073bd` (immediately after `call 0x5c506e2d`). The very first non-0xFF token tells us if the lexer is sane on byte 0 of the buffer. A stream like `[1, 1, 1, 0]` is a normal "header / template / template / EOF" sequence; `[0xff, 0xff, ...]` or `[0]` immediately is mode-misconfigured.
+
+**cont.52 result — both lexer modes are firing; mode dispatch is correct.**
+
+```
+0x74feee2d (lexer entry)         = 387  ✓ matches cont.48
+0x74feee6f (mode==1 path)        = 291  binary
+0x74feee7d (mode≥2 → 0xFF)       = 0    no mode-mismatch
+0x74feee95 (text-lexer body)     = 92   text
+0x74fef1bf (binary-lexer body)   = 291  binary
+```
+
+`387 − 291 − 92 = 4` accounted for by the prologue early-returns (`yyssp` pushback + EOF flag). So:
+- 1× RegisterTemplates parse → 291 binary-lexer calls (templates buffer is `xof 0303bin 0032`).
+- 3× GetNextDataObject parses → 92 text-lexer calls (`RO_PICK.X` / `RO_GIT.X` are `xof 0302txt 0032`).
+
+Both modes are dispatched correctly *and* both still result in `"syntax error" + YYABORT`. So **the bug is not in mode selection**. Two independent lexers producing parse-incompatible tokens for one parser is implausible coincidence — the failure must be common to both lexers. Hypotheses to test in cont.53:
+
+1. **Parser table corruption / mis-read.** The reduce dispatcher `jmp [0x5c507d5b+eax*4]` and the lookup tables `0x5c515308`/`0x5c515460`/`0x5c5159d8`/`0x5c5156b8` are static `.rdata`/`.text`. If our PE loader miscomputed RVA→VA for d3dxof's reloc-free `.text` tables, every parser action would be off-by-N. Probe: dump 16 bytes of each table at runtime via `--trace-at-dump` and diff vs the static PE. If they differ → PE-load bug.
+2. **Both lexers share a bad post-token normalizer at `0x5c506e82` (`cmp eax, 0x37; jnz / mov [0x5c51cc30],1; xor eax,eax`).** Token 0x37 is special-cased to "set EOF flag and return 0". If our emulator's flag handling miscompiles this `cmp/jnz`, the lexer would *return EOF on every token* — but then the parser would only get 1 token before EOF and the cont.51 token counts wouldn't reach 387. So this branch is NOT the bug — falsified by cont.52 numbers themselves.
+3. **`yychar` / `yystate` width mismatch.** The parser reads tokens via `[ebx*2]` indexing into yytable (cont.46 disasm: `movsx ecx, word [0x5c515460+ebx*2]`). If our 16-bit `movsx` sign-extension is buggy, large negative actions would mis-decode as huge positives, hitting "syntax error" path. Probe: hand-emulate one parse state transition by reading the tables and checking against expected Bison action.
+4. **Stack-pointer drift between yacc actions.** The parser uses `[esp+0x14]` / `[esp+0x18]` / `[esp+0x1c]` as locals (cont.47-ish disasm). If a reduce action calls into `0x5c507337` (yyerror) and the call's stdcall arg-pop is wrong, ESP is corrupted on return → next lexer call returns to wrong site → garbage token stream.
+
+cont.53 starts with hypothesis #1: dump the four parser tables at runtime and compare to a static disasm dump.
