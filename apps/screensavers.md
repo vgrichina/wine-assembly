@@ -2909,3 +2909,45 @@ Token id 0xff is YYUNDEFTOK-shaped. Hypothesis: d3xof's binary lexer returns 0xf
 **cont.56 plan:**
 1. Read d3xof's binary lexer (mode=0, entry at 0x5c506e95) and find where it emits token 0xff. The X-file binary tokens are 16-bit tags 0x0001..0x000a: NAME, STRING, INTEGER, GUID, INTEGER_LIST, FLOAT_LIST, OBRACE, CBRACE, OPAREN, CPAREN. Anything outside that range or any TOKEN_RESERVED_ID (0x0010-0x001b for keywords like `template`, `array`) that the binary lexer doesn't handle → 0xff fallback.
 2. Capture the actual byte sequence in the templates buffer at the point of error (cont.54 noted EDX=cursor at 0x47d47d). Decode the next 1-2 16-bit tags to know which tag value the binary lexer choked on. That tag value is either (a) a legal binary tag that d3xof's lexer mishandles, (b) garbage from a misalignment caused by an earlier mis-decode, or (c) end-of-buffer sentinel that should be EOF/0 but lexer returns 0xff.
+
+**cont.56 — root cause: token 0xff is a *synthetic EOF*, not a lexer-of-bytestream emit.**
+
+The hypothesis above (cont.55b) was wrong. The 0xff doesn't come from the binary lexer at 0x5c506e95 returning an unrecognized tag — that lexer is fine. The actual `yylex` called by `yyparse` is a *one-line wrapper* at 0x5c506e2d:
+
+```
+5c506e2d  push edi
+5c506e2e  xor edi, edi
+5c506e30  cmp [0x5c51cc34], edi      ; check global "force-EOF" flag
+5c506e36  jz  0x5c506e45              ; flag clear → call real lexer (0x5c506e95)
+5c506e38  mov [0x5c51cc34], edi      ; clear flag
+5c506e3e  mov eax, 0xff              ; ← synthetic EOF token
+5c506e43  pop edi
+5c506e44  ret
+```
+
+When global flag `[0x5c51cc34]` is non-zero, yylex bypasses the underlying lexer and returns 0xff. So 0xff is the grammar's `YYEOF` (end-of-stream), and it's *triggered by a parser semantic action*, not by the byte-tag stream.
+
+12 callsites set this flag (call 0x5c507356 = `mov [0x5c51cc34], 1; ret`). `--count` over all 12 (max 16 fits) shows exactly **one** fires before failure: `d3dxof+0x5c507bf4` (count=1). Surrounding code:
+
+```
+5c507bdc  push ebp                     ; arg3 = NULL (ebp=0 in yyparse)
+5c507bdd  push [edx-0x10]              ; arg2 = yyvsp[-1] (a name?)
+5c507be0  push [edx-0x20]              ; arg1 = yyvsp[-2] (a type/scope?)
+5c507be3  call 0x5c50a1d6              ; lookup(arg1, arg2, NULL)
+5c507be8  add esp, 0xc
+5c507beb  cmp eax, ebp                 ; eax vs 0
+5c507bed  mov [0x5c51cc08], eax        ; stash result globally
+5c507bf2  jnz 0x5c507bf9               ; eax != 0 → skip
+5c507bf4  call 0x5c507356              ; ★ FAILED LOOKUP → set force-EOF
+```
+
+So the real failure: a Bison reduce-action does a name/template lookup via `0x5c50a1d6(name1, name2, NULL)`; it returns 0; the action signals "abort parse via synthetic EOF". The next yylex returns 0xff; state 0x28 has no action for token 0xff → yyerror → YYABORT → "Failed to load camera.x".
+
+**cont.57 plan:**
+1. Disassemble `0x5c50a1d6` to identify what kind of lookup it does (template-name registry? GUID resolution? typename hash?).
+2. Capture the args (arg1, arg2) at the failing call. They're `[edx-0x10]` and `[edx-0x20]` where edx is the Bison value-stack pointer. Decode them — if they're string pointers, dump the strings; if structs, dump fields.
+3. The lookup target is presumably a name that should resolve in a clean d3dxof. Three candidates for why it doesn't:
+   - **Template not registered**: d3dxof bootstraps with built-in templates (Header, Frame, Mesh, MeshNormals, etc). If our DLL load skipped a registration step, lookup of e.g. "Header" misses. Check whether d3dxof's DllMain or first-call init runs all the `RegisterTemplates` calls.
+   - **Earlier corruption**: name string was written wrong by a prior lexer step (e.g. STRING/NAME tag handler ran on bad bytes due to misalignment).
+   - **Memory aliasing**: `0x5c51cc08`/`0x5c51cc20` (registry/value-stack pointers) collide in our emu's memory model.
+4. The state-0x28 + 6×token-0x0b stream from cont.55b still tells us what *was* parsed up to the failure: a Header-template-shaped field list. Cross-checking, this is exactly the X-file initial Header object preamble: 6 INTEGER fields. The reduce-action firing right after is "look up template by name / declare instance" — and *that's* where the name-resolve fails.
