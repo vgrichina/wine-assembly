@@ -2517,39 +2517,43 @@ if (VERBOSE) {
   // +18 pitch(u16), +20 DIB ptr (WASM addr), +28 flags (1=primary 2=backbuf 4=offscr).
   // For 8bpp surfaces we need the palette; $dx_primary_pal_wa holds the current
   // primary palette's 256-entry data (PALETTEENTRY format: R,G,B,flags).
-  if (DUMP_DDRAW && createCanvas) {
+  if (DUMP_DDRAW) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0x07FF0000;
-    // Read the primary palette WASM addr from the WAT global by probing memory
-    // near the first primary surface; we can't read globals from JS without an
-    // export, so for 8bpp we scan surfaces and reuse whichever palette_wa we
-    // find on a palette-type entry. Palette entries aren't differentiated in
-    // flags, but their DIB ptr (+20) points at 1024 bytes of palette data.
+    const DX_BASE = 0xE970;
+    const DX_SLOTS = 32;
+    const manifest = [];
+    // Read the primary palette WASM addr by scanning palette-type entries in
+    // the live DX table. Palette slots have type=3 and store their palette
+    // bytes at +20.
     let paletteWa = 0;
-    // First pass: find primary surface → it knows the palette indirectly.
-    // Simpler: search the SetPalette-side state by trawling DX_OBJECTS for a
-    // slot whose flags==0 (palette slots don't set surface-type flags) but
-    // whose +20 is a valid pointer. Good enough for diagnostic dumps.
-    for (let slot = 0; slot < 256; slot++) {
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
-      const flags = dv.getUint32(entry + 28, true);
+      const type = dv.getUint32(entry, true);
       const ptr = dv.getUint32(entry + 20, true);
-      const w = dv.getUint16(entry + 12, true);
-      if (!flags && ptr && !w) { paletteWa = ptr; break; }
+      if (type === 3 && ptr) { paletteWa = ptr; break; }
     }
     let count = 0;
-    for (let slot = 0; slot < 256; slot++) {
+    for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
+      const type = dv.getUint32(entry, true);
       const flags = dv.getUint32(entry + 28, true);
-      if (!flags) continue;
+      if (type !== 2 || !flags) continue;
       const w = dv.getUint16(entry + 12, true);
       const h = dv.getUint16(entry + 14, true);
       const bpp = dv.getUint16(entry + 16, true);
       const pitch = dv.getUint16(entry + 18, true) || Math.ceil(w * bpp / 32) * 4;
       const dib = dv.getUint32(entry + 20, true);
       if (!w || !h || !dib) continue;
+      let firstNonZero = -1;
+      let checksum = 0;
+      const sampleBytes = Math.min(pitch * Math.min(h, 16), 0x4000);
+      for (let i = 0; i < sampleBytes; i++) {
+        const v = mem[dib + i];
+        if (firstNonZero < 0 && v !== 0) firstNonZero = i;
+        checksum = (checksum + v) >>> 0;
+      }
       const rgba = new Uint8Array(w * h * 4);
       for (let y = 0; y < h; y++) {
         const srcRow = dib + y * pitch;
@@ -2577,16 +2581,31 @@ if (VERBOSE) {
           rgba[di] = r; rgba[di + 1] = g; rgba[di + 2] = b; rgba[di + 3] = 255;
         }
       }
-      const c = createCanvas(w, h);
-      const cctx = c.getContext('2d');
-      const img = cctx.createImageData(w, h);
-      img.data.set(rgba);
-      cctx.putImageData(img, 0, 0);
       const kind = (flags & 1) ? 'primary' : (flags & 2) ? 'backbuf' : (flags & 4) ? 'offscreen' : 'other';
-      const outFile = path.join(DUMP_DDRAW, `dx_${slot.toString().padStart(2, '0')}_${kind}_${w}x${h}_${bpp}bpp.png`);
-      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      manifest.push({ slot, kind, w, h, bpp, pitch, dib, flags, firstNonZero, checksum, sampleBytes });
+      const base = path.join(DUMP_DDRAW, `dx_${slot.toString().padStart(2, '0')}_${kind}_${w}x${h}_${bpp}bpp`);
+      if (createCanvas) {
+        const c = createCanvas(w, h);
+        const cctx = c.getContext('2d');
+        const img = cctx.createImageData(w, h);
+        img.data.set(rgba);
+        cctx.putImageData(img, 0, 0);
+        fs.writeFileSync(base + '.png', c.toBuffer('image/png'));
+      } else {
+        // Canvas isn't available in some sandboxes; emit a simple binary PPM
+        // so surface inspection still works without native deps.
+        const header = Buffer.from(`P6\n${w} ${h}\n255\n`, 'ascii');
+        const rgb = Buffer.allocUnsafe(w * h * 3);
+        for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+          rgb[j] = rgba[i];
+          rgb[j + 1] = rgba[i + 1];
+          rgb[j + 2] = rgba[i + 2];
+        }
+        fs.writeFileSync(base + '.ppm', Buffer.concat([header, rgb]));
+      }
       count++;
     }
+    fs.writeFileSync(path.join(DUMP_DDRAW, 'manifest.json'), JSON.stringify(manifest, null, 2));
     console.log(`Dumped ${count} DirectDraw surfaces to ${DUMP_DDRAW}/ (paletteWA=0x${(paletteWa>>>0).toString(16)})`);
   }
 
