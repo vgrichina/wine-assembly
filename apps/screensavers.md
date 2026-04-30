@@ -2951,3 +2951,44 @@ So the real failure: a Bison reduce-action does a name/template lookup via `0x5c
    - **Earlier corruption**: name string was written wrong by a prior lexer step (e.g. STRING/NAME tag handler ran on bad bytes due to misalignment).
    - **Memory aliasing**: `0x5c51cc08`/`0x5c51cc20` (registry/value-stack pointers) collide in our emu's memory model.
 4. The state-0x28 + 6×token-0x0b stream from cont.55b still tells us what *was* parsed up to the failure: a Header-template-shaped field list. Cross-checking, this is exactly the X-file initial Header object preamble: 6 INTEGER fields. The reduce-action firing right after is "look up template by name / declare instance" — and *that's* where the name-resolve fails.
+
+**cont.57 — confirmed: template registry is uninitialized at runtime.**
+
+Disassembled `0x5c50a1d6` (the lookup at the failing reduce-action). It's a two-tier lookup:
+
+```
+0x5c50a1d6:  push [ebp+0x8]                    ; name
+             call 0x5c50800b                   ; tier-1: built-in PRIMITIVE TYPES
+             test esi,esi; jz tier2
+             ; tier-1 hit → wrap with primitive metadata, return
+tier2:       lea eax, [ebp-0x4]; push eax
+             push [ebp+0x8]                    ; name
+             call 0x5c50a0f0                   ; tier-2: REGISTERED TEMPLATES
+             test eax,eax; jz fail
+             ; tier-2 hit → wrap with template metadata, return
+fail:        xor eax, eax; ret                 ; ← caller sets force-EOF
+```
+
+**Tier-1** (`0x5c50800b`) scans a 13-entry static table at `0x5c5016f8..0x5c501794` of built-in *primitive type* names: WORD, DWORD, FLOAT, DOUBLE, CHAR, UCHAR, BYTE-alias, SWORD, SDWORD, STRING, CSTRING, UNICODE, ULONGLONG. These are the X-file scalar types — not the templates.
+
+**Tier-2** (`0x5c50a0f0`) scans the runtime-allocated *template registry* at `[0x5c51cc3c]`. Each entry has a 16-byte GUID at +8 and a name pointer at +4.
+
+`[0x5c51cc3c]` is initialized empty (count=0, capacity=100, items_ptr=NULL) by `0x5c50a090`. New entries are added via `0x5c507ebd` (vector::push_back) wrapped by `0x5c50a0df`. There are zero internal callers of `0x5c50a0df` — it must be reached via an exported entry point (likely `IDirectXFile::RegisterTemplates`).
+
+**Runtime check at the failing call:** `--break=d3dxof+0x5c507bf4 --break-once`, then dump `0x009d3c3c:16` (= `d3dxof+0x5c51cc3c` at runtime base 0x009b8000):
+
+```
+0x009d3c3c  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+The registry pointer itself is **NULL** — `0x5c50a090` was never called. Combined with tier-1 missing because the looked-up name isn't a primitive (it's a template name like "Header" or "Camera"), the reduce-action returns 0 every time → EOF flag → 0xff → yyerror.
+
+**cont.58 plan — root cause is a missing `RegisterTemplates` step.**
+
+The standard D3DRM template buffer (`D3DRM_XTEMPLATES`, ~3290 bytes binary blob) ships embedded in d3drm.dll. Apps using D3DRM call `Direct3DRMCreate` which internally creates an IDirectXFile, calls `IDirectXFile::RegisterTemplates(D3DRM_XTEMPLATES, ...)` to populate the registry, then `CreateEnumObject(camera.x)`.
+
+For viewer.exe:
+1. Verify viewer.exe (or d3drm) calls `IDirectXFile::RegisterTemplates`. Trace its imports and look for the call. d3dxof.dll exports: `DirectXFileCreate` (the only entry that creates IDirectXFile). `IDirectXFile` vtable exposes `RegisterTemplates` at slot 3.
+2. If the call IS made, find which path in our emu drops it. Possible: (a) `DirectXFileCreate` returns wrong vtable, (b) the vtable's `RegisterTemplates` slot is null/stub, (c) the call runs but `RegisterTemplates` internal goes through a path our emu mishandles (e.g. it may itself parse the template buffer using the same parser, hitting the same EOF flag bug).
+3. If the call is NOT made, the X-file we feed has to define its own templates inline. camera.x typically does NOT — it just references built-ins. So the call should be there.
+4. Quickest probe: `--trace-api=DirectXFileCreate` plus `--trace-host=` for the COM dispatch on its returned vtable. Or `--break=d3dxof+0x5c50a090` to see if registry-init ever fires.
