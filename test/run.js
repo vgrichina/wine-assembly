@@ -2039,8 +2039,15 @@ async function main() {
       console.log(`[${batch}] >> ${hex(eipBefore)} ESP=${hex(instance.exports.get_esp())}`);
     }
 
-    // Fire multimedia timer callback if due (timeSetEvent fires asynchronously on real Win32)
-    if (instance.exports.fire_mm_timer && !hasFlag('no-timer')) {
+    // Default to message-loop delivery for multimedia timers. The guest already
+    // synthesizes MM_TIMER (0x7FF0) in PeekMessageA/GetMessageA, which matches
+    // how our Win32-facing code expects timeSetEvent callbacks to arrive.
+    // Injecting the callback asynchronously here as well causes duplicate
+    // dispatch for apps that pump messages, including RCT and Abe.
+    //
+    // `--async-mm-timer` keeps the old path available for experiments on
+    // binaries that truly need out-of-band timer delivery.
+    if (instance.exports.fire_mm_timer && hasFlag('async-mm-timer') && !hasFlag('no-timer')) {
       const comBefore = instance.exports.guest_read32(0x003fea90);
       const fired = instance.exports.fire_mm_timer();
       const comAfter = instance.exports.guest_read32(0x003fea90);

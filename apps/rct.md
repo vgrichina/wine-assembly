@@ -23,6 +23,26 @@
   So the dispatch path resolves `SC3.SC4`, calls `0x0042f986`, then fails at `0x00430344` because `word [0x00836522]` was never initialized to the expected scenario-selection value.
 - `0x00430344` is part of the `0x004302aa` command interpreter. The sibling handler at `0x0043015c` performs the same "build scenario path -> call 0x0042f986 -> compare against `[0x00836522]`" sequence, which strongly suggests `0x00836522` is not random scratch but a real scenario-selection state slot that some earlier init/UI path should populate.
 
+**New lead (2026-04-30, high priority): multimedia timer is still double-dispatched in the harness.**
+
+- `test/run.js` is the **only** caller of `instance.exports.fire_mm_timer()`, and it was doing so unconditionally before every batch.
+- The guest already has a second `timeSetEvent` path: `GetMessageA` / `PeekMessageA` call `$timer_check_due`, which synthesizes internal `0x7FF0` MM_TIMER messages that `DispatchMessageA/W` turn into the 5-arg `TimeProc` callback.
+- This is not a theoretical concern. `abe.md` already documents the same bug shape: JS-side `fire_mm_timer` + guest-side `0x7FF0` caused the timer callback to run twice per tick and corrupted guest state. A follow-up fix (`b152575`) saved caller-saved regs across the async path, but it did **not** remove the duplicate dispatch itself.
+- RCT's known hot path still fits that failure mode better than the viewport theory: it relies on `mm_timer`, `InterlockedExchange`, and busy-wait/tick pacing in the runtime path; duplicate timer callbacks can advance frame/tick state too fast, fire re-entrant work in the wrong place, and explain both the black-frame present loop and the `SC3.SC4` handoff state never stabilizing.
+
+**Action landed:** `test/run.js` now leaves multimedia timer delivery to the guest message loop by default. The old async injection path is still available behind `--async-mm-timer` for experiments on binaries that genuinely need out-of-band callback delivery.
+
+**Validate once `test/binaries/shareware/rct/English/RCT.exe` is present locally:**
+
+1. Baseline with the new default:
+   `node test/run.js --exe=test/binaries/shareware/rct/English/RCT.exe --max-batches=120000 --batch-size=5000 --count=0x438248,0x43867d --trace-host=gdi_set_dib_to_device`
+2. Compare against forced async delivery:
+   `node test/run.js --exe=test/binaries/shareware/rct/English/RCT.exe --async-mm-timer --max-batches=120000 --batch-size=5000 --count=0x438248,0x43867d --trace-host=gdi_set_dib_to_device`
+3. If the default path is right, expect at least one of:
+   - `word [0x00836522]` becomes non-zero before the `0x00430344` compare path
+   - the black full-screen presents stop being solid black
+   - the runtime no longer enters the same fatal branch at batch `1407`
+
 **Status (2026-04-29):** RCT was regressed by commit 44a423c ("trap 0x67/GS"). The blanket `unreachable` on the addr-size-override prefix is a false positive for `LOOP/LOOPE/LOOPNE/JCXZ` (E0–E3): those have no ModRM, the prefix only swaps the implicit counter ECX→CX. RCT hits this in a `mov cx,N ; … ; 67 e2 f5` init pattern at `0x00452260` (and elsewhere) and crashed at batch 12473 with `[i32] 0xCA5E0067`. Decoder now bypasses the trap when the post-prefix opcode is in `0xE0..0xE3`, packing an `addr16` flag into the operand of handler 46 (LOOP, bit 4) and handler 216 (JCXZ, bit 0). Handlers updated to decrement/test CX (low 16 of ECX) when the flag is set, preserving the high half. RCT now runs through 200k batches with no crash, completes all init APIs, loads `SC3.SC4`, and enters the scene-render walker.
 
 **Status (2026-04-17):** Implicit-show activation chain (commit e33deb0) makes CreateWindowExA with WS_VISIBLE deliver WM_ACTIVATEAPP/ACTIVATE/SETFOCUS/SIZE synchronously, matching real Win32. RCT's video-mode probe at `0x009026af` now sees `[0x568504]` populated (640) by the WM_SIZE handler at `0x0040418e`, so the fatal `jmp 0x555ab6` at 0x9026fd no longer fires. Game progresses past PostQuitMessage into the main WinMain loop and starts running game ticks.
