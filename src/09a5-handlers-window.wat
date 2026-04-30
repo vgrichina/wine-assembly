@@ -852,7 +852,11 @@
     ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
     ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
     ;; Hardware input was consumed at top of fn; no second poll here.
-    ;; Deliver WM_PAINT if pending (lowest priority per Win32 spec)
+    ;; Deliver WM_PAINT if pending (lowest priority per Win32 spec).
+    ;; Region-driven discovery via host_next_dirty_hwnd is wired but not yet
+    ;; the primary path — switching priority broke mspaint child rendering
+    ;; (WAT-internal child paints don't validate the rgn, leading to dropped
+    ;; or looping paints). Foundation stays for future Step 2 completion.
     (if (global.get $paint_pending)
     (then
     (global.set $paint_pending (i32.const 0))

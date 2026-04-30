@@ -621,6 +621,13 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 1)))
 
+  ;; $paint_flag_clear_hwnd(hwnd): clear the slot bit for hwnd if any.
+  (func $paint_flag_clear_hwnd (param $hwnd i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 0)))
+
   ;; $paint_flag_first() → hwnd of first dirty slot (0 if none), no clear.
   (func $paint_flag_first (result i32)
     (local $i i32)

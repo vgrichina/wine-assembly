@@ -97,9 +97,11 @@
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $msg_phase (i32.const 5))  ;; skip all activation phases
-        ;; Phase 2: seed paint_pending so first WM_PAINT arrives once the
-        ;; WM_SETFOCUS handler returns (replaces legacy msg_phase==6 block).
+        ;; Phase 2: seed paint_pending + update rgn so first WM_PAINT arrives
+        ;; once the WM_SETFOCUS handler returns (replaces legacy msg_phase==6
+        ;; block). host_invalidate seeds the rgn map for region-driven pump.
         (global.set $paint_pending (i32.const 1))
+        (call $host_invalidate (global.get $main_hwnd))
         (global.set $steps (i32.const 0))
         (return)))
 
