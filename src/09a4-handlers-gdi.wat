@@ -335,8 +335,18 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 181: EndPaint(hwnd, lpPaintStruct) — return TRUE
+  ;; 181: EndPaint(hwnd, lpPaintStruct) — validate rcPaint range, return TRUE
   (func $handle_EndPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))
+      (then
+        (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
+        (drop (call $host_validate_rect
+          (local.get $arg0)
+          (i32.load (local.get $wa))
+          (i32.load offset=4 (local.get $wa))
+          (i32.load offset=8 (local.get $wa))
+          (i32.load offset=12 (local.get $wa))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

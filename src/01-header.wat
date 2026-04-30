@@ -56,6 +56,8 @@
   ;; get_update_rgn(hwnd, dstHrgn) — copies updateRgn into hrgn, returns region type
   (import "host" "begin_paint_clip" (func $host_begin_paint_clip (param i32 i32 i32) (result i32)))
   ;; begin_paint_clip(hdc, hwnd, rectWA) — install updateRgn as DC clip + write bbox to rectWA
+  (import "host" "next_dirty_hwnd" (func $host_next_dirty_hwnd (result i32)))
+  ;; next_dirty_hwnd() → topmost dirty hwnd in z-order, 0 if none
   (import "host" "apply_window_clip" (func $host_apply_window_clip (param i32 i32) (result i32)))
   ;; apply_window_clip(hdc, hwnd) — WS_CLIPCHILDREN / WS_CLIPSIBLINGS exclusions
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
