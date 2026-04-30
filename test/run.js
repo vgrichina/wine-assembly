@@ -2518,12 +2518,10 @@ if (VERBOSE) {
     console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
   }
 
-  // Dump all DirectDraw surfaces' current DIB contents as PNGs. The DX_OBJECTS
-  // table lives at WASM 0x07FF0000; each 32-byte slot is a surface entry when
-  // flags (+28) is non-zero. Layout: +12 w(u16), +14 h(u16), +16 bpp(u16),
-  // +18 pitch(u16), +20 DIB ptr (WASM addr), +28 flags (1=primary 2=backbuf 4=offscr).
-  // For 8bpp surfaces we need the palette; $dx_primary_pal_wa holds the current
-  // primary palette's 256-entry data (PALETTEENTRY format: R,G,B,flags).
+  // Dump all DirectDraw surfaces' current DIB contents as PNGs. Use the same
+  // low-memory DX_OBJECTS table that dxLookupThis() uses for live tracing so
+  // the diagnostic dump stays in sync with the current branch layout. When
+  // canvas is unavailable, fall back to PPM + a metadata manifest.
   if (DUMP_DDRAW) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);

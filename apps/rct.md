@@ -23,6 +23,30 @@
   So the dispatch path resolves `SC3.SC4`, calls `0x0042f986`, then fails at `0x00430344` because `word [0x00836522]` was never initialized to the expected scenario-selection value.
 - `0x00430344` is part of the `0x004302aa` command interpreter. The sibling handler at `0x0043015c` performs the same "build scenario path -> call 0x0042f986 -> compare against `[0x00836522]`" sequence, which strongly suggests `0x00836522` is not random scratch but a real scenario-selection state slot that some earlier init/UI path should populate.
 
+**2026-04-30 follow-up — two stale assumptions corrected, one host-side bug fixed.**
+
+- The `0x00430344` trace needs careful reading: that address is the `pop eax` immediately before the compare, not the compare itself. Live trace shows stack-top `0x00000003` at `0x00430344`, so after the pop the compare is effectively `cmp ax, [0x00836522]` with both sides = `3`. The old "slot stays zero" theory is stale on the current branch.
+- `FindFirstFile("C:\\Scenarios\\*.SC4")` was genuinely wrong in the host layer. Before this pass, VFS enumeration followed host insertion/order and returned:
+  `sc10, sc11, sc15, sc17, sc4, sc8, sc9, sc0, sc3`.
+  That is a bad fit for Win98-era app expectations and clearly wrong for RCT's scenario scan. `VirtualFS.findFirstFile()` now sorts matches case-insensitively with numeric ordering, so the same probe now starts:
+  `sc0, sc3, sc4, sc8, sc9, sc10, sc11, sc15, sc17`.
+- The timer fix still matters directionally: the default guest-loop MM timer path reaches the known runtime renderer (`0x0043688e`, `0x00444374`), while forced `--async-mm-timer` diverges earlier. But the remaining render blocker is not the scenario compare.
+- The viewport/off-map diagnosis still reproduces on the live binary after the timer fix. Trace-at on `0x00444374` with dumps of `0x5706a4` / `0x5706b0` shows a stable render-target like:
+  - `left = 0xEDE0` (signed `-4640`)
+  - `top = 0x029B` (`667`)
+  - `w = 0x001D` (`29`)
+  - `h = 0x0085` (`133`)
+  - `pitch = 0x0263` (`611`)
+
+  So the software renderer is still walking a clipped/off-screen strip instead of a visible viewport when `0x444374` runs.
+
+**Action landed this pass:**
+
+1. `lib/filesystem.js` — deterministic case-insensitive natural sort in `findFirstFile()` / `findNextFile()` results, fixing the bad `*.SC4` enumeration order.
+2. `test/run.js` — `--dump-ddraw-surfaces` now reads the live low-memory DX table (`0xE970`, 32 slots) instead of the stale old high-memory table, so future surface dumps match the current branch layout.
+
+**Next concrete probe:** trace who writes the `0x5706a4` / `0x5706a6` viewport globals on the default timer path and compare their source data before `0x431323` / `0x4311c3` against expected on-screen values. The scenario compare is no longer the primary suspect; the viewport-construction path is.
+
 **New lead (2026-04-30, high priority): multimedia timer is still double-dispatched in the harness.**
 
 - `test/run.js` is the **only** caller of `instance.exports.fire_mm_timer()`, and it was doing so unconditionally before every batch.
