@@ -1587,7 +1587,7 @@
         (call $gs32 (local.get $arg2) (i32.load (i32.add (local.get $entry) (i32.const 8))))
         (global.set $eax (i32.const 0)))
       (else
-        (global.set $eax (i32.const 0x887601FF)))) ;; DDERR_NOTFOUND
+        (global.set $eax (i32.const 0x887600FF)))) ;; DDERR_NOTFOUND
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetBltStatus — always DD_OK (blit is complete)
@@ -1609,7 +1609,7 @@
 
   ;; GetClipper — not supported
   (func $handle_IDirectDrawSurface_GetClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x887601FF))
+    (global.set $eax (i32.const 0x887600FF))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetColorKey(this, dwFlags, lpDDColorKey)
@@ -1622,7 +1622,7 @@
         (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (i32.load (i32.add (local.get $entry) (i32.const 24))))
         (global.set $eax (i32.const 0)))
       (else
-        (global.set $eax (i32.const 0x887601FF))))
+        (global.set $eax (i32.const 0x887600FF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetDC(this, lphDC) — return a synthetic HDC for GDI operations on the surface
