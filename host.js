@@ -180,8 +180,6 @@ class WineAssembly {
       const caption = self.readString(captionPtr);
       console.log(`[MessageBox] "${caption}": "${text}"`);
       self.logToUI(`[MessageBox] ${caption}: ${text}`);
-      if (caption.includes('Assertion')) return 1;
-      alert(`${caption}\n\n${text}`);
       return 1;
     };
     h.exit = (code) => {

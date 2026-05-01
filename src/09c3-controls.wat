@@ -714,8 +714,12 @@
             (i32.const 0x50000000)
             (local.get $text_g)))
     ;; Button row, left edge centered around dialog midpoint.
+    ;; Child controls use client coordinates. MessageBox has a captioned
+    ;; 3px frame, 19px caption/client separator, and 4px bottom border, so
+    ;; place the row relative to the client bottom rather than the outer
+    ;; window bottom.
     (local.set $bx (i32.div_u (i32.sub (local.get $w) (local.get $row_w)) (i32.const 2)))
-    (local.set $by (i32.sub (local.get $h) (i32.const 36)))
+    (local.set $by (i32.sub (local.get $h) (i32.const 63)))
     ;; Layout per MB_* mask. IDs match winuser.h.
     (block $done
       ;; MB_OK (0)
@@ -6016,5 +6020,4 @@
                             (i32.const 0x05) (i32.const 0x0F))))))))) ;; BDR_RAISED, BF_RECT
         (return (i32.const 0))))
     (i32.const 0))
-
 
