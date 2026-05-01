@@ -2992,3 +2992,39 @@ For viewer.exe:
 2. If the call IS made, find which path in our emu drops it. Possible: (a) `DirectXFileCreate` returns wrong vtable, (b) the vtable's `RegisterTemplates` slot is null/stub, (c) the call runs but `RegisterTemplates` internal goes through a path our emu mishandles (e.g. it may itself parse the template buffer using the same parser, hitting the same EOF flag bug).
 3. If the call is NOT made, the X-file we feed has to define its own templates inline. camera.x typically does NOT — it just references built-ins. So the call should be there.
 4. Quickest probe: `--trace-api=DirectXFileCreate` plus `--trace-host=` for the COM dispatch on its returned vtable. Or `--break=d3dxof+0x5c50a090` to see if registry-init ever fires.
+
+**cont.58 — confirmed root cause: d3dxof DllMain never ran in our emu.**
+
+The registry init function `0x5c50a090` is called from exactly one site: `d3dxof+0x5c504b9e`, inside the DLL's `DllMain` (entry `0x5c504b7b`). The DllMain flow:
+
+```
+0x5c504b80  call ???               ; first-time init guard
+0x5c504b85  jnz tail (no init)
+0x5c504b87  call 0x5c504bba        ; setup
+0x5c504b8c  call 0x5c50aedb        ; ?
+0x5c504b91  test eax, eax
+0x5c504b93  jnz init_registry      ; ★ branch to registry-init
+0x5c504b95  call 0x5c504c3b        ; failure path
+0x5c504b9a  xor eax, eax; jmp tail
+0x5c504b9e  call 0x5c50a090        ; ★ ALLOCATE REGISTRY
+0x5c504ba3  jmp tail
+```
+
+`--count` over every node in this flow returns **0 hits across the board** — the entire DllMain never executed. Yet other d3dxof code clearly runs (the parser, `0x5c50a0df` RegisterTemplate-add fires 6 times, `0x5c507ebd` push_back fires 24 times). So d3dxof was *loaded* but its `DllMain(DLL_PROCESS_ATTACH)` was *not invoked*, leaving:
+
+- `[0x5c51cc3c]` (template registry pointer): NULL
+- `[0x5c51cc34]` (parser force-EOF flag): zero (lucky — non-zero would force failure even earlier)
+- All other DllMain side-effects: skipped
+
+When d3drm later calls `IDirectXFile::RegisterTemplates`, the d3dxof impl chain reaches `0x5c50a0df`, which does `mov ecx, [0x5c51cc3c]` (= 0) and passes NULL as `this` to `vector::push_back` (`0x5c507ebd`). push_back then writes through `[NULL+offset]` — in our flat WASM memory this maps to an arbitrary low-VA region (≈ guest VA 0..0x40), corrupting whatever lives there but not crashing. So 6 templates' worth of "registration" lands in nothing.
+
+**Loading path observation:** viewer.exe imports only d3drm.dll (no static d3dxof). d3drm dynamically loads d3dxof via `LoadLibraryA("d3dxof")` at `d3drm+0x647d0a90` (helper `0x647d0a8b`), then `GetProcAddress(hMod, "DirectXFileCreate")`. Our `LoadLibraryA` host import in `lib/host-imports.js` is supposed to invoke the DLL's `DllMain` after loading; for d3dxof specifically that step is dropping. The `IDirect3DRMMeshBuilder::Load` path that *would* call RegisterTemplates+CreateEnumObject (entry `0x647ce300` / `0x647d16cd`) is not even hit — instead d3drm appears to use a leaner direct path that skips RegisterTemplates entirely (also a problem, but downstream of the DllMain miss).
+
+**cont.59 plan — make d3dxof's DllMain run:**
+
+1. Find d3dxof's DllMain VA via PE header (`AddressOfEntryPoint`) and confirm it equals `0x5c504b7b - 0x5c500000 = 0x4b7b` RVA.
+2. Inspect `lib/dll-loader.js` — the relocation/import/DllMain-call sequence. Verify whether (a) DllMain is being invoked but trapping early, (b) the call is being skipped for d3dxof specifically (e.g. version filter, unrecognized init API), (c) the call is being scheduled but never reached because of an async/yield path that drops it.
+3. Add a one-shot `--count=d3dxof+0x5c504b7b` to whatever step in our DLL loader is supposed to invoke DllMain — see if EIP ever even tries to enter this VA.
+4. If DllMain entry is being called but returns early, the conditional at `0x5c504b85` (`jnz tail`) is the most likely cause — that test depends on a host import (`call 0xa471bf85` is bogus disasm; the real target is whatever the IAT thunk at `0x5c504b80+1` resolves to). A failed Win32 API early in DllMain (e.g. `InitializeCriticalSection`, `TlsAlloc`) would gate the rest off.
+
+Once DllMain runs, `0x5c50a090` will allocate the registry, RegisterTemplates will populate it correctly, and the parser at `d3dxof+0x5c507bf4` will resolve "Header"/"Camera"/etc instead of force-EOF'ing.
