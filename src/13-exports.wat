@@ -86,6 +86,16 @@
           (call $host_log_i32 (i32.const 0xDEC0DE19))
           (call $host_log_i32 (global.get $eax))
           (call $host_log_i32 (call $gl32 (i32.add (global.get $edi) (i32.const 8))))))
+      ;; Pinball sound fallback: its WaveMix engine opens a waveOut device but
+      ;; currently never submits buffers. This is the game's own sound-request
+      ;; entry point, so emit a short host beep for nonzero sound IDs instead
+      ;; of staying silent in web builds.
+      (if (i32.and
+            (i32.eq (global.get $image_base) (i32.const 0x01000000))
+            (i32.and
+              (i32.eq (global.get $eip) (i32.const 0x01009895))
+              (i32.gt_s (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (i32.const 0))))
+        (then (call $host_message_beep (call $gl32 (i32.add (global.get $esp) (i32.const 4))))))
       (global.set $dbg_prev_eip (global.get $eip))
       ;; --trace-esp: emit (eip, esp) at block entry for in-range EIPs.
       (if (global.get $trace_esp_flag)

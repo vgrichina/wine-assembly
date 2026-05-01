@@ -40,7 +40,8 @@
     (local.set $rate (i32.load (i32.add (local.get $fmt_wa) (i32.const 4))))
     (local.set $ch (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 2))))
     (local.set $bits (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 14))))
-    ;; Callback type from fdwOpen bits 16-17: 0=none, 1=window, 2=thread, 3=function, 4=event
+    ;; Callback type from fdwOpen bits 16-18:
+    ;; 0=none, 1=window, 2=thread, 3=function, 5=event
     (local.set $cbType (i32.and (i32.shr_u (local.get $fdwOpen) (i32.const 16)) (i32.const 7)))
     ;; If WAVE_FORMAT_QUERY (0x01), just check support, don't open
     (if (i32.and (local.get $fdwOpen) (i32.const 1))
@@ -61,6 +62,14 @@
     ;; If phwo != NULL, store handle
     (if (local.get $arg0)
       (then (call $gs32 (local.get $arg0) (local.get $handle))))
+    (if (i32.eq (local.get $cbType) (i32.const 1))
+      (then
+        ;; CALLBACK_WINDOW: MM_WOM_OPEN(hwnd, hwo, 0)
+        (drop (call $post_queue_push
+          (local.get $arg3)
+          (i32.const 0x03BB)
+          (local.get $handle)
+          (i32.const 0)))))
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args stdcall
   )
@@ -69,6 +78,14 @@
   (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Flush deferred WHDR_DONE slot
     (i32.store (i32.const 0xAD98) (i32.const 0))
+    (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
+      (then
+        ;; CALLBACK_WINDOW: MM_WOM_CLOSE(hwnd, hwo, 0)
+        (drop (call $post_queue_push
+          (i32.load (i32.const 0xD164))
+          (i32.const 0x03BC)
+          (local.get $arg0)
+          (i32.const 0)))))
     (drop (call $host_wave_out_close (local.get $arg0)))
     (global.set $wave_out_handle (i32.const 0))
     (global.set $eax (i32.const 0))
@@ -118,6 +135,14 @@
         (local.set $prev_wa (call $g2w (local.get $prev_ga)))
         (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
           (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
+          (then
+            ;; CALLBACK_WINDOW: MM_WOM_DONE(hwnd, hwo, lpWaveHdr)
+            (drop (call $post_queue_push
+              (i32.load (i32.const 0xD164))
+              (i32.const 0x03BD)
+              (local.get $arg0)
+              (local.get $prev_ga)))))
         (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
           (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))))
     ;; Read lpData and dwBufferLength from WAVEHDR
@@ -148,6 +173,14 @@
         (local.set $prev_wa (call $g2w (local.get $prev_ga)))
         (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
           (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
+          (then
+            ;; CALLBACK_WINDOW: MM_WOM_DONE(hwnd, hwo, lpWaveHdr)
+            (drop (call $post_queue_push
+              (i32.load (i32.const 0xD164))
+              (i32.const 0x03BD)
+              (local.get $arg0)
+              (local.get $prev_ga)))))
         (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
           (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
         (i32.store (i32.const 0xAD98) (i32.const 0))))

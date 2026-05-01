@@ -1010,8 +1010,55 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 65: sndPlaySoundA(pszSound, fuSound) — no-op (no audio support)
+  ;; 65: sndPlaySoundA(pszSound, fuSound) — legacy 2-arg sound API.
+  ;; Handles resource and memory WAVs; file/alias names are accepted as no-op.
   (func $handle_sndPlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
+    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
+    (local.set $flags (local.get $arg1))
+    (local.set $name_id (local.get $arg0))
+    ;; NULL or SND_PURGE: stop current sound. We don't track active one-shots,
+    ;; but Win9x callers treat TRUE as successful purge.
+    (if (i32.or (i32.eqz (local.get $name_id))
+                (i32.and (local.get $flags) (i32.const 0x40)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; SND_MEMORY (0x4): pszSound points at a complete WAV image in memory.
+    ;; Use the RIFF size at +4 plus the 8-byte RIFF header when it looks sane.
+    (if (i32.and (local.get $flags) (i32.const 0x4))
+      (then
+        (local.set $data_wa (call $g2w (local.get $name_id)))
+        (local.set $data_size (i32.add (i32.load (i32.add (local.get $data_wa) (i32.const 4))) (i32.const 8)))
+        (if (i32.and
+              (i32.eq (i32.load (local.get $data_wa)) (i32.const 0x46464952)) ;; "RIFF"
+              (i32.gt_u (local.get $data_size) (i32.const 12)))
+          (then (call $host_play_sound (local.get $data_wa) (local.get $data_size))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; SND_RESOURCE (0x40004): pszSound is MAKEINTRESOURCE(id).
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (if (i32.eqz (global.get $rsrc_rva))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
+    (if (i32.eqz (local.get $hrsrc))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
+    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
+    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
+    (if (i32.eqz (local.get $data_size))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
+    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -9248,4 +9295,3 @@
     (global.set $eax (call $host_get_window_text_length (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; ret + 1 arg
   )
-
