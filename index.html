@@ -1038,7 +1038,7 @@ Resource-aware Win98 emulator
         await wine.loadDlls(dllsToLoad);
         runningApps.push({ wine, name: sel, appIndex });
         document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
-        wine.run();
+        wine.run(sel === 'pinball' ? 500000 : 50000);
       } else {
         document.getElementById('status').textContent = 'Failed to load';
       }
