@@ -61,6 +61,12 @@
   ;; begin_paint_clip(hdc, hwnd, rectWA) — install updateRgn as DC clip + write bbox to rectWA
   (import "host" "next_dirty_hwnd" (func $host_next_dirty_hwnd (result i32)))
   ;; next_dirty_hwnd() → topmost dirty hwnd in z-order, 0 if none
+  (import "host" "alloc_window_dc" (func $host_alloc_window_dc (param i32 i32) (result i32)))
+  ;; alloc_window_dc(hwnd, whole) → hdc — Phase B DC table allocator
+  (import "host" "alloc_screen_dc" (func $host_alloc_screen_dc (result i32)))
+  ;; alloc_screen_dc() → hdc — GetDC(NULL) record
+  (import "host" "release_dc" (func $host_release_dc (param i32) (result i32)))
+  ;; release_dc(hdc) → 1 — frees a DC record allocated via alloc_*_dc
   (import "host" "apply_window_clip" (func $host_apply_window_clip (param i32 i32) (result i32)))
   ;; apply_window_clip(hdc, hwnd) — WS_CLIPCHILDREN / WS_CLIPSIBLINGS exclusions
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
