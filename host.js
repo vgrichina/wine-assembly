@@ -22,6 +22,22 @@ class WineAssembly {
     return str;
   }
 
+  primeAudio() {
+    const AC = (typeof AudioContext !== 'undefined') ? AudioContext :
+               (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
+    if (!AC) return null;
+    if (!this._audioCtx) {
+      try { this._audioCtx = new AC({ sampleRate: 44100 }); }
+      catch (_) {
+        try { this._audioCtx = new AC(); } catch (_) { this._audioCtx = null; }
+      }
+    }
+    if (this._audioCtx && this._audioCtx.state === 'suspended') {
+      try { this._audioCtx.resume(); } catch (_) {}
+    }
+    return this._audioCtx;
+  }
+
   getImports() {
     const self = this;
     const ctx = {
@@ -31,6 +47,8 @@ class WineAssembly {
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
       get exports() { return self.instance ? self.instance.exports : null; },
+      get _audioCtx() { return self._audioCtx; },
+      set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
         const baseName = name.replace(/^.*[\\\/]/, '');
         try {
@@ -291,7 +309,7 @@ class WineAssembly {
         compileEl.style.display = 'block';
       }, 100);
     }
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=42').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=43').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -299,7 +317,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=42');
+        const r = await fetch('src/api_table.json?v=43');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);

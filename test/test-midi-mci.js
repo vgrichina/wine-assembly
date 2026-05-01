@@ -203,11 +203,25 @@ try {
   assert.strictEqual(ctx._voices._ac.started.length, before, 'empty sequencer playback should schedule no notes');
   assert.strictEqual(imports.host.mci_command(emptyId, 0x0804, 0, 0), 0);
 
+  const primedCtx = new FakeAudioContext();
+  const primedHost = createHostImports({
+    getMemory: () => mem.buffer,
+    _audioCtx: primedCtx,
+    readFile: (p) => p.toLowerCase() === 'song.mid' ? oneNoteMidi : null,
+  });
+  assert.strictEqual(primedHost.host.midi_num_devs(), 1);
+  assert.strictEqual(primedHost.host.midi_out_set_volume(0, 0xFFFFFFFF), 0);
+  const primedHandle = primedHost.host.midi_out_open(0, 0, 0, 0);
+  assert.strictEqual(primedHost.host.midi_out_short_msg(primedHandle, 0x00643C90), 0);
+  assert.strictEqual(primedHost.host.midi_out_close(primedHandle), 0);
+  assert.strictEqual(primedCtx.started.length, 1, 'host should reuse pre-unlocked browser AudioContext');
+
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
   console.log('PASS  browser audio unlock creates the shared AudioContext on user input');
+  console.log('PASS  host reuses a launch-primed browser AudioContext');
   console.log('PASS  empty sequencer open does not invent default MIDI playback');
 } finally {
   if (oldAudioContext === undefined) delete globalThis.AudioContext;
