@@ -3102,3 +3102,43 @@ Two likely causes:
 Tools: `--trace-host=` on `IDirect3DRMMeshBuilder` vtable + count probes inside `0x5c50a0df` (RegisterTemplate-add) — verify all 35 template names, see whether "Mesh" specifically registered. Also probe d3rm's GetNextDataObject loop to see whether camera.x's top-level objects were enumerated at all, or zero.
 
 Also note: viewer's wvsprintf-call-site (`0x40200e`/`0x402013`) and several other internal block addrs return **0** under `--count`, even though `--break` and `--trace-at` confirm execution flows through them. The hit-counter loop in `13-exports.wat:46` increments only when `eip == addr` at block-entry dispatch; the threaded-cache call shortcut may skip the eip check on calls into already-cached blocks. Use `--trace-at` (single-addr) or `--break-once` for any address whose value lives inside a function body rather than at a fn entry / call-return landing.
+
+**2026-04-30 cont.61 — root cause: GUID filter passed to d3rm dispatcher is `[Mesh]`, but camera.x contains `ProgressiveMesh`.**
+
+NOTFOUND-emit site narrowed to one of 12 candidates by `--count` on the post-call landings of every `push 0x88760311; call hr_setter` site (counted at imm32_addr+9, the basic-block boundary). Result: only `d3drm+0x647d09f6` (post-call landing `0x647d09ff`) fires. Enclosing fn (`0x647d0868`) is the d3rm-internal "load top-level objects from X-file" generic walker; bail at `0x647d09ea: test bl, 0x80; jz success / cmp [ebp-8], 0; jnz success / push 0x88760311` means: *flag bit 7 set AND no objects loaded → NOTFOUND*. This walker calls `0x647d075c` per data object, which calls dispatcher `0x647d02cd`.
+
+Dispatcher `0x647d02cd` cascades GUID-equality compares (`repe cmpsb 16`) against known template GUIDs (Header `3D82AB43-…`, Mesh `3D82AB46-…`, Frame `3D82AB44-…`, ProgressiveMesh `8A63C360-…` at `0x64781c40`, …). For each matched type, it then calls `find_guid_in_pointer_list(filter_array, count, type_guid)` (helper `0x647d0701`). If the type isn't in the caller-supplied filter → `jz 0x647d06b8` (skip / don't load). Helper returns 1 on `count==0` (empty filter accepts everything), otherwise loops comparing 16-byte GUIDs through pointer indirection.
+
+Hit counts on dispatcher branches (8000 batches):
+
+| Probe | d3drm VA | Hits | Meaning |
+|---|---|---:|---|
+| Per-object dispatcher entry | 0x647d02cd | **2** | 2 top-level objects in camera.x (Header + ProgressiveMesh) |
+| Header consumer | 0x647d0306 | 1 | Header skipped/consumed |
+| Mesh consumer | 0x647d0370 | 0 | no Mesh instance |
+| Frame consumer | 0x647d03ce | 0 | no Frame instance |
+| **ProgressiveMesh GUID match** | **0x647d0485** | **1** | PM detected |
+| ProgressiveMesh handler call | 0x647d04d9 | **0** | handler **never reached** |
+| Generic bail | 0x647d06b8 | 1 | bailed instead of dispatching |
+
+`--trace-at=0x647d0701` with `--trace-at-dump=0x03fffe2c:16` (the haystack ptr passed by dispatcher's PM arm):
+
+```
+[TRACE-AT #1] EIP=0x0046c701 [esp..]= ret=0x46c495 arg1=0x03fffe2c arg2=1 arg3=0x0041d8d0
+Hexdump 0x03fffe2c: 00 d7 41 00 …      ; *arg1 = 0x0041d700
+                                       ; → d3drm+0x64781700 (TID_D3DRMMesh GUID 'A3A80D02-6E12-11CF-AC4A-0000C03825A1')
+arg3 needle = d3drm+0x647818d0 (TID_D3DRMProgressiveMesh GUID '4516EC79-8F20-11D0-9B6D-0000C0781BC3')
+```
+
+So the filter-list is `[TID_D3DRMMesh]` (count=1), and the PM dispatch arm asks "is TID_D3DRMProgressiveMesh in this list?" → no → bail.
+
+**Where the filter comes from.** Walker chain is `MeshBuilder::Load → 0x647cdf1d → 0x647d0868 → 0x647d075c → 0x647d02cd`. `0x647cdf1d` takes args `[ebp+0x14]` = filter-array, `[ebp+0x10]` = count and forwards them as `[ebp+0x14]` of `0x647d0868`. 7 callers of `0x647cdf1d`; 4 of them push `[edi+0x2c]` / `[esi+0x2c]` as the filter — i.e. each public-Load implementation reads its **per-instance filter field at `+0x2c`**. So the MeshBuilder class instance has `[obj+0x2c] = static_array_of_one_GUID_pointer = [&TID_D3DRMMesh]`.
+
+This is the bug surface: real DX5 MeshBuilder::Load is supposed to convert ProgressiveMesh → Mesh transparently, so the filter for MeshBuilder must include both. Either:
+- (a) Our d3drm.dll really does have filter=[Mesh] only and the real DX5 MeshBuilder uses a different mechanism (e.g. the dispatcher's PM arm should call `IDirect3DRMProgressiveMesh::CreateMesh` to flatten PM → Mesh and then re-dispatch — verify by reading 0x647d04d9 handler `0x647cf6a7`).
+- (b) The filter field `[obj+0x2c]` was init'd to a wrong array — a static blob in our emu got the wrong pointer due to a relocation/load-order issue.
+
+**cont.62 plan:**
+1. Locate the static GUID-pointer-array referenced by `[meshbuilder_obj+0x2c]`. The runtime value `0x0041d700` corresponds to a static at d3drm+`0x64781700`. Search for a *table* (multiple consecutive 4-byte ptrs) starting at or near `0x64781700` — that's the `[Mesh]` array. Real d3rm should have the array contain BOTH `&TID_D3DRMMesh` AND `&TID_D3DRMProgressiveMesh` (or more). If our static table contains only one entry, find what wrote it / where the longer table lives.
+2. Disasm `0x647cf6a7` (the would-be PM handler, never reached). Per-arm intent: it likely converts PM data → Mesh data and re-runs the load (so dispatcher's PM arm wouldn't need PM in the filter — it would do the conversion before dispatching). If `0x647cf6a7` *is* a "convert PM and dispatch as Mesh" function, then the bug is dispatcher's `find_guid` gate: it should NOT gate the PM arm on the filter (since PM is being normalized, not loaded as PM). That would mean the static disasm shows a logic path our PM arm bypasses.
+3. Cross-check by running with a plain-Mesh `.x` file (need to find or fabricate one — every X file in `test/binaries/dx-sdk/bin/` is PM). Quick test: hand-craft a minimal `xof 0303bin 0032 / Header { … } / Mesh { … }` file, save as camera.x; if MeshBuilder::Load succeeds, it confirms PM-handling is the only gap. If it still fails, the filter / dispatcher logic is broader.
