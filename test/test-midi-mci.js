@@ -164,6 +164,15 @@ try {
   assert.strictEqual(wideDev.smf.notes.length, 1);
   assert.strictEqual(imports.host.mci_command(wideId, 0x0804, 0, 0), 0);
 
+  writeStr(0x1e0, 'song.mid');
+  const typeFilenameId = imports.host.mci_open(0x1e0, 0, 0x2002);
+  const typeFilenameDev = ctx._mci.devices.get(typeFilenameId);
+  assert(typeFilenameDev && typeFilenameDev.smf, 'MCI_OPEN_TYPE filename should parse as a sequencer file');
+  assert.strictEqual(typeFilenameDev.type, 'sequencer');
+  assert.strictEqual(typeFilenameDev.element, 'song.mid');
+  assert.strictEqual(imports.host.mci_command(typeFilenameId, 0x0806, 0, 0), 0);
+  assert.strictEqual(imports.host.mci_command(typeFilenameId, 0x0804, 0, 0), 0);
+
   const hmo = imports.host.midi_out_open(0, 0, 0, 0);
   assert(hmo, 'midiOutOpen should return a real host handle');
   assert.strictEqual(imports.host.midi_out_set_volume(hmo, 0x80008000), 0);
@@ -218,6 +227,7 @@ try {
 
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
+  console.log('PASS  MCI_OPEN_TYPE accepts .mid filenames used by Pinball');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
   console.log('PASS  browser audio unlock creates the shared AudioContext on user input');

@@ -25,6 +25,7 @@ UNIT=(
   test/test-mat4.js
   test/test-vfs.js
   test/test-midi-mci.js
+  test/test-web-pinball-assets.js
   test/test-radio-mutex.js
   test/test-listbox.js
   test/test-open-nav.js

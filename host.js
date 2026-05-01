@@ -51,9 +51,28 @@ class WineAssembly {
       set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
         const baseName = name.replace(/^.*[\\\/]/, '');
+        const lowerName = name.toLowerCase().replace(/\//g, '\\');
+        const lowerBase = baseName.toLowerCase();
+        const vfs = self._helpCtx && self._helpCtx.vfs;
+        if (vfs && vfs.files) {
+          const candidates = [
+            lowerName,
+            'c:\\' + lowerName.replace(/^\\+/, ''),
+            'c:\\' + lowerBase,
+          ];
+          for (const p of candidates) {
+            const entry = vfs.files.get(p);
+            if (entry && entry.data) return entry.data;
+          }
+          for (const [p, entry] of vfs.files) {
+            if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
+          }
+        }
         try {
           const xhr = new XMLHttpRequest();
-          xhr.open('GET', 'binaries/' + baseName, false);
+          const exeDir = self._exeUrl ? self._exeUrl.replace(/[^\/\\]*$/, '') : '';
+          const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
+          xhr.open('GET', url, false);
           xhr.responseType = 'arraybuffer';
           xhr.send();
           if (xhr.status === 200) return new Uint8Array(xhr.response);
@@ -309,7 +328,7 @@ class WineAssembly {
         compileEl.style.display = 'block';
       }, 100);
     }
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=43').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=45').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -317,7 +336,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=43');
+        const r = await fetch('src/api_table.json?v=45');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -379,6 +398,7 @@ class WineAssembly {
     // Set EXE name from URL
     const exeName = url.replace(/^.*[\\\/]/, '');
     this._exeName = exeName;
+    this._exeUrl = url;
     if (this.instance.exports.set_exe_name) {
       const enc = new TextEncoder();
       const nameBytes = enc.encode(exeName);
