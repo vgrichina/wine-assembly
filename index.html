@@ -61,6 +61,11 @@
       cursor: pointer;
     }
     #toolbar button:active { border-style: inset; }
+    #toolbar .debug-midi {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
     #content {
       flex: 1;
       display: flex;
@@ -388,6 +393,12 @@
       </select>
       <button onclick="launchApp()">Launch</button>
       <button onclick="runningApps.forEach(a => a.wine.running = false); runningApps.length = 0; if(sharedRenderer){sharedRenderer.windows={};sharedRenderer.repaint();} document.getElementById('desktop-icons').style.display='';">Stop All</button>
+      <span class="debug-midi">
+        <label>MIDI:</label>
+        <select id="midi-select"></select>
+        <button onclick="playDebugMidi()">Play MIDI</button>
+        <button onclick="stopDebugMidi()">Stop MIDI</button>
+      </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
@@ -434,19 +445,19 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=45"></script>
-  <script src="lib/dib.js?v=45"></script>
-  <script src="lib/resources-icon.js?v=45"></script>
-  <script src="lib/renderer-input.js?v=45"></script>
-  <script src="lib/renderer.js?v=45"></script>
-  <script src="lib/dll-loader.js?v=45"></script>
-  <script src="lib/storage.js?v=45"></script>
-  <script src="lib/filesystem.js?v=45"></script>
-  <script src="lib/hlp-parser.js?v=45"></script>
-  <script src="lib/host-imports.js?v=45"></script>
-  <script src="lib/compile-wat.js?v=45"></script>
-  <script src="lib/thread-manager.js?v=45"></script>
-  <script src="host.js?v=45"></script>
+  <script src="lib/mem-utils.js?v=46"></script>
+  <script src="lib/dib.js?v=46"></script>
+  <script src="lib/resources-icon.js?v=46"></script>
+  <script src="lib/renderer-input.js?v=46"></script>
+  <script src="lib/renderer.js?v=46"></script>
+  <script src="lib/dll-loader.js?v=46"></script>
+  <script src="lib/storage.js?v=46"></script>
+  <script src="lib/filesystem.js?v=46"></script>
+  <script src="lib/hlp-parser.js?v=46"></script>
+  <script src="lib/host-imports.js?v=46"></script>
+  <script src="lib/compile-wat.js?v=46"></script>
+  <script src="lib/thread-manager.js?v=46"></script>
+  <script src="host.js?v=46"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -709,6 +720,118 @@ Resource-aware Win98 emulator
       scr_win98:    { exe: 'binaries/screensavers/WIN98.SCR', args: '/s' },
       scr_wotravel: { exe: 'binaries/screensavers/WOTRAVEL.SCR', args: '/s' },
     };
+
+    let debugMidiPlayer = null;
+    let debugMidiAudioHost = null;
+
+    function appFileUrl(file) {
+      if (!file) return '';
+      return typeof file === 'string' ? file : (file.url || '');
+    }
+
+    function midiBaseName(url) {
+      return String(url || '').split(/[\/\\]/).pop();
+    }
+
+    function midiContainerKind(bytes) {
+      if (!bytes || bytes.length < 14) return '';
+      const text4 = (p) => String.fromCharCode(bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
+      if (text4(0) === 'MThd') return 'SMF';
+      if (bytes.length >= 24 && text4(0) === 'RIFF' && text4(8) === 'RMID') return 'RMID';
+      return '';
+    }
+
+    function initDebugMidiSelect() {
+      if (!DEBUG_MODE) return;
+      const sel = document.getElementById('midi-select');
+      if (!sel) return;
+      const seen = new Set();
+      for (const [appKey, app] of Object.entries(apps)) {
+        for (const file of (app.files || [])) {
+          const url = appFileUrl(file);
+          if (!/\.(mid|midi|rmi)$/i.test(url) || seen.has(url)) continue;
+          seen.add(url);
+          const opt = document.createElement('option');
+          opt.value = url;
+          opt.textContent = appKey + ': ' + midiBaseName(url);
+          sel.appendChild(opt);
+        }
+      }
+      if (!sel.options.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No MIDI assets';
+        sel.appendChild(opt);
+      }
+    }
+
+    function writeDebugString(memory, ptr, value) {
+      const mem = new Uint8Array(memory.buffer);
+      const s = String(value || '');
+      for (let i = 0; i < s.length && ptr + i + 1 < mem.length; i++) {
+        mem[ptr + i] = s.charCodeAt(i) & 0xFF;
+      }
+      mem[Math.min(ptr + s.length, mem.length - 1)] = 0;
+    }
+
+    function stopDebugMidi(quiet) {
+      if (debugMidiPlayer) {
+        try { debugMidiPlayer.imports.host.mci_command(debugMidiPlayer.id, 0x0804, 0, 0); } catch (_) {}
+        debugMidiPlayer = null;
+      }
+      if (!quiet) document.getElementById('status').textContent = 'MIDI stopped';
+    }
+
+    async function playDebugMidi() {
+      const sel = document.getElementById('midi-select');
+      const url = sel && sel.value;
+      if (!url) return;
+      stopDebugMidi(true);
+      const status = document.getElementById('status');
+      const name = midiBaseName(url);
+      status.textContent = 'Loading MIDI...';
+      try {
+        if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
+        const ac = debugMidiAudioHost.primeAudio();
+        const response = await fetch(url + '?v=46');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!midiContainerKind(bytes)) {
+          status.textContent = name + ' is not SMF/RMID MIDI data';
+          console.warn('[debug-midi] unsupported MIDI container:', name, bytes.slice(0, 16));
+          return;
+        }
+        const memory = new WebAssembly.Memory({ initial: 1 });
+        const path = 'c:\\' + name.toLowerCase();
+        const files = new Map([[path, { data: bytes, attrs: 0x20 }]]);
+        const ctx = {
+          getMemory: () => memory.buffer,
+          get _audioCtx() { return ac; },
+          readFile: (requested) => {
+            const base = midiBaseName(requested).toLowerCase();
+            const entry = files.get('c:\\' + base);
+            return entry && entry.data;
+          },
+          vfs: { files },
+        };
+        const imports = createHostImports(ctx);
+        writeDebugString(memory, 0x100, name);
+        const id = imports.host.mci_open(0x100, 0, 0x2002);
+        const dev = ctx._mci && ctx._mci.devices && ctx._mci.devices.get(id >>> 0);
+        if (!dev || !dev.smf || !dev.smf.notes.length) {
+          throw new Error('MIDI parsed with no notes');
+        }
+        const err = imports.host.mci_command(id, 0x0806, 0, 0);
+        if (err) throw new Error('MCI_PLAY failed: 0x' + (err >>> 0).toString(16));
+        debugMidiPlayer = { imports, id, ctx, url };
+        status.textContent = 'Playing MIDI: ' + name + ' (' + dev.smf.notes.length + ' notes)';
+      } catch (e) {
+        console.error('[debug-midi] failed:', e);
+        status.textContent = 'MIDI failed: ' + (e && e.message ? e.message : e);
+      }
+    }
+
+    initDebugMidiSelect();
 
     function wireCanvasInput(canvas, renderer) {
       if (inputWired) return;

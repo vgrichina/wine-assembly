@@ -37,6 +37,26 @@ const oneNoteMidi = Uint8Array.from([
   0x00, 0xff, 0x2f, 0x00,
 ]);
 
+function makeRmid(smf) {
+  const out = new Uint8Array(12 + 8 + smf.length + (smf.length & 1));
+  out.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+  const riffSize = out.length - 8;
+  out[4] = riffSize & 0xFF;
+  out[5] = (riffSize >>> 8) & 0xFF;
+  out[6] = (riffSize >>> 16) & 0xFF;
+  out[7] = (riffSize >>> 24) & 0xFF;
+  out.set([0x52, 0x4D, 0x49, 0x44], 8); // RMID
+  out.set([0x64, 0x61, 0x74, 0x61], 12); // data
+  out[16] = smf.length & 0xFF;
+  out[17] = (smf.length >>> 8) & 0xFF;
+  out[18] = (smf.length >>> 16) & 0xFF;
+  out[19] = (smf.length >>> 24) & 0xFF;
+  out.set(smf, 20);
+  return out;
+}
+
+const oneNoteRmid = makeRmid(oneNoteMidi);
+
 class FakeAudioParam {
   constructor(value = 0) {
     this.value = value;
@@ -121,7 +141,12 @@ try {
 
   const ctx = {
     getMemory: () => mem.buffer,
-    readFile: (p) => p.toLowerCase() === 'song.mid' ? oneNoteMidi : null,
+    readFile: (p) => {
+      const lower = p.toLowerCase();
+      if (lower === 'song.mid') return oneNoteMidi;
+      if (lower === 'song.rmi') return oneNoteRmid;
+      return null;
+    },
   };
   const imports = createHostImports(ctx);
   assert(windowListeners.pointerdown && windowListeners.pointerdown.length, 'audio unlock listener should be installed immediately');
@@ -163,6 +188,13 @@ try {
   assert(wideDev && wideDev.smf, 'wide MCI open should parse explicit MIDI file');
   assert.strictEqual(wideDev.smf.notes.length, 1);
   assert.strictEqual(imports.host.mci_command(wideId, 0x0804, 0, 0), 0);
+
+  writeStr(0x1c0, 'song.rmi');
+  const rmidId = imports.host.mci_open(0x100, 0x1c0, 0x2000);
+  const rmidDev = ctx._mci.devices.get(rmidId);
+  assert(rmidDev && rmidDev.smf, 'RIFF RMID files should unwrap to embedded SMF data');
+  assert.strictEqual(rmidDev.smf.notes.length, 1);
+  assert.strictEqual(imports.host.mci_command(rmidId, 0x0804, 0, 0), 0);
 
   writeStr(0x1e0, 'song.mid');
   const typeFilenameId = imports.host.mci_open(0x1e0, 0, 0x2002);
@@ -227,6 +259,7 @@ try {
 
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
+  console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
   console.log('PASS  MCI_OPEN_TYPE accepts .mid filenames used by Pinball');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');

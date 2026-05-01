@@ -23,6 +23,10 @@ for (const rel of [
 
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mid'/s.test(deployJs), 'deploy should include .mid binary assets');
 assert(!/SKIP_BIN_DIRS\s*=\s*new Set\([^)]*'pinball'/s.test(deployJs), 'deploy should not skip binaries/pinball');
+assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
+assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
+assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 
 console.log('PASS  web Pinball manifest includes MIDI assets');
 console.log('PASS  deploy filters include .mid and do not skip pinball assets');
+console.log('PASS  debug mode exposes direct MIDI playback');
