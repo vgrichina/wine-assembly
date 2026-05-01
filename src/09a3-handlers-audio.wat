@@ -426,15 +426,183 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 809: mciSendCommandA — return 0 (success)
+  (func $mci_slot_addr (param $slot i32) (result i32)
+    (i32.add (global.get $MCI_DEVICE_TABLE)
+      (i32.mul (local.get $slot) (i32.const 16))))
+
+  (func $mci_alloc_slot (result i32)
+    (local $slot i32)
+    (local.set $slot (i32.const 1))
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $slot) (i32.const 16)))
+        (if (i32.eqz (i32.load (call $mci_slot_addr (local.get $slot))))
+          (then (return (local.get $slot))))
+        (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+        (br $scan)))
+    (i32.const 0))
+
+  ;; 809: mciSendCommandA(mciId, uMsg, fdwCommand, dwParam)
   (func $handle_mciSendCommandA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $params_wa i32)
+    (local $slot i32)
+    (local $slot_addr i32)
+    (local $host_id i32)
+    (local $type_val i32)
+    (local $type_arg i32)
+    (local $element_wa i32)
+    (local $err i32)
+    ;; MCI_OPEN = 0x0803. MCI_OPEN_PARMSA: +4 wDeviceID, +8 lpstrDeviceType,
+    ;; +12 lpstrElementName.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0803))
+      (then
+        (if (i32.eqz (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 0x106)) ;; MCIERR_INVALID_DEVICE_ID
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $params_wa (call $g2w (local.get $arg3)))
+        (local.set $type_val (i32.load (i32.add (local.get $params_wa) (i32.const 8))))
+        (local.set $type_arg
+          (if (result i32)
+            (i32.and (local.get $arg2) (i32.const 0x1000)) ;; MCI_OPEN_TYPE_ID
+            (then (local.get $type_val))
+            (else
+              (if (result i32) (local.get $type_val)
+                (then (call $g2w (local.get $type_val)))
+                (else (i32.const 0))))))
+        (local.set $element_wa
+          (if (result i32) (i32.load (i32.add (local.get $params_wa) (i32.const 12)))
+            (then (call $g2w (i32.load (i32.add (local.get $params_wa) (i32.const 12)))))
+            (else (i32.const 0))))
+        (local.set $host_id (call $host_mci_open
+          (local.get $type_arg)
+          (local.get $element_wa)
+          (local.get $arg2)))
+        (if (i32.eqz (local.get $host_id))
+          (then
+            (global.set $eax (i32.const 0x107)) ;; MCIERR_UNRECOGNIZED_KEYWORD / generic open failure
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $slot (call $mci_alloc_slot))
+        (if (i32.eqz (local.get $slot))
+          (then
+            (drop (call $host_mci_command (local.get $host_id) (i32.const 0x0804) (i32.const 0) (i32.const 0)))
+            (global.set $eax (i32.const 0x109)) ;; MCIERR_OUT_OF_MEMORY-ish
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $slot_addr (call $mci_slot_addr (local.get $slot)))
+        (i32.store (local.get $slot_addr) (local.get $host_id))
+        (i32.store (i32.add (local.get $params_wa) (i32.const 4)) (local.get $slot))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $slot (local.get $arg0))
+    (if (i32.or (i32.eqz (local.get $slot)) (i32.ge_u (local.get $slot) (i32.const 16)))
+      (then
+        (global.set $eax (i32.const 0x106)) ;; MCIERR_INVALID_DEVICE_ID
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $slot_addr (call $mci_slot_addr (local.get $slot)))
+    (local.set $host_id (i32.load (local.get $slot_addr)))
+    (if (i32.eqz (local.get $host_id))
+      (then
+        (global.set $eax (i32.const 0x106))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $params_wa
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3)))
+        (else (i32.const 0))))
+    (local.set $err (call $host_mci_command
+      (local.get $host_id)
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $params_wa)))
+    (if (i32.eq (local.get $arg1) (i32.const 0x0804)) ;; MCI_CLOSE
+      (then (i32.store (local.get $slot_addr) (i32.const 0))))
+    (global.set $eax (local.get $err))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 855: mciSendCommandW — wide version, same behavior
   (func $handle_mciSendCommandW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $params_wa i32)
+    (local $slot i32)
+    (local $slot_addr i32)
+    (local $host_id i32)
+    (local $type_val i32)
+    (local $type_arg i32)
+    (local $element_wa i32)
+    (local $err i32)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0803))
+      (then
+        (if (i32.eqz (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 0x106))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $params_wa (call $g2w (local.get $arg3)))
+        (local.set $type_val (i32.load (i32.add (local.get $params_wa) (i32.const 8))))
+        (local.set $type_arg
+          (if (result i32)
+            (i32.and (local.get $arg2) (i32.const 0x1000))
+            (then (local.get $type_val))
+            (else
+              (if (result i32) (local.get $type_val)
+                (then (call $g2w (local.get $type_val)))
+                (else (i32.const 0))))))
+        (local.set $element_wa
+          (if (result i32) (i32.load (i32.add (local.get $params_wa) (i32.const 12)))
+            (then (call $g2w (i32.load (i32.add (local.get $params_wa) (i32.const 12)))))
+            (else (i32.const 0))))
+        (local.set $host_id (call $host_mci_open_w
+          (local.get $type_arg)
+          (local.get $element_wa)
+          (local.get $arg2)))
+        (if (i32.eqz (local.get $host_id))
+          (then
+            (global.set $eax (i32.const 0x107))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $slot (call $mci_alloc_slot))
+        (if (i32.eqz (local.get $slot))
+          (then
+            (drop (call $host_mci_command (local.get $host_id) (i32.const 0x0804) (i32.const 0) (i32.const 0)))
+            (global.set $eax (i32.const 0x109))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $slot_addr (call $mci_slot_addr (local.get $slot)))
+        (i32.store (local.get $slot_addr) (local.get $host_id))
+        (i32.store (i32.add (local.get $params_wa) (i32.const 4)) (local.get $slot))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $slot (local.get $arg0))
+    (if (i32.or (i32.eqz (local.get $slot)) (i32.ge_u (local.get $slot) (i32.const 16)))
+      (then
+        (global.set $eax (i32.const 0x106))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $slot_addr (call $mci_slot_addr (local.get $slot)))
+    (local.set $host_id (i32.load (local.get $slot_addr)))
+    (if (i32.eqz (local.get $host_id))
+      (then
+        (global.set $eax (i32.const 0x106))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $params_wa
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3)))
+        (else (i32.const 0))))
+    (local.set $err (call $host_mci_command
+      (local.get $host_id)
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $params_wa)))
+    (if (i32.eq (local.get $arg1) (i32.const 0x0804))
+      (then (i32.store (local.get $slot_addr) (i32.const 0))))
+    (global.set $eax (local.get $err))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -538,7 +706,7 @@
 
   ;; midiOutGetNumDevs() — 0 args, return 1 (one MIDI device)
   (func $handle_midiOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; 1 device
+    (global.set $eax (call $host_midi_num_devs))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
@@ -579,6 +747,17 @@
   ;; Fill MIDIOUTCAPSA struct with basic info, return MMSYSERR_NOERROR (0)
   (func $handle_midiOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $caps i32)
+    (local $n i32)
+    (local.set $n (call $host_midi_num_devs))
+    (if (i32.or
+          (i32.eqz (local.get $arg1))
+          (i32.and
+            (i32.ne (local.get $arg0) (i32.const -1))
+            (i32.ge_u (local.get $arg0) (local.get $n))))
+      (then
+        (global.set $eax (i32.const 2)) ;; MMSYSERR_BADDEVICEID
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $caps (call $g2w (local.get $arg1)))
     ;; Zero out the struct
     (memory.fill (local.get $caps) (i32.const 0) (local.get $arg2))
@@ -596,42 +775,60 @@
 
   ;; midiOutOpen(lphmo, uDeviceID, dwCallback, dwCallbackInstance, dwFlags) — 5 args
   (func $handle_midiOutOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Write fake handle to *lphmo
+    (local $hmo i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 11)) ;; MMSYSERR_INVALPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $hmo (call $host_midi_out_open
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $arg3)
+      (local.get $arg4)))
+    (if (i32.eqz (local.get $hmo))
+      (then
+        (global.set $eax (i32.const 2)) ;; MMSYSERR_BADDEVICEID
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (if (local.get $arg0)
-      (then (call $gs32 (local.get $arg0) (i32.const 0x50010001))))
+      (then (call $gs32 (local.get $arg0) (local.get $hmo))))
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; midiOutClose(hmo) — 1 arg
   (func $handle_midiOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $eax (call $host_midi_out_close (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; midiOutShortMsg(hmo, dwMsg) — 2 args
   (func $handle_midiOutShortMsg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $eax (call $host_midi_out_short_msg (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; midiOutReset(hmo) — 1 arg
   (func $handle_midiOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $eax (call $host_midi_out_reset (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; midiOutGetVolume(hmo, lpdwVolume) — 2 args; report max volume both channels
   (func $handle_midiOutGetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (i32.const 0xFFFFFFFF))))
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 11)) ;; MMSYSERR_INVALPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (global.set $eax (call $host_midi_out_get_volume (local.get $arg0) (call $g2w (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; midiOutSetVolume(hmo, dwVolume) — 2 args; accept silently
   (func $handle_midiOutSetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $eax (call $host_midi_out_set_volume (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 

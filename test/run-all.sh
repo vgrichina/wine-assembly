@@ -24,6 +24,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-midi-mci.js
   test/test-radio-mutex.js
   test/test-listbox.js
   test/test-open-nav.js

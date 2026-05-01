@@ -293,6 +293,28 @@
   ;; message_beep(uType) — play system sound (0=default, 0x10=error, 0x30=warning, 0x40=info)
   (import "host" "play_sound" (func $host_play_sound (param i32 i32)))
   ;; play_sound(wasm_ptr, length) — play WAV data from WASM memory
+  (import "host" "mci_open" (func $host_mci_open (param i32 i32 i32) (result i32)))
+  ;; mci_open(device_type_or_wa, element_name_wa, flags) → opaque host device id
+  (import "host" "mci_open_w" (func $host_mci_open_w (param i32 i32 i32) (result i32)))
+  ;; mci_open_w(device_type_or_wa, element_name_wa, flags) → opaque host device id
+  (import "host" "mci_command" (func $host_mci_command (param i32 i32 i32 i32) (result i32)))
+  ;; mci_command(host_id, command, flags, params_wa) → MCIERR_*
+  (import "host" "mci_string" (func $host_mci_string (param i32 i32 i32) (result i32)))
+  ;; mci_string(cmd_wa, retbuf_wa, retlen) → MCIERR_*
+  (import "host" "midi_num_devs" (func $host_midi_num_devs (result i32)))
+  ;; midi_num_devs() → number of MIDI output devices
+  (import "host" "midi_out_open" (func $host_midi_out_open (param i32 i32 i32 i32) (result i32)))
+  ;; midi_out_open(device_id, callback, callback_instance, flags) → opaque MIDI handle or 0
+  (import "host" "midi_out_close" (func $host_midi_out_close (param i32) (result i32)))
+  ;; midi_out_close(handle) → MMRESULT
+  (import "host" "midi_out_short_msg" (func $host_midi_out_short_msg (param i32 i32) (result i32)))
+  ;; midi_out_short_msg(handle, packed_msg) → MMRESULT
+  (import "host" "midi_out_reset" (func $host_midi_out_reset (param i32) (result i32)))
+  ;; midi_out_reset(handle) → MMRESULT
+  (import "host" "midi_out_get_volume" (func $host_midi_out_get_volume (param i32 i32) (result i32)))
+  ;; midi_out_get_volume(handle, out_volume_wa) → MMRESULT
+  (import "host" "midi_out_set_volume" (func $host_midi_out_set_volume (param i32 i32) (result i32)))
+  ;; midi_out_set_volume(handle, volume) → MMRESULT
 
   ;; INI file host imports — backed by localStorage
   (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -506,7 +528,8 @@
   ;; 0x00010770  144B    Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
-  ;; 0x00010A00  ~2.7KB  Free (up to GUEST_BASE)
+  ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
+  ;; 0x00010B00  ~2.5KB  Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -581,6 +604,12 @@
   ;; ptr is a WASM linear address of a heap-allocated ASCII title (no NUL).
   ;; Written by SetWindowTextA; read by $defwndproc_handle_ncpaint.
   (global $TITLE_TABLE   i32 (i32.const 0x0000EE70))
+  ;; MCI_DEVICE_TABLE: 16 slots. Slot 0 is invalid.
+  ;;   +0 host_id returned by host_mci_open
+  ;;   +4 reserved
+  ;;   +8 reserved
+  ;;   +12 reserved
+  (global $MCI_DEVICE_TABLE i32 (i32.const 0x00010A00))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
@@ -1094,4 +1123,3 @@
   ;; click-driven "close on selection" path so keyboard nav can scroll
   ;; through items without dismissing the dropdown.
   (global $combo_kbd_nav_active (mut i32) (i32.const 0))
-

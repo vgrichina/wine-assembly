@@ -1,0 +1,208 @@
+#!/usr/bin/env node
+// Regression coverage for generic MIDI playback.
+//
+// This does not launch a Win32 app. It verifies the host import layer can:
+//   - open an explicit .mid file through the MCI "sequencer" path
+//   - parse Standard MIDI File note events
+//   - schedule notes through Web Audio primitives
+//   - avoid inventing a default song when an app opens sequencer with no file
+//   - play direct midiOutShortMsg note-on/note-off messages
+//   - handle the common mciSendStringA sequencer commands
+
+const assert = require('assert');
+const { createHostImports } = require('../lib/host-imports');
+
+const mem = new WebAssembly.Memory({ initial: 2 });
+const u8 = new Uint8Array(mem.buffer);
+
+function writeStr(ptr, s) {
+  for (let i = 0; i < s.length; i++) u8[ptr + i] = s.charCodeAt(i);
+  u8[ptr + s.length] = 0;
+}
+
+function writeStrW(ptr, s) {
+  const dv = new DataView(mem.buffer);
+  for (let i = 0; i < s.length; i++) dv.setUint16(ptr + i * 2, s.charCodeAt(i), true);
+  dv.setUint16(ptr + s.length * 2, 0, true);
+}
+
+// Format 0, one track, 96 ticks/quarter:
+// note-on middle C at tick 0, note-off at tick 96, end-of-track.
+const oneNoteMidi = Uint8Array.from([
+  0x4d, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x60,
+  0x4d, 0x54, 0x72, 0x6b, 0x00, 0x00, 0x00, 0x0d,
+  0x00, 0x90, 0x3c, 0x64,
+  0x60, 0x80, 0x3c, 0x00,
+  0x00, 0xff, 0x2f, 0x00,
+]);
+
+class FakeAudioParam {
+  constructor(value = 0) {
+    this.value = value;
+    this.events = [];
+  }
+  setValueAtTime(value, time) {
+    this.value = value;
+    this.events.push(['set', value, time]);
+  }
+  exponentialRampToValueAtTime(value, time) {
+    this.value = value;
+    this.events.push(['ramp', value, time]);
+  }
+}
+
+class FakeNode {
+  constructor() {
+    this.connections = [];
+    this.disconnected = false;
+  }
+  connect(node) {
+    this.connections.push(node);
+    return node;
+  }
+  disconnect() {
+    this.disconnected = true;
+  }
+}
+
+class FakeOscillator extends FakeNode {
+  constructor(owner) {
+    super();
+    this.owner = owner;
+    this.type = '';
+    this.frequency = new FakeAudioParam();
+    this.starts = [];
+    this.stops = [];
+  }
+  start(time) {
+    this.starts.push(time);
+    this.owner.started.push(this);
+  }
+  stop(time) {
+    this.stops.push(time);
+  }
+}
+
+class FakeAudioContext {
+  constructor() {
+    this.currentTime = 10;
+    this.destination = new FakeNode();
+    this.state = 'running';
+    this.started = [];
+  }
+  createGain() {
+    const g = new FakeNode();
+    g.gain = new FakeAudioParam(1);
+    return g;
+  }
+  createOscillator() {
+    return new FakeOscillator(this);
+  }
+  resume() {
+    this.state = 'running';
+  }
+}
+
+const oldAudioContext = globalThis.AudioContext;
+globalThis.AudioContext = FakeAudioContext;
+
+try {
+  writeStr(0x100, 'sequencer');
+  writeStr(0x120, 'song.mid');
+
+  const ctx = {
+    getMemory: () => mem.buffer,
+    readFile: (p) => p.toLowerCase() === 'song.mid' ? oneNoteMidi : null,
+  };
+  const imports = createHostImports(ctx);
+
+  const id = imports.host.mci_open(0x100, 0x120, 0x2000);
+  const dev = ctx._mci.devices.get(id);
+  assert(dev, 'MCI device should be registered');
+  assert.strictEqual(dev.type, 'sequencer');
+  assert.strictEqual(dev.element, 'song.mid');
+  assert(dev.smf, 'explicit MIDI file should parse');
+  assert.strictEqual(dev.smf.notes.length, 1);
+  assert(Math.abs(dev.smf.duration - 0.5) < 0.0001, `expected 0.5s duration, got ${dev.smf.duration}`);
+
+  assert.strictEqual(imports.host.mci_command(id, 0x0806, 0, 0), 0, 'MCI_PLAY should succeed');
+  assert.strictEqual(dev.state, 'playing');
+  assert.strictEqual(ctx._voices._ac.started.length, 1, 'one oscillator note should be scheduled');
+
+  const osc = ctx._voices._ac.started[0];
+  assert.strictEqual(osc.type, 'triangle');
+  assert(Math.abs(osc.frequency.value - 261.625565) < 0.001, `expected middle C frequency, got ${osc.frequency.value}`);
+  assert(osc.starts[0] >= 10.04, 'note should be scheduled just after current audio time');
+  assert(osc.stops[0] > osc.starts[0], 'note stop should be after note start');
+
+  const statusPtr = 0x200;
+  new DataView(mem.buffer).setUint32(statusPtr + 8, 1, true); // MCI_STATUS_LENGTH
+  assert.strictEqual(imports.host.mci_command(id, 0x0814, 0, statusPtr), 0);
+  assert.strictEqual(new DataView(mem.buffer).getUint32(statusPtr + 4, true), 500);
+
+  assert.strictEqual(imports.host.mci_command(id, 0x0804, 0, 0), 0, 'MCI_CLOSE should succeed');
+  assert(!ctx._mci.devices.has(id), 'MCI_CLOSE should release the device');
+
+  writeStrW(0x180, 'sequencer');
+  writeStrW(0x1a0, 'song.mid');
+  const wideId = imports.host.mci_open_w(0x180, 0x1a0, 0x2000);
+  const wideDev = ctx._mci.devices.get(wideId);
+  assert(wideDev && wideDev.smf, 'wide MCI open should parse explicit MIDI file');
+  assert.strictEqual(wideDev.smf.notes.length, 1);
+  assert.strictEqual(imports.host.mci_command(wideId, 0x0804, 0, 0), 0);
+
+  const hmo = imports.host.midi_out_open(0, 0, 0, 0);
+  assert(hmo, 'midiOutOpen should return a real host handle');
+  assert.strictEqual(imports.host.midi_out_set_volume(hmo, 0x80008000), 0);
+  assert.strictEqual(imports.host.midi_out_get_volume(hmo, 0x240), 0);
+  assert.strictEqual(new DataView(mem.buffer).getUint32(0x240, true), 0x80008000);
+
+  const beforeDirect = ctx._voices._ac.started.length;
+  assert.strictEqual(imports.host.midi_out_short_msg(hmo, 0x00643C90), 0, 'note-on should succeed');
+  assert.strictEqual(ctx._voices._ac.started.length, beforeDirect + 1, 'direct MIDI note-on should schedule an oscillator');
+  assert.strictEqual(imports.host.midi_out_short_msg(hmo, 0x00003C80), 0, 'note-off should succeed');
+  assert.strictEqual(imports.host.midi_out_reset(hmo), 0);
+  assert.strictEqual(imports.host.midi_out_close(hmo), 0);
+  assert.strictEqual(imports.host.midi_out_short_msg(hmo, 0x00643C90), 5, 'closed MIDI handle should be invalid');
+
+  writeStr(0x300, 'open song.mid type sequencer alias song');
+  assert.strictEqual(imports.host.mci_string(0x300, 0, 0), 0);
+  assert(ctx._mci.aliases.has('song'), 'mciSendString open should register alias');
+  const beforeStringPlay = ctx._voices._ac.started.length;
+  writeStr(0x340, 'play song');
+  assert.strictEqual(imports.host.mci_string(0x340, 0, 0), 0);
+  assert.strictEqual(ctx._voices._ac.started.length, beforeStringPlay + 1, 'mciSendString play should schedule MIDI notes');
+  writeStr(0x360, 'status song length');
+  assert.strictEqual(imports.host.mci_string(0x360, 0x380, 32), 0);
+  assert.strictEqual(readCString(0x380), '500');
+  writeStr(0x3a0, 'close song');
+  assert.strictEqual(imports.host.mci_string(0x3a0, 0, 0), 0);
+  assert(!ctx._mci.aliases.has('song'), 'mciSendString close should release alias');
+
+  const emptyId = imports.host.mci_open(0x100, 0, 0x2000);
+  const emptyDev = ctx._mci.devices.get(emptyId);
+  assert(emptyDev, 'empty sequencer open should still create a device');
+  assert.strictEqual(emptyDev.type, 'sequencer');
+  assert.strictEqual(emptyDev.smf, null, 'sequencer open without an element must not auto-select a MIDI file');
+
+  const before = ctx._voices._ac.started.length;
+  assert.strictEqual(imports.host.mci_command(emptyId, 0x0806, 0, 0), 0);
+  assert.strictEqual(ctx._voices._ac.started.length, before, 'empty sequencer playback should schedule no notes');
+  assert.strictEqual(imports.host.mci_command(emptyId, 0x0804, 0, 0), 0);
+
+  console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
+  console.log('PASS  MCI wide-command open uses the same sequencer backend');
+  console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
+  console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
+  console.log('PASS  empty sequencer open does not invent default MIDI playback');
+} finally {
+  if (oldAudioContext === undefined) delete globalThis.AudioContext;
+  else globalThis.AudioContext = oldAudioContext;
+}
+
+function readCString(ptr) {
+  let s = '';
+  for (let p = ptr; u8[p]; p++) s += String.fromCharCode(u8[p]);
+  return s;
+}

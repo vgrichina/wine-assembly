@@ -419,7 +419,7 @@ const extra = [
   { name: 'DirectSoundEnumerateA', nargs: 2 },
   // DDRAW — standalone clipper factory (DX SDK globe.exe uses this instead of IDirectDraw_CreateClipper)
   { name: 'DirectDrawCreateClipper', nargs: 3 },
-  // WINMM — MCI command string interface (MIDI/CDAudio). Stub returns MCIERR_NO_ERROR (0).
+  // WINMM — MCI command string interface (MIDI/CDAudio). Sequencer commands route to host MIDI.
   { name: 'mciSendStringA', nargs: 4 },
   // USER32 — rect subtraction used by Task Manager update-region math
   { name: 'SubtractRect', nargs: 3 },

@@ -1536,10 +1536,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Clear return buffer if provided
+    ;; Clear return buffer if provided, then let the host parse/execute the
+    ;; command string. The host owns MCI aliases and MIDI sequencing.
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
       (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $host_mci_string
+        (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+        (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+        (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct
