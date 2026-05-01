@@ -644,9 +644,9 @@
   ;;   MF_GRAYED=0x01, MF_SEPARATOR=0x800 may be ORed in.
   ;;
   ;; Two-level model: top-level items become bar items; if a bar item
-  ;; is a popup, its direct children become dropdown items. Cascading
-  ;; sub-popups (popup-in-popup) are consumed but flattened away (none
-  ;; of our test apps use them).
+  ;; is a popup, its children become dropdown items. Cascading
+  ;; sub-popups are flattened into the parent dropdown so command items
+  ;; such as Pinball's Options -> Select Players remain reachable.
   ;;
   ;; Two passes over the PE bytes:
   ;;   pass 1 — count $ml_bar_count, $ml_struct_size, $ml_string_size
@@ -685,23 +685,50 @@
       (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
       (br $items))))
 
-  ;; Pass 1 — children of one popup. Updates $ml_struct_size /
-  ;; $ml_string_size. Counts children locally; if non-zero, adds the
-  ;; child header (4 + 24*N) to struct_size.
-  (func $ml_pass1_children
-    (local $cc i32) (local $flags i32) (local $chars i32)
+  ;; Pass 1 helper — flatten one nested popup level into its parent
+  ;; child list. Popup headers are consumed but not counted; leaf
+  ;; commands/separators are counted and their label bytes reserved.
+  (func $ml_pass1_flatten_level (result i32)
+    (local $cc i32) (local $flags i32) (local $isPopup i32)
     (block $done (loop $items
       (br_if $done (i32.ge_u (global.get $ml_pos) (global.get $ml_end)))
       (local.set $flags (i32.load16_u (global.get $ml_pos)))
       (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))
-      (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
+      (local.set $isPopup (i32.and (local.get $flags) (i32.const 0x10)))
+      (if (i32.eqz (local.get $isPopup))
         (then (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))))
       (drop (call $ml_load_label))
-      (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
-      (global.set $ml_string_size
-        (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))
-      (if (i32.and (local.get $flags) (i32.const 0x10))
-        (then (call $ml_skip_level)))
+      (if (local.get $isPopup)
+        (then
+          (local.set $cc (i32.add (local.get $cc) (call $ml_pass1_flatten_level))))
+        (else
+          (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
+          (global.set $ml_string_size
+            (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))))
+      (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
+      (br $items)))
+    (local.get $cc))
+
+  ;; Pass 1 — children of one popup. Updates $ml_struct_size /
+  ;; $ml_string_size. Counts children locally; if non-zero, adds the
+  ;; child header (4 + 24*N) to struct_size.
+  (func $ml_pass1_children
+    (local $cc i32) (local $flags i32) (local $isPopup i32)
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (global.get $ml_pos) (global.get $ml_end)))
+      (local.set $flags (i32.load16_u (global.get $ml_pos)))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))
+      (local.set $isPopup (i32.and (local.get $flags) (i32.const 0x10)))
+      (if (i32.eqz (local.get $isPopup))
+        (then (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))))
+      (drop (call $ml_load_label))
+      (if (local.get $isPopup)
+        (then
+          (local.set $cc (i32.add (local.get $cc) (call $ml_pass1_flatten_level))))
+        (else
+          (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
+          (global.set $ml_string_size
+            (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))))
       (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
       (br $items)))
     (if (local.get $cc)
@@ -752,15 +779,90 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $cp))))
 
+  ;; Write one flattened dropdown item record at $ml_struct_cur.
+  (func $ml_write_child_record (param $flags i32) (param $id i32)
+                               (param $str_w i32) (param $chars i32)
+    (local $hdr_off i32) (local $tab i32)
+    (local $label_chars i32) (local $sc_chars i32)
+    (local $label_off i32) (local $sc_off i32) (local $out_flags i32)
+    (local.set $hdr_off (global.get $ml_struct_cur))
+    (global.set $ml_struct_cur (i32.add (global.get $ml_struct_cur) (i32.const 24)))
+    ;; Split label on '\t' for shortcut
+    (local.set $tab (call $ml_find_tab (local.get $str_w) (local.get $chars)))
+    (if (i32.ge_s (local.get $tab) (i32.const 0))
+      (then
+        (local.set $label_chars (local.get $tab))
+        (local.set $sc_chars (i32.sub (i32.sub (local.get $chars) (local.get $tab)) (i32.const 1))))
+      (else
+        (local.set $label_chars (local.get $chars))
+        (local.set $sc_chars (i32.const 0))))
+    ;; Copy label to string region
+    (local.set $label_off (global.get $ml_string_cur))
+    (call $ml_copy_ascii (local.get $str_w)
+          (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
+          (local.get $label_chars))
+    (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $label_chars)))
+    (local.set $sc_off (i32.const 0))
+    (if (local.get $sc_chars)
+      (then
+        (local.set $sc_off (global.get $ml_string_cur))
+        (call $ml_copy_ascii
+          (i32.add (local.get $str_w) (i32.shl (i32.add (local.get $tab) (i32.const 1))
+                                                (i32.const 1)))
+          (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
+          (local.get $sc_chars))
+        (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $sc_chars)))))
+    ;; Out flags: bit0 separator, bit1 grayed
+    (local.set $out_flags (i32.const 0))
+    (if (i32.or (i32.and (local.get $flags) (i32.const 0x800))
+                (i32.and (i32.eqz (local.get $chars))
+                         (i32.eqz (local.get $id))))
+      (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 1)))))
+    (if (i32.and (local.get $flags) (i32.const 0x01))
+      (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
+    ;; Write the child item record (24 bytes) at hdr_off.
+    (i32.store           (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $label_off))
+    (i32.store offset=4  (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $label_chars))
+    (i32.store offset=8  (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $sc_off))
+    (i32.store offset=12 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $sc_chars))
+    (i32.store offset=16 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $out_flags))
+    (i32.store offset=20 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $id)))
+
+  ;; Pass 2 helper — write leaf items from one nested popup level into
+  ;; the current parent child block. Returns the number of records added.
+  (func $ml_pass2_flatten_level (result i32)
+    (local $cc i32) (local $flags i32) (local $id i32)
+    (local $str_w i32) (local $chars i32) (local $isPopup i32)
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (global.get $ml_pos) (global.get $ml_end)))
+      (local.set $flags (i32.load16_u (global.get $ml_pos)))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))
+      (local.set $isPopup (i32.and (local.get $flags) (i32.const 0x10)))
+      (local.set $id (i32.const 0))
+      (if (i32.eqz (local.get $isPopup))
+        (then
+          (local.set $id (i32.load16_u (global.get $ml_pos)))
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))))
+      (local.set $str_w (call $ml_load_label))
+      (local.set $chars (global.get $ml_label_chars))
+      (if (local.get $isPopup)
+        (then
+          (local.set $cc (i32.add (local.get $cc) (call $ml_pass2_flatten_level))))
+        (else
+          (call $ml_write_child_record (local.get $flags) (local.get $id)
+                                       (local.get $str_w) (local.get $chars))
+          (local.set $cc (i32.add (local.get $cc) (i32.const 1)))))
+      (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
+      (br $items)))
+    (local.get $cc))
+
   ;; Pass 2 — children of one popup. Walks PE bytes the same way, fills
   ;; the child block at $ml_struct_cur (reserve count slot, write items,
   ;; back-patch count). Returns child count.
   (func $ml_pass2_children (result i32)
     (local $cc i32) (local $flags i32) (local $id i32)
     (local $str_w i32) (local $chars i32)
-    (local $count_off i32) (local $hdr_off i32)
-    (local $tab i32) (local $label_chars i32) (local $sc_chars i32)
-    (local $label_off i32) (local $sc_off i32) (local $out_flags i32)
+    (local $count_off i32)
     (local $isPopup i32)
     (local.set $count_off (global.get $ml_struct_cur))
     (global.set $ml_struct_cur (i32.add (global.get $ml_struct_cur) (i32.const 4)))
@@ -776,50 +878,13 @@
           (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))))
       (local.set $str_w (call $ml_load_label))
       (local.set $chars (global.get $ml_label_chars))
-      (local.set $hdr_off (global.get $ml_struct_cur))
-      (global.set $ml_struct_cur (i32.add (global.get $ml_struct_cur) (i32.const 24)))
-      ;; Split label on '\t' for shortcut
-      (local.set $tab (call $ml_find_tab (local.get $str_w) (local.get $chars)))
-      (if (i32.ge_s (local.get $tab) (i32.const 0))
+      (if (local.get $isPopup)
         (then
-          (local.set $label_chars (local.get $tab))
-          (local.set $sc_chars (i32.sub (i32.sub (local.get $chars) (local.get $tab)) (i32.const 1))))
+          (local.set $cc (i32.add (local.get $cc) (call $ml_pass2_flatten_level))))
         (else
-          (local.set $label_chars (local.get $chars))
-          (local.set $sc_chars (i32.const 0))))
-      ;; Copy label to string region
-      (local.set $label_off (global.get $ml_string_cur))
-      (call $ml_copy_ascii (local.get $str_w)
-            (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
-            (local.get $label_chars))
-      (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $label_chars)))
-      (local.set $sc_off (i32.const 0))
-      (if (local.get $sc_chars)
-        (then
-          (local.set $sc_off (global.get $ml_string_cur))
-          (call $ml_copy_ascii
-            (i32.add (local.get $str_w) (i32.shl (i32.add (local.get $tab) (i32.const 1))
-                                                  (i32.const 1)))
-            (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
-            (local.get $sc_chars))
-          (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $sc_chars)))))
-      ;; Out flags: bit0 separator, bit1 grayed
-      (local.set $out_flags (i32.const 0))
-      (if (i32.or (i32.and (local.get $flags) (i32.const 0x800))
-                  (i32.and (i32.eqz (local.get $chars))
-                           (i32.eqz (i32.or (local.get $isPopup) (local.get $id)))))
-        (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 1)))))
-      (if (i32.and (local.get $flags) (i32.const 0x01))
-        (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
-      ;; Write the child item record (24 bytes) at hdr_off.
-      (i32.store           (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $label_off))
-      (i32.store offset=4  (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $label_chars))
-      (i32.store offset=8  (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $sc_off))
-      (i32.store offset=12 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $sc_chars))
-      (i32.store offset=16 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $out_flags))
-      (i32.store offset=20 (i32.add (global.get $ml_blob_w) (local.get $hdr_off)) (local.get $id))
-      (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
-      (if (local.get $isPopup) (then (call $ml_skip_level)))
+          (call $ml_write_child_record (local.get $flags) (local.get $id)
+                                       (local.get $str_w) (local.get $chars))
+          (local.set $cc (i32.add (local.get $cc) (i32.const 1)))))
       (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
       (br $items)))
     ;; Patch the count slot.

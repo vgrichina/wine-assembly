@@ -197,6 +197,7 @@ const extra = [
   { name: 'SetStdHandle', nargs: 2 },
   { name: 'FlushFileBuffers', nargs: 1 },
   { name: 'WriteFile', nargs: 5 },
+  { name: 'WinExec', nargs: 2 },
   { name: 'GetACP', nargs: 0 },
   { name: 'GetOEMCP', nargs: 0 },
   { name: 'GetCPInfo', nargs: 2 },

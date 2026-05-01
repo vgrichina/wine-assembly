@@ -11217,5 +11217,12 @@
       }
     ],
     "ret": "INT"
+  },
+  {
+    "id": 1516,
+    "name": "WinExec",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1100429264
   }
 ]

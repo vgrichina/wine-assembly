@@ -6147,6 +6147,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; WinExec(lpCmdLine, uCmdShow) — legacy launcher. Pinball's Options →
+  ;; Select Table uses this for table executables and only checks for >31.
+  ;; The bundled build has a single in-process table, so report success.
+  (func $handle_WinExec (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $name_ptr))
+    (global.set $eax (i32.const 33))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 500: CreateProcessW — STUB: unimplemented
   (func $handle_CreateProcessW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
