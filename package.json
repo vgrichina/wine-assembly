@@ -7,9 +7,9 @@
     "test": "test"
   },
   "scripts": {
-    "test":       "test/run-all.sh all",
-    "test:unit":  "test/run-all.sh unit",
-    "test:e2e":   "test/run-all.sh e2e",
+    "test": "test/run-all.sh all",
+    "test:unit": "test/run-all.sh unit",
+    "test:e2e": "test/run-all.sh e2e",
     "test:smoke": "test/run-all.sh smoke",
     "test:quick": "test/run-all.sh quick"
   },
@@ -18,7 +18,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "canvas": "^3.2.2",
+    "skia-canvas": "^3.0.8",
     "wabt": "^1.0.39"
   }
 }

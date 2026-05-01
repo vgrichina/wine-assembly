@@ -43,7 +43,7 @@ const { compileWat } = require('../lib/compile-wat');
 
 let createCanvas, Win98Renderer;
 try {
-  createCanvas = require('canvas').createCanvas;
+  createCanvas = require('../lib/canvas-compat').createCanvas;
   Win98Renderer = require('../lib/renderer').Win98Renderer;
 } catch (_) {}
 

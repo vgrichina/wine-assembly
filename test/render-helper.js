@@ -16,7 +16,7 @@
 // or the JS draw fallback was silently used).
 const fs = require('fs');
 const path = require('path');
-const { createCanvas } = require('canvas');
+const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
 const { Win98Renderer } = require('../lib/renderer');

@@ -19,7 +19,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { createCanvas, loadImage } = require('canvas');
+const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
 const OUT  = path.join(ROOT, 'test', 'output', 'dialogs');

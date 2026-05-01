@@ -9,17 +9,17 @@ const { decodeMfcCString } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 let createCanvas, Win98Renderer;
 try {
-  const canvasMod = require('canvas');
-  createCanvas = canvasMod.createCanvas;
+  const sk = require('skia-canvas');
+  createCanvas = (w, h) => new sk.Canvas(w, h);
   Win98Renderer = require('../lib/renderer').Win98Renderer;
   const fontsDir = path.join(__dirname, '..', 'fonts');
   const fontFiles = [
     { file: 'W95FA.otf',    family: 'W95FA' },
     { file: 'FSEX302.ttf',  family: 'Fixedsys Excelsior' },
   ];
-  for (const { file, family } of fontFiles) {
-    const p = path.join(fontsDir, file);
-    if (fs.existsSync(p)) canvasMod.registerFont(p, { family });
+  const fontPaths = fontFiles.map(({ file }) => path.join(fontsDir, file)).filter(p => fs.existsSync(p));
+  if (fontPaths.length && sk.FontLibrary && sk.FontLibrary.use) {
+    try { sk.FontLibrary.use(fontPaths); } catch (_) {}
   }
 } catch (_) {}
 

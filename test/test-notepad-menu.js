@@ -31,7 +31,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 let createCanvas, loadImage;
 try {
-  ({ createCanvas, loadImage } = require('canvas'));
+  ({ createCanvas, loadImage } = require('../lib/canvas-compat'));
 } catch (_) {}
 
 const ROOT = path.join(__dirname, '..');

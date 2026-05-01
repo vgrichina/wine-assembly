@@ -22,7 +22,7 @@ const { Win98Renderer } = require('../lib/renderer');
 const { VirtualFS } = require('../lib/filesystem');
 
 let createCanvas;
-try { createCanvas = require('canvas').createCanvas; } catch (_) {
+try { createCanvas = require('../lib/canvas-compat').createCanvas; } catch (_) {
   console.log('SKIP  node-canvas not available');
   process.exit(0);
 }

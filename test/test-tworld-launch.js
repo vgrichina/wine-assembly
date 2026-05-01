@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 let createCanvas, loadImage;
-try { ({ createCanvas, loadImage } = require('canvas')); } catch (_) {}
+try { ({ createCanvas, loadImage } = require('../lib/canvas-compat')); } catch (_) {}
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
