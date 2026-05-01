@@ -1,19 +1,5 @@
 // Wine-Assembly: JS host for the WASM x86 interpreter
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
-const createMonotonicTickSource = (typeof require !== 'undefined')
-  ? require('./lib/monotonic-ticks').createMonotonicTickSource
-  : function(nowFn = () => Date.now()) {
-      let last = 0;
-      return () => {
-        const now = (nowFn() | 0) & 0x7FFFFFFF;
-        if (now <= last) {
-          last = (last + 1) & 0x7FFFFFFF;
-        } else {
-          last = now;
-        }
-        return last;
-      };
-    };
 
 class WineAssembly {
   constructor() {
@@ -25,7 +11,6 @@ class WineAssembly {
     this.threadManager = null;
     this._wasmModule = null;
     this.verbose = false;
-    this._getTicks = createMonotonicTickSource();
   }
 
   readString(ptr) {
@@ -200,7 +185,6 @@ class WineAssembly {
       console.log(`[SetMenu] hwnd=0x${hwnd.toString(16)} menuRes=${menuResId}`);
       if (self.renderer) self.renderer.setMenu(hwnd, menuResId);
     };
-    h.get_ticks = () => self._getTicks();
 
     // --- Input ---
     h.check_input = () => {

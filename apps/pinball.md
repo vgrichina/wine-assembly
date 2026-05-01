@@ -1612,3 +1612,51 @@ The "no visible flipper motion" is **not** an input-routing bug. The chain works
 - `--break-once=pinball+0x01011b54` (post-call of state→2 from per-tick logic) with callstack dump — find what triggers premature 1→2 advance.
 - Disasm L-flipper sub-object's slot 0 (need to dump `[0x01269634+0x2a]` at runtime then look up its vtable[0]) — see what gating it does.
 - `--trace-host=ddraw_blt,gdi_bitblt` for ~500 batches around Z keypress — see if any draw lands in the L-flipper rect.
+
+### 2026-04-30 — current finding: stale `[table+0x172]` poke was one blocker, not the final blocker
+
+`src/09a5-handlers-window.wat` still had an old pinball-specific workaround:
+
+```
+if wndproc == 0x01007264 && [0x1025658] != 0 && [[0x1025658]+0x172] == 0:
+    [[0x1025658]+0x172] = 1
+```
+
+That was added for the "Player 1" label fix: when `[table+0x172]` stayed 0, the attract-mode text path kept overwriting "Player 1" with "Careful...". Later investigation proved the same field gates flipper dispatch at `0x01018e12` / `0x01018e3f`: if nonzero, the game object's msg handler bails before forwarding the normalized flipper command to the child object. So the workaround was forcing a flipper gate closed on every no-message `PeekMessageA` idle path.
+
+After removing that poke, the flipper chain gets further:
+
+```
+input: F2, Space, Z, / over 8500 batches
+0x01007d1a  WM_KEYDOWN wndproc branch       = 4
+0x01015072  keydown dispatcher entry        = 4
+0x010150c7  Z / left-flipper match          = 1
+0x010150ed  / / right-flipper match         = 1
+0x01018e12  msg 0x3e8 case entry            = 1
+0x01018e1f  left case no-bail path          = 1
+0x01018e3f  msg 0x3ea case entry            = 1
+0x01018e4f  common child-dispatch merge     = 1
+0x010152e4  keyup dispatcher entry          = 4
+```
+
+The image test still fails, now honestly:
+
+```
+L flipper rect: noise=0px  signal=0px
+R flipper rect: noise=39px signal=39px
+```
+
+So the stale poke explains an earlier hard block and the previous `/` "pass" was indeed noise, but there is still no visible flipper animation.
+
+The child object reached by the Z path is:
+
+```
+[0x01025658]        = 0x01269634       ; root table/game object
+[0x01269634+0x2a]   = 0x0143969c       ; left flipper child object
+[0x0143969c]        = 0x01002838       ; child vtable
+vtable[0]           = 0x0101c178
+```
+
+Disasm of `0x0101c178` shows msg `1` (the normalized "raise" command from `0x01018e4f`) is handled at `0x0101c206`: it calls `0x01011ec9`, copies `[esi+0x5a]` to `[esi+0x62]`, optionally triggers a sound/action via `[esi+0x4a]`, schedules callback `0x0101c070` through `0x010074b7`, stores the timer handle at `[esi+0x56]`, then calls `0x0101bf98` on `[esi+0x52]`. Counts confirm `0x0101c178` runs, but the old suspected actuator fns `0x01016df5` / `0x01016e72` do not.
+
+Current conclusion: input delivery and root-object forwarding are now proven good. The remaining bug is downstream of the flipper child object's vtable[0], probably in the scheduled animation/render callback path (`0x010074b7` / callback `0x0101c070`) or in the sprite/frame update that should make the scheduled state visible.

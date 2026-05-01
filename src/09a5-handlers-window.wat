@@ -1116,19 +1116,6 @@
                 (i32.store (call $g2w (i32.const 0x1024fe0)) (i32.const 1))
                 (i32.store (call $g2w (i32.const 0x1024ff8)) (i32.const 1))
               ))))))
-    ;; Pinball ball-in-play poke: set [table+0x172] once the table object exists.
-    ;; Without this, the attract mode text ("Careful...") keeps overwriting "Player 1".
-    (if (i32.and
-          (i32.eq (global.get $wndproc_addr) (i32.const 0x01007264))
-          (i32.ne (i32.load (call $g2w (i32.const 0x1025658))) (i32.const 0)))
-      (then
-        (if (i32.eqz (i32.load (call $g2w (i32.add
-              (i32.load (call $g2w (i32.const 0x1025658)))
-              (i32.const 0x172)))))
-          (then
-            (i32.store (call $g2w (i32.add
-              (i32.load (call $g2w (i32.const 0x1025658)))
-              (i32.const 0x172))) (i32.const 1))))))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
