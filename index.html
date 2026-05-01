@@ -807,6 +807,7 @@ Resource-aware Win98 emulator
         const ctx = {
           getMemory: () => memory.buffer,
           get _audioCtx() { return ac; },
+          trimMidiLeadIn: true,
           readFile: (requested) => {
             const base = midiBaseName(requested).toLowerCase();
             const entry = files.get('c:\\' + base);

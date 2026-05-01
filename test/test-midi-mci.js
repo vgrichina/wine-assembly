@@ -56,6 +56,14 @@ function makeRmid(smf) {
 }
 
 const oneNoteRmid = makeRmid(oneNoteMidi);
+const delayedOneNoteMidi = Uint8Array.from([
+  0x4d, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x60,
+  0x4d, 0x54, 0x72, 0x6b, 0x00, 0x00, 0x00, 0x0e,
+  0x83, 0x60, 0x90, 0x3c, 0x64,
+  0x60, 0x80, 0x3c, 0x00,
+  0x00, 0xff, 0x2f, 0x00,
+]);
 
 class FakeAudioParam {
   constructor(value = 0) {
@@ -145,6 +153,7 @@ try {
       const lower = p.toLowerCase();
       if (lower === 'song.mid') return oneNoteMidi;
       if (lower === 'song.rmi') return oneNoteRmid;
+      if (lower === 'delayed.mid') return delayedOneNoteMidi;
       return null;
     },
   };
@@ -195,6 +204,21 @@ try {
   assert(rmidDev && rmidDev.smf, 'RIFF RMID files should unwrap to embedded SMF data');
   assert.strictEqual(rmidDev.smf.notes.length, 1);
   assert.strictEqual(imports.host.mci_command(rmidId, 0x0804, 0, 0), 0);
+
+  writeStr(0x1d0, 'delayed.mid');
+  const delayedCtx = {
+    getMemory: () => mem.buffer,
+    _audioCtx: new FakeAudioContext(),
+    trimMidiLeadIn: true,
+    readFile: (p) => p.toLowerCase() === 'delayed.mid' ? delayedOneNoteMidi : null,
+  };
+  const delayedImports = createHostImports(delayedCtx);
+  const delayedId = delayedImports.host.mci_open(0x100, 0x1d0, 0x2000);
+  const delayedDev = delayedCtx._mci.devices.get(delayedId);
+  assert(delayedDev && delayedDev.smf && delayedDev.smf.notes[0].start > 2, 'delayed MIDI fixture should have leading silence');
+  assert.strictEqual(delayedImports.host.mci_command(delayedId, 0x0806, 0, 0), 0);
+  assert.strictEqual(delayedCtx._audioCtx.started.length, 1, 'debug MIDI playback should trim leading silence and schedule immediately');
+  assert.strictEqual(delayedImports.host.mci_command(delayedId, 0x0804, 0, 0), 0);
 
   writeStr(0x1e0, 'song.mid');
   const typeFilenameId = imports.host.mci_open(0x1e0, 0, 0x2002);
@@ -260,6 +284,7 @@ try {
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
+  console.log('PASS  debug MIDI playback can trim leading silence');
   console.log('PASS  MCI_OPEN_TYPE accepts .mid filenames used by Pinball');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
