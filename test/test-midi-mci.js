@@ -11,6 +11,7 @@
 
 const assert = require('assert');
 const { createHostImports } = require('../lib/host-imports');
+const RealWebAudioTinySynth = require('../lib/vendor/webaudio-tinysynth');
 
 const mem = new WebAssembly.Memory({ initial: 2 });
 const u8 = new Uint8Array(mem.buffer);
@@ -93,6 +94,17 @@ class FakeAudioParam {
     this.value = value;
     this.events.push(['ramp', value, time]);
   }
+  linearRampToValueAtTime(value, time) {
+    this.value = value;
+    this.events.push(['linearRamp', value, time]);
+  }
+  setTargetAtTime(value, time, constant) {
+    this.value = value;
+    this.events.push(['target', value, time, constant]);
+  }
+  cancelScheduledValues(time) {
+    this.events.push(['cancel', time]);
+  }
 }
 
 class FakeNode {
@@ -115,8 +127,12 @@ class FakeOscillator extends FakeNode {
     this.owner = owner;
     this.type = '';
     this.frequency = new FakeAudioParam();
+    this.detune = new FakeAudioParam();
     this.starts = [];
     this.stops = [];
+  }
+  setPeriodicWave(wave) {
+    this.periodicWave = wave;
   }
   start(time) {
     this.starts.push(time);
@@ -127,12 +143,45 @@ class FakeOscillator extends FakeNode {
   }
 }
 
+class FakeBufferSource extends FakeNode {
+  constructor(owner) {
+    super();
+    this.owner = owner;
+    this.playbackRate = new FakeAudioParam(1);
+    this.detune = new FakeAudioParam();
+    this.starts = [];
+    this.stops = [];
+    this.loop = false;
+  }
+  start(time) {
+    this.starts.push(time);
+    this.owner.started.push(this);
+  }
+  stop(time) {
+    this.stops.push(time);
+  }
+}
+
+class FakeAudioBuffer {
+  constructor(channels, length, sampleRate) {
+    this.numberOfChannels = channels;
+    this.length = length;
+    this.sampleRate = sampleRate;
+    this.duration = sampleRate ? length / sampleRate : 0;
+    this.channels = Array.from({ length: channels }, () => new Float32Array(length));
+  }
+  getChannelData(channel) {
+    return this.channels[channel];
+  }
+}
+
 class FakeAudioContext {
   constructor() {
     this.currentTime = 10;
     this.destination = new FakeNode();
     this.state = 'running';
     this.started = [];
+    this.sampleRate = 44100;
   }
   createGain() {
     const g = new FakeNode();
@@ -142,6 +191,26 @@ class FakeAudioContext {
   createOscillator() {
     return new FakeOscillator(this);
   }
+  createBufferSource() {
+    return new FakeBufferSource(this);
+  }
+  createBuffer(channels, length, sampleRate) {
+    return new FakeAudioBuffer(channels, length, sampleRate);
+  }
+  createDynamicsCompressor() {
+    return new FakeNode();
+  }
+  createConvolver() {
+    return new FakeNode();
+  }
+  createStereoPanner() {
+    const n = new FakeNode();
+    n.pan = new FakeAudioParam(0);
+    return n;
+  }
+  createPeriodicWave(real, imag) {
+    return { real, imag };
+  }
   resume() {
     this.state = 'running';
   }
@@ -150,6 +219,8 @@ class FakeAudioContext {
 const oldAudioContext = globalThis.AudioContext;
 const oldWindow = globalThis.window;
 const oldTinySynth = globalThis.WebAudioTinySynth;
+const oldSetInterval = globalThis.setInterval;
+const oldClearInterval = globalThis.clearInterval;
 const windowListeners = {};
 globalThis.AudioContext = FakeAudioContext;
 globalThis.window = {
@@ -305,6 +376,7 @@ try {
   assert.strictEqual(tinySynth.opts.internalcontext, 0, 'TinySynth should reuse the host AudioContext');
   assert.strictEqual(tinySynth.ac, tinyCtx._audioCtx);
   assert.strictEqual(tinySynth.tsMode, 0);
+  assert.strictEqual(tinySynth.masterVol, 0.35, 'TinySynth should use its own balanced master gain');
   assert.deepStrictEqual(tinySynth.sent.map(ev => ev.raw), eventsDev.smf.events.map(ev => ev.raw));
   assert(tinySynth.sent.every(ev => ev.time >= tinyCtx._audioCtx.currentTime), 'TinySynth events should use AudioContext time');
   assert.strictEqual(tinyImports.host.mci_command(tinyId, 0x0804, 0, 0), 0);
@@ -314,6 +386,36 @@ try {
   assert.strictEqual(tinyImports.host.midi_out_short_msg(tinyOutHandle, 0x00643C90), 0);
   assert.deepStrictEqual(tinySynth.sent[tinySynth.sent.length - 1].raw, [0x90, 0x3c, 0x64]);
   assert.strictEqual(tinyImports.host.midi_out_close(tinyOutHandle), 0);
+  delete globalThis.WebAudioTinySynth;
+
+  const realTinyIntervals = [];
+  globalThis.setInterval = (fn, ms) => {
+    const id = { fn, ms };
+    realTinyIntervals.push(id);
+    return id;
+  };
+  globalThis.clearInterval = () => {};
+  globalThis.WebAudioTinySynth = RealWebAudioTinySynth;
+  writeStr(0x210, 'events.mid');
+  const realTinyCtx = {
+    getMemory: () => mem.buffer,
+    _audioCtx: new FakeAudioContext(),
+    readFile: (p) => p.toLowerCase() === 'events.mid' ? midiEventStream : null,
+  };
+  const realTinyImports = createHostImports(realTinyCtx);
+  const realTinyId = realTinyImports.host.mci_open(0x100, 0x210, 0x2000);
+  assert.strictEqual(realTinyImports.host.mci_command(realTinyId, 0x0806, 0, 0), 0);
+  const realTiny = realTinyCtx._tinySynth && realTinyCtx._tinySynth.synth;
+  assert(realTiny instanceof RealWebAudioTinySynth, 'vendored TinySynth should initialize on the richer fake AudioContext');
+  assert.strictEqual(realTiny.internalcontext, 0);
+  assert.strictEqual(realTiny.getAudioContext(), realTinyCtx._audioCtx);
+  assert.strictEqual(realTiny.masterVol, 0.35);
+  assert(realTinyCtx._audioCtx.started.length > 0, 'real TinySynth should start fake Web Audio nodes');
+  assert(realTiny.notetab.length > 0, 'real TinySynth should accept scheduled note-on events');
+  assert.strictEqual(realTinyImports.host.mci_command(realTinyId, 0x0804, 0, 0), 0);
+  assert.strictEqual(realTiny.notetab.length, 0, 'MCI close should clear real TinySynth notes');
+  globalThis.setInterval = oldSetInterval;
+  globalThis.clearInterval = oldClearInterval;
   delete globalThis.WebAudioTinySynth;
 
   writeStr(0x1e0, 'song.mid');
@@ -380,6 +482,7 @@ try {
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  SMF parser exposes timed MIDI events for synth backends');
   console.log('PASS  WebAudioTinySynth backend receives MCI and midiOut events');
+  console.log('PASS  vendored TinySynth runs against the richer fake AudioContext');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
   console.log('PASS  debug MIDI playback can trim leading silence');
@@ -396,6 +499,8 @@ try {
   else globalThis.window = oldWindow;
   if (oldTinySynth === undefined) delete globalThis.WebAudioTinySynth;
   else globalThis.WebAudioTinySynth = oldTinySynth;
+  globalThis.setInterval = oldSetInterval;
+  globalThis.clearInterval = oldClearInterval;
 }
 
 function readCString(ptr) {
