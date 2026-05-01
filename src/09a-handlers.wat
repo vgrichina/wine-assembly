@@ -1170,14 +1170,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 85: GetDC
+  ;; 85: GetDC — Phase B: alloc DcRecord via host_alloc_window_dc
+  ;; (whole=0). GetDC(NULL) → screen DC.
   (func $handle_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hdc i32)
-    ;; GetDC(hwnd) → hdc = hwnd + 0x40000; GetDC(NULL) → 0x40000
-    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0x40000)))
-    ;; Phase 3b/3c: apply CLIPCHILDREN / CLIPSIBLINGS exclusions.
     (if (local.get $arg0)
-      (then (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))))
+      (then
+        (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
+        ;; Phase 3b/3c: apply CLIPCHILDREN / CLIPSIBLINGS exclusions.
+        (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0))))
+      (else
+        (local.set $hdc (call $host_alloc_screen_dc))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -1469,8 +1472,11 @@
     (global.set $eax (global.get $focus_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; 100: ReleaseDC(hwnd, hdc) — release window DC, return 1
+  ;; 100: ReleaseDC(hwnd, hdc) — release window DC, return 1.
+  ;; Phase B: free the DcRecord. Legacy hdcs (hwnd+0x40000) are still
+  ;; valid — _dcFree returns 0 for unknown handles, harmless.
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_release_dc (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -2873,7 +2879,7 @@
     (drop (call $host_erase_background (local.get $arg0) (local.get $brush)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
-    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0x40000)))
+    (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
     (call $gs32 (local.get $arg1) (local.get $hdc)) ;; hdc
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase
     ;; Phase 2: install updateRgn as DC clipRgn and write rcPaint from its bbox.
@@ -4457,10 +4463,10 @@
   )
 
   ;; 384: GetWindowDC(hwnd) → HDC. Like GetDC but includes non-client area.
-  ;; Use 0xC0000 offset (vs GetDC's 0x40000) so JS can detect whole-window drawing
+  ;; Phase B: alloc DcRecord with kind='whole' so origin is window top-left.
   (func $handle_GetWindowDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hdc i32)
-    (local.set $hdc (i32.add (local.get $arg0) (i32.const 0xC0000)))
+    (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 1)))
     (if (local.get $arg0)
       (then (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))))
     (global.set $eax (local.get $hdc))
