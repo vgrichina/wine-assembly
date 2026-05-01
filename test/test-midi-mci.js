@@ -149,6 +149,7 @@ class FakeAudioContext {
 
 const oldAudioContext = globalThis.AudioContext;
 const oldWindow = globalThis.window;
+const oldTinySynth = globalThis.WebAudioTinySynth;
 const windowListeners = {};
 globalThis.AudioContext = FakeAudioContext;
 globalThis.window = {
@@ -264,6 +265,57 @@ try {
   assert.strictEqual(eventsDev.smf.duration, 0.5);
   assert.strictEqual(imports.host.mci_command(eventsId, 0x0804, 0, 0), 0);
 
+  class FakeTinySynth {
+    constructor(opts) {
+      this.opts = opts;
+      this.sent = [];
+      this.soundOff = [];
+      FakeTinySynth.instances.push(this);
+    }
+    setAudioContext(ac, dest) {
+      this.ac = ac;
+      this.dest = dest;
+    }
+    setTsMode(mode) {
+      this.tsMode = mode;
+    }
+    setMasterVol(value) {
+      this.masterVol = value;
+    }
+    send(raw, time) {
+      this.sent.push({ raw: [...raw], time });
+    }
+    allSoundOff(ch) {
+      this.soundOff.push(ch);
+    }
+  }
+  FakeTinySynth.instances = [];
+  globalThis.WebAudioTinySynth = FakeTinySynth;
+  writeStr(0x1f0, 'events.mid');
+  const tinyCtx = {
+    getMemory: () => mem.buffer,
+    _audioCtx: new FakeAudioContext(),
+    readFile: (p) => p.toLowerCase() === 'events.mid' ? midiEventStream : null,
+  };
+  const tinyImports = createHostImports(tinyCtx);
+  const tinyId = tinyImports.host.mci_open(0x100, 0x1f0, 0x2000);
+  assert.strictEqual(tinyImports.host.mci_command(tinyId, 0x0806, 0, 0), 0);
+  const tinySynth = FakeTinySynth.instances[0];
+  assert(tinySynth, 'TinySynth backend should be created when available');
+  assert.strictEqual(tinySynth.opts.internalcontext, 0, 'TinySynth should reuse the host AudioContext');
+  assert.strictEqual(tinySynth.ac, tinyCtx._audioCtx);
+  assert.strictEqual(tinySynth.tsMode, 0);
+  assert.deepStrictEqual(tinySynth.sent.map(ev => ev.raw), eventsDev.smf.events.map(ev => ev.raw));
+  assert(tinySynth.sent.every(ev => ev.time >= tinyCtx._audioCtx.currentTime), 'TinySynth events should use AudioContext time');
+  assert.strictEqual(tinyImports.host.mci_command(tinyId, 0x0804, 0, 0), 0);
+  assert.strictEqual(tinySynth.soundOff.length, 16, 'MCI close should silence all TinySynth channels');
+
+  const tinyOutHandle = tinyImports.host.midi_out_open(0, 0, 0, 0);
+  assert.strictEqual(tinyImports.host.midi_out_short_msg(tinyOutHandle, 0x00643C90), 0);
+  assert.deepStrictEqual(tinySynth.sent[tinySynth.sent.length - 1].raw, [0x90, 0x3c, 0x64]);
+  assert.strictEqual(tinyImports.host.midi_out_close(tinyOutHandle), 0);
+  delete globalThis.WebAudioTinySynth;
+
   writeStr(0x1e0, 'song.mid');
   const typeFilenameId = imports.host.mci_open(0x1e0, 0, 0x2002);
   const typeFilenameDev = ctx._mci.devices.get(typeFilenameId);
@@ -327,6 +379,7 @@ try {
 
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  SMF parser exposes timed MIDI events for synth backends');
+  console.log('PASS  WebAudioTinySynth backend receives MCI and midiOut events');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
   console.log('PASS  debug MIDI playback can trim leading silence');
@@ -341,6 +394,8 @@ try {
   else globalThis.AudioContext = oldAudioContext;
   if (oldWindow === undefined) delete globalThis.window;
   else globalThis.window = oldWindow;
+  if (oldTinySynth === undefined) delete globalThis.WebAudioTinySynth;
+  else globalThis.WebAudioTinySynth = oldTinySynth;
 }
 
 function readCString(ptr) {
