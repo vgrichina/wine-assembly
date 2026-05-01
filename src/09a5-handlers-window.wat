@@ -1286,9 +1286,14 @@
     ;; WM_CLOSE (0x10): call DestroyWindow(hwnd) — only quit if main/dialog window
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
-    (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
-                (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
-    (then (global.set $quit_flag (i32.const 1))))))
+      (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
+                  (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+        (then (global.set $quit_flag (i32.const 1))))
+      (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
+        (then (global.set $focus_hwnd (i32.const 0))))
+      (call $wnd_destroy_recursive (local.get $arg0))
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then

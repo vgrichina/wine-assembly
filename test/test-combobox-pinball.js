@@ -41,7 +41,8 @@ const dropPng      = path.join(TMP, 'pinball_player_controls_dropped.png');
 const pickedPng    = path.join(TMP, 'pinball_player_controls_picked.png');
 const drop2Png     = path.join(TMP, 'pinball_player_controls_dropped2.png');
 const picked2Png   = path.join(TMP, 'pinball_player_controls_picked2.png');
-for (const p of [dlgPng, dropPng, pickedPng, drop2Png, picked2Png]) {
+const closedPng    = path.join(TMP, 'pinball_player_controls_closed.png');
+for (const p of [dlgPng, dropPng, pickedPng, drop2Png, picked2Png, closedPng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
@@ -58,6 +59,8 @@ for (const p of [dlgPng, dropPng, pickedPng, drop2Png, picked2Png]) {
 //   560 — snapshot: dropdown visible AGAIN (regression target)
 //   570 — click row 6 → second pick + close
 //   600 — snapshot: closed, field shows new letter
+//   610 — click dialog titlebar close button
+//   630 — snapshot: dialog destroyed, not blanked in-place
 const inputSpec = [
   `300:post-cmd:406`,
   `500:png:${dlgPng}`,
@@ -69,6 +72,8 @@ const inputSpec = [
   `560:png:${drop2Png}`,
   `570:click:110:283`,
   `600:png:${picked2Png}`,
+  `610:click:424:28`,
+  `630:png:${closedPng}`,
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --batch-size=200000 --max-batches=700 --input='${inputSpec}'`;
@@ -114,6 +119,11 @@ function rectDiff(a, b, x, y, w, h) {
     }
   }
   return total;
+}
+
+function pixelAt(img, x, y) {
+  const i = (y * img.w + x) * 4;
+  return [img.data[i], img.data[i+1], img.data[i+2], img.data[i+3]];
 }
 
 (async () => {
@@ -208,6 +218,16 @@ function rectDiff(a, b, x, y, w, h) {
     checks.push({ name: '2nd pick: field text updated', pass: d > 50 });
   }
 
+  const closedImg = await loadPixels(closedPng);
+  checks.push({ name: 'closed-dialog snapshot written',
+    pass: !!closedImg && fs.statSync(closedPng).size > 1000 });
+  if (closedImg) {
+    const titlePx = pixelAt(closedImg, 20, 28);
+    console.log(`  closed title pixel @20,28: ${titlePx.slice(0, 3).join(',')}`);
+    checks.push({ name: 'titlebar close destroys dialog chrome',
+      pass: !(titlePx[2] > 80 && titlePx[0] < 40 && titlePx[1] < 80) });
+  }
+
   console.log('');
   let failed = 0;
   for (const c of checks) {
@@ -216,6 +236,6 @@ function rectDiff(a, b, x, y, w, h) {
   }
   console.log('');
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
-  console.log(`Snapshots: ${dlgPng} ${dropPng} ${pickedPng}`);
+  console.log(`Snapshots: ${dlgPng} ${dropPng} ${pickedPng} ${closedPng}`);
   process.exit(failed > 0 ? 1 : 0);
 })();

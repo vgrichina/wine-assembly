@@ -1781,6 +1781,16 @@
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $dlg_ended (i32.const 1))
     (global.set $dlg_result (local.get $arg1))
+    ;; DialogBoxParamA's modal pump owns teardown for its active dialog.
+    ;; Modeless dialogs created by CreateDialogParamA have no such pump, so
+    ;; EndDialog must remove the frame here. Match the modal cleanup path:
+    ;; destroy WAT-managed children, remove the dialog table slot, and drop
+    ;; the host window without sending WM_DESTROY to the app's dialog proc.
+    (if (i32.ne (local.get $arg0) (global.get $dlg_pump_hwnd))
+      (then
+        (call $wnd_destroy_children (local.get $arg0))
+        (call $wnd_table_remove (local.get $arg0))
+        (call $host_destroy_window (local.get $arg0))))
     ;; Don't set quit_flag — that kills the main message loop.
     ;; CACA0004 checks dlg_ended to exit the modal loop.
     (global.set $eax (i32.const 1))
@@ -3463,9 +3473,14 @@
     ;; WM_CLOSE (0x10): call DestroyWindow(hwnd) — only quit if main/dialog window
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
-    (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
-                (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
-    (then (global.set $quit_flag (i32.const 1))))))
+      (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
+                  (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+        (then (global.set $quit_flag (i32.const 1))))
+      (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
+        (then (global.set $focus_hwnd (i32.const 0))))
+      (call $wnd_destroy_recursive (local.get $arg0))
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then

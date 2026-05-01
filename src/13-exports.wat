@@ -777,6 +777,15 @@
   (func (export "wnd_destroy_tree") (param $hwnd i32)
     (call $wnd_destroy_tree (local.get $hwnd)))
 
+  ;; Tear down a dialog frame without sending WM_DESTROY to the dialog proc.
+  ;; DialogBoxParamA uses the same shape after EndDialog; modeless dialog
+  ;; titlebar-close fallback uses this when the guest closes its children but
+  ;; leaves the frame alive.
+  (func (export "destroy_dialog_frame") (param $hwnd i32)
+    (call $wnd_destroy_children (local.get $hwnd))
+    (call $wnd_table_remove (local.get $hwnd))
+    (call $host_destroy_window (local.get $hwnd)))
+
   ;; Open dialog: re-populate the listbox after a file upload completes.
   ;; JS calls this from the <input type="file"> change handler once the
   ;; new file has been written into the VFS, so the listbox shows it.
