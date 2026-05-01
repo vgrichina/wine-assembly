@@ -454,14 +454,19 @@ for (const iface of d3dimIfaces) {
   }
 }
 
-// Reassign IDs and recompute hashes
-const table = existing.map((api, id) => ({
-  id,
-  name: api.name,
-  nargs: api.nargs,
-  convention: api.convention || 'stdcall',
-  hash: fnv1a(api.name),
-}));
+// Reassign IDs and recompute hashes; preserve args/ret/any other metadata.
+const table = existing.map((api, id) => {
+  const out = {
+    id,
+    name: api.name,
+    nargs: api.nargs,
+    convention: api.convention || 'stdcall',
+    hash: fnv1a(api.name),
+  };
+  if (api.args) out.args = api.args;
+  if (api.ret) out.ret = api.ret;
+  return out;
+});
 
 // Check for hash collisions
 const hashMap = new Map();
