@@ -65,6 +65,21 @@ const delayedOneNoteMidi = Uint8Array.from([
   0x00, 0xff, 0x2f, 0x00,
 ]);
 
+const midiEventStream = Uint8Array.from([
+  0x4d, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x60,
+  0x4d, 0x54, 0x72, 0x6b, 0x00, 0x00, 0x00, 0x22,
+  0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20,
+  0x00, 0xc0, 0x18,
+  0x00, 0xb0, 0x07, 0x64,
+  0x00, 0xe0, 0x00, 0x40,
+  0x00, 0xd0, 0x20,
+  0x00, 0xa0, 0x3c, 0x10,
+  0x00, 0x90, 0x3c, 0x64,
+  0x60, 0x80, 0x3c, 0x00,
+  0x00, 0xff, 0x2f, 0x00,
+]);
+
 class FakeAudioParam {
   constructor(value = 0) {
     this.value = value;
@@ -154,6 +169,7 @@ try {
       if (lower === 'song.mid') return oneNoteMidi;
       if (lower === 'song.rmi') return oneNoteRmid;
       if (lower === 'delayed.mid') return delayedOneNoteMidi;
+      if (lower === 'events.mid') return midiEventStream;
       return null;
     },
   };
@@ -171,6 +187,11 @@ try {
   assert(dev.smf, 'explicit MIDI file should parse');
   assert.strictEqual(dev.smf.notes.length, 1);
   assert(Math.abs(dev.smf.duration - 0.5) < 0.0001, `expected 0.5s duration, got ${dev.smf.duration}`);
+  assert.strictEqual(dev.smf.division, 96);
+  assert.strictEqual(dev.smf.events.length, 2, 'parsed SMF should expose timed MIDI events');
+  assert.deepStrictEqual(dev.smf.events.map(ev => ev.raw), [[0x90, 0x3c, 0x64], [0x80, 0x3c, 0x00]]);
+  assert.strictEqual(dev.smf.events[0].time, 0);
+  assert.strictEqual(dev.smf.events[1].time, 0.5);
 
   assert.strictEqual(imports.host.mci_command(id, 0x0806, 0, 0), 0, 'MCI_PLAY should succeed');
   assert.strictEqual(dev.state, 'playing');
@@ -219,6 +240,29 @@ try {
   assert.strictEqual(delayedImports.host.mci_command(delayedId, 0x0806, 0, 0), 0);
   assert.strictEqual(delayedCtx._audioCtx.started.length, 1, 'debug MIDI playback should trim leading silence and schedule immediately');
   assert.strictEqual(delayedImports.host.mci_command(delayedId, 0x0804, 0, 0), 0);
+
+  writeStr(0x1b0, 'events.mid');
+  const eventsId = imports.host.mci_open(0x100, 0x1b0, 0x2000);
+  const eventsDev = ctx._mci.devices.get(eventsId);
+  assert(eventsDev && eventsDev.smf, 'event stream fixture should parse');
+  assert.deepStrictEqual(eventsDev.smf.tempos, [{ tick: 0, time: 0, usPerQn: 500000 }]);
+  assert.deepStrictEqual(
+    eventsDev.smf.events.map(ev => ev.type),
+    ['program', 'cc', 'pitch', 'pressure', 'polyPressure', 'on', 'off']
+  );
+  assert.deepStrictEqual(eventsDev.smf.events.map(ev => ev.raw), [
+    [0xc0, 0x18],
+    [0xb0, 0x07, 0x64],
+    [0xe0, 0x00, 0x40],
+    [0xd0, 0x20],
+    [0xa0, 0x3c, 0x10],
+    [0x90, 0x3c, 0x64],
+    [0x80, 0x3c, 0x00],
+  ]);
+  assert.strictEqual(eventsDev.smf.events[2].value, 0);
+  assert.strictEqual(eventsDev.smf.notes.length, 1);
+  assert.strictEqual(eventsDev.smf.duration, 0.5);
+  assert.strictEqual(imports.host.mci_command(eventsId, 0x0804, 0, 0), 0);
 
   writeStr(0x1e0, 'song.mid');
   const typeFilenameId = imports.host.mci_open(0x1e0, 0, 0x2002);
@@ -282,6 +326,7 @@ try {
   assert.strictEqual(primedCtx.started.length, 1, 'host should reuse pre-unlocked browser AudioContext');
 
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
+  console.log('PASS  SMF parser exposes timed MIDI events for synth backends');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
   console.log('PASS  debug MIDI playback can trim leading silence');
