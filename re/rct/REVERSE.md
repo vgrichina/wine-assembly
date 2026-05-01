@@ -130,6 +130,39 @@ over an empty region.
 
 ---
 
+## Walker call chain (static, 2026-04-30)
+
+Static call graph leading into the walker. The bad off-map screen viewport
+originates in one of the 4 leaf callers — they pre-load EDI = render-target
+struct whose `+0x4 (left)`, `+0x6 (top)`, `+0x8 (w)`, `+0xa (h)` are the
+screen rect.
+
+```
+0x00431245  pack_viewport_for_walker     ; reads EDI struct {left,top,w,h} -> AX,BX,DX,BP, esi=clip
+  └─> 0x00431266  clip_and_split           ; clips against esi, calls walker once or twice
+        └─> 0x00431323  tile_walker_outer  ; the loop that writes [0x5706a4..0x5706ae]
+```
+
+Writers of `[0x5706a4]` (cursor X), per `tools/xrefs.js`:
+- `0x004311c4` — inside `render_one_cell`
+- `0x00431357` — inside `tile_walker_outer` itself (cursor advances)
+
+Both are *consumers/iterators* — they receive the bad initial value from
+elsewhere. The actual originator is one of the 4 callers of `0x00431245`:
+
+| Callsite | Enclosing fn | Notes |
+|----------|--------------|-------|
+| `0x00427a85` | `0x00427a57` | Unknown — investigate |
+| `0x0043e9c0` | `0x0043e9a0` | Unknown — investigate |
+| `0x0044bb58` | `0x0044bb25` | Unknown — investigate |
+| `0x00454f15` | `0x00454efb` | Unknown — investigate |
+
+Next step (per dynamic): `--watch=0x5706a4 --watch-log` from boot will show
+which caller fires first AND with which value. That pinpoints the origin
+without chasing all 4 chains.
+
+---
+
 ## Phase A — RLE decompressor (still relevant, as background)
 
 The bulk of pre-Phase-B time is RLE decompression at `0x42f5a5`:

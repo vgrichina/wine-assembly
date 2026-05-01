@@ -11,7 +11,13 @@ offset,name,comment
 0x4311c2,render_one_cell,sets viewport to 1x1 at cursor then walks tiles - per-cell driver
 0x431245,tile_walker_entry_a,4 static callers no xref to enclosing fn
 0x431266,tile_walker_entry_b,calls 0x431323 once or twice (twice if width>0x180)
+0x431245,pack_viewport_for_walker,reads EDI struct {+4 left +6 top +8 w +a h} into AX/BX/DX/BP and calls 0x431266
+0x431266,clip_and_split,clips AX/BX/DX/BP against esi rect (esi=[esi+8] from caller) splits and dispatches walker once or twice if width gt 0x180
 0x431323,tile_walker_outer,outer loop ECX from [0x5706a4] step 0x20 calls 0x43679a
+0x427a57,unknown_caller_a_of_pack_viewport,calls 0x431245 at 0x427a85 - one of 4 origins of screen viewport
+0x43e9a0,unknown_caller_b_of_pack_viewport,calls 0x431245 at 0x43e9c0 - one of 4 origins
+0x44bb25,unknown_caller_c_of_pack_viewport,calls 0x431245 at 0x44bb58 - one of 4 origins
+0x454efb,unknown_caller_d_of_pack_viewport,calls 0x431245 at 0x454f15 - one of 4 origins
 0x43679a,rotation_dispatcher,jmp [0x4367b0+ecx*4]
 0x4367b0,rotation_table,4 entries: 0x4367c0 0x436833 0x4368ad 0x436923
 0x4367c0,rotation0,
