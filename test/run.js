@@ -2295,9 +2295,10 @@ async function main() {
         pdi(instance.exports, memory.buffer,
           [{ name: fileName, bytes: dllBytesArr }],
           [result], console.log);
-        // Call DllMain(DLL_PROCESS_ATTACH) — skip for now as it can trigger yields
-        // Plugin DLLs don't need complex init; their real init is via the plugin API
-        // if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
+        // Call DllMain(DLL_PROCESS_ATTACH). Some DLLs (e.g. d3dxof) initialize
+        // critical state here — the template registry. callDllMain saves/restores
+        // EIP/ESP so it's safe to invoke from the LoadLibrary yield handler.
+        if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
         instance.exports.set_eax(result.loadAddr);
       } else {
         console.log(`[LoadLibrary] DLL not found: ${fileName}`);

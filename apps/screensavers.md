@@ -3028,3 +3028,45 @@ When d3drm later calls `IDirectXFile::RegisterTemplates`, the d3dxof impl chain 
 4. If DllMain entry is being called but returns early, the conditional at `0x5c504b85` (`jnz tail`) is the most likely cause — that test depends on a host import (`call 0xa471bf85` is bogus disasm; the real target is whatever the IAT thunk at `0x5c504b80+1` resolves to). A failed Win32 API early in DllMain (e.g. `InitializeCriticalSection`, `TlsAlloc`) would gate the rest off.
 
 Once DllMain runs, `0x5c50a090` will allocate the registry, RegisterTemplates will populate it correctly, and the parser at `d3dxof+0x5c507bf4` will resolve "Header"/"Camera"/etc instead of force-EOF'ing.
+
+**cont.59 — fixed: dynamic LoadLibraryA was skipping DllMain.**
+
+Root cause was `test/run.js` line 2300 — the `callDllMain` invocation in the LoadLibraryA yield handler was commented out with the note "Plugin DLLs don't need complex init". d3dxof emphatically *does* need it: registry init lives in DllMain. Fix is a one-line uncomment; no API surface changes.
+
+Verification on viewer.exe (post-fix):
+
+```
+[LoadLibrary] d3dxof.dll loaded at 0x9b7000, dllMain=0x9c2040
+Calling DllMain at 0x9c2040...
+DllMain returned, EAX=0x1
+```
+
+`--count` over the previously-zero registry-init flow:
+- `d3dxof+0x5c504b7b` (DllMain entry): **1**
+- `d3dxof+0x5c50a090` (registry allocator): **1**
+- `d3dxof+0x5c50a0df` (RegisterTemplate-add helper): **35** (was 6 — D3DRM_XTEMPLATES populates the registry now)
+- `d3dxof+0x5c507ebd` (vector::push_back): **129** (was 24)
+
+The original parser-dispatch failure region (`d3dxof+0x5c507650-d3dxof+0x5c507760`) no longer fires at all — the state-0x28 + token-0xff dispatch trap is gone. camera.x is opened (CreateFileA #340), memory-mapped, parsed, and *cleanly released* (UnmapViewOfFile #3193) before viewer reaches its error path. We went from 674 API calls / 11 batches to ~3206 / parser-success-then-downstream-fail.
+
+**cont.60 — new failure: "Failed to load camera.x.\n(null)\n" downstream of parser.**
+
+After cont.59, viewer.exe still pops the Load failure dialog, but the failure is now after a successful X-file parse:
+
+```
+[API #3193] UnmapViewOfFile(0x00ddc344)
+[API #3194] CloseHandle(0xfb000001)
+[API #3195] CloseHandle(0x70000002)
+... (heap teardown) ...
+[API #3204] wvsprintfA(buf, fmt, args)
+[API #3205] lstrcatA(dst="Failed to load camera.x.\n(null)", src="\n")
+[API #3206] MessageBoxA(...)
+```
+
+The `(null)` substitution means viewer's error-formatting path got a NULL string for the HRESULT description (likely `D3DRMErrorToString(hr)` for an unrecognized HRESULT). So `IDirect3DRMMeshBuilder::Load` returns a non-zero HRESULT that viewer doesn't have a string for — meaning *either* the Load itself failed at a later stage (after parse completed), *or* the parse succeeded but produced no usable mesh data.
+
+`dbg_prev_eip=0x00401049` is viewer.exe's lstrcatA call site; the failing HRESULT is at `[esp+0x3fffe74 - 0x3fffd44] = [esp+0x130]` of the failure frame. To find the real root cause, the next step is:
+
+1. Trace `IDirect3DRMMeshBuilder::Load` return value — set a break-once on the call site (caller is in viewer.exe near `0x40102d-0x401049`) and capture EAX at return.
+2. If HR is non-zero, walk back into d3drm to find which sub-step set it. Likely candidates: `IDirectXFileEnumObject::GetNextDataObject` (returns DXFILE_E_NOMOREOBJECTS if registry mismatched, or a parser-side error code if a Frame/Mesh template field is misnamed), or the d3drm-internal "build mesh from data object" reduce action.
+3. Verify `0x009d3c3c` (registry pointer) is **non-NULL** at the point the Load is invoked — confirms RegisterTemplates actually wired the registry into the singleton DLL state, not just into a transient allocation.
