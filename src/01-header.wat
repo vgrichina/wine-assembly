@@ -61,6 +61,8 @@
   ;; begin_paint_clip(hdc, hwnd, rectWA) — install updateRgn as DC clip + write bbox to rectWA
   (import "host" "next_dirty_hwnd" (func $host_next_dirty_hwnd (result i32)))
   ;; next_dirty_hwnd() → topmost dirty hwnd in z-order, 0 if none
+  (import "host" "seed_child_paints" (func $host_seed_child_paints (param i32) (result i32)))
+  ;; seed_child_paints(parent) — seed _updateRgns for children intersecting parent's update rgn
   (import "host" "alloc_window_dc" (func $host_alloc_window_dc (param i32 i32) (result i32)))
   ;; alloc_window_dc(hwnd, whole) → hdc — Phase B DC table allocator
   (import "host" "alloc_screen_dc" (func $host_alloc_screen_dc (result i32)))
