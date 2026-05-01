@@ -22,6 +22,12 @@ for (const rel of [
 }
 
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mid'/s.test(deployJs), 'deploy should include .mid binary assets');
+assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.inf'/s.test(deployJs), 'deploy should include .inf companion config assets');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large Plus! 95 pinball DAT');
+assert(/function apiMultipart/.test(deployJs), 'deploy should support multipart uploads');
+assert(/new FormData\(\)/.test(deployJs), 'deploy should use FormData for multipart uploads');
+assert(/form\.append\('file',\s*new Blob\(\[raw\]\),\s*f\.name\)/s.test(deployJs), 'deploy multipart upload should preserve repo-relative filenames');
 assert(!/SKIP_BIN_DIRS\s*=\s*new Set\([^)]*'pinball'/s.test(deployJs), 'deploy should not skip binaries/pinball');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
@@ -30,7 +36,8 @@ assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should 
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 
 console.log('PASS  web Pinball manifest includes MIDI assets');
-console.log('PASS  deploy filters include .mid and do not skip pinball assets');
+console.log('PASS  deploy filters include .mid/.inf/DAT and do not skip pinball assets');
+console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');
