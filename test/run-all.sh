@@ -31,6 +31,7 @@ UNIT=(
   test/test-render-find-dlg.js
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js
+  test/test-host-ticks.js
 )
 
 E2E=(
