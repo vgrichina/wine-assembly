@@ -126,6 +126,8 @@
   (import "host" "get_window_text" (func $host_get_window_text (param i32 i32 i32) (result i32)))
   ;; get_window_text(hwnd, bufWA, maxLen) → chars copied (top-level titles;
   ;; child control text goes through WM_GETTEXT directly).
+  (import "host" "get_window_text_length" (func $host_get_window_text_length (param i32) (result i32)))
+  ;; get_window_text_length(hwnd) → length in chars (no NUL).
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))

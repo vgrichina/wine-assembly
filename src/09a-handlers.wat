@@ -9237,3 +9237,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; GetWindowTextLengthA(hwnd) → length in chars (no NUL).
+  (func $handle_GetWindowTextLengthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_get_window_text_length (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; ret + 1 arg
+  )
+

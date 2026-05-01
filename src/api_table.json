@@ -326,22 +326,7 @@
     "name": "CopyFileA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1885947561,
-    "args": [
-      {
-        "name": "src",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "dst",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "failIfExists",
-        "type": "BOOL"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 1885947561
   },
   {
     "id": 47,
@@ -460,18 +445,7 @@
     "name": "CreateDirectoryA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2965998675,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "sa",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 2965998675
   },
   {
     "id": 64,
@@ -499,38 +473,7 @@
     "name": "CreateFileA",
     "nargs": 7,
     "convention": "stdcall",
-    "hash": 3184183758,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "access",
-        "type": "DWORD"
-      },
-      {
-        "name": "share",
-        "type": "DWORD"
-      },
-      {
-        "name": "sa",
-        "type": "DWORD"
-      },
-      {
-        "name": "creation",
-        "type": "DWORD"
-      },
-      {
-        "name": "flags",
-        "type": "DWORD"
-      },
-      {
-        "name": "tmpl",
-        "type": "HANDLE"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 3184183758
   },
   {
     "id": 68,
@@ -712,58 +655,7 @@
     "name": "CreateWindowExA",
     "nargs": 12,
     "convention": "stdcall",
-    "hash": 393369835,
-    "args": [
-      {
-        "name": "exStyle",
-        "type": "DWORD"
-      },
-      {
-        "name": "class",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "title",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "style",
-        "type": "flags:WS"
-      },
-      {
-        "name": "x",
-        "type": "INT"
-      },
-      {
-        "name": "y",
-        "type": "INT"
-      },
-      {
-        "name": "w",
-        "type": "INT"
-      },
-      {
-        "name": "h",
-        "type": "INT"
-      },
-      {
-        "name": "parent",
-        "type": "HWND"
-      },
-      {
-        "name": "menu",
-        "type": "HMENU"
-      },
-      {
-        "name": "hInst",
-        "type": "HANDLE"
-      },
-      {
-        "name": "param",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "HWND"
+    "hash": 393369835
   },
   {
     "id": 94,
@@ -833,14 +725,7 @@
     "name": "DeleteFileA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2185326967,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 2185326967
   },
   {
     "id": 104,
@@ -896,14 +781,7 @@
     "name": "DestroyWindow",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2495907549,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 2495907549
   },
   {
     "id": 112,
@@ -931,14 +809,7 @@
     "name": "DispatchMessageA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 456773993,
-    "args": [
-      {
-        "name": "msg",
-        "type": "LPMSG"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 456773993
   },
   {
     "id": 116,
@@ -1246,18 +1117,7 @@
     "name": "FindFirstFileA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3611832149,
-    "args": [
-      {
-        "name": "pattern",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "data",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 3611832149
   },
   {
     "id": 160,
@@ -1376,14 +1236,7 @@
     "name": "FreeLibrary",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2873476590,
-    "args": [
-      {
-        "name": "mod",
-        "type": "HANDLE"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 2873476590
   },
   {
     "id": 177,
@@ -1782,14 +1635,7 @@
     "name": "GetFileAttributesA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3659167075,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 3659167075
   },
   {
     "id": 234,
@@ -1992,27 +1838,7 @@
     "name": "GetMessageA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3700777589,
-    "args": [
-      {
-        "name": "msg",
-        "type": "LPMSG",
-        "out": true
-      },
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "min",
-        "type": "UINT"
-      },
-      {
-        "name": "max",
-        "type": "UINT"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 3700777589
   },
   {
     "id": 263,
@@ -2040,23 +1866,7 @@
     "name": "GetModuleFileNameA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2583414333,
-    "args": [
-      {
-        "name": "mod",
-        "type": "HANDLE"
-      },
-      {
-        "name": "buf",
-        "type": "LPSTR",
-        "out": true
-      },
-      {
-        "name": "size",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 2583414333
   },
   {
     "id": 267,
@@ -2070,14 +1880,7 @@
     "name": "GetModuleHandleA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3831749180,
-    "args": [
-      {
-        "name": "name",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 3831749180
   },
   {
     "id": 269,
@@ -2203,35 +2006,7 @@
     "name": "GetPrivateProfileStringA",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 2283556481,
-    "args": [
-      {
-        "name": "section",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "key",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "def",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "buf",
-        "type": "LPSTR",
-        "out": true
-      },
-      {
-        "name": "size",
-        "type": "DWORD"
-      },
-      {
-        "name": "file",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 2283556481
   },
   {
     "id": 287,
@@ -2245,18 +2020,7 @@
     "name": "GetProcAddress",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 4176762661,
-    "args": [
-      {
-        "name": "mod",
-        "type": "HANDLE"
-      },
-      {
-        "name": "name",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 4176762661
   },
   {
     "id": 289,
@@ -2291,31 +2055,7 @@
     "name": "GetProfileStringA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 554682768,
-    "args": [
-      {
-        "name": "section",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "key",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "def",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "buf",
-        "type": "LPSTR",
-        "out": true
-      },
-      {
-        "name": "size",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 554682768
   },
   {
     "id": 294,
@@ -2784,23 +2524,7 @@
     "name": "GetWindowTextA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 512434803,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "buf",
-        "type": "LPSTR",
-        "out": true
-      },
-      {
-        "name": "max",
-        "type": "INT"
-      }
-    ],
-    "ret": "INT"
+    "hash": 512434803
   },
   {
     "id": 361,
@@ -3360,14 +3084,7 @@
     "name": "LoadLibraryA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1404176143,
-    "args": [
-      {
-        "name": "name",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 1404176143
   },
   {
     "id": 441,
@@ -3402,27 +3119,7 @@
     "name": "LoadStringA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 172870751,
-    "args": [
-      {
-        "name": "hInst",
-        "type": "HANDLE"
-      },
-      {
-        "name": "id",
-        "type": "UINT"
-      },
-      {
-        "name": "buf",
-        "type": "LPSTR",
-        "out": true
-      },
-      {
-        "name": "max",
-        "type": "INT"
-      }
-    ],
-    "ret": "INT"
+    "hash": 172870751
   },
   {
     "id": 446,
@@ -3534,26 +3231,7 @@
     "name": "MessageBoxA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 598309348,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "text",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "caption",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "type",
-        "type": "flags:MB"
-      }
-    ],
-    "ret": "INT"
+    "hash": 598309348
   },
   {
     "id": 462,
@@ -3574,18 +3252,7 @@
     "name": "MoveFileA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1580310873,
-    "args": [
-      {
-        "name": "src",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "dst",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 1580310873
   },
   {
     "id": 465,
@@ -3704,22 +3371,7 @@
     "name": "OpenFile",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2730506447,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "ofs",
-        "type": "DWORD"
-      },
-      {
-        "name": "flags",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "HANDLE"
+    "hash": 2730506447
   },
   {
     "id": 482,
@@ -3733,13 +3385,7 @@
     "name": "OutputDebugStringA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3321276645,
-    "args": [
-      {
-        "name": "str",
-        "type": "LPCSTR"
-      }
-    ]
+    "hash": 3321276645
   },
   {
     "id": 484,
@@ -3788,31 +3434,7 @@
     "name": "PeekMessageA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 654759124,
-    "args": [
-      {
-        "name": "msg",
-        "type": "LPMSG",
-        "out": true
-      },
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "min",
-        "type": "UINT"
-      },
-      {
-        "name": "max",
-        "type": "UINT"
-      },
-      {
-        "name": "remove",
-        "type": "UINT"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 654759124
   },
   {
     "id": 491,
@@ -3889,26 +3511,7 @@
     "name": "PostMessageA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 4083509285,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "msg",
-        "type": "UINT"
-      },
-      {
-        "name": "wP",
-        "type": "DWORD"
-      },
-      {
-        "name": "lP",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 4083509285
   },
   {
     "id": 502,
@@ -3964,25 +3567,7 @@
     "name": "RaiseException",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3251983964,
-    "args": [
-      {
-        "name": "code",
-        "type": "DWORD"
-      },
-      {
-        "name": "flags",
-        "type": "DWORD"
-      },
-      {
-        "name": "nArgs",
-        "type": "DWORD"
-      },
-      {
-        "name": "args",
-        "type": "DWORD"
-      }
-    ]
+    "hash": 3251983964
   },
   {
     "id": 510,
@@ -4185,28 +3770,14 @@
     "name": "RegisterClassA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3945250267,
-    "args": [
-      {
-        "name": "wc",
-        "type": "LPWNDCLASSA"
-      }
-    ],
-    "ret": "UINT"
+    "hash": 3945250267
   },
   {
     "id": 539,
     "name": "RegisterClassExA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3970118692,
-    "args": [
-      {
-        "name": "wcx",
-        "type": "LPWNDCLASSA"
-      }
-    ],
-    "ret": "UINT"
+    "hash": 3970118692
   },
   {
     "id": 540,
@@ -4297,14 +3868,7 @@
     "name": "RemoveDirectoryA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 62841587,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 62841587
   },
   {
     "id": 553,
@@ -4528,26 +4092,7 @@
     "name": "SendMessageA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3281094429,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "msg",
-        "type": "UINT"
-      },
-      {
-        "name": "wP",
-        "type": "DWORD"
-      },
-      {
-        "name": "lP",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "DWORD"
+    "hash": 3281094429
   },
   {
     "id": 585,
@@ -4736,22 +4281,7 @@
     "name": "SetDlgItemTextA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1207384311,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "id",
-        "type": "INT"
-      },
-      {
-        "name": "text",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 1207384311
   },
   {
     "id": 612,
@@ -4800,18 +4330,7 @@
     "name": "SetFileAttributesA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1875418247,
-    "args": [
-      {
-        "name": "path",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "attrs",
-        "type": "DWORD"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 1875418247
   },
   {
     "id": 619,
@@ -5140,18 +4659,7 @@
     "name": "SetWindowTextA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2740872407,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "text",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 2740872407
   },
   {
     "id": 666,
@@ -5228,18 +4736,7 @@
     "name": "ShowWindow",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3381370368,
-    "args": [
-      {
-        "name": "hwnd",
-        "type": "HWND"
-      },
-      {
-        "name": "cmd",
-        "type": "flags:SW"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 3381370368
   },
   {
     "id": 677,
@@ -5456,14 +4953,7 @@
     "name": "TranslateMessage",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3807544660,
-    "args": [
-      {
-        "name": "msg",
-        "type": "LPMSG"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 3807544660
   },
   {
     "id": 708,
@@ -5687,26 +5177,7 @@
     "name": "WritePrivateProfileStringA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3599205936,
-    "args": [
-      {
-        "name": "section",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "key",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "val",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "file",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "BOOL"
+    "hash": 3599205936
   },
   {
     "id": 740,
@@ -6049,18 +5520,7 @@
     "name": "lstrcatA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 437380981,
-    "args": [
-      {
-        "name": "dst",
-        "type": "LPSTR"
-      },
-      {
-        "name": "src",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "LPSTR"
+    "hash": 437380981
   },
   {
     "id": 789,
@@ -6074,18 +5534,7 @@
     "name": "lstrcmpA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 629854941,
-    "args": [
-      {
-        "name": "a",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "b",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "INT"
+    "hash": 629854941
   },
   {
     "id": 791,
@@ -6099,18 +5548,7 @@
     "name": "lstrcmpiA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3318075116,
-    "args": [
-      {
-        "name": "a",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "b",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "INT"
+    "hash": 3318075116
   },
   {
     "id": 793,
@@ -6124,18 +5562,7 @@
     "name": "lstrcpyA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2283419363,
-    "args": [
-      {
-        "name": "dst",
-        "type": "LPSTR"
-      },
-      {
-        "name": "src",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "LPSTR"
+    "hash": 2283419363
   },
   {
     "id": 795,
@@ -6149,22 +5576,7 @@
     "name": "lstrcpynA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 320138849,
-    "args": [
-      {
-        "name": "dst",
-        "type": "LPSTR"
-      },
-      {
-        "name": "src",
-        "type": "LPCSTR"
-      },
-      {
-        "name": "n",
-        "type": "INT"
-      }
-    ],
-    "ret": "LPSTR"
+    "hash": 320138849
   },
   {
     "id": 797,
@@ -6178,28 +5590,14 @@
     "name": "lstrlenA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2569981992,
-    "args": [
-      {
-        "name": "str",
-        "type": "LPCSTR"
-      }
-    ],
-    "ret": "INT"
+    "hash": 2569981992
   },
   {
     "id": 799,
     "name": "lstrlenW",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2402205802,
-    "args": [
-      {
-        "name": "str",
-        "type": "LPCWSTR"
-      }
-    ],
-    "ret": "INT"
+    "hash": 2402205802
   },
   {
     "id": 800,
@@ -11203,5 +10601,12 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 349546314
+  },
+  {
+    "id": 1515,
+    "name": "GetWindowTextLengthA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1301721255
   }
 ]
