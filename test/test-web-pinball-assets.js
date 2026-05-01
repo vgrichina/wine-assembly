@@ -27,8 +27,10 @@ assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MI
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
+assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 
 console.log('PASS  web Pinball manifest includes MIDI assets');
 console.log('PASS  deploy filters include .mid and do not skip pinball assets');
 console.log('PASS  debug mode exposes direct MIDI playback');
 console.log('PASS  web host loads TinySynth MIDI backend');
+console.log('PASS  default desktop whitelist includes Pinball');
