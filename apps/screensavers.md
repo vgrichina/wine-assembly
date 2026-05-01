@@ -3070,3 +3070,35 @@ The `(null)` substitution means viewer's error-formatting path got a NULL string
 1. Trace `IDirect3DRMMeshBuilder::Load` return value — set a break-once on the call site (caller is in viewer.exe near `0x40102d-0x401049`) and capture EAX at return.
 2. If HR is non-zero, walk back into d3drm to find which sub-step set it. Likely candidates: `IDirectXFileEnumObject::GetNextDataObject` (returns DXFILE_E_NOMOREOBJECTS if registry mismatched, or a parser-side error code if a Frame/Mesh template field is misnamed), or the d3drm-internal "build mesh from data object" reduce action.
 3. Verify `0x009d3c3c` (registry pointer) is **non-NULL** at the point the Load is invoked — confirms RegisterTemplates actually wired the registry into the singleton DLL state, not just into a transient allocation.
+
+**cont.60b — failure isolated: HRESULT 0x88760311 from IDirect3DRMMeshBuilder::Load.**
+
+Disasm of viewer's Load wrapper (`viewer.exe+0x401dc9`) shows the failing call at `0x401ff1`:
+
+```
+0x401fbf  call [eax+0x18]                    ; IDirect3DRM::CreateMeshBuilder → ok
+0x401fdb..0x401fec  push 0,0,0,0,"camera.x", lpvObjSource, this
+0x401ff1  call [eax+0x2c]                    ; IDirect3DRMMeshBuilder::Load
+0x401ff4  mov [ebp-8], eax                   ; HR
+0x401ff7  cmp [ebp-8], 0
+0x401ffb  je success                         ; if HR==0 skip error
+... push hr ; call D3DRMErrorToString (0x40523e) → "(null)" for unknown HR ...
+0x40200e  push 0x410194                      ; fmt "Failed to load camera.x.\n%s"
+0x402013  call 0x401000                      ; error helper
+```
+
+Captured via `--trace-at=0x401ff4`:
+
+```
+[TRACE-AT #1] EIP=0x00401ff4 EAX=0x88760311
+```
+
+**HR = 0x88760311 = D3DRMERR_NOTFOUND** (DX5 d3drmerr.h: severity=fail, facility=0x076 D3DRM, code=0x311). So the Load *finds* the file, the X-file parser *succeeds* (CreateFile + UnmapViewOfFile pair both fire cleanly), but d3drm cannot find a usable mesh data object in the parsed result.
+
+Two likely causes:
+1. **Template registration is partial**: D3DRM_XTEMPLATES populated the registry (35 add-template hits, registry pointer non-NULL) but maybe not every template needed for camera.x — the parser silently drops objects whose template name can't resolve, leaving zero Mesh instances. RegisterTemplates calling `0x5c50a0df` 35 times does *not* prove all of D3DRM_XTEMPLATES landed correctly; some entries could fail mid-list and the rest silently skipped.
+2. **Parser builds incomplete object tree**: parser runs but the COM-side d3rm "build mesh from data object" walker (in d3rm itself, not d3dxof) hits a template field it doesn't recognize and reports NOTFOUND instead of BADOBJECT.
+
+Tools: `--trace-host=` on `IDirect3DRMMeshBuilder` vtable + count probes inside `0x5c50a0df` (RegisterTemplate-add) — verify all 35 template names, see whether "Mesh" specifically registered. Also probe d3rm's GetNextDataObject loop to see whether camera.x's top-level objects were enumerated at all, or zero.
+
+Also note: viewer's wvsprintf-call-site (`0x40200e`/`0x402013`) and several other internal block addrs return **0** under `--count`, even though `--break` and `--trace-at` confirm execution flows through them. The hit-counter loop in `13-exports.wat:46` increments only when `eip == addr` at block-entry dispatch; the threaded-cache call shortcut may skip the eip check on calls into already-cached blocks. Use `--trace-at` (single-addr) or `--break-once` for any address whose value lives inside a function body rather than at a fn entry / call-return landing.
