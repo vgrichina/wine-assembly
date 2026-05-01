@@ -90,6 +90,41 @@ The investigation went through ~60 continuation entries before localizing to Mes
 
 The full chronicle (cont.1 through cont.60b, plus the parallel "scene-walker / dispatcher / list ownership" chain) is preserved in the git history of this file. Don't excavate it unless a new finding contradicts the current narrative.
 
+**2026-04-30 cont.62 — filter mechanics fully decoded; the gate is real in the shipped binary, so the bug must be upstream of dispatcher.**
+
+Statically traced the filter source. Key findings:
+
+1. **The 6-entry table at `d3drm+0x64782380` is a red herring.** It's a `(GUID*, vtable*)` pair list inside an outer directory at `d3drm+0x647826d0` mapping class IIDs to filter-blocks. `0x647826e0` pairs `0x64781520` (an IID) → `0x64782380`. NOT the runtime filter passed to the walker.
+
+2. **The 7 public-Load wrappers calling `0x647cdf1d` build the filter as a single-element stack local.** Reference: `0x647ce066` (a non-MeshBuilder Load wrapper):
+
+   ```
+   647ce06b  mov eax, 0x647816b0          ; static GUID literal
+   647ce07d  mov [ebp-4], eax              ; local = &GUID
+   647ce0a1  lea eax, [ebp-4]
+   647ce0a4  push 1                        ; ★ count = 1
+   647ce0a6  push eax                      ; ★ filter = &local (one ptr)
+   ...
+   647ce0b0  call 0x647cdf1d
+   ```
+
+   The `push [edi+0x2c]` cont.61 misread as "filter from per-instance field" is actually arg1 (an unrelated payload). cont.61's "[obj+0x2c] = filter array" claim is wrong.
+
+3. **CreateMeshBuilder helper at `0x6478fcf4` hardcodes the MeshBuilder's primary template GUID = `0x64781700` (`TID_D3DRMMesh`)** — single GUID, no PM. So the shipped d3drm.dll really does instantiate MeshBuilder with a Mesh-only filter.
+
+4. **PM handler `0x647cf6a7` is a re-dispatch shim:** it calls `IDirectXFileData::GetNextObject` on the PM data object, QIs the child as IDirectXFileData, runs `IDirectXFileData::GetType` on the outer, verifies it matches IID at `0x64781c20`, then re-invokes the user callback `[ebp+0x1c]` with `&TID_D3DRMProgressiveMesh`. Function flow is consistent with "expand PM into Mesh data, then call the original handler" — but the dispatcher's PM arm at `0x647d048d-0x647d049a` gates the call to `0x647cf6a7` on `find_guid_in_pointer_list(filter, count, &PM)`. With filter=[Mesh] only, the gate fails and the PM handler is never reached.
+
+**Reconciling with real DX5:** since the shipped binary really does have count=1 + Mesh-only filter AND the PM gate at `0x647d048d`, real Win98+DX5 must reach a successful Load via a different path than `MeshBuilder::Load → 0x647cdf1d → 0x647d0868 → 0x647d075c → 0x647d02cd`. Three remaining hypotheses:
+
+- (a) **PM expansion happens at the d3xof layer**, not in d3rm: `IDirectXFileEnumObject::GetNextDataObject` could materialize a PM as a synthetic Mesh data object (or the X-file parser silently rewrites PM templates as Mesh on load). Then by the time the d3rm dispatcher sees the data object, its template GUID is already TID_D3DRMMesh and the filter passes. Worth checking d3xof's binary parser for any PM-aware translation step.
+- (b) **MeshBuilder::Load uses a different walker for the .x file's top-level objects** than the chain above. cont.61 traced `MeshBuilder::Load → 0x647cdf1d` from the runtime hit counts on the bail site `0x647d09f6`, but maybe the bail site is reached from a different upstream call than CreateMeshBuilder/Load. Trace MeshBuilder::Load's first instruction (vtable slot 11 of the IDirect3DRMMeshBuilder vtable returned by CreateMeshBuilder) and walk forward — confirm it reaches `0x647cdf1d` via the chain we assumed.
+- (c) **The version of d3drm.dll we're using doesn't match viewer.exe's expectations.** Verify file-level metadata (PE timestamp, version resource).
+
+**cont.63 plan:**
+1. Locate IDirect3DRMMeshBuilder vtable; identify slot 11 = Load. Set `--break-once` on its entry, capture the actual call chain to `0x647d02cd` via `dbg_prev_eip` and stack walk. Confirm or refute the chain MeshBuilder::Load → 0x647cdf1d.
+2. Disasm d3xof's IDirectXFileEnumObject::GetNextDataObject (find via tools/find_string.js for "DirectXFile" or the IDirectXFileEnumObject IID, then xref); check whether it has any PM→Mesh template-rewriting logic.
+3. Check the d3drm.dll version against the camera.x DX SDK version. If they're mismatched, swap to the DX SDK's bundled d3drm if any.
+
 ### 4. MFC screensavers — full DirectAnimation (DEFERRED)
 
 CORBIS investigation (2026-04-20): the COM dependency isn't IPicture/OleLoadPicture but **DirectAnimation** (DAView + DAStatics from `danim.dll`). `CLSIDFromProgID(L"DirectAnimation.DAView"/L"DAStatics")` stubbed to `REGDB_E_CLASSNOTREG`; app then crashes on a null vtable from an unpopulated DAView pointer. Bringing up even minimal DirectAnimation is larger than the existing DDraw work. FASHION/HORROR/WOTRAVEL share the framework.
