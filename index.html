@@ -251,6 +251,32 @@
     body.no-debug #log { display: none; }
     body.no-debug #screen-wrap { background: #008080; }
     body.no-debug canvas { background: transparent; z-index: 2; }
+    body.no-debug.exclusive-fullscreen,
+    body.no-debug.exclusive-fullscreen #shell,
+    body.no-debug.exclusive-fullscreen #content,
+    body.no-debug.exclusive-fullscreen #screen-wrap {
+      width: 100vw;
+      height: 100vh;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: #000;
+    }
+    body.no-debug.exclusive-fullscreen #taskbar,
+    body.no-debug.exclusive-fullscreen #desktop-icons { display: none !important; }
+    body.no-debug.exclusive-fullscreen canvas { width: 100vw; height: 100vh; }
+    #screen-wrap:fullscreen {
+      width: 100vw;
+      height: 100vh;
+      margin: 0;
+      background: #000;
+    }
+    #screen-wrap:-webkit-full-screen {
+      width: 100vw;
+      height: 100vh;
+      margin: 0;
+      background: #000;
+    }
   </style>
 </head>
 <body>
@@ -840,6 +866,23 @@ Resource-aware Win98 emulator
       if (inputWired) return;
       inputWired = true;
       canvas.oncontextmenu = e => e.preventDefault();
+      function eventPoint(e) {
+        const r = canvas.getBoundingClientRect();
+        const sx = canvas.width / r.width, sy = canvas.height / r.height;
+        const x = Math.floor((e.clientX - r.left) * sx);
+        const y = Math.floor((e.clientY - r.top) * sy);
+        return renderer.mapCanvasPoint ? renderer.mapCanvasPoint(x, y) : { x, y };
+      }
+      function requestBrowserFullscreen() {
+        const target = document.getElementById('screen-wrap') || canvas;
+        if (!document.fullscreenElement && target && target.requestFullscreen) {
+          renderer._requestedBrowserFullscreen = true;
+          try {
+            const p = target.requestFullscreen();
+            if (p && p.catch) p.catch(() => {});
+          } catch (_) {}
+        }
+      }
       function windowAtCanvas(cx, cy) {
         for (const w of Object.values(renderer.windows)) {
           if (!w.visible || w.isChild) continue;
@@ -849,10 +892,8 @@ Resource-aware Win98 emulator
       }
       canvas.onmousedown = e => {
         canvas.focus();
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        const cx = Math.floor((e.clientX - r.left) * sx);
-        const cy = Math.floor((e.clientY - r.top) * sy);
+        if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
+        const { x: cx, y: cy } = eventPoint(e);
         if (!DEBUG_MODE && !windowAtCanvas(cx, cy)) {
           // No window here — forward click to the icon under the cursor.
           canvas.style.pointerEvents = 'none';
@@ -869,23 +910,13 @@ Resource-aware Win98 emulator
         renderer.handleMouseDown(cx, cy, e.button);
       };
       canvas.onmouseup = e => {
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        renderer.handleMouseUp(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy),
-          e.button
-        );
+        const { x, y } = eventPoint(e);
+        renderer.handleMouseUp(x, y, e.button);
       };
       canvas.addEventListener('wheel', e => {
         e.preventDefault();
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        renderer.handleWheel(
-          Math.floor((e.clientX - r.left) * sx),
-          Math.floor((e.clientY - r.top) * sy),
-          e.deltaY
-        );
+        const { x, y } = eventPoint(e);
+        renderer.handleWheel(x, y, e.deltaY);
       }, { passive: false });
       canvas.setAttribute('tabindex', '0');
       canvas.focus();
@@ -928,6 +959,9 @@ Resource-aware Win98 emulator
       };
       canvas.addEventListener('keydown', e => {
         const vk = e.keyCode;
+        if (renderer._exclusiveFullscreen || (vk === 115 && !e.altKey && !e.ctrlKey && !e.metaKey)) {
+          requestBrowserFullscreen();
+        }
         renderer.handleKeyDown(vk);
         if (!keepForBrowser(e) && !isPrintableKey(e)) e.preventDefault();
       });
@@ -946,10 +980,7 @@ Resource-aware Win98 emulator
         }
       });
       canvas.onmousemove = e => {
-        const rr = canvas.getBoundingClientRect();
-        const ssx = canvas.width / rr.width, ssy = canvas.height / rr.height;
-        const mx = Math.floor((e.clientX - rr.left) * ssx);
-        const my = Math.floor((e.clientY - rr.top) * ssy);
+        const { x: mx, y: my } = eventPoint(e);
         renderer.handleMenuHover(mx, my);
         // Always deliver mouse moves — WM_SETCURSOR depends on it, and games
         // like Reversi key their "valid move" cross cursor on WM_MOUSEMOVE.
@@ -1060,6 +1091,8 @@ Resource-aware Win98 emulator
       }
     }
     window.addEventListener('resize', resizeCanvas);
+    document.addEventListener('fullscreenchange', resizeCanvas);
+    document.addEventListener('webkitfullscreenchange', resizeCanvas);
     new ResizeObserver(resizeCanvas).observe(document.getElementById('screen-wrap'));
 
     // Taskbar clock
