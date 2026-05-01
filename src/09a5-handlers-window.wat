@@ -852,27 +852,32 @@
     ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
     ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
     ;; Hardware input was consumed at top of fn; no second poll here.
-    ;; Deliver WM_PAINT — legacy paint_pending+paint_flag_take dispatch.
-    ;; Phase A.2 (host_next_dirty_hwnd as primary path) regressed mspaint:
-    ;; BS_OWNERDRAW tool buttons received WM_PAINT directly under region-
-    ;; driven dispatch and posted WM_DRAWITEM to a parent (Tools/CToolBar)
-    ;; whose wndproc doesn't paint, so the icons were lost. Reverted to
-    ;; legacy until WM_DRAWITEM routing is investigated. $paint_flag_set_inv
-    ;; (A.1) and rgn fast-path (A.3) remain — they only seed _updateRgns
-    ;; and don't change dispatch order.
-    (if (global.get $paint_pending)
-    (then
-    (global.set $paint_pending (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver WM_PAINT to child window from paint queue
-    (local.set $tmp (call $paint_flag_take))
+    ;; Deliver WM_PAINT — Phase A.2 redux: region-driven dispatch via
+    ;; $host_next_dirty_hwnd. The mspaint regression from commit 30ded5c is
+    ;; mitigated by step 3 prerequisites:
+    ;;   - next_dirty_hwnd skips BS_OWNERDRAW children (their parent's
+    ;;     WM_PAINT handles them via WM_DRAWITEM legacy route).
+    ;;   - $host_seed_child_paints seeds non-OWNERDRAW WS_CHILD windows
+    ;;     intersecting the parent's update rgn, so they get their own
+    ;;     WM_PAINT after the parent.
+    ;; PAINT_FLAGS and $paint_pending mirror the rgn map (every set bit
+    ;; corresponds to a non-empty _updateRgns entry via $paint_flag_set_inv
+    ;; + host_invalidate seeding). Pre-validate full-client at dispatch to
+    ;; mimic the legacy paint_flag_take atomic clear-on-dispatch contract,
+    ;; since WAT-internal control wndprocs paint via host_gdi_* without
+    ;; BeginPaint/EndPaint and would otherwise never validate the rgn.
+    (local.set $tmp (call $host_next_dirty_hwnd))
     (if (local.get $tmp)
     (then
+    (call $paint_flag_clear_hwnd (local.get $tmp))
+    (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 0))))
+    ;; Seed child paints before dispatching parent WM_PAINT so subsequent
+    ;; pump iterations dispatch each child's WM_PAINT in z-order.
+    (drop (call $host_seed_child_paints (local.get $tmp)))
+    (drop (call $host_validate_rect (local.get $tmp)
+            (i32.const 0) (i32.const 0)
+            (i32.const 32767) (i32.const 32767)))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
