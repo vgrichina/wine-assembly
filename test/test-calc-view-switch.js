@@ -36,6 +36,8 @@ for (const p of [pngStd1, pngSci, pngStd2]) { try { fs.unlinkSync(p); } catch (_
 const inputSpec = [
   `30:png:${pngStd1}`,
   `40:post-cmd:303`,
+  `70:mousedown:184:86`,
+  `73:mouseup:184:86`,
   `90:png:${pngSci}`,
   `100:post-cmd:304`,
   `135:png:${pngStd2}`,
@@ -60,6 +62,9 @@ const STD_BBOX = { x0: 43, y0: 41, x1: 43 + 256, y1: 41 + 211 };
 // at least as big as standard. We probe the same standard-sized area, which is
 // inside scientific too, so any black background bleed shows up there as well.
 const SCI_BBOX = STD_BBOX;
+const BTN_BBOX = { x0: 98, y0: 191, x1: 133, y1: 218 };
+const SCI_DEC_DOT = { x0: 117, y0: 81, x1: 128, y1: 92 };
+const SCI_OCT_DOT = { x0: 179, y0: 81, x1: 190, y1: 92 };
 
 async function readPixels(p) {
   const img = await loadImage(p);
@@ -83,6 +88,33 @@ function blackRatio(img, bbox) {
   return { black, total, ratio: black / total };
 }
 
+function nonFacePixels(img, bbox) {
+  const w = img.w;
+  let total = 0, nonFace = 0;
+  for (let y = bbox.y0; y < Math.min(bbox.y1, img.h); y++) {
+    for (let x = bbox.x0; x < Math.min(bbox.x1, w); x++) {
+      const i = (y * w + x) * 4;
+      const r = img.data[i], g = img.data[i+1], b = img.data[i+2];
+      if (!(r === 0xC0 && g === 0xC0 && b === 0xC0)) nonFace++;
+      total++;
+    }
+  }
+  return { nonFace, total, ratio: nonFace / total };
+}
+
+function darkPixels(img, bbox) {
+  const w = img.w;
+  let dark = 0;
+  for (let y = bbox.y0; y < Math.min(bbox.y1, img.h); y++) {
+    for (let x = bbox.x0; x < Math.min(bbox.x1, w); x++) {
+      const i = (y * w + x) * 4;
+      const r = img.data[i], g = img.data[i+1], b = img.data[i+2];
+      if (r < 64 && g < 64 && b < 64) dark++;
+    }
+  }
+  return dark;
+}
+
 (async () => {
   const checks = [];
   const exists = (p) => fs.existsSync(p) && fs.statSync(p).size > 0;
@@ -93,19 +125,32 @@ function blackRatio(img, bbox) {
 
   const THRESH = 0.10; // healthy calc has < 1% pure-black; bug fills >50%
   if (have1) {
-    const r = blackRatio(await readPixels(pngStd1), STD_BBOX);
+    const img = await readPixels(pngStd1);
+    const r = blackRatio(img, STD_BBOX);
     checks.push({ name: `std#1 black ratio < ${THRESH} (got ${r.ratio.toFixed(3)})`,
                   pass: r.ratio < THRESH });
+    const b = nonFacePixels(img, BTN_BBOX);
+    checks.push({ name: `std#1 keypad button visible (>=30 non-face px, got ${b.nonFace})`,
+                  pass: b.nonFace >= 30 });
   }
   if (haveS) {
-    const r = blackRatio(await readPixels(pngSci), SCI_BBOX);
+    const img = await readPixels(pngSci);
+    const r = blackRatio(img, SCI_BBOX);
     checks.push({ name: `scientific black ratio < ${THRESH} (got ${r.ratio.toFixed(3)})`,
                   pass: r.ratio < THRESH });
+    const decDark = darkPixels(img, SCI_DEC_DOT);
+    const octDark = darkPixels(img, SCI_OCT_DOT);
+    checks.push({ name: `scientific Oct radio selected after click (oct=${octDark}, dec=${decDark})`,
+                  pass: octDark > decDark + 3 });
   }
   if (have2) {
-    const r = blackRatio(await readPixels(pngStd2), STD_BBOX);
+    const img = await readPixels(pngStd2);
+    const r = blackRatio(img, STD_BBOX);
     checks.push({ name: `std#2 black ratio < ${THRESH} (got ${r.ratio.toFixed(3)})`,
                   pass: r.ratio < THRESH });
+    const b = nonFacePixels(img, BTN_BBOX);
+    checks.push({ name: `std#2 keypad button visible (>=30 non-face px, got ${b.nonFace})`,
+                  pass: b.nonFace >= 30 });
   }
 
   console.log('');

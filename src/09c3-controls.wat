@@ -42,6 +42,12 @@
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
 
+  ;; Dialog mouse capture for WAT-managed buttons. Browser mouseup coordinates
+  ;; can drift from the mousedown point; deliver the release to the pressed
+  ;; button so owner-draw controls always clear ODS_SELECTED.
+  (global $dialog_button_capture_parent (mut i32) (i32.const 0))
+  (global $dialog_button_capture_hwnd (mut i32) (i32.const 0))
+
   ;; Copy a NUL-terminated string from a WASM-linear address into a fresh
   ;; heap-allocated guest buffer. Returns the guest pointer (suitable for
   ;; passing as $text_wa to $ctrl_create_child, which then ends up in
@@ -155,7 +161,13 @@
 
   ;; Get check state for a control hwnd (legacy CONTROL_TABLE path)
   (func $ctrl_get_check_state (param $hwnd i32) (result i32)
-    (local $idx i32)
+    (local $idx i32) (local $state i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (local.get $state)
+      (then
+        (return (i32.and
+          (i32.shr_u (i32.load offset=8 (call $g2w (local.get $state))) (i32.const 1))
+          (i32.const 1)))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
@@ -164,7 +176,15 @@
 
   ;; Set check state for a control hwnd (legacy CONTROL_TABLE path)
   (func $ctrl_set_check_state (param $hwnd i32) (param $state i32)
-    (local $idx i32)
+    (local $idx i32) (local $btn_state i32) (local $btn_state_w i32) (local $flags i32)
+    (local.set $btn_state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (local.get $btn_state)
+      (then
+        (local.set $btn_state_w (call $g2w (local.get $btn_state)))
+        (local.set $flags (i32.and (i32.load offset=8 (local.get $btn_state_w)) (i32.const 0xFFFFFFFD)))
+        (if (local.get $state)
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x02)))))
+        (i32.store offset=8 (local.get $btn_state_w) (local.get $flags))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
@@ -1805,6 +1825,13 @@
     (i32.store offset=36 (local.get $disw) (local.get $w))
     (i32.store offset=40 (local.get $disw) (local.get $h))
     (i32.store offset=44 (local.get $disw) (i32.const 0))
+    ;; Calc owner-draw button labels move by 1px while pressed. Its draw code
+    ;; uses transparent text, so clear the child DC first or stale glyph pixels
+    ;; from the previous offset remain visible.
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.const 0) (i32.const 0)
+            (local.get $w) (local.get $h)
+            (i32.const 0x30011)))
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002B)
@@ -2305,6 +2332,11 @@
             (i32.store offset=36 (local.get $edge_flags) (local.get $w)) ;; rcItem.right
             (i32.store offset=40 (local.get $edge_flags) (local.get $h)) ;; rcItem.bottom
             (i32.store offset=44 (local.get $edge_flags) (i32.const 0)) ;; itemData
+            ;; Clear stale transparent text before delegating to the owner.
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30011)))
             ;; Post WM_DRAWITEM (0x002B) to parent
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))
@@ -2473,7 +2505,9 @@
         (local.set $tx_b (local.get $h))
         ;; WS_EX_CLIENTEDGE (0x200): paint white interior + sunken edge
         ;; (calc's display "0." field + memory indicator both use this).
-        ;; Inset the text rect by 2px so glyphs don't touch the sunken edge.
+        ;; Inset the text rect so glyphs don't touch the sunken edge.
+        ;; Calc's display is a right-aligned client-edge static; Win98
+        ;; leaves a few pixels of inner padding there.
         (if (i32.and (local.get $ex) (i32.const 0x200))
           (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -2484,10 +2518,10 @@
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x0A) (i32.const 0x0F)))  ;; EDGE_SUNKEN | BF_RECT
-            (local.set $tx_l (i32.const 2))
-            (local.set $tx_t (i32.const 2))
-            (local.set $tx_r (i32.sub (local.get $w) (i32.const 2)))
-            (local.set $tx_b (i32.sub (local.get $h) (i32.const 2))))
+            (local.set $tx_l (i32.const 4))
+            (local.set $tx_t (i32.const 1))
+            (local.set $tx_r (i32.sub (local.get $w) (i32.const 4)))
+            (local.set $tx_b (i32.sub (local.get $h) (i32.const 1))))
           (else
             ;; Erase the static's rect for label types. Parent's WM_ERASEBKGND
             ;; ran once at create time, but subsequent SetWindowText invalidates
@@ -2523,6 +2557,11 @@
                 (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x01))))) ;; DT_CENTER
               (if (i32.eq (local.get $style) (i32.const 2))
                 (then (local.set $fmt (i32.or (local.get $fmt) (i32.const 0x02))))) ;; DT_RIGHT
+              (if (i32.and (local.get $ex) (i32.const 0x200))
+                (then (local.set $fmt
+                  (i32.or
+                    (i32.and (local.get $fmt) (i32.const 0x03)) ;; keep horizontal alignment
+                    (i32.const 0x24))))) ;; DT_VCENTER|DT_SINGLELINE
               (i32.store        (global.get $PAINT_SCRATCH) (local.get $tx_l))
               (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $tx_t))
               (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $tx_r))
@@ -5358,6 +5397,26 @@
     (local $hit i32)
     (local.set $px (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
     (local.set $py (i32.shr_s (local.get $lParam) (i32.const 16)))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0202))
+          (i32.and
+            (i32.eq (global.get $dialog_button_capture_parent) (local.get $parent))
+            (i32.ne (global.get $dialog_button_capture_hwnd) (i32.const 0))))
+      (then
+        (local.set $ch (global.get $dialog_button_capture_hwnd))
+        (global.set $dialog_button_capture_parent (i32.const 0))
+        (global.set $dialog_button_capture_hwnd (i32.const 0))
+        (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
+        (local.set $cx (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
+        (local.set $cy (i32.shr_s (local.get $xy) (i32.const 16)))
+        (local.set $ch_lp (i32.or
+          (i32.and (i32.sub (local.get $px) (local.get $cx)) (i32.const 0xFFFF))
+          (i32.shl
+            (i32.and (i32.sub (local.get $py) (local.get $cy)) (i32.const 0xFFFF))
+            (i32.const 16))))
+        (drop (call $wnd_send_message (local.get $ch)
+                (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
+        (return (i32.const 1))))
     (block $done (loop $walk
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
@@ -5397,6 +5456,12 @@
                   (i32.ne (global.get $combo_open_hwnd) (i32.const 0))
                   (i32.ne (global.get $combo_open_hwnd) (local.get $ch))))
             (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
+          (if (i32.and
+                (i32.eq (local.get $msg) (i32.const 0x0201))
+                (i32.eq (local.get $cls) (i32.const 1)))
+            (then
+              (global.set $dialog_button_capture_parent (local.get $parent))
+              (global.set $dialog_button_capture_hwnd (local.get $ch))))
           (drop (call $wnd_send_message (local.get $ch)
                   (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
           (return (i32.const 1))))
@@ -6020,4 +6085,3 @@
                             (i32.const 0x05) (i32.const 0x0F))))))))) ;; BDR_RAISED, BF_RECT
         (return (i32.const 0))))
     (i32.const 0))
-

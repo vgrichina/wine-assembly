@@ -471,20 +471,20 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=46"></script>
-  <script src="lib/dib.js?v=46"></script>
-  <script src="lib/resources-icon.js?v=46"></script>
-  <script src="lib/renderer-input.js?v=46"></script>
-  <script src="lib/renderer.js?v=46"></script>
-  <script src="lib/dll-loader.js?v=46"></script>
-  <script src="lib/storage.js?v=46"></script>
-  <script src="lib/filesystem.js?v=46"></script>
-  <script src="lib/hlp-parser.js?v=46"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=47"></script>
-  <script src="lib/host-imports.js?v=47"></script>
-  <script src="lib/compile-wat.js?v=46"></script>
-  <script src="lib/thread-manager.js?v=46"></script>
-  <script src="host.js?v=46"></script>
+  <script src="lib/mem-utils.js?v=48"></script>
+  <script src="lib/dib.js?v=48"></script>
+  <script src="lib/resources-icon.js?v=48"></script>
+  <script src="lib/renderer-input.js?v=48"></script>
+  <script src="lib/renderer.js?v=48"></script>
+  <script src="lib/dll-loader.js?v=48"></script>
+  <script src="lib/storage.js?v=48"></script>
+  <script src="lib/filesystem.js?v=48"></script>
+  <script src="lib/hlp-parser.js?v=48"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=48"></script>
+  <script src="lib/host-imports.js?v=48"></script>
+  <script src="lib/compile-wat.js?v=48"></script>
+  <script src="lib/thread-manager.js?v=48"></script>
+  <script src="host.js?v=48"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -821,7 +821,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=46');
+        const response = await fetch(url + '?v=48');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {

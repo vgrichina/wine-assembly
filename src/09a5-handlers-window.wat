@@ -855,8 +855,10 @@
     ;; Deliver WM_PAINT — Phase A.2 redux: region-driven dispatch via
     ;; $host_next_dirty_hwnd. The mspaint regression from commit 30ded5c is
     ;; mitigated by step 3 prerequisites:
-    ;;   - next_dirty_hwnd skips BS_OWNERDRAW children (their parent's
-    ;;     WM_PAINT handles them via WM_DRAWITEM legacy route).
+    ;;   - next_dirty_hwnd skips non-dialog BS_OWNERDRAW children (their
+    ;;     parent's WM_PAINT handles them via WM_DRAWITEM legacy route),
+    ;;     while allowing dialog-owned owner-draw buttons like calc.exe's
+    ;;     keypad to receive their bootstrap WM_PAINT.
     ;;   - $host_seed_child_paints seeds non-OWNERDRAW WS_CHILD windows
     ;;     intersecting the parent's update rgn, so they get their own
     ;;     WM_PAINT after the parent.
