@@ -105,7 +105,15 @@ class FakeAudioContext {
 }
 
 const oldAudioContext = globalThis.AudioContext;
+const oldWindow = globalThis.window;
+const windowListeners = {};
 globalThis.AudioContext = FakeAudioContext;
+globalThis.window = {
+  addEventListener(type, fn) {
+    if (!windowListeners[type]) windowListeners[type] = [];
+    windowListeners[type].push(fn);
+  },
+};
 
 try {
   writeStr(0x100, 'sequencer');
@@ -116,6 +124,10 @@ try {
     readFile: (p) => p.toLowerCase() === 'song.mid' ? oneNoteMidi : null,
   };
   const imports = createHostImports(ctx);
+  assert(windowListeners.pointerdown && windowListeners.pointerdown.length, 'audio unlock listener should be installed immediately');
+  windowListeners.pointerdown[0]();
+  assert(ctx._voices._ac, 'first browser pointerdown should create the shared AudioContext');
+  assert.strictEqual(ctx._voices._ac.state, 'running');
 
   const id = imports.host.mci_open(0x100, 0x120, 0x2000);
   const dev = ctx._mci.devices.get(id);
@@ -195,10 +207,13 @@ try {
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
+  console.log('PASS  browser audio unlock creates the shared AudioContext on user input');
   console.log('PASS  empty sequencer open does not invent default MIDI playback');
 } finally {
   if (oldAudioContext === undefined) delete globalThis.AudioContext;
   else globalThis.AudioContext = oldAudioContext;
+  if (oldWindow === undefined) delete globalThis.window;
+  else globalThis.window = oldWindow;
 }
 
 function readCString(ptr) {
