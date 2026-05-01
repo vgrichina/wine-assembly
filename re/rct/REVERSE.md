@@ -161,6 +161,26 @@ Next step (per dynamic): `--watch=0x5706a4 --watch-log` from boot will show
 which caller fires first AND with which value. That pinpoints the origin
 without chasing all 4 chains.
 
+### Dynamic resolution (2026-04-30)
+
+`--watch=0x5706a4 --watch-log` over a 30k-batch boot run:
+
+- First write at **batch 28123**, `EIP=0x0043143c`, `prev_eip=0x00431323` —
+  inside `tile_walker_outer`. Old=0, New=0x029bed35 (vp.x=-4811, vp.y=667).
+- Pre-walker entry at `0x00431245` (`pack_viewport_for_walker`) trace shows
+  input struct `EDI=0x008e6bcc`:
+  `{fb=0x01be0f26, left=434, top=0, w=200, h=133, pitch=440}` — **reasonable**.
+- ESI (after `mov esi,[esi+0x8]`) resolves to clip struct `0x008e81a8`:
+  `{+0=0x27a, +2=0x1b3, +4=0, +6=0, +8 dword=0x029beb83, +10 byte=0x09}`.
+- The bad coords are **computed** by `0x00431266`'s clip+transform:
+  `(world - clip_origin) << zoom + [esi+0x8]`. With zoom=9 and word-truncated
+  `[esi+8]=0xeb83 (signed -5245)`, the output is off-map.
+
+So the originator chain (4 callsites of `0x00431245`) is **not** the bug —
+they pass sane values. The real defect is the clip struct at `0x008e81a8`
+holding wrong values (specifically `+0x8 dword = 0x029beb83`). Find the
+writer of `[0x008e81b0]` to identify the missing init step.
+
 ---
 
 ## Phase A — RLE decompressor (still relevant, as background)

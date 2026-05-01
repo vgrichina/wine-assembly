@@ -74,6 +74,47 @@
 
 **Next concrete probe:** trace who writes the `0x5706a4` / `0x5706a6` viewport globals on the default timer path and compare their source data before `0x431323` / `0x4311c3` against expected on-screen values. The scenario compare is no longer the primary suspect; the viewport-construction path is.
 
+**2026-04-30 update — walker entry traced; bad coords come from clip math, not from caller.**
+
+Probed first call into `0x00431245` (`pack_viewport_for_walker`) at batch 28123 with `--watch=0x5706a4 --watch-log` and `--trace-at=0x00431245 --trace-at-dump=...`:
+
+- Caller's input struct at `EDI=0x008e6bcc` (a render-target struct) has **reasonable** values:
+  - `+0 fb_ptr = 0x01be0f26` (in heap)
+  - `+4 vp.left = 434`, `+6 vp.top = 0`, `+8 vp.w = 200`, `+a vp.h = 133`, `+c pitch = 440`
+- The clip-rect struct passed via `ESI` resolves through `mov esi,[esi+0x8]` to `0x008e81a8`, contents:
+  - `+0 = 0x027a (634)`, `+2 = 0x01b3 (435)` — screen size
+  - `+4 = 0`, `+6 = 0` — clip origin
+  - `+8..+b dword = 0x029beb83` — read as **word = 0xeb83 = -5245**
+  - `+10 byte = 0x09` — zoom shift
+- The clip+transform math at `0x004312c2..0x004312e1` does:
+  `(world - clip) << zoom + [esi+0x8]`. With `world=434`, `clip=0`, `zoom=9`: `434 << 9 = 0x6400` (16-bit), then `+ 0xeb83 = 0x4f83`. Combined with the `0x00431323` adjustments (sub `[edi+4]`, sub `[edi+0xc]`) the result lands at the observed `vp.left=0xed35 (-4811)`, `vp.top=0x029b (667)`, `vp.w=0x000b (11)`.
+
+So the bad off-map coords are **computed**, not received. The two suspects are:
+
+1. The clip-rect ESI struct at `0x008e81a8` was never re-initialized for the actual screen origin — `[esi+0x8]` should be a small positive screen-buffer offset, not `0xeb83`.
+2. The zoom shift (9) feeding `shl ax,cl` is too large for an 8-bit framebuffer — but RCT's own asm uses this scheme, so the input world coords are likely meant to be small. The 434/0/200/133 input may be in *map-tile* units that overflow when shifted.
+
+`0x008e81a8` is the next concrete probe target: find writers of that struct's `+0x8` field (and `+0..+0xa`) and compare to what real Win98 RCT puts there during init. The struct is part of an array — original ESI=`0x008e717c`, then `[esi+0x8] = 0x008e81a8` (a linked viewport). Walking the chain or finding a `mov [0x008e81b0],...` pattern via `tools/find_field.js` will identify the missing init step.
+
+**Writers of `[0x008e81b0]` (clip struct +8) found via `--watch=0x008e81b0 --watch-log`:**
+
+| Batch | EIP | Writes | Notes |
+|---|---|---|---|
+| 25145 | `0x0055d0c3` | 0x0546fec3 | first writer; `prev_eip=0x55a977` |
+| 25288 | `0x0055d0c3` | 0x0526fec3 | updates same field |
+| 28124 | `0x0055805e` | **0x029beb83** | the BAD value seen at walker entry; `prev_eip=0x55802f` |
+
+The two writer sites are both in `0x55xxxx` (RCT's hand-asm). `0x0055805e` is the immediate cause of the off-map walker. Investigating its enclosing function and the input that produced `0x029beb83` (the high half `0x029b=667` matches `vp.top`, the low half `0xeb83` is the screen offset in question) is the next concrete step toward actual rendering.
+
+**Disasm context (2026-04-30):**
+
+- Writer `0x0055805e` is mid-function; real entry is `0x0055802f` (called from `0x00557eeb`). The site reads `[edi+0x32]` (a flag byte test) and proceeds to copy `[esi+0x4]/+0x6/+0/+2` (left/top/right/bottom corners) into AX/BX/DX/BP. This is a **per-viewport-entry updater** that iterates an array of `0x14`-byte structs.
+- Writer `0x0055d0c3` is a **viewport list compactor**: walks `0x008e81a8..0x008e825c` (9 entries × 20 bytes = the viewport array), collects non-empty (`word [esi]!=0`) ones into a pointer list at `0x008e825c`, and terminates the list with NULL.
+
+So the data shape is now clear: there's a fixed array of **9 viewport descriptors** at `0x008e81a8..0x008e8258`, each `0x14` bytes, with a compact-pointer list right after it. The walker fault is that one of these 9 entries has `[+0x8] = 0x029beb83` written by the per-entry updater at `0x55802f`, which expected normalized screen coords but got world-space minus a missing camera origin.
+
+The cleanest next step: trace `0x55802f` entry once after the bad write, dump its input ESI struct (the source of `0x029beb83`), and find what writes the source. That will identify the camera-origin / scroll-position global that was never initialized in our env — almost certainly a value populated by a WM_PAINT / DDraw `Lock` / scenario-load step that's currently a no-op in our DDraw stubs.
+
 **New lead (2026-04-30, high priority): multimedia timer is still double-dispatched in the harness.**
 
 - `test/run.js` is the **only** caller of `instance.exports.fire_mm_timer()`, and it was doing so unconditionally before every batch.
