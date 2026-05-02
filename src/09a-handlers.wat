@@ -7969,7 +7969,17 @@
 
   ;; 660: CreateDialogIndirectParamW — STUB: unimplemented
   (func $handle_CreateDialogIndirectParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $dlg_indirect_template_ptr (local.get $arg1))
+    (call $handle_CreateDialogParamA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
+  (func $handle_CreateDialogIndirectParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $dlg_indirect_template_ptr (local.get $arg1))
+    (call $handle_CreateDialogParamA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 661: GetNextDlgTabItem — STUB: unimplemented

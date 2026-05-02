@@ -53,6 +53,7 @@ const extra = [
   { name: 'IsClipboardFormatAvailable', nargs: 1 },
   { name: 'GetEnvironmentStringsW', nargs: 0 },
   { name: 'GetSaveFileNameA', nargs: 1 },
+  { name: 'CreateDialogIndirectParamA', nargs: 5 },
   { name: 'SetViewportExtEx', nargs: 4 },
   { name: 'lstrcmpiA', nargs: 2 },
   { name: 'FreeEnvironmentStringsA', nargs: 1 },

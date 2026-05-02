@@ -1081,13 +1081,19 @@
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
     (if (i32.lt_s (local.get $dlg_slot) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $dlg_rec (call $dlg_record_addr (local.get $dlg_slot)))
-    ;; Walk PE directory; also captures $rsrc_matched_eid for named entries
-    (local.set $data_entry (call $find_resource (i32.const 5) (local.get $dlg_id)))
-    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
-    (local.set $dlg_key (global.get $rsrc_matched_eid))
-    ;; Read RVA from data entry → WASM linear address of template
-    (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
-    (local.set $wa (call $g2w (i32.add (call $r_base) (local.get $rva))))
+    (if (global.get $dlg_indirect_template_ptr)
+      (then
+        (local.set $dlg_key (i32.const 0))
+        (local.set $wa (call $g2w (global.get $dlg_indirect_template_ptr)))
+        (global.set $dlg_indirect_template_ptr (i32.const 0)))
+      (else
+        ;; Walk PE directory; also captures $rsrc_matched_eid for named entries
+        (local.set $data_entry (call $find_resource (i32.const 5) (local.get $dlg_id)))
+        (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
+        (local.set $dlg_key (global.get $rsrc_matched_eid))
+        ;; Read RVA from data entry → WASM linear address of template
+        (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
+        (local.set $wa (call $g2w (i32.add (call $r_base) (local.get $rva))))))
     (local.set $p (local.get $wa))
     ;; Detect DIALOGEX: sig=1 at +0, ver=0xFFFF at +2
     (local.set $is_ex (i32.and
@@ -1263,5 +1269,4 @@
     (call $heap_free (local.get $cs))
     (call $dlg_seed_focus (local.get $dlg_hwnd))
     (local.get $ctrl_count))
-
 

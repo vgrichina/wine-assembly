@@ -678,6 +678,10 @@
   ;;   +24  menu_key       template menu field: int id, or guest ptr to ASCII name (0 if none)
   ;;   +28  ctrl_count     number of controls (child hwnds = first_hwnd..first_hwnd+ctrl_count-1)
   (global $WND_DLG_RECORDS i32 (i32.const 0x0000B160))
+  ;; One-shot override for CreateDialogIndirectParam*: when non-zero,
+  ;; $dlg_load reads the DLGTEMPLATE directly from this guest pointer
+  ;; instead of resolving an RT_DIALOG resource.
+  (global $dlg_indirect_template_ptr (mut i32) (i32.const 0))
   ;; SCROLL_TABLE — per-window scroll bar state, parallel to WND_RECORDS slots.
   ;; 256 entries × 24 bytes = 0x1800 (0xD170..0xE970)
   ;;   +0   h_pos     SB_HORZ position
