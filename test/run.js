@@ -2360,6 +2360,16 @@ async function main() {
         const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm } = require('../lib/dll-loader');
         const result = ld(instance.exports, memory.buffer, dllBytesArr);
         console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
+        try {
+          const { extractBitmapBytes } = require('../lib/dib');
+          const bitmapBytes = extractBitmapBytes(dllBytesArr);
+          const count = Object.keys(bitmapBytes).length;
+          if (count > 0) {
+            ctx.dllResources = ctx.dllResources || {};
+            ctx.dllResources[result.loadAddr] = { bitmapBytes };
+            console.log(`DLL resources: ${fileName} has ${count} bitmaps`);
+          }
+        } catch (_) {}
         {
           const key = fileName.toLowerCase().replace(/\.[^.]+$/, '');
           const peOff2 = dllBytesArr[0x3C] | (dllBytesArr[0x3D] << 8) | (dllBytesArr[0x3E] << 16) | (dllBytesArr[0x3F] << 24);

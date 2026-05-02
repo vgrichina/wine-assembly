@@ -177,7 +177,7 @@ async function main() {
   h.exit = (code) => { stopped = true; };
 
   // Shared memory
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 
@@ -191,6 +191,7 @@ async function main() {
   h.set_event = notSupported;
   h.reset_event = notSupported;
   h.wait_single = () => 0;
+  h.wait_multiple = () => 0;
   h.com_create_instance = () => 0x80004002; // E_NOINTERFACE
   h.has_dll_file = (nameWA) => {
     const m8 = new Uint8Array(memory.buffer);
@@ -393,9 +394,20 @@ async function main() {
         if (fs.existsSync(p)) { data = new Uint8Array(fs.readFileSync(p)); break; }
       }
       if (data) {
-        const { loadDll, patchDllImports } = require('../lib/dll-loader');
+        const { loadDll, patchDllImports, callDllMain } = require('../lib/dll-loader');
         const r = loadDll(instance.exports, memory.buffer, data);
+        try {
+          const { extractBitmapBytes } = require('../lib/dib');
+          const bitmapBytes = extractBitmapBytes(data);
+          const count = Object.keys(bitmapBytes).length;
+          if (count > 0) {
+            ctx.dllResources = ctx.dllResources || {};
+            ctx.dllResources[r.loadAddr] = { bitmapBytes };
+            console.log(`DLL resources: ${base} has ${count} bitmaps`);
+          }
+        } catch (_) {}
         patchDllImports(instance.exports, memory.buffer, [{ name: base, bytes: data }], [r], () => {});
+        if (r.dllMain && callDllMain) callDllMain(instance.exports, r.loadAddr, r.dllMain, () => {});
         e.set_eax(r.loadAddr);
       } else {
         e.set_eax(0);

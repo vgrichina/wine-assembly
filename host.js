@@ -628,6 +628,86 @@ class WineAssembly {
     this.instance.exports.clear_yield();
   }
 
+  _registerDllBitmapResources(name, bytes, loadAddr) {
+    const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
+      ? extractBitmapBytes
+      : (typeof dibLib !== 'undefined' && dibLib.extractBitmapBytes);
+    if (!_extractBitmapBytes) return;
+    try {
+      const bitmapBytes = _extractBitmapBytes(bytes);
+      const count = Object.keys(bitmapBytes).length;
+      if (count > 0) {
+        this.dllResources = this.dllResources || {};
+        this.dllResources[loadAddr] = { bitmapBytes };
+        console.log(`DLL resources: ${name} has ${count} bitmaps`);
+      }
+    } catch (_) {}
+  }
+
+  async handleLoadLibrary() {
+    const exports = this.instance.exports;
+    const nameWA = exports.get_loadlib_name ? exports.get_loadlib_name() : 0;
+    if (!nameWA) {
+      exports.set_eax && exports.set_eax(0);
+      exports.clear_yield && exports.clear_yield();
+      return;
+    }
+    const mem = new Uint8Array(this.memory.buffer);
+    let dllName = '';
+    for (let i = 0; i < 260 && mem[nameWA + i]; i++) {
+      dllName += String.fromCharCode(mem[nameWA + i]);
+    }
+    const fileName = dllName.split('\\').pop().toLowerCase();
+    const ctx = this._helpCtx;
+    let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
+
+    if (!dllBytes) {
+      const paths = [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`];
+      for (const p of paths) {
+        try {
+          const resp = await fetch(p);
+          if (resp.ok) {
+            dllBytes = new Uint8Array(await resp.arrayBuffer());
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!dllBytes) {
+      console.error(`[LoadLibrary] DLL not found: ${fileName}`);
+      exports.set_eax && exports.set_eax(0);
+      exports.clear_yield && exports.clear_yield();
+      return;
+    }
+
+    const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
+    const _patchDllImports = (typeof DllLoader !== 'undefined' && DllLoader.patchDllImports) || null;
+    const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
+    if (!_loadDll) {
+      exports.set_eax && exports.set_eax(0);
+      exports.clear_yield && exports.clear_yield();
+      return;
+    }
+
+    try {
+      const result = _loadDll(exports, this.memory.buffer, dllBytes);
+      console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}`);
+      this._registerDllBitmapResources(fileName, dllBytes, result.loadAddr);
+      if (_patchDllImports) {
+        _patchDllImports(exports, this.memory.buffer, [{ name: fileName, bytes: dllBytes }], [result], console.log);
+      }
+      if (result.dllMain && _callDllMain) {
+        _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
+      }
+      exports.set_eax && exports.set_eax(result.loadAddr);
+    } catch (e) {
+      console.error('[LoadLibrary] load error:', e);
+      exports.set_eax && exports.set_eax(0);
+    }
+    exports.clear_yield && exports.clear_yield();
+  }
+
   _removeAppWindows() {
     if (!this.renderer || !this._hwndBase) return;
     const lo = this._hwndBase;
@@ -670,6 +750,11 @@ class WineAssembly {
         }
         if (yieldReason === 4) {
           await self.handleHelpLoad();
+          if (self.running) { setTimeout(step, 0); }
+          return;
+        }
+        if (yieldReason === 5) {
+          await self.handleLoadLibrary();
           if (self.running) { setTimeout(step, 0); }
           return;
         }
