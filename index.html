@@ -993,28 +993,71 @@ Resource-aware Win98 emulator
         if (vk === 32) return true;                          // space
         return false;
       };
-      canvas.addEventListener('keydown', e => {
+      let suppressTextInputEvents = 0;
+      const charCodeFromKeyEvent = (e) => {
+        if (e.ctrlKey || e.altKey || e.metaKey) return 0;
+        if (typeof e.key === 'string' && e.key.length === 1) return e.key.charCodeAt(0);
+        if (e.key === 'Enter') return 13;
+        return 0;
+      };
+      const shouldIgnorePageKey = (e) => {
+        const el = e.target;
+        if (!el || el === canvas || el === document.body || el === document.documentElement) return false;
+        const tag = (el.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        if (el.isContentEditable) return true;
+        return false;
+      };
+      const handleKeyDown = (e) => {
+        if (shouldIgnorePageKey(e)) return;
         const vk = e.keyCode;
         if (renderer._exclusiveFullscreen || (vk === 115 && !e.altKey && !e.ctrlKey && !e.metaKey)) {
           requestBrowserFullscreen();
         }
         renderer.handleKeyDown(vk);
-        if (!keepForBrowser(e) && !isPrintableKey(e)) e.preventDefault();
-      });
-      canvas.addEventListener('keyup', e => {
+        suppressTextInputEvents = 0;
+        if (!keepForBrowser(e)) {
+          const charCode = charCodeFromKeyEvent(e);
+          if (charCode) {
+            renderer.handleKeyPress(charCode);
+            suppressTextInputEvents = 2;
+            e.preventDefault();
+          } else if (!isPrintableKey(e)) {
+            e.preventDefault();
+          }
+        }
+      };
+      const handleKeyUp = (e) => {
+        if (shouldIgnorePageKey(e)) return;
         renderer.handleKeyUp(e.keyCode);
-      });
-      canvas.addEventListener('keypress', e => {
+      };
+      const handleKeyPress = (e) => {
+        if (shouldIgnorePageKey(e)) return;
+        if (suppressTextInputEvents > 0) {
+          suppressTextInputEvents--;
+          e.preventDefault();
+          return;
+        }
         e.preventDefault();
         renderer.handleKeyPress(e.charCode || e.keyCode);
-      });
-      canvas.addEventListener('beforeinput', e => {
+      };
+      const handleBeforeInput = (e) => {
+        if (shouldIgnorePageKey(e)) return;
+        if (suppressTextInputEvents > 0) {
+          suppressTextInputEvents--;
+          e.preventDefault();
+          return;
+        }
         if (e.data) {
           for (const ch of e.data) {
             renderer.handleKeyPress(ch.charCodeAt(0));
           }
         }
-      });
+      };
+      window.addEventListener('keydown', handleKeyDown, { capture: true });
+      window.addEventListener('keyup', handleKeyUp, { capture: true });
+      window.addEventListener('keypress', handleKeyPress, { capture: true });
+      window.addEventListener('beforeinput', handleBeforeInput, { capture: true });
       canvas.onmousemove = e => {
         const { x: mx, y: my } = eventPoint(e);
         renderer.handleMenuHover(mx, my);
@@ -1065,6 +1108,7 @@ Resource-aware Win98 emulator
       }
 
       wireCanvasInput(canvas, sharedRenderer);
+      canvas.focus();
 
       document.getElementById('status').textContent = 'Loading PE...';
 
@@ -1112,6 +1156,7 @@ Resource-aware Win98 emulator
         await wine.loadDlls(dllsToLoad);
         runningApps.push({ wine, name: sel, appIndex });
         document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
+        canvas.focus();
         wine.run(sel === 'pinball' ? 500000 : 50000);
       } else {
         document.getElementById('status').textContent = 'Failed to load';

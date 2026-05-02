@@ -4439,6 +4439,7 @@
     (local $sel_lo i32) (local $sel_hi i32) (local $a i32) (local $b i32)
     (local $line_end i32) (local $pre_w i32) (local $sel_w i32)
     (local $line_y i32) (local $line_buf_w i32) (local $brush i32)
+    (local $full_w i32) (local $total_lines i32) (local $visible_lines i32) (local $max_scroll i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -4913,6 +4914,12 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $full_w (local.get $w))
+        ;; Reserve the right strip for multiline edits created with WS_VSCROLL.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (if (i32.gt_u (local.get $w) (i32.const 16))
+              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
         ;; Default GUI font + transparent bk mode so glyphs don't paint over
         ;; the white edit area with an opaque white box.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
@@ -5031,6 +5038,26 @@
                     (i32.add (local.get $px) (i32.const 5))
                     (i32.add (local.get $hi) (i32.const 18))
                     (i32.const 0x30014))))))) ;; BLACK_BRUSH
+        ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (local.set $total_lines
+              (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
+                       (i32.const 1)))
+            (local.set $visible_lines (i32.div_u
+              (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+                      (i32.gt_u (local.get $h) (i32.const 8)))
+              (i32.const 16)))
+            (if (i32.eqz (local.get $visible_lines))
+              (then (local.set $visible_lines (i32.const 1))))
+            (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+            (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+              (then (local.set $max_scroll (i32.const 0))))
+            (call $paint_vscrollbar_rect (local.get $hdc)
+              (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
+              (i32.const 16) (local.get $h)
+              (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
+              (i32.const 0))))
         (return (i32.const 0))))
 
     ;; ---------- EM_SETLIMITTEXT / EM_LIMITTEXT (0x00C5) ----------

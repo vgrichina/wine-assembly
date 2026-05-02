@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Regression: canvas keydown handler must NOT call preventDefault() for
-// plain printable keys, otherwise the browser suppresses the subsequent
-// keypress event and WM_CHAR never reaches the guest — typing into any
-// EDIT control silently drops every letter.
+// Regression: canvas keydown must deliver text-producing keys directly to
+// the guest. Real browsers no longer reliably fire keypress/beforeinput for
+// a focused canvas, so relying on a later event drops typing in Notepad.
 //
 // Bug history:
 //   6087d88  Added blanket e.preventDefault() on keydown unless reserved
@@ -11,10 +10,11 @@
 //   b98431a  Carved out printable keys (no Ctrl/Alt/Meta, VK in typing
 //            range) so keypress still fires.
 //
-// We can't run a real browser here, so this test extracts the two
-// predicate functions from index.html (`keepForBrowser`, `isPrintableKey`)
+// We can't run a real browser here, so this test extracts the keyboard
+// predicate/helpers from index.html
 // by string-matching the source, evals them, and asserts:
-//   - 'A'..'Z', '0'..'9', space, common punctuation -> NOT preventDefault'd
+//   - 'A'..'Z', '0'..'9', space, common punctuation -> direct WM_CHAR
+//     path and preventDefault on keydown
 //   - Tab, Enter, Esc, F1..F12, arrows, Ctrl+S, Alt+F, etc. -> handled
 //     (preventDefault'd unless explicitly browser-reserved like F5/F11)
 //   - Browser-reserved (Ctrl+R, Ctrl+W, F5, F11, F12, Cmd+anything,
@@ -34,40 +34,43 @@ function extract(name) {
 
 const keepForBrowser = extract('keepForBrowser');
 const isPrintableKey = extract('isPrintableKey');
+const charCodeFromKeyEvent = extract('charCodeFromKeyEvent');
 
-// Mirror the keydown handler decision: e.preventDefault() iff
-// !keepForBrowser(e) && !isPrintableKey(e).
+// Mirror the keydown handler decision after direct text dispatch.
 function wouldPreventDefault(e) {
-  return !keepForBrowser(e) && !isPrintableKey(e);
+  if (keepForBrowser(e)) return false;
+  if (charCodeFromKeyEvent(e)) return true;
+  return !isPrintableKey(e);
 }
 
 function ev(keyCode, mods = {}) {
-  return { keyCode, ctrlKey: !!mods.ctrl, altKey: !!mods.alt,
+  return { keyCode, key: mods.key || '', ctrlKey: !!mods.ctrl, altKey: !!mods.alt,
            shiftKey: !!mods.shift, metaKey: !!mods.meta };
 }
 
 const checks = [];
 function check(label, cond) { checks.push({ label, ok: !!cond }); }
 
-// --- Printable typing keys: must NOT preventDefault ---
+// --- Printable typing keys: direct char path + preventDefault ---
 for (let vk = 0x30; vk <= 0x39; vk++) // 0..9
-  check(`digit VK 0x${vk.toString(16)} not prevented`, !wouldPreventDefault(ev(vk)));
+  check(`digit VK 0x${vk.toString(16)} direct char`, wouldPreventDefault(ev(vk, { key: String.fromCharCode(vk) })));
 for (let vk = 0x41; vk <= 0x5A; vk++) // A..Z
-  check(`letter VK 0x${vk.toString(16)} not prevented`, !wouldPreventDefault(ev(vk)));
-check('space not prevented',           !wouldPreventDefault(ev(32)));
-check('semicolon (0xBA) not prevented',!wouldPreventDefault(ev(0xBA)));
-check('equals (0xBB) not prevented',   !wouldPreventDefault(ev(0xBB)));
-check('comma (0xBC) not prevented',    !wouldPreventDefault(ev(0xBC)));
-check('period (0xBE) not prevented',   !wouldPreventDefault(ev(0xBE)));
-check('slash (0xBF) not prevented',    !wouldPreventDefault(ev(0xBF)));
-check('backtick (0xC0) not prevented', !wouldPreventDefault(ev(0xC0)));
-check('bracket (0xDB) not prevented',  !wouldPreventDefault(ev(0xDB)));
-check('quote (0xDE) not prevented',    !wouldPreventDefault(ev(0xDE)));
-check('shift+A not prevented',         !wouldPreventDefault(ev(0x41, { shift: true })));
+  check(`letter VK 0x${vk.toString(16)} direct char`, wouldPreventDefault(ev(vk, { key: String.fromCharCode(vk + 32) })));
+check('space direct char',             wouldPreventDefault(ev(32, { key: ' ' })));
+check('semicolon direct char',         wouldPreventDefault(ev(0xBA, { key: ';' })));
+check('equals direct char',            wouldPreventDefault(ev(0xBB, { key: '=' })));
+check('comma direct char',             wouldPreventDefault(ev(0xBC, { key: ',' })));
+check('period direct char',            wouldPreventDefault(ev(0xBE, { key: '.' })));
+check('slash direct char',             wouldPreventDefault(ev(0xBF, { key: '/' })));
+check('backtick direct char',          wouldPreventDefault(ev(0xC0, { key: '`' })));
+check('bracket direct char',           wouldPreventDefault(ev(0xDB, { key: '[' })));
+check('quote direct char',             wouldPreventDefault(ev(0xDE, { key: "'" })));
+check('shift+A direct char',           wouldPreventDefault(ev(0x41, { shift: true, key: 'A' })));
+check('Enter direct char',             charCodeFromKeyEvent(ev(13, { key: 'Enter' })) === 13);
 
 // --- Non-printable / chrome keys: claimed by guest (preventDefault) ---
 check('Tab (9) prevented',         wouldPreventDefault(ev(9)));
-check('Enter (13) prevented',      wouldPreventDefault(ev(13)));
+check('Enter (13) prevented',      wouldPreventDefault(ev(13, { key: 'Enter' })));
 check('Esc (27) prevented',        wouldPreventDefault(ev(27)));
 check('Backspace (8) prevented',   wouldPreventDefault(ev(8)));
 check('Arrow Left (37) prevented', wouldPreventDefault(ev(37)));

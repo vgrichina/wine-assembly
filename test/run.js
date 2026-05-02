@@ -277,6 +277,11 @@ async function main() {
   //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
   //   B:mousemove:X:Y       — handleMouseMove at canvas (X,Y)
   //   B:dump-find           — log current find dialog edit state
+  //   B:dump-main-edit      — log main edit text
+  //   B:focus-main-window   — set WAT focus to the top-level main window
+  //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
+  //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
+  //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
@@ -285,6 +290,16 @@ async function main() {
       const kind = parts[1];
       if (kind === 'focus-find' || kind === 'dump-find' || kind === 'dump-main-edit') {
         scheduledInput.push({ batch, action: kind });
+      } else if (kind === 'focus-main-window') {
+        scheduledInput.push({ batch, action: kind });
+      } else if (kind === 'dump-main-edit-state') {
+        scheduledInput.push({ batch, action: kind, label: parts[2] || '' });
+      } else if (kind === 'wheel-main-edit') {
+        scheduledInput.push({ batch, action: kind, delta: parseInt(parts[2]) || 0 });
+      } else if (kind === 'drag-main-edit') {
+        scheduledInput.push({ batch, action: kind,
+          x1: parseInt(parts[2]), y1: parseInt(parts[3]),
+          x2: parseInt(parts[4]), y2: parseInt(parts[5]) });
       } else if (kind === 'find-click') {
         // B:find-click:CTRL_ID — click a find dialog button by ctrl id
         // (1=Find Next, 2=Cancel, 0x411=Match case, 0x420=Up, 0x421=Down).
@@ -1695,6 +1710,79 @@ async function main() {
           logs.push(`[input] dump-main-edit: hwnd=0x${found.toString(16)} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-main-edit: NO EDIT at batch ${batch}`);
+        }
+      } else if (ev.action === 'focus-main-window') {
+        const we = instance.exports;
+        const hwnd = we.get_main_hwnd ? (we.get_main_hwnd() | 0) : 0;
+        if (hwnd && we.set_focus_hwnd) {
+          we.set_focus_hwnd(hwnd);
+          logs.push(`[input] focus-main-window: hwnd=0x${hwnd.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] focus-main-window: NO MAIN HWND at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-main-edit-state' && renderer) {
+        const we = instance.exports;
+        let found = 0;
+        if (we.ctrl_get_class && we.get_edit_text && we.guest_alloc) {
+          for (const w of Object.values(renderer.windows || {})) {
+            if (we.ctrl_get_class(w.hwnd) === 2 && w.visible) { found = w.hwnd; break; }
+          }
+        }
+        if (found) {
+          const scratchG = we.guest_alloc(8192);
+          const n = we.get_edit_text(found, scratchG, 8191);
+          const dv = new DataView(memory.buffer);
+          let txt = '';
+          for (let i = 0; i < n; i++) txt += String.fromCharCode(dv.getUint8(g2w(scratchG) + i));
+          const cursor = we.get_edit_cursor ? we.get_edit_cursor(found) : 0;
+          const sel = we.get_edit_sel_start ? we.get_edit_sel_start(found) : cursor;
+          const len = we.get_edit_text_len ? we.get_edit_text_len(found) : n;
+          const lineCount = we.send_message ? we.send_message(found, 0x00BA, 0, 0) : 1; // EM_GETLINECOUNT
+          const firstVisible = we.send_message ? we.send_message(found, 0x00CE, 0, 0) : 0; // EM_GETFIRSTVISIBLELINE
+          const label = ev.label ? ` ${ev.label}` : '';
+          logs.push(`[input] dump-main-edit-state${label}: hwnd=0x${found.toString(16)} len=${len} cursor=${cursor} sel=${sel} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else {
+          const label = ev.label ? ` ${ev.label}` : '';
+          logs.push(`[input] dump-main-edit-state${label}: NO EDIT at batch ${batch}`);
+        }
+      } else if (ev.action === 'wheel-main-edit' && renderer) {
+        const we = instance.exports;
+        let found = 0;
+        if (we.ctrl_get_class && we.send_message) {
+          for (const w of Object.values(renderer.windows || {})) {
+            if (we.ctrl_get_class(w.hwnd) === 2 && w.visible) { found = w.hwnd; break; }
+          }
+        }
+        if (found) {
+          we.send_message(found, 0x020A, (ev.delta << 16), 0); // WM_MOUSEWHEEL
+          logs.push(`[input] wheel-main-edit: hwnd=0x${found.toString(16)} delta=${ev.delta} at batch ${batch}`);
+        } else {
+          logs.push(`[input] wheel-main-edit: NO EDIT at batch ${batch}`);
+        }
+      } else if (ev.action === 'drag-main-edit' && renderer) {
+        const we = instance.exports;
+        let found = null;
+        if (we.ctrl_get_class) {
+          for (const w of Object.values(renderer.windows || {})) {
+            if (we.ctrl_get_class(w.hwnd) === 2 && w.visible) { found = w; break; }
+          }
+        }
+        if (found) {
+          let ox = found.x || 0;
+          let oy = found.y || 0;
+          const parent = found.parentHwnd ? renderer.windows[found.parentHwnd] : null;
+          if (parent) {
+            ox += parent.isPopup ? parent.x : parent.x + 3;
+            oy += parent.isPopup ? parent.y : parent.y + 3 + 18 + (renderer._hasMenuBar && renderer._hasMenuBar(parent) ? 18 : 0) + 1;
+          }
+          const sx1 = ox + ev.x1, sy1 = oy + ev.y1;
+          const sx2 = ox + ev.x2, sy2 = oy + ev.y2;
+          renderer.handleMouseDown(sx1, sy1, 1);
+          renderer.handleMouseMove(sx2, sy2);
+          renderer.handleMouseUp(sx2, sy2, 1);
+          logs.push(`[input] drag-main-edit: hwnd=0x${found.hwnd.toString(16)} ${sx1},${sy1}->${sx2},${sy2} at batch ${batch}`);
+        } else {
+          logs.push(`[input] drag-main-edit: NO EDIT at batch ${batch}`);
         }
       } else if (ev.action === 'dump-find' && renderer) {
         // Read EditState text directly from WAT — find dialog has no JS
