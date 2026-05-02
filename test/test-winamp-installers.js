@@ -92,6 +92,7 @@ for (const tc of CASES) {
       `--png="${pngPath}"`,
       '--no-build',
       '--quiet-api',
+      '--trace-host=gdi_draw_text',
     ].join(' ');
 
     console.log('$', licenseCmd);
@@ -111,7 +112,8 @@ for (const tc of CASES) {
 
     const pngOk = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 10000;
     const licenseChecks = [
-      { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2/.test(licenseOut) },
+      { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
+      { name: 'license text uses word-wrapped DrawText', pass: /gdi_draw_text\(0x5000d, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
       { name: 'license page PNG captured', pass: pngOk },
     ];
 

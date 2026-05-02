@@ -161,6 +161,14 @@
     (i32.load (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16))))
   )
 
+  (func $ctrl_table_get_id (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load offset=4
+      (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
+
   ;; Get check state for a control hwnd (legacy CONTROL_TABLE path)
   (func $ctrl_get_check_state (param $hwnd i32) (result i32)
     (local $idx i32) (local $state i32)
@@ -2550,6 +2558,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        ;; NSIS installer branding label. It is decorative, and with the
+        ;; emulator's current font metrics it collides with the wizard
+        ;; buttons; suppress it instead of painting unreadable overlap.
+        (if (i32.eq (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 1028))
+          (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         ;; Geometry from CONTROL_GEOM (parent has already painted the
@@ -5161,6 +5174,46 @@
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
         (local.set $sel_lo (call $edit_sel_lo (local.get $state_w)))
         (local.set $sel_hi (call $edit_sel_hi (local.get $state_w)))
+        ;; Multiline edits with a vertical scrollbar and no ES_AUTOHSCROLL
+        ;; behave like RichEdit license viewers: word-wrap text inside the
+        ;; client rect.
+        (if (i32.and
+              (i32.ne (local.get $buf) (i32.const 0))
+              (i32.and
+                (i32.ne
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+                  (i32.const 0))
+                (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))))
+          (then
+            (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
+            (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 4))
+            (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $w) (i32.const 4)))
+            (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.sub (local.get $h) (i32.const 4)))
+            (drop (call $host_gdi_draw_text (local.get $hdc)
+                    (call $g2w (local.get $buf))
+                    (local.get $text_len)
+                    (global.get $PAINT_SCRATCH)
+                    (i32.const 0x10) (i32.const 0)))
+            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+              (then
+                (local.set $total_lines
+                  (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
+                           (i32.const 1)))
+                (local.set $visible_lines (i32.div_u
+                  (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+                          (i32.gt_u (local.get $h) (i32.const 8)))
+                  (i32.const 16)))
+                (if (i32.eqz (local.get $visible_lines))
+                  (then (local.set $visible_lines (i32.const 1))))
+                (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+                (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+                  (then (local.set $max_scroll (i32.const 0))))
+                (call $paint_vscrollbar_rect (local.get $hdc)
+                  (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
+                  (i32.const 16) (local.get $h)
+                  (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
+                  (i32.const 0))))
+            (return (i32.const 0))))
         (if (local.get $buf)
           (then
             ;; Start at the scroll_top line (multi-line scroll). scroll_top is

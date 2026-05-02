@@ -2083,7 +2083,8 @@ async function main() {
             const id = we.ctrl_get_id ? we.ctrl_get_id(ch) : -1;
             const xy = we.ctrl_get_xy ? we.ctrl_get_xy(ch) : 0;
             const wh = we.ctrl_get_wh ? we.ctrl_get_wh(ch) : 0;
-            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}`);
+            const style = we.wnd_get_style_export ? we.wnd_get_style_export(ch) >>> 0 : 0;
+            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}`);
             s++;
           }
         }
