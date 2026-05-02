@@ -282,6 +282,10 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
+  //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
+  //   B:dlg-click:CTRL_ID — click a control by id in the topmost visible dialog
+  //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
+  //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
@@ -319,6 +323,15 @@ async function main() {
         // tests to drive OK/Cancel without a per-class hwnd export.
         scheduledInput.push({ batch, action: 'class-cmd',
           ctrlClass: parseInt(parts[2]), cmdId: parseInt(parts[3]) });
+      } else if (kind === 'dlg-cmd') {
+        scheduledInput.push({ batch, action: 'dlg-cmd', cmdId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-click') {
+        scheduledInput.push({ batch, action: 'dlg-click', ctrlId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-set-edit') {
+        scheduledInput.push({ batch, action: 'dlg-set-edit',
+          ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
+      } else if (kind === 'dlg-dump') {
+        scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
       } else if (kind === 'open-dlg-pick') {
         // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
         // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
@@ -1310,6 +1323,21 @@ async function main() {
       }
     }
 
+    // Funpack community remakes default to showing a modeless "Get Started"
+    // walkthrough. Smoke tests need to exercise the game surface, not stop at
+    // first-run instructional dialogs.
+    const funpackApps = {
+      'funtris.exe': 'Funtris',
+      'peaks.exe': 'Peaks',
+      'pyramid.exe': 'Pyramid',
+    };
+    if (funpackApps[exeName]) {
+      try {
+        const { setRegValue } = require('../lib/storage');
+        setRegValue(`HKCU\\Software\\Funpack Software\\${funpackApps[exeName]}\\Options`, 'GetStarted', 4, 0);
+      } catch (_) {}
+    }
+
     // Also load sibling directories from parent — games like RCT have the exe
     // in a subdirectory (English/) but data in a sibling (Data/).
     const parentDir = path.dirname(exeDir);
@@ -1939,6 +1967,127 @@ async function main() {
         } else {
           logs.push(`[input] class-cmd: class=${ev.ctrlClass} NOT FOUND at batch ${batch}`);
         }
+      } else if (ev.action === 'dlg-cmd') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        if (dlg) {
+          we.send_message(dlg, 0x0111, ev.cmdId, 0);
+          logs.push(`[input] dlg-cmd: cmd=${ev.cmdId} hwnd=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-cmd: cmd=${ev.cmdId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-click') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        let found = 0;
+        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id) {
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) { found = ch; break; }
+            s++;
+          }
+        }
+        if (found) {
+          we.send_message(found, 0x0201, 0, 0);
+          we.send_message(found, 0x0202, 0, 0);
+          logs.push(`[input] dlg-click: id=${ev.ctrlId} hwnd=0x${found.toString(16)} dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else if (dlg) {
+          logs.push(`[input] dlg-click: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-click: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-set-edit') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        let edit = 0;
+        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id && we.ctrl_get_class) {
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId && we.ctrl_get_class(ch) === 2) { edit = ch; break; }
+            s++;
+          }
+        }
+        if (edit) {
+          const text = String(ev.text);
+          const g = we.guest_alloc(text.length + 1);
+          const wa = g2w(g);
+          const u8 = new Uint8Array(memory.buffer);
+          for (let i = 0; i < text.length; i++) u8[wa + i] = text.charCodeAt(i);
+          u8[wa + text.length] = 0;
+          we.send_message(edit, 0x000C, 0, g); // WM_SETTEXT
+          logs.push(`[input] dlg-set-edit: id=${ev.ctrlId} text="${text}" edit=0x${edit.toString(16)} dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else if (dlg) {
+          logs.push(`[input] dlg-set-edit: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-set-edit: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-dump') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        const controls = [];
+        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd) {
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            const cls = we.ctrl_get_class ? we.ctrl_get_class(ch) : -1;
+            const id = we.ctrl_get_id ? we.ctrl_get_id(ch) : -1;
+            const xy = we.ctrl_get_xy ? we.ctrl_get_xy(ch) : 0;
+            const wh = we.ctrl_get_wh ? we.ctrl_get_wh(ch) : 0;
+            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}`);
+            s++;
+          }
+        }
+        logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.
         // For find dialog the userdata holds the guest FR ptr; FR.Flags

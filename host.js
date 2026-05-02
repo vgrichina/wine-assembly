@@ -344,7 +344,7 @@ class WineAssembly {
       }, 100);
     }
     await this.ensureUiFontsReady();
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=49').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=51').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -352,7 +352,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=49');
+        const r = await fetch('src/api_table.json?v=51');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);

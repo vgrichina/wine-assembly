@@ -924,9 +924,15 @@
     ;; Seed child paints before dispatching parent WM_PAINT so subsequent
     ;; pump iterations dispatch each child's WM_PAINT in z-order.
     (drop (call $host_seed_child_paints (local.get $tmp)))
-    (drop (call $host_validate_rect (local.get $tmp)
-            (i32.const 0) (i32.const 0)
-            (i32.const 32767) (i32.const 32767)))
+    ;; Do not pre-validate the main app window. Some apps call GetUpdateRect
+    ;; or rely on BeginPaint's update rgn before drawing their client scene.
+    ;; WAT-owned controls still get pre-validated here; they often paint
+    ;; directly through host helpers and never call BeginPaint/EndPaint.
+    (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
+      (then
+        (drop (call $host_validate_rect (local.get $tmp)
+                (i32.const 0) (i32.const 0)
+                (i32.const 32767) (i32.const 32767)))))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))

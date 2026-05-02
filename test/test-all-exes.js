@@ -114,11 +114,14 @@ const TEST_CASES = [
   { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
   { exe: 'test/binaries/wep32-community/EmPipe/EMPIPE.EXE', name: 'EmPipe (PipeDream)' },
   { exe: 'test/binaries/wep32-community/Funpack/Funtris.exe', name: 'Funtris (Tetris)',
-    maxBatches: 120, extraArgs: ['--no-close', '--input=80:0x111:40003'], expectVisibleTitle: 'Get Started' },
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40004'],
+    forbidVisibleTitles: ['Get Started'] },
   { exe: 'test/binaries/wep32-community/Funpack/Peaks.exe', name: 'Peaks (TriPeaks)',
-    maxBatches: 120, extraArgs: ['--no-close', '--input=80:0x111:40003'], expectVisibleTitle: 'Get Started' },
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40003'],
+    forbidVisibleTitles: ['Get Started', 'Hall of Fame'] },
   { exe: 'test/binaries/wep32-community/Funpack/Pyramid.exe', name: 'Pyramid (TutsTomb)',
-    maxBatches: 120, extraArgs: ['--no-close', '--input=80:0x111:40003'], expectVisibleTitle: 'Get Started' },
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40003'],
+    forbidVisibleTitles: ['Get Started'] },
   { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
   { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)', knownBadRender: 'requires DirectX 9' },
   { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
@@ -255,6 +258,8 @@ function runExe(testCase, pngPath) {
   const visibleTitle = testCase.expectVisibleTitle
     ? lines.some(l => l.includes('visible=true') && l.includes(`title="${testCase.expectVisibleTitle}"`))
     : true;
+  const forbiddenVisibleTitle = (testCase.forbidVisibleTitles || [])
+    .find(title => lines.some(l => l.includes('visible=true') && l.includes(`title="${title}"`))) || '';
 
   if ((result.status !== null && result.status !== 0) || unimplMatch) {
     // run.js prints "*** CRASH at batch N: <msg>" then "  EIP before batch: 0xXXXX"
@@ -304,6 +309,7 @@ function runExe(testCase, pngPath) {
     hasWindow,
     hasShowWindow,
     visibleTitle,
+    forbiddenVisibleTitle,
   };
 }
 
@@ -353,6 +359,10 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     if (r.status === 'OK' && tc.expectVisibleTitle && !r.visibleTitle) {
       r.status = 'WARN';
       r.reason = `${r.reason} — expected visible title "${tc.expectVisibleTitle}"`;
+    }
+    if (r.status === 'OK' && r.forbiddenVisibleTitle) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — forbidden visible title "${r.forbiddenVisibleTitle}"`;
     }
     if (tc.knownBadRender && (r.status === 'OK' || r.status === 'WARN')) {
       r.status = 'WARN';
