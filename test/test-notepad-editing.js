@@ -3,7 +3,7 @@
 //   - typed characters reach the EDIT control
 //   - Ctrl+A selects text
 //   - typing over a selection replaces it, and Backspace edits it
-//   - long multiline content can scroll
+//   - long multiline content can scroll and mouse-select after scrolling
 
 const fs = require('fs');
 const path = require('path');
@@ -66,6 +66,8 @@ push('wheel-main-edit:-120', 4);
 push('wheel-main-edit:-120', 4);
 push('wheel-main-edit:-120', 4);
 push('dump-main-edit-state:long-after-scroll', 8);
+push('drag-main-edit:4:8:52:8', 8);
+push('dump-main-edit-state:scrolled-mouse-selected', 8);
 
 const inputSpec = seq.join(',');
 const cmd = `node "${RUN}" --exe="${EXE}" --input='${inputSpec}' --max-batches=${b + 40} --batch-size=50000 --quiet-api --no-close`;
@@ -113,6 +115,7 @@ const edited = state('edited');
 const longBefore = state('long-before-scroll');
 const longAfterDrag = state('long-after-drag-scroll');
 const longAfter = state('long-after-scroll');
+const scrolledMouseSelected = state('scrolled-mouse-selected');
 
 const checks = [
   { name: 'typed text reached Notepad edit', pass: typed && typed.text === 'alpha beta' },
@@ -122,6 +125,13 @@ const checks = [
   { name: 'long multiline content inserted', pass: longBefore && longBefore.text.includes('line00\nline01') && longBefore.lineCount >= 60 },
   { name: 'scrollbar thumb drag scrolled long edit', pass: longAfterDrag && longBefore && longAfterDrag.firstVisible > longBefore.firstVisible },
   { name: 'mouse wheel scrolled long edit', pass: longAfter && longBefore && longAfter.firstVisible > longBefore.firstVisible },
+  {
+    name: 'mouse selection after scroll targets visible scrolled text',
+    pass: scrolledMouseSelected && longAfter &&
+      scrolledMouseSelected.firstVisible === longAfter.firstVisible &&
+      scrolledMouseSelected.cursor !== scrolledMouseSelected.sel &&
+      Math.min(scrolledMouseSelected.cursor, scrolledMouseSelected.sel) >= longAfter.firstVisible * 7,
+  },
   { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no runtime crash', pass: !/CRASH|Unreachable code/.test(out) },
 ];

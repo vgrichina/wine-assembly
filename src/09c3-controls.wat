@@ -4362,6 +4362,7 @@
     (local.set $y (i32.sub (local.get $y) (i32.const 4)))
     (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
     (local.set $line_num (i32.div_s (local.get $y) (i32.const 16)))
+    (local.set $line_num (i32.add (local.get $line_num) (i32.load offset=20 (local.get $state_w))))
     ;; Clamp to last line: total_lines = edit_line_from_char(text_len) + 1
     (local.set $total_lines (i32.add
       (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
