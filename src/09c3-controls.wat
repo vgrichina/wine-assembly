@@ -4625,6 +4625,36 @@
           (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
+    ;; ---------- EM_STREAMIN (0x0449) ----------
+    ;; RichEdit license controls in NSIS pass an EDITSTREAM whose dwCookie
+    ;; points at the source text buffer. For our edit-like RichEdit shim,
+    ;; copying that text into EditState is enough to render the license body.
+    (if (i32.eq (local.get $msg) (i32.const 0x0449))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $name_ptr (i32.load (call $g2w (local.get $lParam))))
+        (i32.store offset=4  (local.get $state_w) (i32.const 0))
+        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (if (local.get $name_ptr)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+            (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
+            (if (local.get $text_len)
+              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                                  (call $g2w (local.get $name_ptr))
+                                  (local.get $text_len))))
+            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
+            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (if (i32.load (local.get $state_w))
+              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+                                (i32.const 0))))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.load offset=4 (local.get $state_w)))))
+
     ;; ---------- WM_SETFOCUS (0x0007) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0007))
       (then

@@ -26,6 +26,7 @@ const CASES = [
   {
     name: 'Winamp 2.95 installer',
     exe: path.join(__dirname, 'binaries', 'installers', 'winamp295.exe'),
+    probeLicensePage: true,
     expected: [
       'c:\\program files\\winamp\\winamp.exe (854016 bytes)',
       'c:\\program files\\winamp\\plugins\\in_mp3.dll (274944 bytes)',
@@ -79,6 +80,48 @@ for (const tc of CASES) {
     if (!c.pass) failed++;
   }
   console.log('');
+
+  if (tc.probeLicensePage) {
+    const pngPath = path.join(__dirname, 'output', 'winamp295-license.png');
+    const licenseCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=620',
+      '--batch-size=5000',
+      '--input=600:dlg-dump:license',
+      `--png="${pngPath}"`,
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', licenseCmd);
+
+    let licenseOut = '';
+    try {
+      licenseOut = execSync(licenseCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (e) {
+      licenseOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    }
+
+    const pngOk = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 10000;
+    const licenseChecks = [
+      { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2/.test(licenseOut) },
+      { name: 'license page PNG captured', pass: pngOk },
+    ];
+
+    console.log(`${tc.name} license page`);
+    for (const c of licenseChecks) {
+      console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+      if (!c.pass) failed++;
+    }
+    console.log('');
+  }
 
   const interactiveCmd = [
     `node "${RUN}"`,

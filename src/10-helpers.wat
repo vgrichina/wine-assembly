@@ -1187,7 +1187,8 @@
           (local.set $ctrl_id (i32.load16_u (i32.add (local.get $p) (i32.const 16))))
           (local.set $p (i32.add (local.get $p) (i32.const 18)))))
       ;; className: int (0xFFFF + u16 ordinal) → Win32 builtin class enum,
-      ;; or a UTF-16 string we currently ignore (class_enum stays 0).
+      ;; or a UTF-16 string. Treat RichEdit* as edit-like enough for
+      ;; installer license pages; EM_STREAMIN is handled by $edit_wndproc.
       ;; 0x80=Button,0x81=Edit,0x82=Static,0x83=ListBox,0x84=ScrollBar,0x85=ComboBox
       (local.set $class_enum (i32.const 0))
       (if (i32.eq (i32.load16_u (local.get $p)) (i32.const 0xFFFF))
@@ -1198,7 +1199,18 @@
           (if (i32.eq (local.get $class_val) (i32.const 0x82)) (then (local.set $class_enum (i32.const 3))))
           (if (i32.eq (local.get $class_val) (i32.const 0x83)) (then (local.set $class_enum (i32.const 4))))
           (if (i32.eq (local.get $class_val) (i32.const 0x85)) (then (local.set $class_enum (i32.const 5))))
-          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7))))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7)))))
+        (else
+          ;; UTF-16 "RichEdit", "RichEdit20A", etc. Compare the first
+          ;; four chars case-insensitively: r i c h.
+          (if (i32.and
+                (i32.eq (i32.or (i32.load16_u (local.get $p)) (i32.const 0x20)) (i32.const 0x72))
+                (i32.and
+                  (i32.eq (i32.or (i32.load16_u (i32.add (local.get $p) (i32.const 2))) (i32.const 0x20)) (i32.const 0x69))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load16_u (i32.add (local.get $p) (i32.const 4))) (i32.const 0x20)) (i32.const 0x63))
+                    (i32.eq (i32.or (i32.load16_u (i32.add (local.get $p) (i32.const 6))) (i32.const 0x20)) (i32.const 0x68)))))
+            (then (local.set $class_enum (i32.const 2))))))
       (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
       ;; Text (UTF-16 → ASCII in heap; 0 for null/ordinal)
       (call $dlg_read_text (local.get $p))
@@ -1269,4 +1281,3 @@
     (call $heap_free (local.get $cs))
     (call $dlg_seed_focus (local.get $dlg_hwnd))
     (local.get $ctrl_count))
-
