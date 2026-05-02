@@ -539,20 +539,20 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=53"></script>
-  <script src="lib/dib.js?v=53"></script>
-  <script src="lib/resources-icon.js?v=53"></script>
-  <script src="lib/renderer-input.js?v=53"></script>
-  <script src="lib/renderer.js?v=53"></script>
-  <script src="lib/dll-loader.js?v=53"></script>
-  <script src="lib/storage.js?v=53"></script>
-  <script src="lib/filesystem.js?v=53"></script>
-  <script src="lib/hlp-parser.js?v=53"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=53"></script>
-  <script src="lib/host-imports.js?v=53"></script>
-  <script src="lib/compile-wat.js?v=53"></script>
-  <script src="lib/thread-manager.js?v=53"></script>
-  <script src="host.js?v=53"></script>
+  <script src="lib/mem-utils.js?v=54"></script>
+  <script src="lib/dib.js?v=54"></script>
+  <script src="lib/resources-icon.js?v=54"></script>
+  <script src="lib/renderer-input.js?v=54"></script>
+  <script src="lib/renderer.js?v=54"></script>
+  <script src="lib/dll-loader.js?v=54"></script>
+  <script src="lib/storage.js?v=54"></script>
+  <script src="lib/filesystem.js?v=54"></script>
+  <script src="lib/hlp-parser.js?v=54"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=54"></script>
+  <script src="lib/host-imports.js?v=54"></script>
+  <script src="lib/compile-wat.js?v=54"></script>
+  <script src="lib/thread-manager.js?v=54"></script>
+  <script src="host.js?v=54"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1040,6 +1040,23 @@ Resource-aware Win98 emulator
         if (el.isContentEditable) return true;
         return false;
       };
+      const startInputProfile = (label, e, data) => {
+        if (!renderer._profileInput || !window.DEBUG_INPUT_PROFILE) return;
+        const now = renderer._profileNow ? renderer._profileNow() : performance.now();
+        let eventTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : now;
+        if (eventTime > now + 100000 && performance.timeOrigin) eventTime -= performance.timeOrigin;
+        if (!Number.isFinite(eventTime) || eventTime < 0 || eventTime > now + 1000) eventTime = now;
+        renderer._profileInput(label, {
+          ...(data || {}),
+          domType: e.type,
+          key: e.key,
+          code: e.code,
+          eventTime: Number(eventTime.toFixed(3)),
+        }, eventTime);
+        renderer._profileMark('browser-handler-start', {
+          delayMs: Number((now - eventTime).toFixed(3)),
+        });
+      };
       const handleKeyDown = (e) => {
         if (shouldIgnorePageKey(e)) return;
         const vk = e.keyCode;
@@ -1051,7 +1068,9 @@ Resource-aware Win98 emulator
         if (!keepForBrowser(e)) {
           const charCode = charCodeFromKeyEvent(e);
           if (charCode) {
+            startInputProfile('keydown-char', e, { vk, charCode });
             renderer.handleKeyPress(charCode);
+            renderer._profileMark && renderer._profileMark('browser-handler-end');
             suppressTextInputEvents = 2;
             e.preventDefault();
           } else if (!isPrintableKey(e)) {
@@ -1071,7 +1090,10 @@ Resource-aware Win98 emulator
           return;
         }
         e.preventDefault();
-        renderer.handleKeyPress(e.charCode || e.keyCode);
+        const charCode = e.charCode || e.keyCode;
+        startInputProfile('keypress', e, { charCode });
+        renderer.handleKeyPress(charCode);
+        renderer._profileMark && renderer._profileMark('browser-handler-end');
       };
       const handleBeforeInput = (e) => {
         if (shouldIgnorePageKey(e)) return;
@@ -1082,7 +1104,10 @@ Resource-aware Win98 emulator
         }
         if (e.data) {
           for (const ch of e.data) {
-            renderer.handleKeyPress(ch.charCodeAt(0));
+            const charCode = ch.charCodeAt(0);
+            startInputProfile('beforeinput', e, { charCode });
+            renderer.handleKeyPress(charCode);
+            renderer._profileMark && renderer._profileMark('browser-handler-end');
           }
         }
       };
@@ -1131,23 +1156,43 @@ Resource-aware Win98 emulator
       const runMs = profile.steps
         .filter(s => s.name === 'wasm-run-slice')
         .reduce((sum, s) => sum + ((s.data && s.data.ms) || 0), 0);
-      status.textContent = `${ms.toFixed(1)}ms run ${runMs.toFixed(1)}`;
+      status.textContent = `${ms.toFixed(3)}ms run ${runMs.toFixed(3)}`;
+    }
+
+    function appendDebugLog(text) {
+      const el = document.getElementById('log');
+      if (!el) return;
+      el.textContent += text + '\n';
+      el.scrollTop = el.scrollHeight;
     }
 
     function printInputProfiles() {
       const profiles = window.__inputPaintProfiles || [];
       const last = profiles[profiles.length - 1];
       if (!last) {
-        console.log('[input-profile] no samples yet');
+        const msg = '[input-profile] no samples yet';
+        console.log(msg);
+        appendDebugLog(msg);
         return;
       }
       console.log('[input-profile] last profile', last);
-      console.table(last.steps.map(s => ({
+      const rows = last.steps.map(s => ({
         step: s.name,
-        delta_ms: s.dt.toFixed(2),
-        at_ms: s.at.toFixed(2),
+        delta_ms: s.dt.toFixed(3),
+        at_ms: s.at.toFixed(3),
         detail: s.data ? JSON.stringify(s.data) : '',
-      })));
+      }));
+      console.table(rows);
+      const lines = [
+        `[input-profile] ${last.label} total=${last.totalMs.toFixed(3)}ms`,
+        '  step                         +ms      at      detail',
+      ];
+      for (const row of rows) {
+        lines.push(
+          `  ${row.step.padEnd(26).slice(0, 26)} ${row.delta_ms.padStart(7)} ${row.at_ms.padStart(7)}  ${row.detail}`
+        );
+      }
+      appendDebugLog(lines.join('\n'));
     }
 
     async function launchApp() {
