@@ -284,6 +284,7 @@ async function main() {
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
   //   B:dlg-click:CTRL_ID — click a control by id in the topmost visible dialog
+  //   B:dlg-send:CTRL_ID:MSG:WPARAM:LPARAM — send a message to a dialog control by id
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   const scheduledInput = [];
@@ -327,6 +328,10 @@ async function main() {
         scheduledInput.push({ batch, action: 'dlg-cmd', cmdId: parseInt(parts[2]) });
       } else if (kind === 'dlg-click') {
         scheduledInput.push({ batch, action: 'dlg-click', ctrlId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-send') {
+        scheduledInput.push({ batch, action: 'dlg-send',
+          ctrlId: parseInt(parts[2]), msg: parseInt(parts[3]),
+          wParam: parseInt(parts[4]) || 0, lParam: parseInt(parts[5]) || 0 });
       } else if (kind === 'dlg-set-edit') {
         scheduledInput.push({ batch, action: 'dlg-set-edit',
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
@@ -2020,6 +2025,39 @@ async function main() {
           logs.push(`[input] dlg-click: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] dlg-click: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-send') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        let found = 0;
+        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id) {
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) { found = ch; break; }
+            s++;
+          }
+        }
+        if (found) {
+          const ret = we.send_message(found, ev.msg, ev.wParam, ev.lParam) | 0;
+          const firstVisible = we.send_message(found, 0x00CE, 0, 0) | 0; // EM_GETFIRSTVISIBLELINE
+          logs.push(`[input] dlg-send: id=${ev.ctrlId} hwnd=0x${found.toString(16)} msg=0x${ev.msg.toString(16)} ret=${ret} firstVisible=${firstVisible} at batch ${batch}`);
+        } else if (dlg) {
+          logs.push(`[input] dlg-send: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-send: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
         }
       } else if (ev.action === 'dlg-set-edit') {
         const we = instance.exports;

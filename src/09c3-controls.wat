@@ -4457,6 +4457,28 @@
       (br $scan)))
     (i32.add (local.get $line_start) (local.get $line_len)))
 
+  ;; Count wrapped visual rows for multiline edit controls that paint through
+  ;; DrawText(DT_WORDBREAK), such as RichEdit license viewers.
+  (func $edit_wrapped_line_count
+        (param $state_w i32) (param $hdc i32) (param $text_len i32) (param $text_w i32) (result i32)
+    (local $buf i32) (local $height i32)
+    (local.set $buf (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 1))))
+    (if (i32.lt_s (local.get $text_w) (i32.const 8))
+      (then (local.set $text_w (i32.const 8))))
+    (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
+    (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 4))
+    (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $text_w) (i32.const 4)))
+    (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 4))
+    (local.set $height (call $host_gdi_draw_text (local.get $hdc)
+      (call $g2w (local.get $buf))
+      (local.get $text_len)
+      (global.get $PAINT_SCRATCH)
+      (i32.const 0x410) (i32.const 0))) ;; DT_CALCRECT | DT_WORDBREAK
+    (local.set $height (i32.div_u (i32.add (local.get $height) (i32.const 15)) (i32.const 16)))
+    (if (i32.eqz (local.get $height)) (then (return (i32.const 1))))
+    (local.get $height))
+
   ;; Word-boundary classification: 1 if $ch is part of a word (alnum/underscore),
   ;; else 0. Matches Win32 default word break for ASCII.
   (func $edit_is_word_char (param $ch i32) (result i32)
@@ -4956,10 +4978,18 @@
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
 	            (if (i32.ge_s (local.get $w) (i32.sub (local.get $full_w) (i32.const 16)))
 	              (then
-	                (local.set $total_lines
-	                  (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                           (i32.load offset=4 (local.get $state_w)))
-	                           (i32.const 1)))
+	                (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
+	                  (then
+	                    (local.set $total_lines
+	                      (call $edit_wrapped_line_count
+	                        (local.get $state_w) (local.get $hdc)
+	                        (i32.load offset=4 (local.get $state_w))
+	                        (i32.sub (local.get $full_w) (i32.const 16)))))
+	                  (else
+	                    (local.set $total_lines
+	                      (i32.add (call $edit_line_from_char (local.get $state_w)
+	                                               (i32.load offset=4 (local.get $state_w)))
+	                               (i32.const 1)))))
 	                (local.set $visible_lines (i32.div_u
 	                  (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
 	                          (i32.gt_u (local.get $line_y) (i32.const 8)))
@@ -5059,10 +5089,18 @@
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
 	            (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-	            (local.set $total_lines
-	              (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                       (i32.load offset=4 (local.get $state_w)))
-	                       (i32.const 1)))
+	            (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
+	              (then
+	                (local.set $total_lines
+	                  (call $edit_wrapped_line_count
+	                    (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
+	                    (i32.load offset=4 (local.get $state_w))
+	                    (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16)))))
+	              (else
+	                (local.set $total_lines
+	                  (i32.add (call $edit_line_from_char (local.get $state_w)
+	                                           (i32.load offset=4 (local.get $state_w)))
+	                           (i32.const 1)))))
 	            (local.set $visible_lines (i32.div_u
 	              (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
 	                      (i32.gt_u (local.get $line_y) (i32.const 8)))
@@ -5185,10 +5223,27 @@
                   (i32.const 0))
                 (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))))
           (then
+            (local.set $total_lines
+              (call $edit_wrapped_line_count
+                (local.get $state_w) (local.get $hdc) (local.get $text_len) (local.get $w)))
+            (local.set $visible_lines (i32.div_u
+              (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+                      (i32.gt_u (local.get $h) (i32.const 8)))
+              (i32.const 16)))
+            (if (i32.eqz (local.get $visible_lines))
+              (then (local.set $visible_lines (i32.const 1))))
+            (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+            (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+              (then (local.set $max_scroll (i32.const 0))))
+            (if (i32.gt_s (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll))
+              (then (i32.store offset=20 (local.get $state_w) (local.get $max_scroll))))
             (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
-            (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 4))
+            (i32.store offset=4  (global.get $PAINT_SCRATCH)
+              (i32.sub (i32.const 4) (i32.mul (i32.load offset=20 (local.get $state_w)) (i32.const 16))))
             (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $w) (i32.const 4)))
-            (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.sub (local.get $h) (i32.const 4)))
+            (i32.store offset=12 (global.get $PAINT_SCRATCH)
+              (i32.add (i32.sub (local.get $h) (i32.const 4))
+                (i32.mul (i32.load offset=20 (local.get $state_w)) (i32.const 16))))
             (drop (call $host_gdi_draw_text (local.get $hdc)
                     (call $g2w (local.get $buf))
                     (local.get $text_len)
@@ -5196,18 +5251,6 @@
                     (i32.const 0x10) (i32.const 0)))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
               (then
-                (local.set $total_lines
-                  (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
-                           (i32.const 1)))
-                (local.set $visible_lines (i32.div_u
-                  (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
-                          (i32.gt_u (local.get $h) (i32.const 8)))
-                  (i32.const 16)))
-                (if (i32.eqz (local.get $visible_lines))
-                  (then (local.set $visible_lines (i32.const 1))))
-                (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
-                (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
-                  (then (local.set $max_scroll (i32.const 0))))
                 (call $paint_vscrollbar_rect (local.get $hdc)
                   (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
                   (i32.const 16) (local.get $h)
@@ -5521,7 +5564,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01)))
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000004)))
           (then (return (i32.const 0))))
         ;; lines_delta = -delta_raw / 40  (120/3 = 40 → 3 lines per notch)
         (local.set $vk (i32.div_s
@@ -5530,13 +5573,26 @@
                          (i32.const 40)))
         (local.set $text_len (i32.load offset=4 (local.get $state_w)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (if (i32.gt_u (local.get $w) (i32.const 16))
+              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
         ;; visible_lines = max(1, (h - 8) / 16)
         (local.set $a (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
         (if (i32.eqz (local.get $a)) (then (local.set $a (i32.const 1))))
-        ;; total_lines = edit_line_from_char(text_len) + 1
-        (local.set $b (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
-                               (i32.const 1)))
+        (if (i32.and
+              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
+              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+          (then
+            (local.set $b (call $edit_wrapped_line_count
+              (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
+              (local.get $text_len) (local.get $w))))
+          (else
+            ;; total_lines = edit_line_from_char(text_len) + 1
+            (local.set $b (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
+                                   (i32.const 1)))))
         ;; max_scroll = max(0, total_lines - visible_lines)
         (local.set $lo (i32.sub (local.get $b) (local.get $a)))
         (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))
@@ -5643,6 +5699,13 @@
     (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
+    ;; RichEdit-backed installer controls are painted by the WAT edit control
+    ;; path once mapped to class=2, so route synchronous input/query messages
+    ;; there too. Otherwise the DLL wndproc updates its own state while our
+    ;; renderer keeps drawing the old WAT EditState.
+    (if (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 2))
+      (then (return (call $edit_wndproc
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; WAT-native (>= 0xFFFF0000)
     (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000))
       (then (return (call $wat_wndproc_dispatch

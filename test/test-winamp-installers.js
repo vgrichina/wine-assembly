@@ -123,6 +123,56 @@ for (const tc of CASES) {
       if (!c.pass) failed++;
     }
     console.log('');
+
+    const scrollProbes = [
+      {
+        name: 'mouse wheel scrolls license text',
+        input: '600:dlg-send:1000:522:-7864320:0',
+        pattern: /dlg-send: id=1000 .* msg=0x20a .* firstVisible=3/,
+      },
+      {
+        name: 'scrollbar down arrow scrolls license text',
+        input: '600:dlg-send:1000:513:1:11469190,610:dlg-send:1000:514:0:11469190',
+        pattern: /dlg-send: id=1000 .* msg=0x201 .* firstVisible=1/,
+      },
+      {
+        name: 'scrollbar thumb drag scrolls license text',
+        input: '600:dlg-send:1000:513:1:1573254,610:dlg-send:1000:512:1:5898630,620:dlg-send:1000:514:0:5898630',
+        pattern: /dlg-send: id=1000 .* msg=0x200 .* firstVisible=54/,
+      },
+    ];
+
+    for (const probe of scrollProbes) {
+      const scrollCmd = [
+        `node "${RUN}"`,
+        `--exe="${tc.exe}"`,
+        '--max-batches=680',
+        '--batch-size=5000',
+        `--input=${probe.input}`,
+        '--no-build',
+        '--quiet-api',
+      ].join(' ');
+
+      console.log('$', scrollCmd);
+
+      let scrollOut = '';
+      try {
+        scrollOut = execSync(scrollCmd, {
+          cwd: ROOT,
+          encoding: 'utf8',
+          timeout: 180000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          maxBuffer: 80 * 1024 * 1024,
+        });
+      } catch (e) {
+        scrollOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+      }
+
+      const pass = probe.pattern.test(scrollOut);
+      console.log((pass ? 'PASS  ' : 'FAIL  ') + probe.name);
+      if (!pass) failed++;
+    }
+    console.log('');
   }
 
   const interactiveCmd = [
