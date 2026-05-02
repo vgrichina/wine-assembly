@@ -374,7 +374,7 @@
         (local.set $flags (i32.or (i32.and (local.get $flags) (i32.const 0xFFFFFFB7))
                                   (i32.const 0x40)))
         (i32.store offset=12 (local.get $fr_w) (local.get $flags))
-        (drop (call $wnd_send_message (local.get $owner)
+        (drop (call $post_queue_push (local.get $owner)
                 (i32.const 0xC000) (i32.const 0) (local.get $fr)))
         ;; Tear down the dialog: free child WAT state via WM_DESTROY,
         ;; release the WND_RECORDS slots, drop the visible JS window,
@@ -425,7 +425,7 @@
                                           (local.get $text_src_w)
                                           (local.get $text_len))))))
                 (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))))
-        (drop (call $wnd_send_message (local.get $owner)
+        (drop (call $post_queue_push (local.get $owner)
                 (i32.const 0xC000) (i32.const 0) (local.get $fr)))
         (return (i32.const 0))))
 
@@ -680,6 +680,7 @@
     (local $text_g i32) (local $w i32) (local $h i32)
     (local $btn_kind i32) (local $n_btn i32) (local $row_w i32)
     (local $bx i32) (local $by i32) (local $longest i32)
+    (local $slot i32) (local $ch i32)
     (local.set $text_len (call $strlen (local.get $text_wa)))
     (if (i32.eqz (local.get $caption_wa))
       (then (local.set $cap_len (i32.const 0)))
@@ -726,8 +727,12 @@
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 16) (i32.const 0))
-    (call $nc_flags_set (local.get $dlg) (i32.const 3))
-    (call $dlg_fill_bkgnd (local.get $dlg))
+    ;; Paint the frame/background immediately. MessageBox can be created
+    ;; inside a synchronous button click; if it waits for the modal pump's
+    ;; first paint pass, the browser mouse-up from the original click can
+    ;; arrive first and leave the user staring at the disabled owner.
+    (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))
+    (call $defwndproc_do_ncpaint (local.get $dlg))
     ;; Message text static.
     (local.set $text_g (call $wat_str_to_heap (local.get $text_wa) (local.get $text_len)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
@@ -816,6 +821,23 @@
       ;; Fallback: lone OK.
       (call $msgbox_btn (local.get $dlg) (i32.const 1)
         (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1))))
+    ;; Static text + buttons. Used by renderer-input.js for Enter/Esc
+    ;; handling on the message box.
+    (i32.store offset=28 (call $dlg_record_for_hwnd (local.get $dlg))
+               (i32.add (local.get $n_btn) (i32.const 1)))
+    ;; Paint the WAT-built children immediately for the same reason as the
+    ;; frame/background above.
+    (local.set $slot (i32.const 0))
+    (block $paint_done (loop $paint_children
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $paint_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (local.get $ch)
+        (then (drop (call $wnd_send_message
+          (local.get $ch) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $paint_children)))
+    (call $dlg_seed_focus (local.get $dlg)))
 
   ;; ============================================================
   ;; Font (ChooseFont) dialog — control class 14
