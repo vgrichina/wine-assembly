@@ -251,10 +251,10 @@
     body.no-debug #log { display: none; }
     body.no-debug #screen-wrap { background: #008080; }
     body.no-debug canvas { background: transparent; z-index: 2; }
-    body.no-debug.exclusive-fullscreen,
-    body.no-debug.exclusive-fullscreen #shell,
-    body.no-debug.exclusive-fullscreen #content,
-    body.no-debug.exclusive-fullscreen #screen-wrap {
+    body.exclusive-fullscreen,
+    body.exclusive-fullscreen #shell,
+    body.exclusive-fullscreen #content,
+    body.exclusive-fullscreen #screen-wrap {
       width: 100vw;
       height: 100vh;
       margin: 0;
@@ -262,20 +262,56 @@
       border: 0;
       background: #000;
     }
-    body.no-debug.exclusive-fullscreen #taskbar,
-    body.no-debug.exclusive-fullscreen #desktop-icons { display: none !important; }
-    body.no-debug.exclusive-fullscreen canvas { width: 100vw; height: 100vh; }
+    body.exclusive-fullscreen {
+      overflow: hidden;
+    }
+    body.exclusive-fullscreen #screen-wrap {
+      position: fixed;
+      inset: 0;
+      max-width: none;
+      max-height: none;
+    }
+    body.exclusive-fullscreen #titlebar,
+    body.exclusive-fullscreen #toolbar,
+    body.exclusive-fullscreen #log,
+    body.exclusive-fullscreen #taskbar,
+    body.exclusive-fullscreen #desktop-icons { display: none !important; }
+    body.exclusive-fullscreen canvas {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: none !important;
+      max-height: none !important;
+    }
     #screen-wrap:fullscreen {
-      width: 100vw;
-      height: 100vh;
+      position: fixed;
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
       margin: 0;
+      padding: 0;
       background: #000;
     }
     #screen-wrap:-webkit-full-screen {
-      width: 100vw;
-      height: 100vh;
+      position: fixed;
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
       margin: 0;
+      padding: 0;
       background: #000;
+    }
+    #screen-wrap::backdrop,
+    #screen-wrap::-webkit-backdrop {
+      background: #000;
+    }
+    #screen-wrap:fullscreen canvas,
+    #screen-wrap:-webkit-full-screen canvas {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
     }
   </style>
 </head>
@@ -471,20 +507,20 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=48"></script>
-  <script src="lib/dib.js?v=48"></script>
-  <script src="lib/resources-icon.js?v=48"></script>
-  <script src="lib/renderer-input.js?v=48"></script>
-  <script src="lib/renderer.js?v=48"></script>
-  <script src="lib/dll-loader.js?v=48"></script>
-  <script src="lib/storage.js?v=48"></script>
-  <script src="lib/filesystem.js?v=48"></script>
-  <script src="lib/hlp-parser.js?v=48"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=48"></script>
-  <script src="lib/host-imports.js?v=48"></script>
-  <script src="lib/compile-wat.js?v=48"></script>
-  <script src="lib/thread-manager.js?v=48"></script>
-  <script src="host.js?v=48"></script>
+  <script src="lib/mem-utils.js?v=49"></script>
+  <script src="lib/dib.js?v=49"></script>
+  <script src="lib/resources-icon.js?v=49"></script>
+  <script src="lib/renderer-input.js?v=49"></script>
+  <script src="lib/renderer.js?v=49"></script>
+  <script src="lib/dll-loader.js?v=49"></script>
+  <script src="lib/storage.js?v=49"></script>
+  <script src="lib/filesystem.js?v=49"></script>
+  <script src="lib/hlp-parser.js?v=49"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=49"></script>
+  <script src="lib/host-imports.js?v=49"></script>
+  <script src="lib/compile-wat.js?v=49"></script>
+  <script src="lib/thread-manager.js?v=49"></script>
+  <script src="host.js?v=49"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -821,7 +857,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=48');
+        const response = await fetch(url + '?v=49');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -879,7 +915,7 @@ Resource-aware Win98 emulator
           renderer._requestedBrowserFullscreen = true;
           try {
             const p = target.requestFullscreen();
-            if (p && p.catch) p.catch(() => {});
+            if (p && p.then) p.then(resizeCanvas).catch(() => {});
           } catch (_) {}
         }
       }
@@ -995,8 +1031,15 @@ Resource-aware Win98 emulator
 
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
-      canvas.width = wrap.clientWidth;
-      canvas.height = wrap.clientHeight;
+      if (app.args === '/s' && !document.fullscreenElement && wrap.requestFullscreen) {
+        try {
+          const p = wrap.requestFullscreen();
+          if (p && p.then) await p.then(resizeCanvas).catch(() => {});
+        } catch (_) {}
+      }
+      const size = screenCanvasSize();
+      canvas.width = size.w;
+      canvas.height = size.h;
 
       const log = document.getElementById('log');
       log.textContent += `Launching ${sel}.exe...\n`;
@@ -1075,21 +1118,70 @@ Resource-aware Win98 emulator
       }
     }
 
+    function screenCanvasSize() {
+      const canvas = document.getElementById('screen');
+      const wrap = document.getElementById('screen-wrap');
+      const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+      const fullscreen = fsElement === wrap || fsElement === canvas;
+      if (!fullscreen) {
+        return { fullscreen, w: wrap.clientWidth, h: wrap.clientHeight };
+      }
+
+      const fsRect = fsElement && fsElement.getBoundingClientRect ? fsElement.getBoundingClientRect() : null;
+      const vv = window.visualViewport;
+      const w = Math.floor(Math.max(
+        (fsRect && fsRect.width) || 0,
+        (vv && vv.width) || 0,
+        window.innerWidth || 0,
+        wrap.clientWidth || 0,
+        canvas.clientWidth || 0
+      ));
+      const h = Math.floor(Math.max(
+        (fsRect && fsRect.height) || 0,
+        (vv && vv.height) || 0,
+        window.innerHeight || 0,
+        wrap.clientHeight || 0,
+        canvas.clientHeight || 0
+      ));
+      return { fullscreen, w, h };
+    }
+
     // Resize canvas to match container
     function resizeCanvas() {
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
-      const w = wrap.clientWidth;
-      const h = wrap.clientHeight;
+      const { fullscreen, w, h } = screenCanvasSize();
+      if (fullscreen) {
+        wrap.style.width = w + 'px';
+        wrap.style.height = h + 'px';
+        wrap.style.position = 'fixed';
+        wrap.style.inset = '0';
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        canvas.style.position = 'fixed';
+        canvas.style.inset = '0';
+      } else {
+        wrap.style.width = '';
+        wrap.style.height = '';
+        wrap.style.position = '';
+        wrap.style.inset = '';
+        canvas.style.width = '';
+        canvas.style.height = '';
+        canvas.style.position = '';
+        canvas.style.inset = '';
+      }
       if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
         console.log('[resize] canvas', canvas.width + 'x' + canvas.height, '->', w + 'x' + h);
         canvas.width = w;
         canvas.height = h;
-        if (wine && wine.renderer) {
-          wine.renderer.repaint();
-        }
+      }
+      if (wine && wine.renderer) {
+        wine.renderer.repaint();
+      } else if (sharedRenderer) {
+        sharedRenderer.repaint();
       }
     }
+    window.resizeCanvas = resizeCanvas;
     window.addEventListener('resize', resizeCanvas);
     document.addEventListener('fullscreenchange', resizeCanvas);
     document.addEventListener('webkitfullscreenchange', resizeCanvas);
