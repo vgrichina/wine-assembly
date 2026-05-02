@@ -6188,12 +6188,19 @@
 
   ;; 498: GetExitCodeProcess — STUB: unimplemented
   (func $handle_GetExitCodeProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 0)))) ;; exited with code 0
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall, 2 args
   )
 
   ;; 499: CreateProcessA — STUB: unimplemented
   (func $handle_CreateProcessA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Process launch is out-of-scope for the in-browser emulator. Decline the
+    ;; launch after installers have extracted their files; this avoids waiting
+    ;; on a fake child process that will never really run.
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 44))) ;; stdcall, 10 args
   )
 
   ;; WinExec(lpCmdLine, uCmdShow) — legacy launcher. Pinball's Options →
@@ -6209,7 +6216,8 @@
 
   ;; 500: CreateProcessW — STUB: unimplemented
   (func $handle_CreateProcessW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
   )
 
   ;; 501: HeapValidate — STUB: unimplemented
@@ -7179,6 +7187,14 @@
     (if (i32.eq (local.get $arg0) (global.get $WNDPROC_BUILTIN))
       (then
         (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; WAT-native wndprocs (for current controls, 0xFFFF0002) are markers,
+    ;; not guest-code addresses. Dispatch them directly instead of jumping.
+    (if (i32.ge_u (local.get $arg0) (i32.const 0xFFFF0000))
+      (then
+        (global.set $eax (call $wat_wndproc_dispatch
+          (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)

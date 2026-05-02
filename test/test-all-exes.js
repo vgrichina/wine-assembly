@@ -103,12 +103,15 @@ const TEST_CASES = [
   // Pinball
   { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball' },
   { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)' },
-  // Winamp (top-level copies, not installers)
+  // Winamp extracted app
   { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
-  { exe: 'test/binaries/winamp295.exe', name: 'Winamp 2.95' },
   // Installers (NSIS etc.)
-  { exe: 'test/binaries/installers/winamp291.exe', name: 'WinAmp Installer',
-    extraArgs: ['--buttons=2'], maxBatches: 20000 },  // Click Cancel on license dialog (needs batches for CRC loop)
+  { exe: 'test/binaries/installers/winamp291.exe', name: 'Winamp 2.91 Installer',
+    extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
+    expectOutput: '[API] CreateProcessA' },
+  { exe: 'test/binaries/installers/winamp295.exe', name: 'Winamp 2.95 Installer',
+    extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
+    expectOutput: '[API] CreateProcessA' },
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer' },
   // WEP community 32-bit remakes (archive.org/details/wep-32bit)
   { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
@@ -218,7 +221,7 @@ function runExe(testCase, pngPath) {
     RUN_JS,
     `--exe=${exePath}`,
     `--max-batches=${testCase.maxBatches || MAX_BATCHES}`,
-    `--batch-size=${BATCH_SIZE}`,
+    `--batch-size=${testCase.batchSize || BATCH_SIZE}`,
     '--no-build',
     '--verbose',
     ...(pngPath ? [`--png=${pngPath}`] : []),
@@ -297,10 +300,13 @@ function runExe(testCase, pngPath) {
 
   // Reached max batches without crash = likely working
   const windowOrLoop = hasWindow || hasMessageLoop || hasMessageBox;
+  const sawExpectedOutput = testCase.expectOutput ? output.includes(testCase.expectOutput) : false;
   return {
     name: testCase.name,
-    status: windowOrLoop || exitClean ? 'OK' : 'WARN',
-    reason: windowOrLoop
+    status: windowOrLoop || exitClean || sawExpectedOutput ? 'OK' : 'WARN',
+    reason: sawExpectedOutput
+      ? `${apiCalls.size} APIs, saw ${testCase.expectOutput}`
+      : windowOrLoop
       ? `${apiCalls.size} APIs, ${hasWindow ? 'window created' : hasMessageBox ? 'message box shown' : 'message loop running'}`
       : exitClean
         ? `${apiCalls.size} APIs, clean exit`

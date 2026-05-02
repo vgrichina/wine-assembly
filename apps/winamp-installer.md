@@ -1,6 +1,6 @@
 # Winamp NSIS Installer — Annotated Disassembly
 
-Disassembled from `winamp295.exe` (NSIS 2.x exehead). Entry point: `0x404046`.
+Disassembled from `test/binaries/installers/winamp295.exe` (NSIS 2.x exehead). Entry point: `0x404046`.
 
 ## Global Variables
 
@@ -476,5 +476,5 @@ The NSIS installer successfully decompresses and extracts all files to the virtu
 **Breakpoint improvement:** Added WASM-level breakpoint support to test runner (uses `set_bp` export for per-block EIP checking inside `$run`, instead of JS-level per-batch checking).
 
 Test commands:
-- Quick (skip extraction): `node test/run.js --exe=test/binaries/installers/winamp291.exe --max-batches=50000 --batch-size=5000 --buttons=1,1,1,1,1,1`
-- Full extraction: `node test/run.js --exe=test/binaries/installers/winamp291.exe --max-batches=500000 --batch-size=5000 --buttons=1,1,1,1,1,1 --dump-vfs`
+- Quick silent install: `node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=5000 --batch-size=5000`
+- Full silent extraction: `node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=5000 --batch-size=5000 --dump-vfs`

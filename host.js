@@ -416,6 +416,11 @@ class WineAssembly {
     const exeName = url.replace(/^.*[\\\/]/, '');
     this._exeName = exeName;
     this._exeUrl = url;
+    if (this._helpCtx && this._helpCtx.vfs && this._helpCtx.vfs.files) {
+      const exeData = new Uint8Array(exeBytes);
+      this._helpCtx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
+      this._helpCtx.vfs.files.set('c:\\' + exeName.toLowerCase(), { data: exeData, attrs: 0x20 });
+    }
     if (this.instance.exports.set_exe_name) {
       const enc = new TextEncoder();
       const nameBytes = enc.encode(exeName);

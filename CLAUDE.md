@@ -189,5 +189,5 @@ Win98/XP executables in `test/binaries/`. Currently tested:
 - **Win98 accessories:** notepad.exe, calc.exe, mspaint.exe
 - **Entertainment Pack:** SkiFree (ski32.exe), FreeCell, Solitaire, Minesweeper, Reversi, Golf, Pegged, Rattler Race, Taipei, TicTactics
 - **NT/XP:** mspaint.exe (NT version, requires msvcrt.dll + mfc42u.dll from `test/binaries/dlls/`), winmine.exe (XP)
-- **Other:** Space Cadet Pinball, Winamp 2.95 (NSIS installer)
+- **Other:** Space Cadet Pinball, Winamp extracted app, Winamp 2.91/2.95 NSIS installers
 - **Help files:** `test/binaries/help/` — .hlp files for notepad, calc, freecell, solitaire, mspaint
