@@ -47,6 +47,8 @@
   ;; button so owner-draw controls always clear ODS_SELECTED.
   (global $dialog_button_capture_parent (mut i32) (i32.const 0))
   (global $dialog_button_capture_hwnd (mut i32) (i32.const 0))
+  (global $edit_sb_drag_anchor_y (mut i32) (i32.const 0))
+  (global $edit_sb_drag_anchor_top (mut i32) (i32.const 0))
 
   ;; Copy a NUL-terminated string from a WASM-linear address into a fresh
   ;; heap-allocated guest buffer. Returns the guest pointer (suitable for
@@ -4841,11 +4843,82 @@
         ;; Mark focused + drag-tracking bit 4 (0x10).
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
-        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
-        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-        (local.set $cur (call $edit_xy_to_offset
-          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
+	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
+	        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+	          (then
+	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
+	            (if (i32.ge_s (local.get $w) (i32.sub (local.get $full_w) (i32.const 16)))
+	              (then
+	                (local.set $total_lines
+	                  (i32.add (call $edit_line_from_char (local.get $state_w)
+	                                           (i32.load offset=4 (local.get $state_w)))
+	                           (i32.const 1)))
+	                (local.set $visible_lines (i32.div_u
+	                  (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
+	                          (i32.gt_u (local.get $line_y) (i32.const 8)))
+	                  (i32.const 16)))
+	                (if (i32.eqz (local.get $visible_lines))
+	                  (then (local.set $visible_lines (i32.const 1))))
+	                (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+	                (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+	                  (then (local.set $max_scroll (i32.const 0))))
+	                (local.set $lo (i32.load offset=20 (local.get $state_w)))
+	                (if (i32.lt_s (local.get $h) (i32.const 16))
+	                  (then
+	                    (if (i32.gt_s (local.get $lo) (i32.const 0))
+	                      (then (i32.store offset=20 (local.get $state_w)
+	                              (i32.sub (local.get $lo) (i32.const 1)))))
+	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                    (global.set $sb_pressed_part (i32.const 1)))
+	                  (else (if (i32.ge_s (local.get $h) (i32.sub (local.get $line_y) (i32.const 16)))
+	                    (then
+	                      (if (i32.lt_s (local.get $lo) (local.get $max_scroll))
+	                        (then (i32.store offset=20 (local.get $state_w)
+	                                (i32.add (local.get $lo) (i32.const 1)))))
+	                      (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                      (global.set $sb_pressed_part (i32.const 2)))
+	                    (else (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
+	                      (then
+	                        (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
+	                        (if (i32.gt_s (local.get $a) (i32.const 0))
+	                          (then
+	                            (local.set $b (i32.div_u (local.get $a)
+	                                             (i32.add (local.get $max_scroll) (i32.const 1))))
+	                            (if (i32.lt_u (local.get $b) (i32.const 16))
+	                              (then (local.set $b (i32.const 16))))
+	                            (if (i32.gt_u (local.get $b) (local.get $a))
+	                              (then (local.set $b (local.get $a))))
+	                            (local.set $px
+	                              (i32.add (i32.const 16)
+	                                (i32.div_u
+	                                  (i32.mul (local.get $lo)
+	                                           (i32.sub (local.get $a) (local.get $b)))
+	                                  (local.get $max_scroll))))
+	                            (if (i32.lt_s (local.get $h) (local.get $px))
+	                              (then
+	                                (local.set $lo (i32.sub (local.get $lo) (local.get $visible_lines)))
+	                                (if (i32.lt_s (local.get $lo) (i32.const 0))
+	                                  (then (local.set $lo (i32.const 0))))
+	                                (i32.store offset=20 (local.get $state_w) (local.get $lo)))
+	                              (else (if (i32.ge_s (local.get $h) (i32.add (local.get $px) (local.get $b)))
+	                                (then
+	                                  (local.set $lo (i32.add (local.get $lo) (local.get $visible_lines)))
+	                                  (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
+	                                    (then (local.set $lo (local.get $max_scroll))))
+	                                  (i32.store offset=20 (local.get $state_w) (local.get $lo)))
+	                                (else
+	                                  (global.set $edit_sb_drag_anchor_y (local.get $h))
+	                                  (global.set $edit_sb_drag_anchor_top (local.get $lo))
+	                                  (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                                  (global.set $sb_pressed_part (i32.const 5)))))))))))))))
+	                (call $invalidate_hwnd (local.get $hwnd))
+	                (return (i32.const 0)))))
+	        (local.set $cur (call $edit_xy_to_offset
+	          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
         (if (i32.eq (local.get $msg) (i32.const 0x0203))
           (then
             ;; Double-click: select word spanning $cur
@@ -4868,9 +4941,63 @@
     ;; didn't see.
     (if (i32.eq (local.get $msg) (i32.const 0x0200))
       (then
-        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+	        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+	        (local.set $state_w (call $g2w (local.get $state)))
+	        (if (i32.and (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+	                     (i32.eq (global.get $sb_pressed_part) (i32.const 5)))
+	          (then
+	            (if (i32.eqz (i32.and (local.get $wParam) (i32.const 0x0001)))
+	              (then
+	                (global.set $sb_pressed_hwnd (i32.const 0))
+	                (global.set $sb_pressed_part (i32.const 0))
+	                (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+	                  (then (global.set $capture_hwnd (i32.const 0))))
+	                (return (i32.const 0))))
+	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
+	            (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
+	            (local.set $total_lines
+	              (i32.add (call $edit_line_from_char (local.get $state_w)
+	                                       (i32.load offset=4 (local.get $state_w)))
+	                       (i32.const 1)))
+	            (local.set $visible_lines (i32.div_u
+	              (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
+	                      (i32.gt_u (local.get $line_y) (i32.const 8)))
+	              (i32.const 16)))
+	            (if (i32.eqz (local.get $visible_lines))
+	              (then (local.set $visible_lines (i32.const 1))))
+	            (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+	            (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+	              (then (local.set $max_scroll (i32.const 0))))
+	            (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
+	              (then
+	                (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
+	                (if (i32.gt_s (local.get $a) (i32.const 0))
+	                  (then
+	                    (local.set $b (i32.div_u (local.get $a)
+	                                     (i32.add (local.get $max_scroll) (i32.const 1))))
+	                    (if (i32.lt_u (local.get $b) (i32.const 16))
+	                      (then (local.set $b (i32.const 16))))
+	                    (if (i32.gt_u (local.get $b) (local.get $a))
+	                      (then (local.set $b (local.get $a))))
+	                    (local.set $px (i32.sub (local.get $a) (local.get $b)))
+	                    (if (i32.gt_s (local.get $px) (i32.const 0))
+	                      (then
+	                        (local.set $lo
+	                          (i32.add (global.get $edit_sb_drag_anchor_top)
+	                            (i32.div_s
+	                              (i32.mul
+	                                (i32.sub (local.get $h) (global.get $edit_sb_drag_anchor_y))
+	                                (local.get $max_scroll))
+	                              (local.get $px))))
+	                        (if (i32.lt_s (local.get $lo) (i32.const 0))
+	                          (then (local.set $lo (i32.const 0))))
+	                        (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
+	                          (then (local.set $lo (local.get $max_scroll))))
+	                        (i32.store offset=20 (local.get $state_w) (local.get $lo))))))))
+	            (call $invalidate_hwnd (local.get $hwnd))
+	            (return (i32.const 0))))
+	        (local.set $flags (i32.load offset=24 (local.get $state_w)))
         (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
           (then (return (i32.const 0))))
         (if (i32.eqz (i32.and (local.get $wParam) (i32.const 0x0001)))
@@ -4893,12 +5020,17 @@
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0202))
       (then
-        (if (local.get $state)
-          (then
-            (local.set $state_w (call $g2w (local.get $state)))
-            (i32.store offset=24 (local.get $state_w)
-              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
-        ;; Release capture grabbed on WM_LBUTTONDOWN.
+	        (if (local.get $state)
+	          (then
+	            (local.set $state_w (call $g2w (local.get $state)))
+	            (i32.store offset=24 (local.get $state_w)
+	              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
+	        (if (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+	          (then
+	            (global.set $sb_pressed_hwnd (i32.const 0))
+	            (global.set $sb_pressed_part (i32.const 0))
+	            (call $invalidate_hwnd (local.get $hwnd))))
+	        ;; Release capture grabbed on WM_LBUTTONDOWN.
         (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
           (then (global.set $capture_hwnd (i32.const 0))))
         (return (i32.const 0))))
@@ -4979,12 +5111,12 @@
                     (then (local.set $sel_w (i32.sub (local.get $w)
                             (i32.add (local.get $pre_w) (i32.const 4))))))
                   (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
-                          (i32.add (local.get $pre_w) (i32.const 4))
-                          (local.get $line_y)
-                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
-                          (i32.add (local.get $line_y) (i32.const 16))
-                          (local.get $brush)))
+	                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+	                          (i32.add (local.get $pre_w) (i32.const 4))
+	                          (i32.add (local.get $line_y) (i32.const 2))
+	                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+	                          (i32.add (local.get $line_y) (i32.const 17))
+	                          (local.get $brush)))
                   (drop (call $host_gdi_delete_object (local.get $brush)))
                   ;; pre-sel text (black)
                   (if (local.get $a)
@@ -5030,13 +5162,17 @@
               (then (local.set $px (call $host_measure_text (local.get $hdc)
                                         (i32.add (call $g2w (local.get $buf)) (local.get $lo))
                                         (i32.sub (local.get $cur) (local.get $lo))))))
-            (if (i32.ge_s (local.get $a) (i32.const 0))
+            (if (i32.and
+                  (i32.ge_s (local.get $a) (i32.const 0))
+                  (i32.eqz (i32.and
+                    (i32.div_u (call $host_get_ticks) (i32.const 530))
+                    (i32.const 1))))
               (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
-                    (i32.add (local.get $hi) (i32.const 5))
+                    (i32.add (local.get $hi) (i32.const 2))
                     (i32.add (local.get $px) (i32.const 5))
-                    (i32.add (local.get $hi) (i32.const 18))
+                    (i32.add (local.get $hi) (i32.const 17))
                     (i32.const 0x30014))))))) ;; BLACK_BRUSH
         ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))

@@ -101,8 +101,8 @@ let cliOk = false;
 if (fs.existsSync(EXE)) {
   try {
     const out = execSync(
-      `node "${RUN}" --exe="${EXE}" --input=100:keypress:72,110:keypress:73 --max-batches=200`,
-      { encoding: 'utf-8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
+      `node "${RUN}" --exe="${EXE}" --input=90:focus-main-window,100:keypress:72,110:keypress:73 --max-batches=200 --quiet-api`,
+      { encoding: 'utf-8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
     // run.js prints `[input] keypress code=NN` once per dispatch, and the
     // edit accepts it if there is no UNIMPLEMENTED crash.
     cliOk = out.includes('keypress code=72') && out.includes('keypress code=73')

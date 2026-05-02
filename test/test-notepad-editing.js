@@ -60,13 +60,15 @@ for (let i = 0; i < 60; i++) {
 }
 typeText(lines.join('\r'));
 push('dump-main-edit-state:long-before-scroll', 8);
+push('drag-main-edit:386:24:386:140', 8);
+push('dump-main-edit-state:long-after-drag-scroll', 8);
 push('wheel-main-edit:-120', 4);
 push('wheel-main-edit:-120', 4);
 push('wheel-main-edit:-120', 4);
 push('dump-main-edit-state:long-after-scroll', 8);
 
 const inputSpec = seq.join(',');
-const cmd = `node "${RUN}" --exe="${EXE}" --input='${inputSpec}' --max-batches=${b + 40} --batch-size=50000 --no-close`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input='${inputSpec}' --max-batches=${b + 40} --batch-size=50000 --quiet-api --no-close`;
 console.log('$', cmd);
 
 let out = '';
@@ -109,6 +111,7 @@ const mouseSelected = state('mouse-selected');
 const selected = state('selected');
 const edited = state('edited');
 const longBefore = state('long-before-scroll');
+const longAfterDrag = state('long-after-drag-scroll');
 const longAfter = state('long-after-scroll');
 
 const checks = [
@@ -117,6 +120,7 @@ const checks = [
   { name: 'Ctrl+A selected typed text', pass: selected && selected.text === 'alpha beta' && selected.sel === 0 && selected.cursor === selected.len },
   { name: 'typing over selection and Backspace edited text', pass: edited && edited.text === 'gamm' },
   { name: 'long multiline content inserted', pass: longBefore && longBefore.text.includes('line00\nline01') && longBefore.lineCount >= 60 },
+  { name: 'scrollbar thumb drag scrolled long edit', pass: longAfterDrag && longBefore && longAfterDrag.firstVisible > longBefore.firstVisible },
   { name: 'mouse wheel scrolled long edit', pass: longAfter && longBefore && longAfter.firstVisible > longBefore.firstVisible },
   { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no runtime crash', pass: !/CRASH|Unreachable code/.test(out) },
