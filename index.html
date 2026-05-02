@@ -61,7 +61,8 @@
       cursor: pointer;
     }
     #toolbar button:active { border-style: inset; }
-    #toolbar .debug-midi {
+    #toolbar .debug-midi,
+    #toolbar .debug-slice {
       display: flex;
       align-items: center;
       gap: 4px;
@@ -455,6 +456,18 @@
       </select>
       <button onclick="launchApp()">Launch</button>
       <button onclick="runningApps.forEach(a => a.wine.running = false); runningApps.length = 0; if(sharedRenderer){sharedRenderer.windows={};sharedRenderer.repaint();} document.getElementById('desktop-icons').style.display='';">Stop All</button>
+      <span class="debug-slice">
+        <label>Slice:</label>
+        <select id="slice-size-select" onchange="applyRunSlice()">
+          <option value="auto" selected>Auto</option>
+          <option value="5000">5k</option>
+          <option value="10000">10k</option>
+          <option value="25000">25k</option>
+          <option value="50000">50k</option>
+          <option value="100000">100k</option>
+          <option value="500000">500k</option>
+        </select>
+      </span>
       <span class="debug-midi">
         <label>MIDI:</label>
         <select id="midi-select"></select>
@@ -507,20 +520,20 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=51"></script>
-  <script src="lib/dib.js?v=51"></script>
-  <script src="lib/resources-icon.js?v=51"></script>
-  <script src="lib/renderer-input.js?v=51"></script>
-  <script src="lib/renderer.js?v=51"></script>
-  <script src="lib/dll-loader.js?v=51"></script>
-  <script src="lib/storage.js?v=51"></script>
-  <script src="lib/filesystem.js?v=51"></script>
-  <script src="lib/hlp-parser.js?v=51"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=51"></script>
-  <script src="lib/host-imports.js?v=51"></script>
-  <script src="lib/compile-wat.js?v=51"></script>
-  <script src="lib/thread-manager.js?v=51"></script>
-  <script src="host.js?v=51"></script>
+  <script src="lib/mem-utils.js?v=52"></script>
+  <script src="lib/dib.js?v=52"></script>
+  <script src="lib/resources-icon.js?v=52"></script>
+  <script src="lib/renderer-input.js?v=52"></script>
+  <script src="lib/renderer.js?v=52"></script>
+  <script src="lib/dll-loader.js?v=52"></script>
+  <script src="lib/storage.js?v=52"></script>
+  <script src="lib/filesystem.js?v=52"></script>
+  <script src="lib/hlp-parser.js?v=52"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=52"></script>
+  <script src="lib/host-imports.js?v=52"></script>
+  <script src="lib/compile-wat.js?v=52"></script>
+  <script src="lib/thread-manager.js?v=52"></script>
+  <script src="host.js?v=52"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -857,7 +870,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=51');
+        const response = await fetch(url + '?v=52');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1067,6 +1080,22 @@ Resource-aware Win98 emulator
       };
     }
 
+    function selectedRunSlice(appKey) {
+      const select = document.getElementById('slice-size-select');
+      const raw = select && select.value ? select.value : 'auto';
+      if (raw !== 'auto') {
+        const n = parseInt(raw, 10);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return (appKey === 'pinball' || appKey === 'pinball_plus95') ? 500000 : 10000;
+    }
+
+    function applyRunSlice() {
+      for (const app of runningApps) {
+        app.wine.stepsPerSlice = selectedRunSlice(app.name);
+      }
+    }
+
     async function launchApp() {
       const sel = document.getElementById('app-select').value;
       const app = apps[sel];
@@ -1157,7 +1186,7 @@ Resource-aware Win98 emulator
         runningApps.push({ wine, name: sel, appIndex });
         document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
         canvas.focus();
-        wine.run(sel === 'pinball' ? 500000 : 50000);
+        wine.run(selectedRunSlice(sel));
       } else {
         document.getElementById('status').textContent = 'Failed to load';
       }

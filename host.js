@@ -10,6 +10,7 @@ class WineAssembly {
     this.resourceJson = null;
     this.threadManager = null;
     this._wasmModule = null;
+    this.stepsPerSlice = 50000;
     this.verbose = false;
   }
 
@@ -344,7 +345,7 @@ class WineAssembly {
       }, 100);
     }
     await this.ensureUiFontsReady();
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=51').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=52').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -352,7 +353,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=51');
+        const r = await fetch('src/api_table.json?v=52');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -721,16 +722,18 @@ class WineAssembly {
   }
 
   run(stepsPerSlice = 50000) {
+    this.stepsPerSlice = stepsPerSlice;
     this.running = true;
     const self = this;
     const step = async () => {
       if (!self.running) return;
       try {
+        const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         // Check if main thread is waiting
         if (self.threadManager && self.threadManager.checkMainYield()) {
           // Main still waiting — just run worker threads
         } else {
-          self.instance.exports.run(stepsPerSlice);
+          self.instance.exports.run(activeStepsPerSlice);
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
@@ -764,7 +767,7 @@ class WineAssembly {
             await self.threadManager.spawnPending();
           }
           if (self.threadManager.hasActiveThreads()) {
-            self.threadManager.runSlice(Math.min(stepsPerSlice, 10000));
+            self.threadManager.runSlice(Math.min(activeStepsPerSlice, 10000));
           }
         }
       } catch (e) {
