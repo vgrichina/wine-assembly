@@ -5774,7 +5774,7 @@
   ;; window table as WNDPROC_CTRL_NATIVE so $wnd_send_message routes
   ;; messages to it via $control_wndproc_dispatch.
   (func $create_findreplace_dialog (param $dlg i32) (param $owner i32) (param $fr_guest i32)
-    (local $edit i32) (local $down i32)
+    (local $edit i32) (local $down i32) (local $slot i32) (local $ch i32)
     ;; Frame (renderer.windows[] entry, isFindDialog flag for hit-test path).
     ;; Same pattern as $create_about_dialog: WAT calls into JS via the
     ;; bare host_register_dialog_frame import — JS does no Win32 logic.
@@ -5791,11 +5791,11 @@
     ;; routes WM_COMMAND from child buttons to $findreplace_wndproc.
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 10) (i32.const 0))
-    ;; Queue WM_NCPAINT + WM_ERASEBKGND on the registered slot so the main
-    ;; GetMessageA loop dispatches chrome + background fill. Must run AFTER
-    ;; wnd_table_set — nc_flags_set is a no-op when the slot doesn't exist.
-    (call $nc_flags_set (local.get $dlg) (i32.const 3))  ;; bits 0+1
-    (call $dlg_fill_bkgnd (local.get $dlg))
+    ;; Paint the dialog chrome/background before child creation. The modeless
+    ;; Find dialog shares one back-canvas with its WAT children, so a later
+    ;; queued parent paint would cover the children.
+    (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))
+    (call $defwndproc_do_ncpaint (local.get $dlg))
     ;; Static "Find what:"
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
@@ -5845,6 +5845,18 @@
     ;; group-box + 2 radios + Find Next + Cancel.
     (i32.store offset=28 (call $dlg_record_for_hwnd (local.get $dlg))
                (i32.const 8))
+    ;; Modeless Find has no modal child-paint drain. Paint the WAT-built
+    ;; children once now so the dialog opens with labels/buttons visible.
+    (local.set $slot (i32.const 0))
+    (block $paint_done (loop $paint_children
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $paint_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (local.get $ch)
+        (then (drop (call $wnd_send_message
+          (local.get $ch) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $paint_children)))
     ;; Seed initial focus on the first tabstop child (the "Find what" edit)
     ;; so Tab/Shift+Tab traversal works without a prior click.
     (call $dlg_seed_focus (local.get $dlg))

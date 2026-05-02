@@ -31,7 +31,7 @@ const RUN_JS  = path.join(ROOT, 'test', 'run.js');
 // cmdId → notepad WM_COMMAND id (see tools/parse-rsrc.js on notepad.exe)
 const CASES = [
   { name: 'about',     cmd: 11, title: 'About Notepad', minColors: 32 },
-  { name: 'find',      cmd:  3, title: 'Find',          minColors: 24 },
+  { name: 'find',      cmd:  3, title: 'Find',          minColors: 24, minClientInk: 900 },
   { name: 'open',      cmd: 10, title: 'Open',          minColors: 32 },
   { name: 'font',      cmd: 37, title: 'Font',          minColors: 32 },
   { name: 'pagesetup', cmd: 32, title: 'Page Setup',    minColors: 16 },
@@ -50,13 +50,34 @@ async function countUniqueColors(pngPath) {
   return seen.size;
 }
 
-async function runCase({ name, cmd, title, minColors }) {
+async function countClientInk(pngPath) {
+  const img = await loadImage(pngPath);
+  const c = createCanvas(img.width, img.height);
+  const cx = c.getContext('2d');
+  cx.drawImage(img, 0, 0);
+  const px = cx.getImageData(0, 0, img.width, img.height).data;
+  let ink = 0;
+  // Skip caption/borders. The Find regression left this area solid btnface,
+  // hiding every child control even though the dialog frame was present.
+  for (let y = 24; y < Math.min(img.height - 4, 86); y++) {
+    for (let x = 4; x < img.width - 4; x++) {
+      const i = (y * img.width + x) * 4;
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      const btnFace = Math.abs(r - 192) <= 2 && Math.abs(g - 192) <= 2 && Math.abs(b - 192) <= 2;
+      if (!btnFace) ink++;
+    }
+  }
+  return ink;
+}
+
+async function runCase({ name, cmd, title, minColors, minClientInk = 0 }) {
   const pngBase = path.join(OUT, `${name}.png`);
   const args = [
     RUN_JS,
     '--exe=' + NOTEPAD,
-    '--max-batches=8000',
-    `--input=3000:post-cmd:${cmd},0`,
+    '--max-batches=3600',
+    '--quiet-api',
+    `--input=3000:post-cmd:${cmd}`,
     '--png=' + pngBase,
   ];
   let stdout;
@@ -83,7 +104,12 @@ async function runCase({ name, cmd, title, minColors }) {
   if (colors < minColors) {
     return { name, pass: false, reason: `only ${colors} distinct colors (min ${minColors}) in ${backPng}` };
   }
-  return { name, pass: true, info: `hwnd=0x${hwnd.toString(16)} colors=${colors} ${path.basename(backPng)}` };
+  const clientInk = minClientInk ? await countClientInk(backPng) : 0;
+  if (clientInk < minClientInk) {
+    return { name, pass: false, reason: `only ${clientInk} client ink pixels (min ${minClientInk}) in ${backPng}` };
+  }
+  const inkInfo = minClientInk ? ` clientInk=${clientInk}` : '';
+  return { name, pass: true, info: `hwnd=0x${hwnd.toString(16)} colors=${colors}${inkInfo} ${path.basename(backPng)}` };
 }
 
 (async () => {
