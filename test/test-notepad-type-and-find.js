@@ -4,12 +4,14 @@
 //   2. Type "hello world" into the main edit
 //   3. Open Edit > Find (WM_COMMAND id 3)
 //   4. Type "world" into the Find dialog
-//   5. Verify Find dialog FINDREPLACE struct holds findWhat="world"
+//   5. Activate Find Next from the keyboard
+//   6. Verify the substring was selected in the main editor
 //
 // PASS criteria:
 //   - Main edit text == "hello world" before Find opens
 //   - Find dialog edit text == "world"
 //   - FINDREPLACE.lpstrFindWhat == "world"
+//   - Main edit selection covers "world"
 
 const fs = require('fs');
 const path = require('path');
@@ -38,7 +40,9 @@ seq.push(`${b}:keydown:36`); // VK_HOME
 b += 5;
 // Open Find dialog
 seq.push(`${b + 20}:0x111:3`);
-b += 60;
+b += 50;
+seq.push(`${b}:focus-find`);
+b += 10;
 // Type "world" into Find dialog
 for (const ch of 'world') {
   seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
@@ -61,10 +65,13 @@ seq.push(`${b}:dump-focus:before-space`);
 seq.push(`${b + 4}:keydown:32`);       // VK_SPACE -> click Find Next
 seq.push(`${b + 8}:keyup:32`);
 b += 40;
+seq.push(`${b}:dump-main-edit-state:after-find`);
+b += 10;
 
 const inputSpec = seq.join(',');
-// --trace-api=MessageBoxA so we can verify Space->Find Next fired the search.
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=${b + 60} --trace-api=MessageBoxA,FindTextA`;
+// --trace-api=MessageBoxA so we can verify successful Find Next did not fall
+// into the not-found MessageBox path.
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=${b + 60} --trace-api=MessageBoxA,FindTextA --quiet-api`;
 console.log('$', cmd);
 
 let out = '';
@@ -116,12 +123,15 @@ if (focusLine) {
         /class=1 id=1\b/.test(focusLine));
 }
 
-// Space activated Find Next: Notepad ran the search and (because the
-// caret is at end-of-buffer 11 by the time Tab navigation finishes,
-// not at 0) reported "Cannot find world". Both the search firing and
-// the MessageBox text are evidence Space worked.
-check('Space triggered Find Next search (MessageBox "Cannot find \\"world\\"" appeared)',
-      out.includes('Cannot find "world"'));
+const selectedLine = lines.find(l => l.includes('dump-main-edit-state after-find'));
+check('dump-main-edit-state after-find emitted', !!selectedLine);
+if (selectedLine) {
+  check('Find Next selected "world" in main edit',
+        /cursor=11 sel=6\b/.test(selectedLine) && /text="hello world"/.test(selectedLine));
+}
+
+check('Space did not trigger not-found MessageBox',
+      !out.includes('Cannot find "world"'));
 
 check('no UNIMPLEMENTED', !out.includes('UNIMPLEMENTED'));
 check('no CRASH', !out.includes('CRASH'));

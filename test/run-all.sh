@@ -41,6 +41,7 @@ E2E=(
   test/test-notepad-menu.js
   test/test-notepad-menu-items.js
   test/test-find-typing.js
+  test/test-notepad-find-next-positive.js
   test/test-find-cancel.js
   test/test-about-cancel.js
   test/test-open-cancel.js
