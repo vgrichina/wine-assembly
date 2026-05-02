@@ -2012,7 +2012,9 @@
             (if (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
                         (i32.const 0x0B))
               (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
-              (else (call $invalidate_hwnd (local.get $hwnd))))))
+              (else
+                (drop (call $wnd_send_message
+                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
@@ -2053,7 +2055,9 @@
             ;; face. Other kinds use button_wndproc's WM_PAINT.
             (if (i32.eq (local.get $w) (i32.const 0x0B))
               (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
-              (else (call $invalidate_hwnd (local.get $hwnd))))
+              (else
+                (drop (call $wnd_send_message
+                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
             ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
             ;; to parent. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
