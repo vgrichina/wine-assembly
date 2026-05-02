@@ -345,7 +345,7 @@ class WineAssembly {
       }, 100);
     }
     await this.ensureUiFontsReady();
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=52').then(r => r.text()));
+    const bytes = await compileWat(f => fetch('src/' + f + '?v=53').then(r => r.text()));
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -353,7 +353,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=52');
+        const r = await fetch('src/api_table.json?v=53');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -733,7 +733,14 @@ class WineAssembly {
         if (self.threadManager && self.threadManager.checkMainYield()) {
           // Main still waiting — just run worker threads
         } else {
+          const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          if (runStart && self.renderer && self.renderer._profileMark) {
+            self.renderer._profileMark('wasm-run-slice', {
+              steps: activeStepsPerSlice,
+              ms: self.renderer._profileNow() - runStart,
+            });
+          }
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');

@@ -62,10 +62,24 @@
     }
     #toolbar button:active { border-style: inset; }
     #toolbar .debug-midi,
-    #toolbar .debug-slice {
+    #toolbar .debug-slice,
+    #toolbar .debug-profile {
       display: flex;
       align-items: center;
       gap: 4px;
+    }
+    #toolbar .debug-profile label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    #toolbar .debug-profile input {
+      margin: 0;
+    }
+    #input-profile-status {
+      min-width: 78px;
+      color: #404040;
+      font-variant-numeric: tabular-nums;
     }
     #content {
       flex: 1;
@@ -474,6 +488,11 @@
         <button onclick="playDebugMidi()">Play MIDI</button>
         <button onclick="stopDebugMidi()">Stop MIDI</button>
       </span>
+      <span class="debug-profile">
+        <label><input id="input-profile-toggle" type="checkbox" onchange="setInputProfileEnabled(this.checked)">Profile input</label>
+        <button onclick="printInputProfiles()">Log</button>
+        <span id="input-profile-status"></span>
+      </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
@@ -520,20 +539,20 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=52"></script>
-  <script src="lib/dib.js?v=52"></script>
-  <script src="lib/resources-icon.js?v=52"></script>
-  <script src="lib/renderer-input.js?v=52"></script>
-  <script src="lib/renderer.js?v=52"></script>
-  <script src="lib/dll-loader.js?v=52"></script>
-  <script src="lib/storage.js?v=52"></script>
-  <script src="lib/filesystem.js?v=52"></script>
-  <script src="lib/hlp-parser.js?v=52"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=52"></script>
-  <script src="lib/host-imports.js?v=52"></script>
-  <script src="lib/compile-wat.js?v=52"></script>
-  <script src="lib/thread-manager.js?v=52"></script>
-  <script src="host.js?v=52"></script>
+  <script src="lib/mem-utils.js?v=53"></script>
+  <script src="lib/dib.js?v=53"></script>
+  <script src="lib/resources-icon.js?v=53"></script>
+  <script src="lib/renderer-input.js?v=53"></script>
+  <script src="lib/renderer.js?v=53"></script>
+  <script src="lib/dll-loader.js?v=53"></script>
+  <script src="lib/storage.js?v=53"></script>
+  <script src="lib/filesystem.js?v=53"></script>
+  <script src="lib/hlp-parser.js?v=53"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=53"></script>
+  <script src="lib/host-imports.js?v=53"></script>
+  <script src="lib/compile-wat.js?v=53"></script>
+  <script src="lib/thread-manager.js?v=53"></script>
+  <script src="host.js?v=53"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1094,6 +1113,41 @@ Resource-aware Win98 emulator
       for (const app of runningApps) {
         app.wine.stepsPerSlice = selectedRunSlice(app.name);
       }
+    }
+
+    window.DEBUG_INPUT_PROFILE = false;
+    window.DEBUG_INPUT_PROFILE_LOG = false;
+
+    function setInputProfileEnabled(enabled) {
+      window.DEBUG_INPUT_PROFILE = !!enabled;
+      const status = document.getElementById('input-profile-status');
+      if (status) status.textContent = enabled ? 'waiting' : '';
+    }
+
+    function updateInputProfileUI(profile) {
+      const status = document.getElementById('input-profile-status');
+      if (!status || !profile) return;
+      const ms = profile.totalMs || 0;
+      const runMs = profile.steps
+        .filter(s => s.name === 'wasm-run-slice')
+        .reduce((sum, s) => sum + ((s.data && s.data.ms) || 0), 0);
+      status.textContent = `${ms.toFixed(1)}ms run ${runMs.toFixed(1)}`;
+    }
+
+    function printInputProfiles() {
+      const profiles = window.__inputPaintProfiles || [];
+      const last = profiles[profiles.length - 1];
+      if (!last) {
+        console.log('[input-profile] no samples yet');
+        return;
+      }
+      console.log('[input-profile] last profile', last);
+      console.table(last.steps.map(s => ({
+        step: s.name,
+        delta_ms: s.dt.toFixed(2),
+        at_ms: s.at.toFixed(2),
+        detail: s.data ? JSON.stringify(s.data) : '',
+      })));
     }
 
     async function launchApp() {
