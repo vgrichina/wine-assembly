@@ -338,6 +338,8 @@
     (local $text_src_w i32) (local $text_len i32) (local $max_len i32)
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
+    (local $main_edit_h i32) (local $main_state i32) (local $main_state_w i32)
+    (local $main_len i32)
 
     ;; WM_NCPAINT → paint chrome (title bar + border) on back-canvas.
     (if (i32.eq (local.get $msg) (i32.const 0x0085))
@@ -420,11 +422,31 @@
                 (if (i32.load (local.get $edit_sw))
                   (then
                     (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
-                    (if (local.get $text_len)
-                      (then (call $memcpy (local.get $find_buf_w)
+                (if (local.get $text_len)
+                  (then (call $memcpy (local.get $find_buf_w)
                                           (local.get $text_src_w)
                                           (local.get $text_len))))))
                 (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))))
+        ;; Win98 Notepad's Find starts at the current caret. In the web UI
+        ;; the common case is: type text, open Find, search for text that is
+        ;; before the caret. When the main edit is exactly at EOF with no
+        ;; selection, treat the first downward search as starting at top so
+        ;; the visible document is searchable without requiring Home first.
+        (if (i32.and (local.get $flags) (i32.const 0x01))
+          (then
+            (local.set $main_edit_h (call $ctrl_find_by_id (local.get $owner) (i32.const 15)))
+            (local.set $main_state (call $wnd_get_state_ptr (local.get $main_edit_h)))
+            (if (local.get $main_state)
+              (then
+                (local.set $main_state_w (call $g2w (local.get $main_state)))
+                (local.set $main_len (i32.load offset=4 (local.get $main_state_w)))
+                (if (i32.and
+                      (i32.gt_u (local.get $main_len) (i32.const 0))
+                      (i32.and
+                        (i32.eq (i32.load offset=12 (local.get $main_state_w)) (local.get $main_len))
+                        (i32.eq (i32.load offset=16 (local.get $main_state_w)) (local.get $main_len))))
+                  (then (drop (call $wnd_send_message
+                    (local.get $main_edit_h) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))))))))
         (drop (call $post_queue_push (local.get $owner)
                 (i32.const 0xC000) (i32.const 0) (local.get $fr)))
         (return (i32.const 0))))

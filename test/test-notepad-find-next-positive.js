@@ -4,6 +4,7 @@
 // Covers both activation paths that have diverged before:
 //   - real canvas mouse down/up on the Find Next button
 //   - Enter key on the dialog default button
+//   - first downward search with the main edit caret already at EOF
 
 const fs = require('fs');
 const path = require('path');
@@ -28,20 +29,24 @@ function chars(startBatch, text) {
   return [seq, b];
 }
 
-function runCase(name, activateEvents) {
+function runCase(name, activateEvents, opts = {}) {
+  const docText = opts.docText || 'hello';
+  const findText = opts.findText || 'ell';
   const input = [];
   let b = 50;
   {
-    const [seq, next] = chars(b, 'hello');
+    const [seq, next] = chars(b, docText);
     input.push(...seq);
     b = next;
   }
-  input.push(`${b + 5}:keydown:36`); // VK_HOME: search forward from start.
+  if (opts.home !== false) {
+    input.push(`${b + 5}:keydown:36`); // VK_HOME: search forward from start.
+  }
   input.push(`${b + 25}:dump-main-edit-state:before`);
   input.push(`${b + 35}:0x111:3`); // Search > Find...
   input.push(`${b + 75}:focus-find`);
   {
-    const [seq, next] = chars(b + 80, 'ell');
+    const [seq, next] = chars(b + 80, findText);
     input.push(...seq);
     b = next;
   }
@@ -81,6 +86,10 @@ const cases = [
   runCase('Enter default Find Next', b => [
     `${b}:keydown:13`,
   ]),
+  runCase('Find from EOF starts at top', b => [
+    `${b}:mousedown:350:101`,
+    `${b + 10}:mouseup:350:101`,
+  ], { docText: 'hello, w', findText: 'hel', home: false }),
 ];
 
 const checks = [];
@@ -89,14 +98,21 @@ function check(name, pass) { checks.push([name, !!pass]); }
 for (const c of cases) {
   check(`${c.name}: process exited`, c.status === 0 && !c.signal && !c.error);
   check(`${c.name}: Find dialog appeared`, c.out.includes('[FindTextA]'));
-  check(`${c.name}: find edit contains ell`, /dump-find:.*editText="ell"/.test(c.out));
-  check(`${c.name}: main edit started at cursor 0`, /dump-main-edit-state before:.*cursor=0 sel=0 .*text="hello"/.test(c.out));
-  check(`${c.name}: selected substring ell`, /dump-main-edit-state after:.*cursor=4 sel=1 .*text="hello"/.test(c.out));
-  check(`${c.name}: FINDREPLACE has FR_FINDNEXT and ell`, (() => {
-    const m = c.out.match(/dump-fr: flags=0x([0-9a-f]+) findWhat="ell"/);
+  if (c.name === 'Find from EOF starts at top') {
+    check(`${c.name}: find edit contains hel`, /dump-find:.*editText="hel"/.test(c.out));
+    check(`${c.name}: main edit started at EOF`, /dump-main-edit-state before:.*cursor=8 sel=8 .*text="hello, w"/.test(c.out));
+    check(`${c.name}: selected prefix hel`, /dump-main-edit-state after:.*cursor=3 sel=0 .*text="hello, w"/.test(c.out));
+  } else {
+    check(`${c.name}: find edit contains ell`, /dump-find:.*editText="ell"/.test(c.out));
+    check(`${c.name}: main edit started at cursor 0`, /dump-main-edit-state before:.*cursor=0 sel=0 .*text="hello"/.test(c.out));
+    check(`${c.name}: selected substring ell`, /dump-main-edit-state after:.*cursor=4 sel=1 .*text="hello"/.test(c.out));
+  }
+  const term = c.name === 'Find from EOF starts at top' ? 'hel' : 'ell';
+  check(`${c.name}: FINDREPLACE has FR_FINDNEXT and ${term}`, (() => {
+    const m = c.out.match(new RegExp(`dump-fr: flags=0x([0-9a-f]+) findWhat="${term}"`));
     return !!m && (parseInt(m[1], 16) & 0x08) !== 0;
   })());
-  check(`${c.name}: no not-found MessageBox`, !c.out.includes('Cannot find "ell"'));
+  check(`${c.name}: no not-found MessageBox`, !c.out.includes(`Cannot find "${term}"`));
   check(`${c.name}: no UNIMPLEMENTED`, !c.out.includes('UNIMPLEMENTED'));
   check(`${c.name}: no CRASH`, !c.out.includes('CRASH'));
 }
