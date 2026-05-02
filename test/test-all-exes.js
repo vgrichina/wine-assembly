@@ -56,7 +56,7 @@ const TEST_CASES = [
     extraArgs: ['--no-close', '--input=5:0x111:102'] },  // Game > New Game (F2)
   { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire',
     extraArgs: ['--no-close', '--input=5:0x111:1000'] },  // Game > Deal
-  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)' },
+  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)', knownBadRender: 'paint canvas/tools are visually broken' },
   { exe: 'test/binaries/nt/mspaint.exe', name: 'MSPaint (NT)' },
   { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel',
     extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
@@ -73,7 +73,7 @@ const TEST_CASES = [
   // Win98 accessories
   { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad' },
   { exe: 'test/binaries/win98-apps/write.exe', name: 'Write' },
-  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player' },
+  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player', knownBadRender: 'not meaningful/fixable on web at current stage' },
   { exe: 'test/binaries/win98-apps/mplayer.exe', name: 'Media Player' },
   { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
   { exe: 'test/binaries/win98-apps/fontview.exe', name: 'Font Viewer' },
@@ -83,14 +83,14 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control' },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
   { exe: 'test/binaries/win98-apps/explorer.exe', name: 'Explorer (98)' },
-  { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
+  { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
   { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)' },
-  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour' },
-  { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor' },
-  { exe: 'test/binaries/win98-apps/rsrcmtr.exe', name: 'Resource Meter' },
-  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config' },
-  { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup' },
+  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor', knownBadRender: 'not a current-stage target' },
+  { exe: 'test/binaries/win98-apps/rsrcmtr.exe', name: 'Resource Meter', knownBadRender: 'not a current-stage target' },
+  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config', knownBadRender: 'not meaningful/fixable on web at current stage' },
+  { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup', knownBadRender: 'not a current-stage target' },
   { exe: 'test/binaries/win98-apps/notepad98.exe', name: 'Notepad (98)' },
   { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)' },
   { exe: 'test/binaries/win98-apps/telnet.exe', name: 'Telnet' },
@@ -113,11 +113,11 @@ const TEST_CASES = [
   // WEP community 32-bit remakes (archive.org/details/wep-32bit)
   { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
   { exe: 'test/binaries/wep32-community/EmPipe/EMPIPE.EXE', name: 'EmPipe (PipeDream)' },
-  { exe: 'test/binaries/wep32-community/Funpack/Funtris.exe', name: 'Funtris (Tetris)' },
-  { exe: 'test/binaries/wep32-community/Funpack/Peaks.exe', name: 'Peaks (TriPeaks)' },
-  { exe: 'test/binaries/wep32-community/Funpack/Pyramid.exe', name: 'Pyramid (TutsTomb)' },
+  { exe: 'test/binaries/wep32-community/Funpack/Funtris.exe', name: 'Funtris (Tetris)', knownBadRender: 'empty window' },
+  { exe: 'test/binaries/wep32-community/Funpack/Peaks.exe', name: 'Peaks (TriPeaks)', knownBadRender: 'empty window' },
+  { exe: 'test/binaries/wep32-community/Funpack/Pyramid.exe', name: 'Pyramid (TutsTomb)', knownBadRender: 'empty window' },
   { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
-  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)' },
+  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)', knownBadRender: 'requires DirectX 9' },
   { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
   { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)' },
   { exe: 'test/binaries/wep32-community/Tetravex/Tetravex.exe', name: 'Tetravex' },
@@ -130,10 +130,10 @@ const TEST_CASES = [
   { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
   { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX, expected fail)' },
   // Shareware / demos — DirectX titles
-  { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)' },
-  { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)' },
-  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)' },
-  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)' },
+  { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)' },
   { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)' },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
@@ -143,7 +143,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/ddex4.exe', name: 'DX5 DDraw Sample 4 (ddex4)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)', maxBatches: 500 },
   { exe: 'test/binaries/dx-sdk/bin/flip2d.exe', name: 'DX5 Flip2D' },
-  { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette' },
+  { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/dx-sdk/bin/stretch.exe', name: 'DX5 Stretch' },
   { exe: 'test/binaries/dx-sdk/bin/tunnel.exe', name: 'DX5 D3DIM Tunnel (DrawPrimitive)' },
   { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist' },
@@ -343,6 +343,10 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
         }
       }
     }
+    if (tc.knownBadRender && (r.status === 'OK' || r.status === 'WARN')) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — KNOWN_BAD_RENDER (${tc.knownBadRender})`;
+    }
     results.push(r);
 
     const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
@@ -367,6 +371,12 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
   if (blanks.length > 0) {
     console.log('\nBlank canvases (demoted from PASS):');
     for (const r of blanks) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  const knownBad = results.filter(r => r.status === 'WARN' && /KNOWN_BAD_RENDER/.test(r.reason || ''));
+  if (knownBad.length > 0) {
+    console.log('\nKnown bad renders / non-stage targets (demoted from PASS):');
+    for (const r of knownBad) console.log(`  ${r.name}: ${r.reason}`);
   }
 
   process.exit(fail > 0 ? 1 : 0);
