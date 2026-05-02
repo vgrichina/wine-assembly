@@ -1338,11 +1338,12 @@
 
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; WM_CLOSE (0x10): call DestroyWindow(hwnd) — only quit if main/dialog window
+    ;; WM_CLOSE (0x10): default close destroys the target. Only closing the
+    ;; main window should end the message loop; modeless dialogs are ordinary
+    ;; owned windows and closing them must not terminate the app.
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
-      (if (i32.or (i32.eq (local.get $arg0) (global.get $main_hwnd))
-                  (i32.eq (local.get $arg0) (global.get $dlg_hwnd)))
+      (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
         (then (global.set $quit_flag (i32.const 1))))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
         (then (global.set $focus_hwnd (i32.const 0))))
