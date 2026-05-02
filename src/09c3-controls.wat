@@ -842,7 +842,7 @@
           (br $done)))
       ;; Fallback: lone OK.
       (call $msgbox_btn (local.get $dlg) (i32.const 1)
-        (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1))))
+        (local.get $bx) (local.get $by) (i32.const 0x1D9) (i32.const 2) (i32.const 1)))
     ;; Static text + buttons. Used by renderer-input.js for Enter/Esc
     ;; handling on the message box.
     (i32.store offset=28 (call $dlg_record_for_hwnd (local.get $dlg))
@@ -1741,7 +1741,7 @@
   ;; contains two independent radio groups (none of our test apps do today).
   (func $autoradio_clear_siblings (param $hwnd i32)
     (local $parent i32) (local $i i32) (local $rec i32)
-    (local $other i32) (local $st i32) (local $stw i32)
+    (local $other i32) (local $st i32) (local $stw i32) (local $flags i32)
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
     (block $done (loop $scan
@@ -1759,11 +1759,20 @@
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
+              (local.set $flags (i32.load offset=8 (local.get $stw)))
               ;; Clear bit1 (checked) on every autoradio sibling — including
               ;; $hwnd itself; the caller will re-set it after this returns.
               (i32.store offset=8 (local.get $stw)
-                (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0xFFFFFFFD)))
-              (call $invalidate_hwnd (local.get $other))))))
+                (i32.and (local.get $flags) (i32.const 0xFFFFFFFD)))
+              (call $invalidate_hwnd (local.get $other))
+              ;; The browser compositor does not always get another child
+              ;; paint before the next frame. Paint cleared siblings now so
+              ;; stale radio dots cannot remain visible.
+              (if (i32.and (local.get $flags) (i32.const 0x02))
+                (then
+                  (drop (call $wnd_send_message
+                    (local.get $other) (i32.const 0x000F)
+                    (i32.const 0) (i32.const 0)))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
   )
@@ -2429,6 +2438,8 @@
               (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x02)))))
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
             (call $invalidate_hwnd (local.get $hwnd))
+            (drop (call $wnd_send_message
+              (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
             (return (i32.const 0))))
         (call $ctrl_set_check_state (local.get $hwnd) (local.get $wParam))
         (return (i32.const 0))))
@@ -4963,9 +4974,9 @@
 	                                  (global.set $edit_sb_drag_anchor_y (local.get $h))
 	                                  (global.set $edit_sb_drag_anchor_top (local.get $lo))
 	                                  (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                                  (global.set $sb_pressed_part (i32.const 5)))))))))))))))
+	                                  (global.set $sb_pressed_part (i32.const 5))))))))))))))
 	                (call $invalidate_hwnd (local.get $hwnd))
-	                (return (i32.const 0)))))
+	                (return (i32.const 0))))))
 	        (local.set $cur (call $edit_xy_to_offset
 	          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
         (if (i32.eq (local.get $msg) (i32.const 0x0203))

@@ -408,6 +408,8 @@ const extra = [
   { name: 'GetTextCharacterExtra', nargs: 1 },
   // KERNEL32 — fills SYSTEM_INFO struct (CPU count, arch, page size, etc.)
   { name: 'GetSystemInfo', nargs: 1 },
+  // KERNEL32 — default process/system locale (US English).
+  { name: 'GetSystemDefaultLCID', nargs: 0 },
   // ADVAPI32 — returns a constant "user" string
   { name: 'GetUserNameA', nargs: 2 },
   // KERNEL32 — returns a constant "PC" string

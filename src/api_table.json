@@ -11231,5 +11231,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3389844147
+  },
+  {
+    "id": 1518,
+    "name": "GetSystemDefaultLCID",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 544724655
   }
 ]
