@@ -175,6 +175,36 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
 
+    ;; CACA0028: dialog CBT hook returned → dispatch WM_INITDIALOG or
+    ;; return the modeless dialog HWND. This mirrors CreateDialogParamA's
+    ;; direct path, but lets MFC's WH_CBT hook attach m_hWnd first.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0028))
+      (then
+        (if (global.get $dialog_cbt_saved_proc)
+          (then
+            ;; Push saved_hwnd + saved_ret below DlgProc args; CACA0001
+            ;; returns saved_hwnd in EAX after WM_INITDIALOG.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $dialog_cbt_saved_hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $dialog_cbt_saved_ret))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $dialog_cbt_saved_lparam))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x110))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $dialog_cbt_saved_hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+            (global.set $eip (global.get $dialog_cbt_saved_proc))
+            (global.set $steps (i32.const 0))
+            (return)))
+        (global.set $eip (global.get $dialog_cbt_saved_ret))
+        (global.set $eax (global.get $dialog_cbt_saved_hwnd))
+        (return)))
+
     ;; CBT hook continuation — hook returned, now dispatch WM_CREATE
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0002))
       (then

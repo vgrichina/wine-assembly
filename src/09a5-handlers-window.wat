@@ -542,6 +542,53 @@
       (call $paint_flag_set_inv (call $wnd_slot_hwnd (local.get $i)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
+    ;; Fire WH_CBT/HCBT_CREATEWND for modeless dialogs. MFC's dialog
+    ;; creation path installs a CBT hook and uses it to attach the freshly
+    ;; created HWND to the CWnd/CDialog object before WM_INITDIALOG.
+    (if (global.get $cbt_hook_proc)
+      (then
+        (global.set $dialog_cbt_saved_hwnd (local.get $hwnd))
+        (global.set $dialog_cbt_saved_ret (call $gl32 (global.get $esp)))
+        (global.set $dialog_cbt_saved_proc (local.get $arg3))
+        (global.set $dialog_cbt_saved_lparam (local.get $arg4))
+        (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+        ;; Build a CREATESTRUCT at image_base+0x100 and CBT_CREATEWND at
+        ;; image_base+0x140, matching the CreateWindowEx CBT path.
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (local.get $arg4)) ;; lpCreateParams
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (local.get $arg0)) ;; hInstance
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (i32.const 0))     ;; hMenu
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (local.get $arg2)) ;; hwndParent
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110))
+          (select (i32.load16_s (i32.add (local.get $dlg_rec) (i32.const 18))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114))
+          (select (i32.load16_s (i32.add (local.get $dlg_rec) (i32.const 16))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118))
+          (select (i32.load16_s (i32.add (local.get $dlg_rec) (i32.const 14))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c))
+          (select (i32.load16_s (i32.add (local.get $dlg_rec) (i32.const 12))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (call $wnd_get_style (local.get $hwnd)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124))
+          (select (i32.load (i32.add (local.get $dlg_rec) (i32.const 20))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (i32.const 0))     ;; lpszClass
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c))
+          (select (i32.load (i32.add (local.get $dlg_rec) (i32.const 8))) (i32.const 0) (local.get $dlg_rec)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x140)) (i32.add (global.get $image_base) (i32.const 0x100)))
+        (call $gs32 (i32.add (global.get $image_base) (i32.const 0x144)) (i32.const 0))
+        ;; Pop CreateDialogParamA frame (ret + 5 args = 24 bytes), then
+        ;; call the hook. CACA0028 resumes into WM_INITDIALOG or returns.
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x140)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $hwnd))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 3))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $dialog_cbt_ret_thunk))
+        (global.set $eax (local.get $hwnd))
+        (global.set $eip (global.get $cbt_hook_proc))
+        (global.set $steps (i32.const 0))
+        (return)))
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
