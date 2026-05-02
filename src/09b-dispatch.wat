@@ -241,6 +241,11 @@
         ;; unchanged EIP as "handler left EIP alone" and pop [esp].
         (global.set $handler_set_eip (i32.const 1))
         (local.set $arg4 (i32.const 0))  ;; reuse as wndproc temp
+        (if (i32.load (global.get $SHARED_DLG_ENDED))
+          (then
+            (global.set $dlg_ended (i32.const 1))
+            (global.set $dlg_result (i32.load (global.get $SHARED_DLG_RESULT)))
+            (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))))
         ;; If EndDialog was called, destroy dialog and return result
         (if (global.get $dlg_ended)
           (then
@@ -304,6 +309,14 @@
                 (return)))
             (if (i32.eqz (local.get $arg4))
               (then (local.set $arg4 (global.get $dlg_proc))))
+            ;; Some NSIS common controls leave a low non-code value in the
+            ;; wndproc slot while still getting marked dirty. Treat those as
+            ;; default-handled instead of jumping into address 0x00xx.
+            (if (i32.lt_u (local.get $arg4) (global.get $image_base))
+              (then
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
@@ -338,6 +351,8 @@
             ;; x86 wndproc or dialog proc — call via guest stack
             (if (i32.eqz (local.get $arg4))
               (then (local.set $arg4 (global.get $dlg_proc))))
+            (if (i32.lt_u (local.get $arg4) (global.get $image_base))
+              (then (local.set $arg4 (global.get $dlg_proc))))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
             (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
@@ -368,6 +383,8 @@
                     (global.set $steps (i32.const 0))
                     (return)))
                 (if (i32.eqz (local.get $arg4))
+                  (then (local.set $arg4 (global.get $dlg_proc))))
+                (if (i32.lt_u (local.get $arg4) (global.get $image_base))
                   (then (local.set $arg4 (global.get $dlg_proc)))))
               (else
                 ;; No target hwnd — dispatch to the modal dialog proc.
@@ -394,6 +411,7 @@
     ;; Synchronous SendMessage continuation — WndProc returned
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0005))
       (then
+        (global.set $handler_set_eip (i32.const 1))
         (global.set $eip (i32.const 0))  ;; Stop nested run loop
         (return)))
 

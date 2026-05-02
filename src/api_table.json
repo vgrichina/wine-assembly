@@ -11238,5 +11238,12 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 544724655
+  },
+  {
+    "id": 1519,
+    "name": "ImageList_AddMasked",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1580905743
   }
 ]

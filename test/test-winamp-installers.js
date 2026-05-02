@@ -2,9 +2,9 @@
 // Winamp NSIS installer regression.
 //
 // Runs both installer EXEs in silent mode and verifies the durable result:
-// the installed Winamp tree appears in the VFS. The emulator does not spawn
-// child processes, so CreateProcessA is stubbed and the post-install launch
-// path is not the success criterion.
+// the installed Winamp tree appears in the VFS. Also drives the normal NSIS
+// wizard path far enough to complete the install worker and return from the
+// modal installer.
 
 const fs = require('fs');
 const path = require('path');
@@ -75,6 +75,45 @@ for (const tc of CASES) {
 
   console.log(tc.name);
   for (const c of checks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+  console.log('');
+
+  const interactiveCmd = [
+    `node "${RUN}"`,
+    `--exe="${tc.exe}"`,
+    '--max-batches=800000',
+    '--batch-size=5000',
+    '--input=590:0x111:1,610:0x111:1,630:0x111:1',
+    '--no-build',
+    '--quiet-api',
+  ].join(' ');
+
+  console.log('$', interactiveCmd);
+
+  let interactiveOut = '';
+  try {
+    interactiveOut = execSync(interactiveCmd, {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 180000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 80 * 1024 * 1024,
+    });
+  } catch (e) {
+    interactiveOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+  }
+
+  const interactiveChecks = [
+    { name: 'interactive no crash', pass: !/\*\*\* CRASH|RuntimeError|UNIMPLEMENTED API|STUCK at EIP/.test(interactiveOut) },
+    { name: 'interactive reached Installing Files', pass: /Winamp Setup: Installing Files/.test(interactiveOut) },
+    { name: 'interactive worker started', pass: /CreateThread handle=/.test(interactiveOut) },
+    { name: 'interactive returned from installer', pass: /\[Exit\] code=/.test(interactiveOut) },
+  ];
+
+  console.log(`${tc.name} interactive`);
+  for (const c of interactiveChecks) {
     console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
     if (!c.pass) failed++;
   }

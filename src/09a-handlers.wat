@@ -1779,6 +1779,8 @@
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $dlg_ended (i32.const 1))
     (global.set $dlg_result (local.get $arg1))
+    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+    (i32.store (global.get $SHARED_DLG_RESULT) (local.get $arg1))
     ;; DialogBoxParamA's modal pump owns teardown for its active dialog.
     ;; Modeless dialogs created by CreateDialogParamA have no such pump, so
     ;; EndDialog must remove the frame here. Match the modal cleanup path:
@@ -2069,6 +2071,8 @@
     (global.set $dlg_pump_hwnd (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 0))
     (global.set $dlg_proc (local.get $arg3))
     ;; Register dialog proc in wnd_table before $dlg_load so the walker
     ;; can find the slot for WND_DLG_RECORDS, and so SendMessageA
@@ -7193,6 +7197,15 @@
     ;; not guest-code addresses. Dispatch them directly instead of jumping.
     (if (i32.ge_u (local.get $arg0) (i32.const 0xFFFF0000))
       (then
+        ;; Some subclass procs chain WM_PAINT only to let the native control
+        ;; render. Our renderer paints WAT-native controls out of band, and
+        ;; avoiding this chain keeps NSIS treeview paint from re-entering while
+        ;; its dialog procedure is unwinding.
+        (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
         (global.set $eax (call $wat_wndproc_dispatch
           (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -8580,6 +8593,22 @@
     (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
+  (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0xffffffff))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (i32.store
+      (call $g2w (i32.add (local.get $arg0) (i32.const 12)))
+      (i32.add (local.get $count) (i32.const 1)))
+    (global.set $eax (local.get $count))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; CreateStatusWindowA(style, lpszText, hwndParent, wID) — 4 args, returns HWND

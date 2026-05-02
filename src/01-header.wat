@@ -961,6 +961,11 @@
   (global $dlg_pump_hwnd (mut i32) (i32.const 0))   ;; Modal pump hwnd (DialogBoxParamA only)
   (global $dlg_result   (mut i32) (i32.const 0))    ;; EndDialog return value
   (global $dlg_ended    (mut i32) (i32.const 0))    ;; Flag: EndDialog was called
+  ;; Shared-memory mirror for EndDialog calls made from worker-thread WASM
+  ;; instances. Thread globals are private; this lets the main modal pump see
+  ;; installer worker completion.
+  (global $SHARED_DLG_ENDED  i32 (i32.const 0x00003F00))
+  (global $SHARED_DLG_RESULT i32 (i32.const 0x00003F04))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop

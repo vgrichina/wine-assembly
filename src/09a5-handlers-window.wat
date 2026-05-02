@@ -1473,12 +1473,23 @@
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $wndproc i32)
+    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32)
     ;; Intercept TreeView messages (0x1100-0x1150) — handle directly, bypass comctl32
     (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x1100))
                  (i32.le_u (local.get $arg1) (i32.const 0x1150)))
       (then
         (global.set $eax (call $treeview_dispatch
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Paint for WAT-owned controls is rendered by our native control path.
+    ;; Do not enter an app-installed subclass proc just to chain back to the
+    ;; default marker; some NSIS treeview paints unwind with a corrupted frame.
+    (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg0)))
+    (if (i32.and (local.get $ctrl_class)
+                 (i32.eq (local.get $arg1) (i32.const 0x000F)))
+      (then
+        (global.set $eax (call $control_wndproc_dispatch
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
