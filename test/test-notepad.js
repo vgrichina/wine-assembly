@@ -37,6 +37,7 @@ const inputSpec = [
   '31:keypress:101',  // 'e'
   '32:keypress:115',  // 's'
   '33:keypress:116',  // 't'
+  '50:dump-main-edit',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=80 --batch-size=50000 --trace-api --png="${pngPath}"`;
@@ -63,6 +64,7 @@ const hasNegHeight    = /MoveWindow\(0x00010002,[^\)]*0xfffff/.test(out);
 const hasUnimpl       = /UNIMPLEMENTED API:/.test(out);
 const hasCleanExit    = /Exit.*code=0/.test(out) || exitCode === 0;
 const pngWritten      = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 0;
+const hasTypedText    = /dump-main-edit: hwnd=0x[0-9a-f]+ text="Test"/.test(out);
 
 const checks = [
   { name: 'main window created (hwnd=0x10001)',  pass: hasCreateMain },
@@ -70,6 +72,7 @@ const checks = [
   { name: 'edit style multiline (0x50300104)',    pass: hasEditStyle },
   { name: 'no negative-height MoveWindow',        pass: !hasNegHeight },
   { name: 'no UNIMPLEMENTED API crash',           pass: !hasUnimpl },
+  { name: 'typed text reached Notepad edit',      pass: hasTypedText },
   { name: 'PNG snapshot written',                 pass: pngWritten },
   { name: 'clean exit (code=0)',                  pass: hasCleanExit },
 ];

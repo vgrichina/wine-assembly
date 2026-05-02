@@ -1335,7 +1335,7 @@
   ;; 1099: EnumDisplayMonitors(hdc, lprcClip, lpfnEnum, dwData) — 4 args stdcall
   ;; Calls lpfnEnum(hMonitor, hdcMonitor, lprcMonitor, dwData) once for primary monitor
   (func $handle_EnumDisplayMonitors (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $callback i32) (local $data i32) (local $rect_guest i32)
+    (local $ret_addr i32) (local $callback i32) (local $data i32) (local $rect_guest i32) (local $screen i32)
     ;; arg2 = lpfnEnum (callback), arg3 = dwData
     (local.set $callback (local.get $arg2))
     (local.set $data (local.get $arg3))
@@ -1349,13 +1349,14 @@
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     ;; Pop EnumDisplayMonitors frame: ret + 4 args = 20 bytes
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    ;; Allocate RECT {0, 0, 640, 480} on stack (16 bytes)
+    ;; Allocate RECT {0, 0, screenW, screenH} on stack (16 bytes)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
     (local.set $rect_guest (i32.add (i32.sub (global.get $esp) (i32.const 0x12000)) (global.get $image_base)))
+    (local.set $screen (call $host_get_screen_size))
     (call $gs32 (global.get $esp) (i32.const 0))         ;; left
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (i32.const 0))   ;; top
-    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 640)) ;; right
-    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 480)) ;; bottom
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.and (local.get $screen) (i32.const 0xFFFF))) ;; right
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.shr_u (local.get $screen) (i32.const 16))) ;; bottom
     ;; Push callback args right-to-left: dwData, lprcMonitor, hdcMonitor, hMonitor
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $data))          ;; dwData
@@ -2446,9 +2447,39 @@
     (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
-  ;; 200: GetFileTitleA — STUB: unimplemented
+  ;; 200: GetFileTitleA(lpszFile, lpszTitle, cbBuf)
+  ;; Return the display title portion of a path. Success returns 0; if the
+  ;; destination buffer is too small, return the required char count including
+  ;; the NUL terminator. Good enough for Notepad's File->Open title update.
   (func $handle_GetFileTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $p i32) (local $base i32) (local $ch i32) (local $len i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $p (local.get $arg0))
+    (local.set $base (local.get $arg0))
+    (block $done (loop $scan
+      (local.set $ch (call $gl8 (local.get $p)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x5C)) ;; '\'
+                    (i32.eq (local.get $ch) (i32.const 0x2F))) ;; '/'
+            (i32.eq (local.get $ch) (i32.const 0x3A)))         ;; ':'
+        (then (local.set $base (i32.add (local.get $p) (i32.const 1)))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $scan)))
+    (local.set $len (call $guest_strlen (local.get $base)))
+    (if (i32.or (i32.eqz (local.get $arg1))
+                (i32.lt_u (local.get $arg2) (i32.add (local.get $len) (i32.const 1))))
+      (then
+        (global.set $eax (i32.add (local.get $len) (i32.const 1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $guest_strcpy (local.get $arg1) (local.get $base))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 201: ChooseFontA(lpCF) — show the WAT-driven Font picker with face/
@@ -4572,7 +4603,22 @@
 
   ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
   (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $i i32)
+    (local $buf i32) (local $i i32) (local $screen i32)
+    ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
+    ;; We do not emulate taskbar reservation, so the work area is the screen.
+    (if (i32.eq (local.get $arg0) (i32.const 0x30))
+      (then
+        (if (local.get $arg2)
+          (then
+            (local.set $buf (call $g2w (local.get $arg2)))
+            (local.set $screen (call $host_get_screen_size))
+            (i32.store        (local.get $buf) (i32.const 0))
+            (i32.store offset=4  (local.get $buf) (i32.const 0))
+            (i32.store offset=8  (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))
+            (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; arg0=0x29, arg1=cbSize, arg2=pvParam (struct ptr)
     (if (i32.eq (local.get $arg0) (i32.const 0x29))
@@ -9027,21 +9073,22 @@
   )
 
   ;; 919: GetMonitorInfoA(hMonitor, lpmi) — 2 args stdcall
-  ;; Fill MONITORINFO with 640x480 desktop
+  ;; Fill MONITORINFO with the current desktop size.
   (func $handle_GetMonitorInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $screen i32)
     (local.set $wa (call $g2w (local.get $arg1)))
+    (local.set $screen (call $host_get_screen_size))
     ;; MONITORINFO: cbSize(4), rcMonitor(16), rcWork(16), dwFlags(4) = 40 bytes
-    ;; rcMonitor: left=0, top=0, right=640, bottom=480
+    ;; rcMonitor: left=0, top=0, right=screenW, bottom=screenH
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))   ;; left
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))   ;; top
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 640)) ;; right
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 480)) ;; bottom
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.and (local.get $screen) (i32.const 0xFFFF))) ;; right
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.shr_u (local.get $screen) (i32.const 16))) ;; bottom
     ;; rcWork: same as rcMonitor
     (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0))
     (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0))
-    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 640))
-    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.const 480))
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.and (local.get $screen) (i32.const 0xFFFF)))
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.shr_u (local.get $screen) (i32.const 16)))
     ;; dwFlags: MONITORINFOF_PRIMARY = 1
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))
     (global.set $eax (i32.const 1))  ;; success
