@@ -976,10 +976,6 @@ Resource-aware Win98 emulator
       }
       function windowMouseUp(e) {
         if (!mouseDownActive) return;
-        if (!mouseDragActive) {
-          stopMouseDragCapture();
-          return;
-        }
         e.preventDefault();
         e.stopPropagation();
         const { x, y } = eventPoint(e);
@@ -1011,7 +1007,7 @@ Resource-aware Win98 emulator
         window.addEventListener('mouseup', windowMouseUp, true);
       };
       canvas.onmouseup = e => {
-        if (mouseDragActive) return;
+        if (mouseDownActive) return;
         const { x, y } = eventPoint(e);
         renderer.handleMouseUp(x, y, e.button);
       };
