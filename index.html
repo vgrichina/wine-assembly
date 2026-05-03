@@ -959,20 +959,27 @@ Resource-aware Win98 emulator
         return null;
       }
       let mouseDragActive = false;
+      let mouseDownActive = false;
       function stopMouseDragCapture() {
         mouseDragActive = false;
+        mouseDownActive = false;
         window.removeEventListener('mousemove', windowMouseMove, true);
         window.removeEventListener('mouseup', windowMouseUp, true);
       }
       function windowMouseMove(e) {
-        if (!mouseDragActive) return;
+        if (!mouseDownActive) return;
+        mouseDragActive = true;
         e.preventDefault();
         e.stopPropagation();
         const { x, y } = eventPoint(e);
         renderer.handleMouseMove(x, y);
       }
       function windowMouseUp(e) {
-        if (!mouseDragActive) return;
+        if (!mouseDownActive) return;
+        if (!mouseDragActive) {
+          stopMouseDragCapture();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         const { x, y } = eventPoint(e);
@@ -998,7 +1005,8 @@ Resource-aware Win98 emulator
           for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
         }
         renderer.handleMouseDown(cx, cy, e.button);
-        mouseDragActive = true;
+        mouseDownActive = true;
+        mouseDragActive = false;
         window.addEventListener('mousemove', windowMouseMove, true);
         window.addEventListener('mouseup', windowMouseUp, true);
       };
