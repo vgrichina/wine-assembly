@@ -142,7 +142,7 @@ for (const tc of CASES) {
       },
       {
         name: 'canvas scrollbar down arrow scrolls license text',
-        input: '600:click:400:227,620:dlg-send:1000:206:0:0',
+        input: '600:click:400:250,620:dlg-send:1000:206:0:0',
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
       },
       {

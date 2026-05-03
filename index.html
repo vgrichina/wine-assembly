@@ -958,7 +958,29 @@ Resource-aware Win98 emulator
         }
         return null;
       }
+      let mouseDragActive = false;
+      function stopMouseDragCapture() {
+        mouseDragActive = false;
+        window.removeEventListener('mousemove', windowMouseMove, true);
+        window.removeEventListener('mouseup', windowMouseUp, true);
+      }
+      function windowMouseMove(e) {
+        if (!mouseDragActive) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { x, y } = eventPoint(e);
+        renderer.handleMouseMove(x, y);
+      }
+      function windowMouseUp(e) {
+        if (!mouseDragActive) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { x, y } = eventPoint(e);
+        renderer.handleMouseUp(x, y, e.button);
+        stopMouseDragCapture();
+      }
       canvas.onmousedown = e => {
+        e.preventDefault();
         canvas.focus();
         if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPoint(e);
@@ -976,8 +998,12 @@ Resource-aware Win98 emulator
           for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
         }
         renderer.handleMouseDown(cx, cy, e.button);
+        mouseDragActive = true;
+        window.addEventListener('mousemove', windowMouseMove, true);
+        window.addEventListener('mouseup', windowMouseUp, true);
       };
       canvas.onmouseup = e => {
+        if (mouseDragActive) return;
         const { x, y } = eventPoint(e);
         renderer.handleMouseUp(x, y, e.button);
       };
@@ -1116,6 +1142,7 @@ Resource-aware Win98 emulator
       window.addEventListener('keypress', handleKeyPress, { capture: true });
       window.addEventListener('beforeinput', handleBeforeInput, { capture: true });
       canvas.onmousemove = e => {
+        if (mouseDragActive) return;
         const { x: mx, y: my } = eventPoint(e);
         renderer.handleMenuHover(mx, my);
         // Always deliver mouse moves — WM_SETCURSOR depends on it, and games
