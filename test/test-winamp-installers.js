@@ -140,6 +140,16 @@ for (const tc of CASES) {
         input: '600:dlg-send:1000:513:1:1573254,610:dlg-send:1000:512:1:5898630,620:dlg-send:1000:514:0:5898630',
         pattern: /dlg-send: id=1000 .* msg=0x200 .* firstVisible=54/,
       },
+      {
+        name: 'canvas scrollbar down arrow scrolls license text',
+        input: '600:click:400:227,620:dlg-send:1000:206:0:0',
+        pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
+      },
+      {
+        name: 'canvas scrollbar thumb drag scrolls license text',
+        input: '600:mousedown:403:99,610:mousemove:403:165,620:mouseup:403:165,640:dlg-send:1000:206:0:0',
+        pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=[1-9][0-9]*/,
+      },
     ];
 
     for (const probe of scrollProbes) {

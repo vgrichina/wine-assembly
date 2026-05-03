@@ -5757,6 +5757,8 @@
   ;; x|(y<<16); the child receives a child-relative lParam. Button kind=7
   ;; (group-box) is skipped as non-interactive. Used by JS to avoid
   ;; reimplementing CONTROL_GEOM hit-testing for WAT-managed dialogs.
+  ;; NSIS wizard pages are child dialogs inside an outer dialog frame, so
+  ;; recurse into child windows before delivering the mouse event to the page.
   (func $dialog_route_mouse (export "dialog_route_mouse")
     (param $parent i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $slot i32) (local $ch i32) (local $cls i32)
@@ -5815,6 +5817,9 @@
             (i32.shl
               (i32.and (i32.sub (local.get $py) (local.get $cy)) (i32.const 0xFFFF))
               (i32.const 16))))
+          (if (call $dialog_route_mouse
+                (local.get $ch) (local.get $msg) (local.get $wParam) (local.get $ch_lp))
+            (then (return (i32.const 1))))
           ;; Click on a sibling control while another combo is dropped → cancel
           ;; that combo first (matches Win98: any click outside the dropdown's
           ;; field/listbox dismisses it). Skip when the hit IS the open combo

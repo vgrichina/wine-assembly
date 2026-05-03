@@ -2010,11 +2010,32 @@ async function main() {
         }
         let found = 0;
         if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id) {
-          let s = 0;
-          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
-            const ch = we.wnd_slot_hwnd(s);
-            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) { found = ch; break; }
-            s++;
+          const seen = new Set();
+          const findChildById = (parent) => {
+            if (!parent || seen.has(parent)) return 0;
+            seen.add(parent);
+            let s = 0;
+            while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+              const ch = we.wnd_slot_hwnd(s);
+              if (ch && we.ctrl_get_id(ch) === ev.ctrlId) return ch;
+              const nested = findChildById(ch);
+              if (nested) return nested;
+              s++;
+            }
+            return 0;
+          };
+          found = findChildById(dlg);
+          if (!found && renderer) {
+            const wins = Object.values(renderer.windows || {})
+              .filter(w => w && w.visible && w.isDialog)
+              .sort((a, b) => {
+                const area = (a.w * a.h) - (b.w * b.h);
+                return area || ((b.zOrder || 0) - (a.zOrder || 0));
+              });
+            for (const w of wins) {
+              found = findChildById(w.hwnd | 0);
+              if (found) break;
+            }
           }
         }
         if (found) {
@@ -2043,11 +2064,32 @@ async function main() {
         }
         let found = 0;
         if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id) {
-          let s = 0;
-          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
-            const ch = we.wnd_slot_hwnd(s);
-            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) { found = ch; break; }
-            s++;
+          const seen = new Set();
+          const findChildById = (parent) => {
+            if (!parent || seen.has(parent)) return 0;
+            seen.add(parent);
+            let s = 0;
+            while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+              const ch = we.wnd_slot_hwnd(s);
+              if (ch && we.ctrl_get_id(ch) === ev.ctrlId) return ch;
+              const nested = findChildById(ch);
+              if (nested) return nested;
+              s++;
+            }
+            return 0;
+          };
+          found = findChildById(dlg);
+          if (!found && renderer) {
+            const wins = Object.values(renderer.windows || {})
+              .filter(w => w && w.visible && w.isDialog)
+              .sort((a, b) => {
+                const area = (a.w * a.h) - (b.w * b.h);
+                return area || ((b.zOrder || 0) - (a.zOrder || 0));
+              });
+            for (const w of wins) {
+              found = findChildById(w.hwnd | 0);
+              if (found) break;
+            }
           }
         }
         if (found) {
