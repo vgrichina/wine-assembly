@@ -339,6 +339,35 @@ for (const tc of CASES) {
     }
     console.log('');
 
+    const optionsPng = path.join(__dirname, 'output', 'winamp295-options-page.png');
+    const optionsCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=760',
+      '--batch-size=5000',
+      '--input=600:mousedown:373:283,620:mouseup:373:283,700:png:' + optionsPng,
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', optionsCmd);
+
+    try {
+      execSync(optionsCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (_) {}
+
+    const optionsPngOk = fs.existsSync(optionsPng) && fs.statSync(optionsPng).size > 10000;
+    console.log(`${tc.name} options page`);
+    console.log((optionsPngOk ? 'PASS  ' : 'FAIL  ') + 'options page PNG captured');
+    if (!optionsPngOk) failed++;
+    console.log('');
+
     const folderPng = path.join(__dirname, 'output', 'winamp295-folder-page.png');
     const folderCmd = [
       `node "${RUN}"`,

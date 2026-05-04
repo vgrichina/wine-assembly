@@ -7,6 +7,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const hostJs = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const deployJs = fs.readFileSync(path.join(ROOT, 'tools', 'deploy-berrry.js'), 'utf8');
 
 for (const rel of [
@@ -34,6 +35,10 @@ assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direc
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
+assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
+assert(indexHtml.includes('lib/host-imports.js?v=56'), 'web host should cache-bust host-imports after GDI changes');
+assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
+assert(hostJs.includes("'?v=56'"), 'host.js should cache-bust WAT source fetches');
 
 console.log('PASS  web Pinball manifest includes MIDI assets');
 console.log('PASS  deploy filters include .mid/.inf/DAT and do not skip pinball assets');
@@ -41,3 +46,4 @@ console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');
+console.log('PASS  web host cache-buster is current');
