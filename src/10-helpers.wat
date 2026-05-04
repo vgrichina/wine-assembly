@@ -798,6 +798,11 @@
   ;; update rect is non-empty.
   (func $paint_select_next_dirty (result i32)
     (local $i i32) (local $hwnd i32) (local $style i32) (local $cs i32) (local $ctrl_wh i32)
+    ;; Main-window invalidation historically used $paint_pending while child
+    ;; windows used PAINT_FLAGS. The region-driven selector is the single
+    ;; paint source now, so mirror main pending into the same flag table.
+    (if (i32.and (global.get $paint_pending) (global.get $main_hwnd))
+      (then (call $paint_flag_set (global.get $main_hwnd))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
@@ -813,7 +818,9 @@
                 (i32.eqz (i32.and (local.get $style) (i32.const 0x10000000))) ;; WS_VISIBLE
                 (i32.eqz (local.get $ctrl_wh)))
             (then
-              (call $paint_flag_clear_hwnd (local.get $hwnd)))
+              (call $paint_flag_clear_hwnd (local.get $hwnd))
+              (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+                (then (global.set $paint_pending (i32.const 0)))))
             (else
               (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
               (if (i32.and
@@ -824,7 +831,9 @@
                       (i32.eqz (i32.and (local.get $ctrl_wh) (i32.const 0xFFFF)))
                       (i32.eqz (i32.shr_u (local.get $ctrl_wh) (i32.const 16)))))
                 (then
-                  (call $paint_flag_clear_hwnd (local.get $hwnd)))
+                  (call $paint_flag_clear_hwnd (local.get $hwnd))
+                  (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+                    (then (global.set $paint_pending (i32.const 0)))))
                 (else
                   (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
                     (then
@@ -832,7 +841,9 @@
                     (else
                       ;; A stale paint bit without an update rect must not
                       ;; keep the message pump spinning.
-                      (call $paint_flag_clear_hwnd (local.get $hwnd))))))))))
+                      (call $paint_flag_clear_hwnd (local.get $hwnd))
+                      (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+                        (then (global.set $paint_pending (i32.const 0))))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))

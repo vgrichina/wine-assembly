@@ -2154,21 +2154,42 @@ async function main() {
             if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
           }
         }
-        const controls = [];
-        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd) {
+        const dumpDialog = (targetDlg) => {
+          const controls = [];
+          if (!targetDlg || !we.wnd_next_child_slot || !we.wnd_slot_hwnd) return controls;
           let s = 0;
-          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+          while ((s = we.wnd_next_child_slot(targetDlg, s)) !== -1) {
             const ch = we.wnd_slot_hwnd(s);
             const cls = we.ctrl_get_class ? we.ctrl_get_class(ch) : -1;
             const id = we.ctrl_get_id ? we.ctrl_get_id(ch) : -1;
             const xy = we.ctrl_get_xy ? we.ctrl_get_xy(ch) : 0;
             const wh = we.ctrl_get_wh ? we.ctrl_get_wh(ch) : 0;
             const style = we.wnd_get_style_export ? we.wnd_get_style_export(ch) >>> 0 : 0;
-            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}`);
+            let text = '';
+            if (cls === 1 && we.button_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.button_get_text(ch, buf, 256);
+              const wa = g2w(buf);
+              const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+              text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+            }
+            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}${text}`);
             s++;
           }
+          return controls;
+        };
+        if (ev.label === 'all' && renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (a.zOrder || 0) - (b.zOrder || 0));
+          for (const w of wins) {
+            const controls = dumpDialog(w.hwnd | 0);
+            logs.push(`[input] dlg-dump:all dlg=0x${(w.hwnd | 0).toString(16)} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
+          }
+        } else {
+          const controls = dumpDialog(dlg);
+          logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
         }
-        logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.
         // For find dialog the userdata holds the guest FR ptr; FR.Flags
@@ -2319,7 +2340,7 @@ async function main() {
         // so it reaches WAT-native dialog children via dialog_route_mouse.
         renderer.handleMouseDown(ev.x, ev.y, 1);
         renderer.handleMouseUp(ev.x, ev.y, 1);
-        renderer.handleMouseDown(ev.x, ev.y, 1);
+        renderer.handleMouseDown(ev.x, ev.y, 1, { doubleClick: true });
         renderer.handleMouseUp(ev.x, ev.y, 1);
         logs.push(`[input] dblclick ${ev.x},${ev.y} at batch ${batch}`);
       } else if (ev.action === 'mouseup' && renderer && renderer.handleMouseUp) {

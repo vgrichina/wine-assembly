@@ -107,14 +107,22 @@ async function diffPngs(aPath, bPath) {
     const c = createCanvas(w, h);
     c.getContext('2d').drawImage(img, 0, 0);
     const data = c.getContext('2d').getImageData(0, 0, w, h).data;
-    let nonGreen = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      if (!(data[i] < 20 && data[i+1] > 100 && data[i+2] < 20)) nonGreen++;
+    let cardPixels = 0;
+    for (let y = 120; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if ((r > 230 && g > 230 && b > 230) ||
+            (r > 180 && g < 60 && b < 60) ||
+            (r < 30 && g < 30 && b < 30)) {
+          cardPixels++;
+        }
+      }
     }
-    console.log(`  non-green pixels in before: ${nonGreen}`);
+    console.log(`  card-like pixels in before tableau: ${cardPixels}`);
     checks.push({
-      name: 'Initial deal shows cards (>= 20000 non-green px)',
-      pass: nonGreen >= 20000,
+      name: 'Initial deal shows tableau cards (>= 50000 card px)',
+      pass: cardPixels >= 50000,
     });
 
     const d = await diffPngs(beforePng, afterPng);
