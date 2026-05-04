@@ -39,22 +39,25 @@ class WineAssembly {
     return this._audioCtx;
   }
 
-  getImports() {
+  getImports(options) {
     const self = this;
+    const opts = options || {};
     const ctx = {
       getMemory: () => self.memory.buffer,
       apiTable: self.apiTable,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
-      get exports() { return self.instance ? self.instance.exports : null; },
+      get exports() { return opts.exports || (self.instance ? self.instance.exports : null); },
+      vfs: opts.vfs || null,
+      sharedGdi: opts.sharedGdi || null,
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
         const baseName = name.replace(/^.*[\\\/]/, '');
         const lowerName = name.toLowerCase().replace(/\//g, '\\');
         const lowerBase = baseName.toLowerCase();
-        const vfs = self._helpCtx && self._helpCtx.vfs;
+        const vfs = ctx.vfs || (self._helpCtx && self._helpCtx.vfs);
         if (vfs && vfs.files) {
           const candidates = [
             lowerName,
@@ -93,9 +96,12 @@ class WineAssembly {
         }
       },
     };
-    self._helpCtx = ctx;
-    self.hostCtx = ctx;
+    if (!opts.detached) {
+      self._helpCtx = ctx;
+      self.hostCtx = ctx;
+    }
     const base = createHostImports(ctx);
+    ctx.sharedGdi = base.gdi;
     const h = base.host;
 
     // --- Browser-specific overrides ---
@@ -259,11 +265,13 @@ class WineAssembly {
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
     h.wait_single = (handle, t) => self.threadManager ? self.threadManager.waitSingle(handle, t) : 0;
     h.wait_multiple = (n, ha, wa, t) => self.threadManager ? self.threadManager.waitMultiple(n, ha, wa, t) : 0;
+    h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;
+    h.release_semaphore = (handle, count, prev) => self.threadManager ? self.threadManager.releaseSemaphore(handle, count, prev) : 0;
 
     // Memory is set later in init()
     h.memory = null;
 
-    return { host: h };
+    return { host: h, gdi: base.gdi };
   }
 
   logToUI(msg) {
@@ -373,7 +381,13 @@ class WineAssembly {
     // Create ThreadManager
     const self = this;
     const makeWorkerImports = (tid) => {
-      const wi = self.getImports();
+      const mainCtx = self.hostCtx || self._helpCtx || {};
+      const wi = self.getImports({
+        detached: true,
+        exports: self.instance.exports,
+        vfs: mainCtx.vfs,
+        sharedGdi: mainCtx.sharedGdi,
+      });
       wi.host.memory = self.memory;
       wi.host.log = () => {};
       wi.host.log_i32 = () => {};

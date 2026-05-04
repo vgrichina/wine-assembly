@@ -5265,7 +5265,8 @@
                   (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
                   (i32.const 16) (local.get $h)
                   (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
-                  (i32.const 0))))
+                  (select (global.get $sb_pressed_part) (i32.const 0)
+                          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
             (return (i32.const 0))))
         (if (local.get $buf)
           (then
@@ -5389,7 +5390,8 @@
               (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
               (i32.const 16) (local.get $h)
               (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
-              (i32.const 0))))
+              (select (global.get $sb_pressed_part) (i32.const 0)
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
         (return (i32.const 0))))
 
     ;; ---------- EM_SETLIMITTEXT / EM_LIMITTEXT (0x00C5) ----------

@@ -71,6 +71,28 @@ async function countNonBtnFacePixels(pngPath, rect) {
   return count;
 }
 
+async function diffPixelsInRect(aPath, bPath, rect) {
+  const a = await loadImage(aPath);
+  const b = await loadImage(bPath);
+  const ca = createCanvas(a.width, a.height);
+  const cb = createCanvas(b.width, b.height);
+  const xa = ca.getContext('2d');
+  const xb = cb.getContext('2d');
+  xa.drawImage(a, 0, 0);
+  xb.drawImage(b, 0, 0);
+  const da = xa.getImageData(0, 0, a.width, a.height).data;
+  const db = xb.getImageData(0, 0, b.width, b.height).data;
+  let count = 0;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * a.width + x) * 4;
+      const delta = Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
+      if (delta > 30) count++;
+    }
+  }
+  return count;
+}
+
 async function main() {
 for (const tc of CASES) {
   if (!fs.existsSync(tc.exe)) {
@@ -236,6 +258,47 @@ for (const tc of CASES) {
           `scrolled license text stays clipped above RichEdit (${strayInk} stray dark pixels)`);
         if (!clipPass) failed++;
       }
+    }
+    console.log('');
+
+    const pressedBase = path.join(__dirname, 'output', 'winamp295-scrollbar-base.png');
+    const pressedHeld = path.join(__dirname, 'output', 'winamp295-scrollbar-held.png');
+    const pressedCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=650',
+      '--batch-size=5000',
+      `--input=600:png:${pressedBase},610:mousedown:400:250,620:png:${pressedHeld},630:mouseup:400:250`,
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', pressedCmd);
+
+    try {
+      execSync(pressedCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (_) {}
+
+    const pressedPngsOk =
+      fs.existsSync(pressedBase) && fs.statSync(pressedBase).size > 10000 &&
+      fs.existsSync(pressedHeld) && fs.statSync(pressedHeld).size > 10000;
+    const downArrowDiff = pressedPngsOk
+      ? await diffPixelsInRect(pressedBase, pressedHeld, { x: 397, y: 241, w: 16, h: 16 })
+      : 0;
+    const pressedChecks = [
+      { name: 'scrollbar down arrow shows pressed state while held', pass: downArrowDiff > 20 },
+    ];
+
+    console.log(`${tc.name} scrollbar visuals`);
+    for (const c of pressedChecks) {
+      console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name + ` (${downArrowDiff} px)`);
+      if (!c.pass) failed++;
     }
     console.log('');
 
