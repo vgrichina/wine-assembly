@@ -13,8 +13,7 @@ echo "Concatenating WAT parts..."
 export LC_ALL=C
 cat src/*.wat > build/combined.wat
 
-echo "Compiling combined.wat..."
-wat2wasm --enable-tail-call --enable-threads build/combined.wat -o build/wine-assembly.wasm
+echo "Compiling with lib/compile-wat.js..."
+node tools/build-compile-wat.js
 
-echo "Build complete: build/wine-assembly.wasm"
 ls -la build/wine-assembly.wasm
