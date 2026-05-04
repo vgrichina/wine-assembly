@@ -54,6 +54,23 @@ async function countNearBlackPixels(pngPath, rect) {
   return count;
 }
 
+async function countNonBtnFacePixels(pngPath, rect) {
+  const img = await loadImage(pngPath);
+  const canvas = createCanvas(img.width, img.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, img.width, img.height).data;
+  let count = 0;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * img.width + x) * 4;
+      const delta = Math.abs(data[i] - 192) + Math.abs(data[i + 1] - 192) + Math.abs(data[i + 2] - 192);
+      if (delta > 30) count++;
+    }
+  }
+  return count;
+}
+
 async function main() {
 for (const tc of CASES) {
   if (!fs.existsSync(tc.exe)) {
@@ -104,7 +121,7 @@ for (const tc of CASES) {
     const licenseCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=620',
+      '--max-batches=700',
       '--batch-size=5000',
       '--input=600:dlg-dump:license',
       `--png="${pngPath}"`,
@@ -129,10 +146,14 @@ for (const tc of CASES) {
     }
 
     const pngOk = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 10000;
+    const wizardButtonInk = pngOk
+      ? await countNonBtnFacePixels(pngPath, { x: 8, y: 268, w: 412, h: 40 })
+      : 0;
     const licenseChecks = [
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
       { name: 'license text uses word-wrapped DrawText', pass: /gdi_draw_text\(0x5000d, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
       { name: 'license page PNG captured', pass: pngOk },
+      { name: 'license wizard buttons are visible', pass: wizardButtonInk > 1000 },
     ];
 
     console.log(`${tc.name} license page`);

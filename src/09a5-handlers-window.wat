@@ -678,7 +678,10 @@
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
-          (else (call $paint_flag_set_inv (local.get $arg0))))))
+          (else
+            (call $paint_flag_set_inv (local.get $arg0))
+            (if (call $wnd_get_parent (local.get $arg0))
+              (then (call $paint_flag_set_inv (call $wnd_get_parent (local.get $arg0)))))))))
     ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
     ;; with the new client dimensions so GetMessageA delivers correct values.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
