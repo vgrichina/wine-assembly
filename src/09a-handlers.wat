@@ -1221,8 +1221,7 @@
     (if (local.get $arg0)
       (then
         (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
-        ;; Phase 3b/3c: apply CLIPCHILDREN / CLIPSIBLINGS exclusions.
-        (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0))))
+        (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0)))
       (else
         (local.set $hdc (call $host_alloc_screen_dc))))
     (global.set $eax (local.get $hdc))
@@ -2983,8 +2982,9 @@
         (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
         (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
-    ;; Phase 3b/3c: WS_CLIPCHILDREN / WS_CLIPSIBLINGS
-    (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))
+    ;; WAT-owned visible clipping: client bounds, update rgn, parent,
+    ;; CLIPCHILDREN and CLIPSIBLINGS all compose into the HDC clip.
+    (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -4563,7 +4563,7 @@
     (local $hdc i32)
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 1)))
     (if (local.get $arg0)
-      (then (drop (call $host_apply_window_clip (local.get $hdc) (local.get $arg0)))))
+      (then (call $dc_apply_window_clip (local.get $hdc) (local.get $arg0))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

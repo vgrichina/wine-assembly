@@ -834,6 +834,182 @@
     (i32.store offset=8  (local.get $rec) (i32.const 0))
     (i32.store offset=12 (local.get $rec) (i32.const 0)))
 
+  ;; ---- WAT-owned window DC clipping -------------------------------------
+  ;; These helpers build the Win32 visible clip for window DCs. JS owns only
+  ;; the target canvas and applies the resulting DC clip region.
+
+  (func $wnd_client_w_for_clip (param $hwnd i32) (result i32)
+    (local $style i32) (local $sz i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (return (i32.and (local.get $sz) (i32.const 0xFFFF)))))
+    (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+    (i32.and (local.get $sz) (i32.const 0xFFFF)))
+
+  (func $wnd_client_h_for_clip (param $hwnd i32) (result i32)
+    (local $style i32) (local $sz i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (return (i32.shr_u (local.get $sz) (i32.const 16)))))
+    (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+    (i32.shr_u (local.get $sz) (i32.const 16)))
+
+  (func $dc_clip_to_parent_client (param $hdc i32) (param $hwnd i32)
+    (local $parent i32) (local $xy i32) (local $x i32) (local $y i32)
+    (local $pw i32) (local $ph i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
+    (local.set $x (i32.and (local.get $xy) (i32.const 0xFFFF)))
+    (local.set $y (i32.shr_u (local.get $xy) (i32.const 16)))
+    (local.set $pw (call $wnd_client_w_for_clip (local.get $parent)))
+    (local.set $ph (call $wnd_client_h_for_clip (local.get $parent)))
+    (if (i32.and (i32.gt_s (local.get $pw) (i32.const 0))
+                 (i32.gt_s (local.get $ph) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc)
+          (i32.sub (i32.const 0) (local.get $x))
+          (i32.sub (i32.const 0) (local.get $y))
+          (i32.sub (local.get $pw) (local.get $x))
+          (i32.sub (local.get $ph) (local.get $y)))))))
+
+  (func $dc_exclude_children_for_clip (param $hdc i32) (param $hwnd i32) (param $origin_x i32) (param $origin_y i32)
+    (local $style i32) (local $slot i32) (local $ch i32) (local $cstyle i32)
+    (local $xy i32) (local $wh i32) (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x02000000))) ;; WS_CLIPCHILDREN
+      (then (return)))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $cstyle (call $wnd_get_style (local.get $ch)))
+      (if (i32.and (local.get $cstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
+          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
+          (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
+                       (i32.gt_s (local.get $chh) (i32.const 0)))
+            (then
+              (drop (call $host_gdi_exclude_clip_rect
+                (local.get $hdc)
+                (i32.add (local.get $origin_x) (local.get $cx))
+                (i32.add (local.get $origin_y) (local.get $cy))
+                (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
+                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh)))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br 0))))
+
+  (func $dc_exclude_siblings_for_clip (param $hdc i32) (param $hwnd i32)
+    (local $style i32) (local $parent i32) (local $myxy i32) (local $myx i32) (local $myy i32)
+    (local $slot i32) (local $my_slot i32) (local $sib i32) (local $sstyle i32)
+    (local $xy i32) (local $wh i32) (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
+      (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $my_slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $my_slot) (i32.const 0)) (then (return)))
+    (local.set $myxy (call $ctrl_get_xy_packed (local.get $hwnd)))
+    (local.set $myx (i32.and (local.get $myxy) (i32.const 0xFFFF)))
+    (local.set $myy (i32.shr_u (local.get $myxy) (i32.const 16)))
+    ;; Later slots are treated as above us; this matches existing WAT
+    ;; sibling enumeration until an explicit z-order table exists.
+    (local.set $slot (i32.add (local.get $my_slot) (i32.const 1)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+      (local.set $sib (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.and
+            (i32.ne (local.get $sib) (i32.const 0))
+            (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+        (then
+          (local.set $sstyle (call $wnd_get_style (local.get $sib)))
+          (if (i32.and (local.get $sstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
+            (then
+              (local.set $xy (call $ctrl_get_xy_packed (local.get $sib)))
+              (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
+              (local.set $sx (i32.and (local.get $xy) (i32.const 0xFFFF)))
+              (local.set $sy (i32.shr_u (local.get $xy) (i32.const 16)))
+              (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+              (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
+              (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
+                           (i32.gt_s (local.get $sh) (i32.const 0)))
+                (then
+                  (drop (call $host_gdi_exclude_clip_rect
+                    (local.get $hdc)
+                    (i32.sub (local.get $sx) (local.get $myx))
+                    (i32.sub (local.get $sy) (local.get $myy))
+                    (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
+                    (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh)))))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br 0))))
+
+  (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)
+    (local $w i32) (local $h i32)
+    (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
+    (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                 (i32.gt_s (local.get $h) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+    (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_children_for_clip (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+
+  (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)
+    (local $style i32) (local $wh i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (if (i32.and
+              (i32.gt_s (i32.and (local.get $wh) (i32.const 0xFFFF)) (i32.const 0))
+              (i32.gt_s (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 0)))
+          (then
+            (drop (call $host_gdi_intersect_clip_rect
+              (local.get $hdc) (i32.const 0) (i32.const 0)
+              (i32.and (local.get $wh) (i32.const 0xFFFF))
+              (i32.shr_u (local.get $wh) (i32.const 16))))))))
+    (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_children_for_clip
+      (local.get $hdc) (local.get $hwnd)
+      (call $client_rect_get_l (local.get $hwnd))
+      (call $client_rect_get_t (local.get $hwnd)))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+
+  (func $dc_apply_nc_clip (param $hdc i32) (param $hwnd i32) (param $w i32) (param $h i32)
+    (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                 (i32.gt_s (local.get $h) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+    (local.set $cr_l (call $client_rect_get_l (local.get $hwnd)))
+    (local.set $cr_t (call $client_rect_get_t (local.get $hwnd)))
+    (local.set $cr_r (call $client_rect_get_r (local.get $hwnd)))
+    (local.set $cr_b (call $client_rect_get_b (local.get $hwnd)))
+    (if (i32.and (i32.gt_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
+                 (i32.gt_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_exclude_clip_rect
+          (local.get $hdc)
+          (local.get $cr_l) (local.get $cr_t)
+          (local.get $cr_r) (local.get $cr_b))))))
+
   ;; $post_queue_push(hwnd, msg, wParam, lParam): append to the ring at 0x400.
   ;; Same layout as PostMessageA. Returns 1 on success, 0 if full.
   (func $post_queue_push

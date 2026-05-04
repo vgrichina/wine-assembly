@@ -59,35 +59,20 @@
     (local $edge i32)        ;; EDGE_RAISED (0x05) or EDGE_SUNKEN (0x0A)
     (local $off i32)         ;; glyph offset (0 or 1) when pressed
     (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
-    (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
     (local $nc_style i32) (local $has_min i32) (local $has_max i32)
     (local $glyph_brush i32)
 
-    ;; Use whole-window DC (0xC0000 offset) so _getDrawTarget returns
-    ;; ox=0,oy=0 — ncpaint draws at window-local coords without needing
-    ;; _activeChildDraw override from JS.
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0xC0000)))
+    ;; NC paint gets a real typed DC with a WAT-built visible clip:
+    ;; window rect minus client rect. JS only applies this region to the
+    ;; top-level canvas.
+    (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
     (local.set $has_caption (i32.and (local.get $flags) (i32.const 0x08)))
     (local.set $is_active   (i32.and (local.get $flags) (i32.const 0x01)))
     (local.set $is_dialog   (i32.and (local.get $flags) (i32.const 0x02)))
     (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
 
-    ;; Fill NC region with btnFace. Exclude CLIENT_RECT from the DC's clip
-    ;; so child pixels on the shared back-canvas survive NC-only triggers
-    ;; (SetWindowTextA, activation, flash). Fall back to full fill when
-    ;; CLIENT_RECT is unset (pre-NCCALCSIZE — safe, children haven't
-    ;; painted yet).
-    (local.set $cr_l (call $client_rect_get_l (local.get $hwnd)))
-    (local.set $cr_t (call $client_rect_get_t (local.get $hwnd)))
-    (local.set $cr_r (call $client_rect_get_r (local.get $hwnd)))
-    (local.set $cr_b (call $client_rect_get_b (local.get $hwnd)))
-    (if (i32.and (i32.gt_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
-                 (i32.gt_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
-      (then
-        (drop (call $host_gdi_exclude_clip_rect (local.get $hdc)
-                (local.get $cr_l) (local.get $cr_t)
-                (local.get $cr_r) (local.get $cr_b)))))
+    (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd) (local.get $w) (local.get $h))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (i32.const 0) (i32.const 0)
             (local.get $w) (local.get $h)
@@ -106,7 +91,7 @@
     ;; If no caption, we're done.
     (if (i32.eqz (local.get $has_caption))
       (then
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (drop (call $host_release_dc (local.get $hdc)))
         (return (i32.const 0))))
 
     ;; -------------------------------------------------
@@ -230,7 +215,7 @@
     (local.set $has_min (i32.and (local.get $nc_style) (i32.const 0x00020000)))
     (if (i32.and (i32.eqz (local.get $has_max)) (i32.eqz (local.get $has_min)))
       (then
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (drop (call $host_release_dc (local.get $hdc)))
         (return (local.get $cap_h))))
 
     ;; --- Max / Restore button ---
@@ -364,8 +349,7 @@
             (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
             (local.get $glyph_brush)))
 
-    ;; Reset the DC clip so persistent 0xC0000 state doesn't leak.
-    (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+    (drop (call $host_release_dc (local.get $hdc)))
     (local.get $cap_h))
 
   ;; ============================================================

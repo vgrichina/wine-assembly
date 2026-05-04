@@ -647,6 +647,9 @@
   (func (export "ctrl_get_wh") (param $hwnd i32) (result i32)
     (call $ctrl_get_wh_packed (local.get $hwnd)))
 
+  (func (export "dc_apply_client_clip") (param $hdc i32) (param $hwnd i32)
+    (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd)))
+
   ;; Update geometry for a control (used by renderer to sync JS dimensions → WAT).
   (func (export "ctrl_set_geom") (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
     (local $idx i32)

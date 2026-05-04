@@ -69,8 +69,6 @@
   ;; alloc_screen_dc() → hdc — GetDC(NULL) record
   (import "host" "release_dc" (func $host_release_dc (param i32) (result i32)))
   ;; release_dc(hdc) → 1 — frees a DC record allocated via alloc_*_dc
-  (import "host" "apply_window_clip" (func $host_apply_window_clip (param i32 i32) (result i32)))
-  ;; apply_window_clip(hdc, hwnd) — WS_CLIPCHILDREN / WS_CLIPSIBLINGS exclusions
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
   ;; erase_background(hwnd, hbrBackground) → 1
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
