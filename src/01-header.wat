@@ -479,6 +479,17 @@
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
 
+  ;; Dialog-template string class names. Win32 templates may use either
+  ;; builtin ordinal classes (0x80..0x85) or string names.
+  (data (i32.const 0x3100) "Button\00")
+  (data (i32.const 0x3108) "Edit\00")
+  (data (i32.const 0x310D) "Static\00")
+  (data (i32.const 0x3114) "ListBox\00")
+  (data (i32.const 0x311C) "ScrollBar\00")
+  (data (i32.const 0x3126) "ComboBox\00")
+  (data (i32.const 0x312F) "msctls_progress32\00")
+  (data (i32.const 0x3141) "SysListView32\00")
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================

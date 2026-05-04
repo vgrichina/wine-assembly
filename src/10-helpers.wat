@@ -560,6 +560,38 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; Compare a UTF-16LE string at WASM addr $wide_wa with a NUL-terminated
+  ;; ASCII string at WASM addr $ascii_wa, case-insensitive.
+  (func $wide_ascii_eq (param $wide_wa i32) (param $ascii_wa i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $no (loop $scan
+      (local.set $a (call $tolower
+        (i32.load16_u (i32.add (local.get $wide_wa)
+          (i32.shl (local.get $i) (i32.const 1))))))
+      (local.set $b (call $tolower
+        (i32.load8_u (i32.add (local.get $ascii_wa) (local.get $i)))))
+      (br_if $no (i32.ne (local.get $a) (local.get $b)))
+      (if (i32.eqz (local.get $a)) (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Prefix variant for common controls whose template class names can carry
+  ;; suffixes/aliases while still selecting the same native class family.
+  (func $wide_ascii_prefix_eq (param $wide_wa i32) (param $ascii_wa i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $no (loop $scan
+      (local.set $b (call $tolower
+        (i32.load8_u (i32.add (local.get $ascii_wa) (local.get $i)))))
+      (if (i32.eqz (local.get $b)) (then (return (i32.const 1))))
+      (local.set $a (call $tolower
+        (i32.load16_u (i32.add (local.get $wide_wa)
+          (i32.shl (local.get $i) (i32.const 1))))))
+      (br_if $no (i32.ne (local.get $a) (local.get $b)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; DLL name compare: compare guest ANSI string at $name_ptr with WASM string at $cmp_ptr (case-insensitive)
   (func $dll_name_match (param $name_ptr i32) (param $cmp_ptr i32) (result i32)
     (local $a i32) (local $b i32) (local $i i32)
@@ -1613,6 +1645,14 @@
     (i32.store offset=20 (local.get $dlg_rec) (local.get $title_ptr))
     (i32.store offset=24 (local.get $dlg_rec) (local.get $menu_key))
     (i32.store offset=28 (local.get $dlg_rec) (local.get $ctrl_count))
+    ;; Dialog HWNDs are real child windows too. Keep their WAT-side geometry
+    ;; populated so parent invalidation, clipping, hit-testing, and child DC
+    ;; origin accumulation can treat nested wizard pages like Win98 USER32.
+    (call $ctrl_geom_set (local.get $dlg_slot)
+      (i32.div_u (i32.mul (local.get $dlg_x) (i32.const 3)) (i32.const 2))
+      (i32.div_u (i32.mul (local.get $dlg_y) (i32.const 7)) (i32.const 4))
+      (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
+      (i32.div_u (i32.mul (local.get $dlg_cy) (i32.const 7)) (i32.const 4)))
     ;; Allocate one CREATESTRUCT on the heap, reused for every control
     (local.set $cs (call $heap_alloc (i32.const 48)))
     ;; Iterate DLGITEMTEMPLATE entries
@@ -1657,8 +1697,26 @@
           (if (i32.eq (local.get $class_val) (i32.const 0x85)) (then (local.set $class_enum (i32.const 5))))
           (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7)))))
         (else
-          ;; UTF-16 "RichEdit", "RichEdit20A", etc. Compare the first
-          ;; four chars case-insensitively: r i c h.
+          ;; UTF-16 string classes. Templates may name both builtin classes
+          ;; ("ListBox") and common controls ("msctls_progress32").
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3100))
+            (then (local.set $class_enum (i32.const 1))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3108))
+            (then (local.set $class_enum (i32.const 2))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x310D))
+            (then (local.set $class_enum (i32.const 3))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3114))
+            (then (local.set $class_enum (i32.const 4))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x311C))
+            (then (local.set $class_enum (i32.const 7))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3126))
+            (then (local.set $class_enum (i32.const 5))))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x312F))
+            (then (local.set $class_enum (i32.const 17))))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3141))
+            (then (local.set $class_enum (i32.const 18))))
+          ;; "RichEdit", "RichEdit20A", etc. Compare the first four chars
+          ;; case-insensitively: r i c h.
           (if (i32.and
                 (i32.eq (i32.or (i32.load16_u (local.get $p)) (i32.const 0x20)) (i32.const 0x72))
                 (i32.and

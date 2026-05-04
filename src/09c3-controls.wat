@@ -18,7 +18,8 @@
   ;;
   ;; ctrl_class values: 0=not a control, 1=Button, 2=Edit, 3=Static,
   ;;                    4=ListBox, 5=ComboBox, 6=ColorGrid, 7=ScrollBar,
-  ;;                    10=Find dialog parent, 11=About dialog parent
+  ;;                    8=TreeView, 9=Combo popup, 10+=WAT-built dialogs,
+  ;;                    17=ProgressBar, 18=ListView
 
   ;; ---- Per-class state struct layouts ----
   ;;
@@ -311,6 +312,12 @@
     ;; Class 16 = MessageBox modal dialog
     (if (i32.eq (local.get $class) (i32.const 16))
       (then (return (call $msgbox_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 17 = ProgressBar (msctls_progress32)
+    (if (i32.eq (local.get $class) (i32.const 17))
+      (then (return (call $progress_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 18 = ListView (SysListView32)
+    (if (i32.eq (local.get $class) (i32.const 18))
+      (then (return (call $listview_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -2652,6 +2659,84 @@
     ;; Default
     (i32.const 0)
   )
+
+  ;; ---- ProgressBar WndProc ----
+  ;;
+  ;; Minimal native common-control progress bar. Enough for NSIS installers:
+  ;; it owns its HWND, paints a Win98 sunken progress well, and invalidates on
+  ;; PBM_* updates. Position/range state can be added later without changing
+  ;; dialog geometry or clipping.
+
+  (func $progress_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    ;; WM_CREATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then (return (i32.const 0))))
+    ;; PBM_SETRANGE(0x0401), PBM_SETPOS(0x0402), PBM_DELTAPOS(0x0403)
+    (if (i32.and
+          (i32.ge_u (local.get $msg) (i32.const 0x0401))
+          (i32.le_u (local.get $msg) (i32.const 0x0403)))
+      (then
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                     (i32.gt_s (local.get $h) (i32.const 0)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30010))) ;; WHITE_BRUSH
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x0A) (i32.const 0x0F))))) ;; EDGE_SUNKEN | BF_RECT
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; ---- ListView WndProc ----
+  ;;
+  ;; Minimal SysListView32 shell. Win98 common controls create a real child
+  ;; HWND even when a wizard page uses it as an optional details pane. Keeping
+  ;; this as a WAT control gives it correct clipping, erase, and paint order
+  ;; without JS special-casing.
+  (func $listview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    ;; WM_CREATE / WM_DESTROY
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0001))
+                (i32.eq (local.get $msg) (i32.const 0x0002)))
+      (then (return (i32.const 0))))
+    ;; WM_ERASEBKGND
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 0)))))
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                     (i32.gt_s (local.get $h) (i32.const 0)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30010)))
+            (if (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
+              (then
+                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x0A) (i32.const 0x0F)))))))
+        (return (i32.const 0))))
+    (i32.const 0))
 
   ;; Case-insensitive memcmp of $n bytes at WASM-linear $a / $b. Returns 1
   ;; if equal (treating ASCII A-Z and a-z as equivalent), 0 otherwise.

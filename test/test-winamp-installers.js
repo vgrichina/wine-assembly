@@ -338,6 +338,47 @@ for (const tc of CASES) {
       if (!c.pass) failed++;
     }
     console.log('');
+
+    const installingPng = path.join(__dirname, 'output', 'winamp295-installing-files.png');
+    const installingCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=1040',
+      '--batch-size=5000',
+      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283,1021:dlg-dump:all,1022:png:' + installingPng,
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', installingCmd);
+
+    let installingOut = '';
+    try {
+      installingOut = execSync(installingCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (e) {
+      installingOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    }
+
+    const installingPngOk = fs.existsSync(installingPng) && fs.statSync(installingPng).size > 1000;
+    const installingChecks = [
+      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=0,0 wh=399,227/.test(installingOut) },
+      { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
+      { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
+      { name: 'installing page PNG captured', pass: installingPngOk },
+    ];
+
+    console.log(`${tc.name} installing page`);
+    for (const c of installingChecks) {
+      console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+      if (!c.pass) failed++;
+    }
+    console.log('');
   }
 
   const interactiveCmd = [
