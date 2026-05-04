@@ -342,7 +342,7 @@
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))
       (then
         (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
-        (drop (call $host_validate_rect
+        (drop (call $update_validate_rect
           (local.get $arg0)
           (i32.load (local.get $wa))
           (i32.load offset=4 (local.get $wa))

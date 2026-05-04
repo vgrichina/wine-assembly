@@ -339,13 +339,14 @@ class WineAssembly {
   async init(canvas) {
     const compileEl = typeof document !== 'undefined' && document.getElementById('compile-status');
     let showTimeout = null;
-    if (compileEl) {
+    const cacheWarm = !!WineAssembly._wasmModulePromise;
+    if (compileEl && !cacheWarm) {
       showTimeout = setTimeout(() => {
         compileEl.style.display = 'block';
       }, 100);
     }
     await this.ensureUiFontsReady();
-    const bytes = await compileWat(f => fetch('src/' + f + '?v=54').then(r => r.text()));
+    const wasmModule = await WineAssembly.getWasmModule();
     if (showTimeout) clearTimeout(showTimeout);
     if (compileEl) compileEl.style.display = 'none';
     // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
@@ -366,9 +367,8 @@ class WineAssembly {
     this.memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
     imports.host.memory = this.memory;
 
-    const result = await WebAssembly.instantiate(bytes, imports);
-    this.instance = result.instance;
-    this._wasmModule = result.module;
+    this.instance = await WebAssembly.instantiate(wasmModule, imports);
+    this._wasmModule = wasmModule;
 
     // Create ThreadManager
     const self = this;
@@ -385,6 +385,16 @@ class WineAssembly {
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
     }
+  }
+
+  static getWasmModule() {
+    if (!WineAssembly._wasmModulePromise) {
+      WineAssembly._wasmModulePromise = (async () => {
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=54').then(r => r.text()));
+        return WebAssembly.compile(bytes);
+      })();
+    }
+    return WineAssembly._wasmModulePromise;
   }
 
   async loadExe(url) {

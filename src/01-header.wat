@@ -45,24 +45,6 @@
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
   ;; invalidate(hwnd)
-  (import "host" "invalidate_rect" (func $host_invalidate_rect (param i32 i32 i32 i32 i32 i32)))
-  ;; invalidate_rect(hwnd, l, t, r, b, erase) — union into per-hwnd update rgn
-  (import "host" "invalidate_rgn" (func $host_invalidate_rgn (param i32 i32 i32)))
-  ;; invalidate_rgn(hwnd, hrgn, erase)
-  (import "host" "validate_rect" (func $host_validate_rect (param i32 i32 i32 i32 i32) (result i32)))
-  ;; validate_rect(hwnd, l, t, r, b) → 1 if updateRgn now empty
-  (import "host" "validate_rgn" (func $host_validate_rgn (param i32 i32) (result i32)))
-  ;; validate_rgn(hwnd, hrgn)
-  (import "host" "get_update_rect" (func $host_get_update_rect (param i32 i32) (result i32)))
-  ;; get_update_rect(hwnd, rectWA) — writes bbox, returns 1 if non-empty
-  (import "host" "get_update_rgn" (func $host_get_update_rgn (param i32 i32) (result i32)))
-  ;; get_update_rgn(hwnd, dstHrgn) — copies updateRgn into hrgn, returns region type
-  (import "host" "begin_paint_clip" (func $host_begin_paint_clip (param i32 i32 i32) (result i32)))
-  ;; begin_paint_clip(hdc, hwnd, rectWA) — install updateRgn as DC clip + write bbox to rectWA
-  (import "host" "next_dirty_hwnd" (func $host_next_dirty_hwnd (result i32)))
-  ;; next_dirty_hwnd() → topmost dirty hwnd in z-order, 0 if none
-  (import "host" "seed_child_paints" (func $host_seed_child_paints (param i32) (result i32)))
-  ;; seed_child_paints(parent) — seed _updateRgns for children intersecting parent's update rgn
   (import "host" "alloc_window_dc" (func $host_alloc_window_dc (param i32 i32) (result i32)))
   ;; alloc_window_dc(hwnd, whole) → hdc — Phase B DC table allocator
   (import "host" "alloc_screen_dc" (func $host_alloc_screen_dc (result i32)))
@@ -195,8 +177,6 @@
   ;; gdi_create_polygon_rgn(pts_wa, n, fillMode) -> hrgn
   (import "host" "gdi_get_rgn_box" (func $host_gdi_get_rgn_box (param i32 i32) (result i32)))
   ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
-  (import "host" "treeview_paint" (func $host_treeview_paint (param i32)))
-  ;; treeview_paint(hwnd) — draw treeview control into parent's back canvas
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
@@ -504,7 +484,9 @@
   ;; ============================================================
   ;; 0x00000000  4KB     Null page
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
-  ;; 0x00002000  8KB     Free (was old window/class/control tables — moved to 0x7000+)
+  ;; 0x00002000  4KB     UPDATE_RECT    (256 entries × 16 bytes — WAT-owned update bbox)
+  ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
+  ;; 0x00003100  ~3.75KB Free
   ;; 0x00004000  12KB    API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
@@ -576,6 +558,10 @@
   ;; 256 entries × 24 bytes = 0x1800 (0x7000..0x8800)
   (global $WND_RECORDS   i32 (i32.const 0x00007000))
   (global $MAX_WINDOWS   i32 (i32.const 256))
+  ;; UPDATE_RECT / UPDATE_FLAGS: WAT-owned Win32 update-region state. We store
+  ;; a bounding RECT per hwnd slot; JS is only asked to schedule canvas work.
+  (global $UPDATE_RECT    i32 (i32.const 0x00002000))
+  (global $UPDATE_FLAGS   i32 (i32.const 0x00003000))
   ;; NC_FLAGS: parallel to WND_RECORDS, 4 bytes per slot (bits track
   ;; pending WM_NC* messages that GetMessageA synthesises before WM_PAINT).
   (global $NC_FLAGS      i32 (i32.const 0x0000EA70))

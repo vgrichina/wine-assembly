@@ -533,10 +533,9 @@
     ;; Fill dialog client area with COLOR_BTNFACE (see DialogBoxParamA
     ;; for rationale — template DlgProcs rarely handle WM_PAINT).
     (call $dlg_fill_bkgnd (local.get $hwnd))
-    ;; Enqueue WM_PAINT for each child control. Without this, owner-draw
-    ;; buttons never receive their first WM_PAINT and so never post
-    ;; WM_DRAWITEM to the dialog proc — calc.exe's 30-button keypad
-    ;; would stay invisible after ShowWindow(dlg).
+    ;; Mark each child control dirty for the normal paint pump. Avoid sending
+    ;; WM_PAINT synchronously from CreateDialog: owner-draw controls can
+    ;; reenter the app dialog proc before creation is stable.
     ;; Walk children via parent linkage — combobox WM_CREATE may have added
     ;; auxiliary windows (inner listbox / WS_POPUP shell) that interleave
     ;; with dialog controls and break the dlg_hwnd+1+i contiguous assumption.
@@ -544,7 +543,8 @@
     (block $done (loop $push_loop
       (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
       (br_if $done (i32.eq (local.get $i) (i32.const -1)))
-      (call $paint_flag_set_inv (call $wnd_slot_hwnd (local.get $i)))
+      (local.set $ctrl_hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (call $paint_flag_set_inv (local.get $ctrl_hwnd))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
     ;; Fire WH_CBT/HCBT_CREATEWND for modeless dialogs. MFC's dialog
@@ -671,13 +671,14 @@
               (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))))
       (else (drop (call $wnd_set_style (local.get $arg0)
               (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))))
-    ;; Showing a window should trigger WM_PAINT — invalidate it
-    ;; cmd != SW_HIDE (0) → mark for paint
+    ;; Showing a window should trigger WM_PAINT. Region-driven dispatch only
+    ;; sees windows with an update region, so non-main windows must use the
+    ;; paint+invalidate helper rather than the legacy paint bit alone.
     (if (local.get $arg1)
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
-          (else (call $paint_flag_set (local.get $arg0))))))
+          (else (call $paint_flag_set_inv (local.get $arg0))))))
     ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
     ;; with the new client dimensions so GetMessageA delivers correct values.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
@@ -753,7 +754,12 @@
 
   ;; 72: UpdateWindow
   (func $handle_UpdateWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_invalidate (local.get $arg0))
+    ;; Queue the update and let the normal WAT-owned message pump deliver
+    ;; WM_PAINT. Some Win98 apps call UpdateWindow during fragile startup
+    ;; sequences; synchronous re-entry here can run dialog/control procs
+    ;; before their surrounding initialization has unwound.
+    (call $paint_flag_set_inv (local.get $arg0))
+    (call $defwndproc_do_ncpaint (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -904,23 +910,16 @@
     ;; initial WM_ERASEBKGND arrives via NC_FLAGS bit 1 seeded in CreateWindowExA,
     ;; initial WM_PAINT arrives via $paint_pending set at end of CACA0023 thunk.
     ;; Hardware input was consumed at top of fn; no second poll here.
-    ;; Deliver WM_PAINT — Phase A.2 redux: region-driven dispatch via
-    ;; $host_next_dirty_hwnd. The mspaint regression from commit 30ded5c is
-    ;; mitigated by step 3 prerequisites:
-    ;;   - next_dirty_hwnd skips non-dialog BS_OWNERDRAW children (their
-    ;;     parent's WM_PAINT handles them via WM_DRAWITEM legacy route),
-    ;;     while allowing dialog-owned owner-draw buttons like calc.exe's
-    ;;     keypad to receive their bootstrap WM_PAINT.
-    ;;   - $host_seed_child_paints seeds non-OWNERDRAW WS_CHILD windows
-    ;;     intersecting the parent's update rgn, so they get their own
-    ;;     WM_PAINT after the parent.
-    ;; PAINT_FLAGS and $paint_pending mirror the rgn map (every set bit
-    ;; corresponds to a non-empty _updateRgns entry via $paint_flag_set_inv
-    ;; + host_invalidate seeding). Pre-validate full-client at dispatch to
+    ;; Native child controls consume their own WM_PAINT internally after
+    ;; any parent paint already delivered by prior pump iterations.
+    (drop (call $paint_drain_native_control_paints))
+    ;; Deliver WM_PAINT. WAT owns target selection and child propagation.
+    ;; PAINT_FLAGS and $paint_pending mirror WAT's UPDATE_RECT table (every set
+    ;; bit corresponds to a non-empty update rect). Pre-validate full-client at dispatch to
     ;; mimic the legacy paint_flag_take atomic clear-on-dispatch contract,
     ;; since WAT-internal control wndprocs paint via host_gdi_* without
     ;; BeginPaint/EndPaint and would otherwise never validate the rgn.
-    (local.set $tmp (call $host_next_dirty_hwnd))
+    (local.set $tmp (call $paint_select_next_dirty))
     (if (local.get $tmp)
     (then
     (call $paint_flag_clear_hwnd (local.get $tmp))
@@ -928,14 +927,14 @@
       (then (global.set $paint_pending (i32.const 0))))
     ;; Seed child paints before dispatching parent WM_PAINT so subsequent
     ;; pump iterations dispatch each child's WM_PAINT in z-order.
-    (drop (call $host_seed_child_paints (local.get $tmp)))
+    (drop (call $paint_seed_child_paints (local.get $tmp)))
     ;; Do not pre-validate the main app window. Some apps call GetUpdateRect
     ;; or rely on BeginPaint's update rgn before drawing their client scene.
     ;; WAT-owned controls still get pre-validated here; they often paint
     ;; directly through host helpers and never call BeginPaint/EndPaint.
     (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
       (then
-        (drop (call $host_validate_rect (local.get $tmp)
+        (drop (call $update_validate_rect (local.get $tmp)
                 (i32.const 0) (i32.const 0)
                 (i32.const 32767) (i32.const 32767)))))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
@@ -1133,25 +1132,24 @@
         (return)
       )
     )
-    ;; WM_PAINT if pending (lowest priority)
-    (if (global.get $paint_pending)
-    (then
+    ;; WM_PAINT if pending (lowest priority). Selection and child propagation
+    ;; live in WAT; the host only schedules repaint work.
     (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (global.set $paint_pending (i32.const 0))))
-    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F)) ;; WM_PAINT
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Child paint pending (from paint queue)
-    (if (call $paint_flag_any)
-    (then
-    (local.set $tmp (if (result i32) (i32.and (local.get $arg4) (i32.const 1))
-      (then (call $paint_flag_take))
-      (else (call $paint_flag_first))))))  ;; peek without removing if PM_NOREMOVE
+      (then (drop (call $paint_drain_native_control_paints))))
+    (local.set $tmp (call $paint_select_next_dirty))
     (if (local.get $tmp)
     (then
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then
+        (call $paint_flag_clear_hwnd (local.get $tmp))
+        (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 0))))
+        (drop (call $paint_seed_child_paints (local.get $tmp)))
+        (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
+          (then
+            (drop (call $update_validate_rect (local.get $tmp)
+                    (i32.const 0) (i32.const 0)
+                    (i32.const 32767) (i32.const 32767)))))))
     (call $gs32 (local.get $arg0) (local.get $tmp))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
@@ -1182,7 +1180,7 @@
 
   ;; 75: DispatchMessageA
   (func $handle_DispatchMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $wndproc i32)
+    (local $tmp i32) (local $wndproc i32) (local $ctrl_class i32)
     ;; Skip WM_NULL — idle message, don't dispatch to WndProc
     (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (then (global.set $eax (i32.const 0))
@@ -1228,6 +1226,26 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; callback addr
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Paint for WAT-owned controls is rendered by our native control path.
+    ;; Match SendMessageA here: GetMessageA synthesizes WM_PAINT MSGs, and
+    ;; DispatchMessageA must not route those controls into an app fallback
+    ;; proc that never validates the WAT update state.
+    (local.set $ctrl_class (call $ctrl_table_get_class (call $gl32 (local.get $arg0))))
+    (if (i32.and (local.get $ctrl_class)
+                 (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F)))
+      (then
+        ;; WAT-native controls paint without BeginPaint/EndPaint. Validate at
+        ;; dispatch so PM_NOREMOVE + DispatchMessage loops cannot keep
+        ;; redispatching the same synthetic WM_PAINT forever.
+        (call $update_clear_hwnd (call $gl32 (local.get $arg0)))
+        (call $paint_flag_clear_hwnd (call $gl32 (local.get $arg0)))
+        (global.set $eax (call $control_wndproc_dispatch
+          (call $gl32 (local.get $arg0))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Look up wndproc from window table
     (local.set $wndproc (call $wnd_table_get (call $gl32 (local.get $arg0))))
     ;; WAT-native WndProc dispatch (e.g. help window): wndproc >= 0xFFFF0000

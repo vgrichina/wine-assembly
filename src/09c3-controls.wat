@@ -29,7 +29,6 @@
   ;;   +8   flags          bit0=pressed   bit1=checked
   ;;                       bit2=default   (current paint default — flips on focus)
   ;;                       bit3=focused
-  ;;                       bit8=ownerdraw_drawn (WM_DRAWITEM posted)
   ;;   +12  ctrl_id
   ;;
   ;; StaticState (16 bytes)
@@ -2370,16 +2369,11 @@
         ;; DRAWITEMSTRUCT (48 bytes) is embedded at ButtonState+16.
         (if (i32.eq (local.get $kind) (i32.const 0x0B))
           (then
-            ;; Skip if already drawn (flags bit 8 = 0x100) or queue full.
-            ;; bit2 is reserved for "current default" (paint flag); use a
-            ;; distinct bit for ownerdraw "WM_DRAWITEM already posted".
-            (if (i32.and (local.get $flags) (i32.const 0x100))
-              (then (return (i32.const 0))))
+            ;; Owner-draw controls must repaint on every WM_PAINT. Unlike
+            ;; real Win32 child windows, our children share the top-level
+            ;; back-canvas, so a later parent erase can wipe their pixels.
             (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
               (then (return (i32.const 0))))
-            ;; Set drawn flag (bit 8)
-            (i32.store offset=8 (local.get $state_w)
-              (i32.or (local.get $flags) (i32.const 0x100)))
             ;; Fill DRAWITEMSTRUCT at ButtonState+16
             ;; Reuse $edge_flags as WASM address of the struct
             (local.set $edge_flags (call $g2w (i32.add (local.get $state) (i32.const 16))))
@@ -2410,6 +2404,11 @@
               (i32.const 0x002B)
               (i32.load offset=12 (local.get $state_w))
               (i32.add (local.get $state) (i32.const 16))))
+            ;; This WM_PAINT was handled by delegating WM_DRAWITEM to the
+            ;; owner. Keep validation in WAT so owner-draw buttons do not
+            ;; re-enter the paint pump without a fresh invalidation.
+            (call $update_clear_hwnd (local.get $hwnd))
+            (call $paint_flag_clear_hwnd (local.get $hwnd))
             (return (i32.const 0))))
 
         (return (i32.const 0))))
@@ -5694,7 +5693,7 @@
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $wp i32) (local $slot i32)
-    (local $old_eip i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
+    (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
@@ -5718,6 +5717,7 @@
     ;; same register state it had before the recursive run. The wndproc's EAX
     ;; return value is extracted separately and returned as the WAT result.
     (local.set $old_eip (global.get $eip))
+    (local.set $old_esp (global.get $esp))
     (local.set $old_eax (global.get $eax))
     (local.set $old_ecx (global.get $ecx))
     (local.set $old_edx (global.get $edx))
@@ -5740,6 +5740,7 @@
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (global.get $eax))
     (global.set $eip (local.get $old_eip))
+    (global.set $esp (local.get $old_esp))
     (global.set $eax (local.get $old_eax))
     (global.set $ecx (local.get $old_ecx))
     (global.set $edx (local.get $old_edx))

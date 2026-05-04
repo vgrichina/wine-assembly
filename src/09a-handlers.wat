@@ -1815,7 +1815,7 @@
         (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
-    (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (local.get $arg2))
+    (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))
@@ -2970,20 +2970,28 @@
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
     (call $gs32 (local.get $arg1) (local.get $hdc)) ;; hdc
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase
-    ;; Phase 2: install updateRgn as DC clipRgn and write rcPaint from its bbox.
-    ;; rcPaint lives at PAINTSTRUCT+8; pass the guest address + g2w'd WA for the host.
+    ;; WAT owns the update rect. rcPaint is the pending update bbox; if no
+    ;; update exists, return the full client rect like Win32's empty fallback.
     (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
-    (local.set $partial (call $host_begin_paint_clip (local.get $hdc) (local.get $arg0) (local.get $wa)))
+    (local.set $partial (call $update_get_rect (local.get $arg0) (local.get $wa)))
     (if (i32.eqz (local.get $partial))
       (then
-        ;; Empty updateRgn: rcPaint = full client (no DC clip installed).
+        ;; Empty update rect: rcPaint = full client.
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
         (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
         (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
-    ;; WAT-owned visible clipping: client bounds, update rgn, parent,
+    ;; WAT-owned visible clipping: update rect, client bounds, parent,
     ;; CLIPCHILDREN and CLIPSIBLINGS all compose into the HDC clip.
+    (if (local.get $partial)
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc)
+          (i32.load (local.get $wa))
+          (i32.load offset=4 (local.get $wa))
+          (i32.load offset=8 (local.get $wa))
+          (i32.load offset=12 (local.get $wa))))))
     (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -4142,7 +4150,17 @@
 
   ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — copy updateRgn into hRgn.
   (func $handle_GetUpdateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_get_update_rgn (local.get $arg0) (local.get $arg1)))
+    (local $rv i32)
+    (local.set $rv (call $update_get_rect (local.get $arg0) (global.get $PAINT_SCRATCH)))
+    (if (i32.and (local.get $rv) (local.get $arg1))
+      (then
+        (drop (call $host_gdi_set_rect_rgn
+          (local.get $arg1)
+          (i32.load (global.get $PAINT_SCRATCH))
+          (i32.load offset=4 (global.get $PAINT_SCRATCH))
+          (i32.load offset=8 (global.get $PAINT_SCRATCH))
+          (i32.load offset=12 (global.get $PAINT_SCRATCH)))))))
+    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $rv)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -4520,9 +4538,9 @@
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
     (if (i32.and (local.get $arg3) (i32.const 0x8))  ;; RDW_VALIDATE
       (then
-        (drop (call $host_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))))
+        (drop (call $update_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))))
       (else
-        (call $host_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b) (i32.and (local.get $arg3) (i32.const 0x4)))
+        (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else (call $paint_flag_set (local.get $arg0))))
@@ -4550,7 +4568,7 @@
         (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
-    (local.set $empty (call $host_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
+    (local.set $empty (call $update_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
     (if (i32.and (local.get $empty) (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then (global.set $paint_pending (i32.const 0))))
     (global.set $eax (i32.const 1))
@@ -5560,7 +5578,7 @@
     (if (local.get $arg1)
       (then
         (local.set $wa (call $g2w (local.get $arg1)))
-        (local.set $rv (call $host_get_update_rect (local.get $arg0) (local.get $wa)))
+        (local.set $rv (call $update_get_rect (local.get $arg0) (local.get $wa)))
         (if (i32.eqz (local.get $rv))
           (then
             ;; Empty updateRgn. If paint_pending (main) or paint flag set (child),
@@ -5572,7 +5590,7 @@
             (i32.store offset=12 (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))
             (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
               (then (local.set $rv (global.get $paint_pending)))))))
-      (else (local.set $rv (call $host_get_update_rect (local.get $arg0) (i32.const 0)))))
+      (else (local.set $rv (call $update_get_rect (local.get $arg0) (i32.const 0)))))
     (global.set $eax (local.get $rv))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -7495,7 +7513,7 @@
 
   ;; 635: DispatchMessageW — same as DispatchMessageA (delegates to shared dispatch logic)
   (func $handle_DispatchMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $wndproc i32)
+    (local $tmp i32) (local $wndproc i32) (local $ctrl_class i32)
     ;; Skip WM_NULL — idle message, don't dispatch to WndProc
     (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (then (global.set $eax (i32.const 0))
@@ -7539,6 +7557,25 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Paint for WAT-owned controls is rendered by our native control path.
+    ;; Keep this in sync with DispatchMessageA: GetMessageW can synthesize
+    ;; WM_PAINT MSGs for child controls, and those must validate through WAT.
+    (local.set $ctrl_class (call $ctrl_table_get_class (call $gl32 (local.get $arg0))))
+    (if (i32.and (local.get $ctrl_class)
+                 (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F)))
+      (then
+        ;; WAT-native controls paint without BeginPaint/EndPaint. Validate at
+        ;; dispatch so PM_NOREMOVE + DispatchMessage loops cannot keep
+        ;; redispatching the same synthetic WM_PAINT forever.
+        (call $update_clear_hwnd (call $gl32 (local.get $arg0)))
+        (call $paint_flag_clear_hwnd (call $gl32 (local.get $arg0)))
+        (global.set $eax (call $control_wndproc_dispatch
+          (call $gl32 (local.get $arg0))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Look up wndproc from window table
     (local.set $wndproc (call $wnd_table_get (call $gl32 (local.get $arg0))))
     ;; WAT-native WndProc dispatch
@@ -7638,6 +7675,31 @@
         )
       )
     )
+    ;; WM_PAINT if pending. Match PeekMessageA: WAT owns update selection
+    ;; and child propagation; PM_REMOVE consumes/validates the update.
+    (if (i32.and (local.get $arg4) (i32.const 1))
+      (then (drop (call $paint_drain_native_control_paints))))
+    (local.set $tmp (call $paint_select_next_dirty))
+    (if (local.get $tmp)
+    (then
+      (if (i32.and (local.get $arg4) (i32.const 1))
+        (then
+          (call $paint_flag_clear_hwnd (local.get $tmp))
+          (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
+            (then (global.set $paint_pending (i32.const 0))))
+          (drop (call $paint_seed_child_paints (local.get $tmp)))
+          (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
+            (then
+              (drop (call $update_validate_rect (local.get $tmp)
+                      (i32.const 0) (i32.const 0)
+                      (i32.const 32767) (i32.const 32767)))))))
+      (call $gs32 (local.get $arg0) (local.get $tmp))
+      (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F))
+      (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+      (global.set $eax (i32.const 1))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+      (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -7850,11 +7912,22 @@
     (call $host_check_input_lparam))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No input — deliver WM_PAINT if pending
-    (if (global.get $paint_pending)
+    ;; No input — deliver WM_PAINT if pending. Match GetMessageA:
+    ;; WAT owns update selection, child propagation, and validation.
+    (drop (call $paint_drain_native_control_paints))
+    (local.set $tmp (call $paint_select_next_dirty))
+    (if (local.get $tmp)
     (then
-    (global.set $paint_pending (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+    (call $paint_flag_clear_hwnd (local.get $tmp))
+    (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 0))))
+    (drop (call $paint_seed_child_paints (local.get $tmp)))
+    (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
+      (then
+        (drop (call $update_validate_rect (local.get $tmp)
+                (i32.const 0) (i32.const 0)
+                (i32.const 32767) (i32.const 32767)))))
+    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
@@ -8344,19 +8417,26 @@
 
   ;; 694: InvalidateRgn(hwnd, hrgn, bErase). hrgn=NULL → full client rect.
   (func $handle_InvalidateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $rt i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (local.get $arg1)
-      (then (call $host_invalidate_rgn (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+      (then
+        (local.set $rt (call $host_gdi_get_rgn_box (local.get $arg1) (global.get $PAINT_SCRATCH)))
+        (if (local.get $rt)
+          (then
+            (call $update_invalidate_rect (local.get $arg0)
+              (i32.load (global.get $PAINT_SCRATCH))
+              (i32.load offset=4 (global.get $PAINT_SCRATCH))
+              (i32.load offset=8 (global.get $PAINT_SCRATCH))
+              (i32.load offset=12 (global.get $PAINT_SCRATCH)))))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-        (call $host_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
+        (call $update_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
           (i32.and (local.get $cs) (i32.const 0xFFFF))
-          (i32.shr_u (local.get $cs) (i32.const 16))
-          (local.get $arg2))))
+          (i32.shr_u (local.get $cs) (i32.const 16)))))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))

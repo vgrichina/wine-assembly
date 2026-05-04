@@ -593,6 +593,123 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  (func $update_rect_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $UPDATE_RECT) (i32.mul (local.get $slot) (i32.const 16))))
+
+  (func $update_flag_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $UPDATE_FLAGS) (local.get $slot)))
+
+  (func $update_rect_is_empty_slot (param $slot i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $update_rect_addr_for_slot (local.get $slot)))
+    (i32.or
+      (i32.le_s (i32.load offset=8 (local.get $p)) (i32.load (local.get $p)))
+      (i32.le_s (i32.load offset=12 (local.get $p)) (i32.load offset=4 (local.get $p)))))
+
+  (func $update_clear_hwnd (param $hwnd i32)
+    (local $slot i32) (local $p i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $p (call $update_rect_addr_for_slot (local.get $slot)))
+    (i64.store (local.get $p) (i64.const 0))
+    (i64.store offset=8 (local.get $p) (i64.const 0))
+    (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
+
+  (func $update_invalidate_rect (param $hwnd i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32)
+    (local $slot i32) (local $p i32)
+    (if (i32.or
+          (i32.eqz (local.get $hwnd))
+          (i32.or (i32.le_s (local.get $r) (local.get $l))
+                  (i32.le_s (local.get $b) (local.get $t))))
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $p (call $update_rect_addr_for_slot (local.get $slot)))
+    (if (i32.eqz (i32.load8_u (call $update_flag_addr_for_slot (local.get $slot))))
+      (then
+        (i32.store (local.get $p) (local.get $l))
+        (i32.store offset=4 (local.get $p) (local.get $t))
+        (i32.store offset=8 (local.get $p) (local.get $r))
+        (i32.store offset=12 (local.get $p) (local.get $b)))
+      (else
+        (if (i32.lt_s (local.get $l) (i32.load (local.get $p)))
+          (then (i32.store (local.get $p) (local.get $l))))
+        (if (i32.lt_s (local.get $t) (i32.load offset=4 (local.get $p)))
+          (then (i32.store offset=4 (local.get $p) (local.get $t))))
+        (if (i32.gt_s (local.get $r) (i32.load offset=8 (local.get $p)))
+          (then (i32.store offset=8 (local.get $p) (local.get $r))))
+        (if (i32.gt_s (local.get $b) (i32.load offset=12 (local.get $p)))
+          (then (i32.store offset=12 (local.get $p) (local.get $b))))))
+    (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 1)))
+
+  (func $update_invalidate_full (param $hwnd i32)
+    (local $cs i32) (local $wh i32) (local $w i32) (local $h i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $cs) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $cs) (i32.const 16)))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+      (then
+        (local.set $w (i32.const 32767))
+        (local.set $h (i32.const 32767))))
+    (call $update_invalidate_rect (local.get $hwnd) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
+
+  (func $update_get_rect (param $hwnd i32) (param $dst i32) (result i32)
+    (local $slot i32) (local $p i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load8_u (call $update_flag_addr_for_slot (local.get $slot))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $update_rect_addr_for_slot (local.get $slot)))
+    (if (call $update_rect_is_empty_slot (local.get $slot))
+      (then
+        (call $update_clear_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+    (if (local.get $dst)
+      (then
+        (i32.store (local.get $dst) (i32.load (local.get $p)))
+        (i32.store offset=4 (local.get $dst) (i32.load offset=4 (local.get $p)))
+        (i32.store offset=8 (local.get $dst) (i32.load offset=8 (local.get $p)))
+        (i32.store offset=12 (local.get $dst) (i32.load offset=12 (local.get $p)))))
+    (i32.const 1))
+
+  ;; Bounding-rect approximation of ValidateRect. Full validation clears the
+  ;; WAT update state; partial validation only shrinks simple edge strips.
+  (func $update_validate_rect (param $hwnd i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32) (result i32)
+    (local $slot i32) (local $p i32) (local $ul i32) (local $ut i32) (local $ur i32) (local $ub i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 1))))
+    (if (i32.eqz (i32.load8_u (call $update_flag_addr_for_slot (local.get $slot))))
+      (then (return (i32.const 1))))
+    (local.set $p (call $update_rect_addr_for_slot (local.get $slot)))
+    (local.set $ul (i32.load (local.get $p)))
+    (local.set $ut (i32.load offset=4 (local.get $p)))
+    (local.set $ur (i32.load offset=8 (local.get $p)))
+    (local.set $ub (i32.load offset=12 (local.get $p)))
+    (if (i32.and
+          (i32.and (i32.le_s (local.get $l) (local.get $ul))
+                   (i32.le_s (local.get $t) (local.get $ut)))
+          (i32.and (i32.ge_s (local.get $r) (local.get $ur))
+                   (i32.ge_s (local.get $b) (local.get $ub))))
+      (then
+        (call $update_clear_hwnd (local.get $hwnd))
+        (return (i32.const 1))))
+    (if (i32.and (i32.le_s (local.get $l) (local.get $ul))
+                 (i32.and (i32.ge_s (local.get $r) (local.get $ur))
+                          (i32.le_s (local.get $t) (local.get $ut))))
+      (then
+        (if (i32.gt_s (local.get $b) (local.get $ut))
+          (then (i32.store offset=4 (local.get $p) (local.get $b))))))
+    (if (call $update_rect_is_empty_slot (local.get $slot))
+      (then (call $update_clear_hwnd (local.get $hwnd))))
+    (select (i32.const 0) (i32.const 1)
+      (i32.load8_u (call $update_flag_addr_for_slot (local.get $slot)))))
+
   ;; $invalidate_hwnd(hwnd): mark $hwnd dirty so a WM_PAINT gets delivered on
   ;; the next GetMessageA cycle. For the main top-level, GetMessageA reads
   ;; $paint_pending directly; for child controls we set the slot's PAINT_FLAGS
@@ -607,6 +724,7 @@
     (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $hwnd))))
+    (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
   ;; Paint flags table — 1 byte per WND slot at $PAINT_FLAGS. This mirrors
@@ -622,13 +740,14 @@
     (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 1)))
 
   ;; $paint_flag_set_inv(hwnd): mark slot dirty AND seed update rgn so the
-  ;; region-driven WM_PAINT pump (host_next_dirty_hwnd) sees this hwnd. Use
+  ;; WAT-owned region-driven WM_PAINT pump sees this hwnd. Use
   ;; this for WAT-internal paint triggers that don't go through Win32
   ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
   ;; region pump silently drops the paint.
   (func $paint_flag_set_inv (param $hwnd i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (call $paint_flag_set (local.get $hwnd))
+    (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
   ;; $paint_flag_clear_hwnd(hwnd): clear the slot bit for hwnd if any.
@@ -674,9 +793,145 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; $paint_select_next_dirty(): WAT-owned WM_PAINT selection.
+  ;; A window is paintable when WAT marked its paint bit and its WAT-owned
+  ;; update rect is non-empty.
+  (func $paint_select_next_dirty (result i32)
+    (local $i i32) (local $hwnd i32) (local $style i32) (local $cs i32) (local $ctrl_wh i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+        (then
+          (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+          (local.set $style (call $wnd_get_style (local.get $hwnd)))
+          (local.set $ctrl_wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+          ;; Most WAT-native dialog controls are represented by CONTROL_GEOM
+          ;; even when their synthesized WND style is incomplete. Treat a
+          ;; non-empty control geometry as paintable; still drop truly
+          ;; invisible/top-level zero records.
+          (if (i32.and
+                (i32.eqz (i32.and (local.get $style) (i32.const 0x10000000))) ;; WS_VISIBLE
+                (i32.eqz (local.get $ctrl_wh)))
+            (then
+              (call $paint_flag_clear_hwnd (local.get $hwnd)))
+            (else
+              (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+              (if (i32.and
+                    (i32.or
+                      (i32.eqz (i32.and (local.get $cs) (i32.const 0xFFFF)))
+                      (i32.eqz (i32.shr_u (local.get $cs) (i32.const 16))))
+                    (i32.or
+                      (i32.eqz (i32.and (local.get $ctrl_wh) (i32.const 0xFFFF)))
+                      (i32.eqz (i32.shr_u (local.get $ctrl_wh) (i32.const 16)))))
+                (then
+                  (call $paint_flag_clear_hwnd (local.get $hwnd)))
+                (else
+                  (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                    (then
+                      (return (local.get $hwnd)))
+                    (else
+                      ;; A stale paint bit without an update rect must not
+                      ;; keep the message pump spinning.
+                      (call $paint_flag_clear_hwnd (local.get $hwnd))))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; $paint_seed_child_paints(parent): WAT-owned propagation of a parent's
+  ;; update region into direct children. This replaces host JS child-paint
+  ;; policy; JS only stores region geometry and receives primitive draw calls.
+  (func $paint_seed_child_paints (param $parent i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $style i32)
+    (local $pl i32) (local $pt i32) (local $pr i32) (local $pb i32)
+    (local $xy i32) (local $wh i32) (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
+    (local $il i32) (local $it i32) (local $ir i32) (local $ib i32) (local $n i32)
+    (if (i32.eqz (call $update_get_rect (local.get $parent) (global.get $PAINT_SCRATCH)))
+      (then (return (i32.const 0))))
+    (local.set $pl (i32.load (global.get $PAINT_SCRATCH)))
+    (local.set $pt (i32.load offset=4 (global.get $PAINT_SCRATCH)))
+    (local.set $pr (i32.load offset=8 (global.get $PAINT_SCRATCH)))
+    (local.set $pb (i32.load offset=12 (global.get $PAINT_SCRATCH)))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.or
+            (i32.and (local.get $style) (i32.const 0x10000000)) ;; WS_VISIBLE
+            (call $ctrl_get_wh_packed (local.get $ch)))
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
+          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
+          (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
+                       (i32.gt_s (local.get $chh) (i32.const 0)))
+            (then
+              (local.set $il (select (i32.sub (local.get $pl) (local.get $cx)) (i32.const 0)
+                                      (i32.gt_s (i32.sub (local.get $pl) (local.get $cx)) (i32.const 0))))
+              (local.set $it (select (i32.sub (local.get $pt) (local.get $cy)) (i32.const 0)
+                                      (i32.gt_s (i32.sub (local.get $pt) (local.get $cy)) (i32.const 0))))
+              (local.set $ir (select (i32.sub (local.get $pr) (local.get $cx)) (local.get $cw)
+                                      (i32.lt_s (i32.sub (local.get $pr) (local.get $cx)) (local.get $cw))))
+              (local.set $ib (select (i32.sub (local.get $pb) (local.get $cy)) (local.get $chh)
+                                      (i32.lt_s (i32.sub (local.get $pb) (local.get $cy)) (local.get $chh))))
+              (if (i32.and (i32.gt_s (local.get $ir) (local.get $il))
+                           (i32.gt_s (local.get $ib) (local.get $it)))
+                (then
+                  (call $update_invalidate_rect (local.get $ch)
+                    (local.get $il) (local.get $it) (local.get $ir) (local.get $ib))
+                  (call $paint_flag_set (local.get $ch))
+                  (call $host_invalidate (local.get $ch))
+                  (local.set $n (i32.add (local.get $n) (i32.const 1)))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  ;; Dispatch WAT-native control WM_PAINT internally. Win32 built-in
+  ;; controls have their own wndprocs; app message pumps may retrieve a
+  ;; child WM_PAINT, but DispatchMessage routes it to the control proc, not
+  ;; to the parent's fallback WndProc. Keeping this inside WAT prevents JS
+  ;; from owning control paint policy and ensures native controls validate
+  ;; even though they paint through host GDI primitives without BeginPaint.
+  (func $paint_drain_native_control_paints (result i32)
+    (local $i i32) (local $hwnd i32) (local $n i32) (local $guard i32)
+    (block $done (loop $again
+      (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (local.set $i (i32.const 0))
+      (block $found (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+          (then
+            (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+            (if (call $ctrl_table_get_class (local.get $hwnd))
+              (then
+                (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                  (then
+                    (call $paint_flag_clear_hwnd (local.get $hwnd))
+                    (call $update_clear_hwnd (local.get $hwnd))
+                    (drop (call $paint_seed_child_paints (local.get $hwnd)))
+                    (drop (call $control_wndproc_dispatch
+                      (local.get $hwnd) (i32.const 0x000F)
+                      (i32.const 0) (i32.const 0)))
+                    (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                    (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+                    (br $found))
+                  (else
+                    (call $paint_flag_clear_hwnd (local.get $hwnd))))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      (br $again)))
+    (local.get $n))
+
   ;; Called from $wnd_table_remove and slot-recycle paths.
   (func $paint_flag_reset_slot (param $slot i32)
-    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $slot)) (i32.const 0)))
+    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $slot)) (i32.const 0))
+    (i64.store (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
+    (i64.store offset=8 (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
+    (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
 
   ;; ---- NC_FLAGS / TITLE_TABLE / CLIENT_RECT (parallel to WND_RECORDS) ----
   ;; All three are indexed by the WND_RECORDS slot (0..MAX_WINDOWS-1).
@@ -958,6 +1213,20 @@
       (br 0))))
 
   (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)
+    (local $w i32) (local $h i32)
+    (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
+    (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                 (i32.gt_s (local.get $h) (i32.const 0)))
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+    (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
+    (call $dc_exclude_children_for_clip
+      (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
+
+  (func $dc_apply_client_erase_clip (param $hdc i32) (param $hwnd i32)
     (local $w i32) (local $h i32)
     (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
     (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
