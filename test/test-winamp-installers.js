@@ -3,8 +3,8 @@
 //
 // Runs both installer EXEs in silent mode and verifies the durable result:
 // the installed Winamp tree appears in the VFS. Also drives the normal NSIS
-// wizard path far enough to complete the install worker and return from the
-// modal installer.
+// wizard path with real canvas mouse clicks until the install worker completes,
+// the modal installer exits, and the installed files appear in the VFS.
 
 const fs = require('fs');
 const path = require('path');
@@ -261,7 +261,8 @@ for (const tc of CASES) {
     `--exe="${tc.exe}"`,
     '--max-batches=800000',
     '--batch-size=5000',
-    '--input=590:0x111:1,610:0x111:1,630:0x111:1',
+    '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283',
+    '--dump-vfs',
     '--no-build',
     '--quiet-api',
   ].join(' ');
@@ -283,9 +284,12 @@ for (const tc of CASES) {
 
   const interactiveChecks = [
     { name: 'interactive no crash', pass: !/\*\*\* CRASH|RuntimeError|UNIMPLEMENTED API|STUCK at EIP/.test(interactiveOut) },
+    { name: 'interactive real click accepted license', pass: /Winamp Setup: Installation Options/.test(interactiveOut) },
+    { name: 'interactive real click reached install folder', pass: /Winamp Setup: Installation Folder/.test(interactiveOut) },
     { name: 'interactive reached Installing Files', pass: /Winamp Setup: Installing Files/.test(interactiveOut) },
     { name: 'interactive worker started', pass: /CreateThread handle=/.test(interactiveOut) },
     { name: 'interactive returned from installer', pass: /\[Exit\] code=/.test(interactiveOut) },
+    ...tc.expected.map(p => ({ name: `interactive VFS has ${p}`, pass: interactiveOut.includes(p) })),
   ];
 
   console.log(`${tc.name} interactive`);
