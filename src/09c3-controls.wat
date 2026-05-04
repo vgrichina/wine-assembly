@@ -85,12 +85,15 @@
     (i32.store16 offset=6 (local.get $a) (local.get $h)))
 
   ;; Keep CONTROL_GEOM in sync with MoveWindow/SetWindowPos for WAT-managed
-  ;; controls. $flags uses SWP_NOSIZE(1) / SWP_NOMOVE(2) like SetWindowPos;
-  ;; MoveWindow callers pass 0. No-op if $hwnd isn't a control (class==0).
+  ;; controls and child dialogs. $flags uses SWP_NOSIZE(1) / SWP_NOMOVE(2)
+  ;; like SetWindowPos; MoveWindow callers pass 0. No-op only for true
+  ;; top-level/non-WAT windows. Dialog windows have class==0 but a parent.
   (func $ctrl_geom_sync
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $flags i32)
     (local $idx i32) (local $a i32)
-    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+    (if (i32.and
+          (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+          (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
       (then (return)))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))

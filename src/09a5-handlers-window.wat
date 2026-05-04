@@ -530,6 +530,10 @@
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Populate WAT CLIENT_RECT from the same non-client metrics used for
+    ;; painting. Coordinate conversion APIs depend on this for child pages
+    ;; hosted inside dialog client areas.
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
     ;; Fill dialog client area with COLOR_BTNFACE (see DialogBoxParamA
     ;; for rationale — template DlgProcs rarely handle WM_PAINT).
     (call $dlg_fill_bkgnd (local.get $hwnd))

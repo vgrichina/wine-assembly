@@ -107,7 +107,6 @@ for (const tc of CASES) {
     '--max-batches=8000',
     '--batch-size=5000',
     '--dump-vfs',
-    '--no-build',
   ].join(' ');
 
   console.log('$', cmd);
@@ -147,7 +146,6 @@ for (const tc of CASES) {
       '--batch-size=5000',
       '--input=600:dlg-dump:license',
       `--png="${pngPath}"`,
-      '--no-build',
       '--quiet-api',
       '--trace-host=gdi_draw_text',
     ].join(' ');
@@ -224,7 +222,6 @@ for (const tc of CASES) {
         '--max-batches=680',
         '--batch-size=5000',
         `--input=${probe.input}${probe.png ? `,660:png:${probe.png}` : ''}`,
-        '--no-build',
         '--quiet-api',
       ].join(' ');
 
@@ -269,7 +266,6 @@ for (const tc of CASES) {
       '--max-batches=650',
       '--batch-size=5000',
       `--input=600:png:${pressedBase},610:mousedown:400:250,620:png:${pressedHeld},630:mouseup:400:250`,
-      '--no-build',
       '--quiet-api',
     ].join(' ');
 
@@ -308,7 +304,6 @@ for (const tc of CASES) {
       '--max-batches=760',
       '--batch-size=5000',
       '--input=600:mousedown:373:283,620:mouseup:373:283',
-      '--no-build',
       '--quiet-api',
     ].join(' ');
 
@@ -339,6 +334,66 @@ for (const tc of CASES) {
     }
     console.log('');
 
+    const stagePngs = [
+      { name: 'license', path: path.join(__dirname, 'output', 'winamp295-stage-01-license.png') },
+      { name: 'options', path: path.join(__dirname, 'output', 'winamp295-stage-02-options.png') },
+      { name: 'folder', path: path.join(__dirname, 'output', 'winamp295-stage-03-folder.png') },
+      { name: 'installing files', path: path.join(__dirname, 'output', 'winamp295-stage-04-installing-files.png') },
+    ];
+    for (const stage of stagePngs) {
+      try { fs.unlinkSync(stage.path); } catch (_) {}
+    }
+
+    const stageCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=1100',
+      '--batch-size=5000',
+      [
+        `--input=580:png:${stagePngs[0].path}`,
+        '600:mousedown:373:283',
+        '620:mouseup:373:283',
+        `760:png:${stagePngs[1].path}`,
+        '800:mousedown:373:283',
+        '820:mouseup:373:283',
+        `900:png:${stagePngs[2].path}`,
+        '1000:mousedown:373:283',
+        '1020:mouseup:373:283',
+        `1022:png:${stagePngs[3].path}`,
+      ].join(','),
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', stageCmd);
+
+    try {
+      execSync(stageCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (_) {}
+
+    console.log(`${tc.name} wizard stage PNG sequence`);
+    for (const stage of stagePngs) {
+      const minBytes = stage.name === 'installing files' ? 1000 : 10000;
+      const ok = fs.existsSync(stage.path) && fs.statSync(stage.path).size > minBytes;
+      console.log((ok ? 'PASS  ' : 'FAIL  ') + `${stage.name} stage PNG captured`);
+      if (!ok) failed++;
+    }
+    for (const stage of stagePngs.slice(1)) {
+      const staleInk = fs.existsSync(stage.path)
+        ? await countNearBlackPixels(stage.path, { x: 45, y: 20, w: 180, h: 12 })
+        : Number.POSITIVE_INFINITY;
+      const clean = staleInk < 10;
+      console.log((clean ? 'PASS  ' : 'FAIL  ') +
+        `${stage.name} stage has no stale upper-page text (${staleInk} dark pixels)`);
+      if (!clean) failed++;
+    }
+    console.log('');
+
     const optionsPng = path.join(__dirname, 'output', 'winamp295-options-page.png');
     const optionsCmd = [
       `node "${RUN}"`,
@@ -346,7 +401,6 @@ for (const tc of CASES) {
       '--max-batches=760',
       '--batch-size=5000',
       '--input=600:mousedown:373:283,620:mouseup:373:283,700:png:' + optionsPng,
-      '--no-build',
       '--quiet-api',
     ].join(' ');
 
@@ -375,7 +429,6 @@ for (const tc of CASES) {
       '--max-batches=900',
       '--batch-size=5000',
       '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,821:png:' + folderPng,
-      '--no-build',
       '--quiet-api',
     ].join(' ');
 
@@ -422,7 +475,6 @@ for (const tc of CASES) {
       '--max-batches=1040',
       '--batch-size=5000',
       '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283,1021:dlg-dump:all,1022:png:' + installingPng,
-      '--no-build',
       '--quiet-api',
     ].join(' ');
 
@@ -443,7 +495,7 @@ for (const tc of CASES) {
 
     const installingPngOk = fs.existsSync(installingPng) && fs.statSync(installingPng).size > 1000;
     const installingChecks = [
-      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=0,0 wh=399,227/.test(installingOut) },
+      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,227/.test(installingOut) },
       { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
       { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
       { name: 'installing page PNG captured', pass: installingPngOk },
@@ -464,7 +516,6 @@ for (const tc of CASES) {
     '--batch-size=5000',
     '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283',
     '--dump-vfs',
-    '--no-build',
     '--quiet-api',
   ].join(' ');
 

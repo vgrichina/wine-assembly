@@ -1124,6 +1124,23 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 12))))
 
+  ;; Screen origin of an HWND's client area. Win32 coordinate conversion uses
+  ;; this, not the window origin; top-level client origins include NC chrome,
+  ;; while child controls/dialogs usually have a zero client offset.
+  (func $wnd_client_screen_x (param $hwnd i32) (result i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (i32.add
+      (i32.load (global.get $PAINT_SCRATCH))
+      (call $client_rect_get_l (local.get $hwnd))))
+
+  (func $wnd_client_screen_y (param $hwnd i32) (result i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (i32.add
+      (i32.load offset=4 (global.get $PAINT_SCRATCH))
+      (call $client_rect_get_t (local.get $hwnd))))
+
   (func $client_rect_reset_slot (param $slot i32)
     (local $rec i32)
     (local.set $rec (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $slot) (i32.const 16))))

@@ -1876,10 +1876,15 @@
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
   ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cx i32) (local $cy i32)
+    (local $cx i32) (local $cy i32) (local $dlg_rec i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
+    (if (i32.and
+          (i32.ne (local.get $dlg_rec) (i32.const 0))
+          (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+      (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))
     ;; For non-main windows, record pending WM_SIZE for delivery by ShowWindow
     (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
     (then
@@ -1982,9 +1987,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 130: ScreenToClient — STUB: unimplemented
+  ;; 130: ScreenToClient
   (func $handle_ScreenToClient (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; ScreenToClient(hwnd, lpPoint) — all windows at (0,0), so no-op
+    (local $pt i32) (local $ox i32) (local $oy i32)
+    (local.set $pt (call $g2w (local.get $arg1)))
+    (local.set $ox (call $wnd_client_screen_x (local.get $arg0)))
+    (local.set $oy (call $wnd_client_screen_y (local.get $arg0)))
+    (i32.store (local.get $pt)
+      (i32.sub (i32.load (local.get $pt)) (local.get $ox)))
+    (i32.store offset=4 (local.get $pt)
+      (i32.sub (i32.load offset=4 (local.get $pt)) (local.get $oy)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -2088,6 +2100,9 @@
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Populate WAT CLIENT_RECT from the same frame metrics the renderer
+    ;; uses so ScreenToClient/MapWindowPoints subtract the real client origin.
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
     ;; Fill dialog client area with COLOR_BTNFACE — template DlgProcs
     ;; typically don't handle WM_PAINT, expecting DefDlgProc to erase,
     ;; but our modal pump doesn't fall through to DefWindowProc on a
@@ -2170,39 +2185,18 @@
   )
 
   ;; 140: MapWindowPoints(hWndFrom, hWndTo, lpPoints, cPoints) → int
-  ;; Translate an array of POINTs from hWndFrom's client space into
-  ;; hWndTo's. For direct parent↔child pairs (the common dialog case) the
-  ;; delta is the child's CONTROL_GEOM xy. General N-level routing walks
-  ;; up the parent chain on each side and sums offsets. Return value packs
-  ;; dx (low 16) and dy (high 16), matching the Win32 contract.
+  ;; Translate an array of POINTs from hWndFrom's client space into hWndTo's.
+  ;; hWndFrom/hWndTo==NULL means screen coordinates. Return packs dx/dy in
+  ;; signed 16-bit halves, matching the Win32 contract.
   (func $handle_MapWindowPoints (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dx i32) (local $dy i32) (local $cur i32) (local $xy i32)
+    (local $dx i32) (local $dy i32)
     (local $i i32) (local $p i32)
-    ;; Accumulate origin of hWndFrom walking up to a common ancestor (we
-    ;; simplify: walk each side fully; works when only one side is nested).
-    (local.set $cur (local.get $arg0))
-    (block $from_done (loop $from_walk
-      (br_if $from_done (i32.eqz (local.get $cur)))
-      (br_if $from_done (i32.eq (local.get $cur) (local.get $arg1)))
-      (if (call $ctrl_table_get_class (local.get $cur))
-        (then
-          (local.set $xy (call $ctrl_get_xy_packed (local.get $cur)))
-          (local.set $dx (i32.add (local.get $dx) (i32.and (local.get $xy) (i32.const 0xFFFF))))
-          (local.set $dy (i32.add (local.get $dy) (i32.shr_u (local.get $xy) (i32.const 16))))))
-      (local.set $cur (call $wnd_get_parent (local.get $cur)))
-      (br $from_walk)))
-    ;; Subtract origin of hWndTo the same way
-    (local.set $cur (local.get $arg1))
-    (block $to_done (loop $to_walk
-      (br_if $to_done (i32.eqz (local.get $cur)))
-      (br_if $to_done (i32.eq (local.get $cur) (local.get $arg0)))
-      (if (call $ctrl_table_get_class (local.get $cur))
-        (then
-          (local.set $xy (call $ctrl_get_xy_packed (local.get $cur)))
-          (local.set $dx (i32.sub (local.get $dx) (i32.and (local.get $xy) (i32.const 0xFFFF))))
-          (local.set $dy (i32.sub (local.get $dy) (i32.shr_u (local.get $xy) (i32.const 16))))))
-      (local.set $cur (call $wnd_get_parent (local.get $cur)))
-      (br $to_walk)))
+    (local.set $dx (i32.sub
+      (call $wnd_client_screen_x (local.get $arg0))
+      (call $wnd_client_screen_x (local.get $arg1))))
+    (local.set $dy (i32.sub
+      (call $wnd_client_screen_y (local.get $arg0))
+      (call $wnd_client_screen_y (local.get $arg1))))
     ;; Apply to each POINT (or RECT = 2 POINTs, caller picks cPoints)
     (local.set $i (i32.const 0))
     (local.set $p (call $g2w (local.get $arg2)))
@@ -2222,13 +2216,20 @@
   ;; 141: SetWindowPos
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
-    (local $cy i32) (local $uFlags i32)
+    (local $cy i32) (local $uFlags i32) (local $dlg_rec i32)
     (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (if (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
+      (then
+        (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
+        (if (i32.and
+              (i32.ne (local.get $dlg_rec) (i32.const 0))
+              (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+          (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -4944,7 +4945,14 @@
 
   ;; 405: ClientToScreen
   (func $handle_ClientToScreen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; ClientToScreen(hwnd, lpPoint) — all windows at (0,0), so no-op
+    (local $pt i32) (local $ox i32) (local $oy i32)
+    (local.set $pt (call $g2w (local.get $arg1)))
+    (local.set $ox (call $wnd_client_screen_x (local.get $arg0)))
+    (local.set $oy (call $wnd_client_screen_y (local.get $arg0)))
+    (i32.store (local.get $pt)
+      (i32.add (i32.load (local.get $pt)) (local.get $ox)))
+    (i32.store offset=4 (local.get $pt)
+      (i32.add (i32.load offset=4 (local.get $pt)) (local.get $oy)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
