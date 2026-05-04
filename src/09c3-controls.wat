@@ -5181,6 +5181,10 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Native control paints don't call BeginPaint, so establish the
+        ;; child-client clip explicitly before drawing wrapped/scrolling text.
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))
         ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
         ;; that have no JS-side window record).
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))

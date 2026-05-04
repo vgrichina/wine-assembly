@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -37,6 +38,23 @@ const CASES = [
 
 let failed = 0;
 
+async function countNearBlackPixels(pngPath, rect) {
+  const img = await loadImage(pngPath);
+  const canvas = createCanvas(img.width, img.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, img.width, img.height).data;
+  let count = 0;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * img.width + x) * 4;
+      if (data[i] < 35 && data[i + 1] < 35 && data[i + 2] < 35) count++;
+    }
+  }
+  return count;
+}
+
+async function main() {
 for (const tc of CASES) {
   if (!fs.existsSync(tc.exe)) {
     console.log(`SKIP  ${tc.name}: missing ${tc.exe}`);
@@ -149,16 +167,20 @@ for (const tc of CASES) {
         name: 'canvas scrollbar thumb drag scrolls license text',
         input: '600:mousedown:403:99,610:mousemove:403:165,620:mouseup:403:165,640:dlg-send:1000:206:0:0',
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=[1-9][0-9]*/,
+        png: path.join(__dirname, 'output', 'winamp295-license-scrolled.png'),
       },
     ];
 
     for (const probe of scrollProbes) {
+      if (probe.png) {
+        try { fs.unlinkSync(probe.png); } catch (_) {}
+      }
       const scrollCmd = [
         `node "${RUN}"`,
         `--exe="${tc.exe}"`,
         '--max-batches=680',
         '--batch-size=5000',
-        `--input=${probe.input}`,
+        `--input=${probe.input}${probe.png ? `,660:png:${probe.png}` : ''}`,
         '--no-build',
         '--quiet-api',
       ].join(' ');
@@ -181,6 +203,18 @@ for (const tc of CASES) {
       const pass = probe.pattern.test(scrollOut);
       console.log((pass ? 'PASS  ' : 'FAIL  ') + probe.name);
       if (!pass) failed++;
+
+      if (probe.png) {
+        const pngCaptured = fs.existsSync(probe.png) && fs.statSync(probe.png).size > 10000;
+        let strayInk = Number.POSITIVE_INFINITY;
+        if (pngCaptured) {
+          strayInk = await countNearBlackPixels(probe.png, { x: 8, y: 22, w: 412, h: 50 });
+        }
+        const clipPass = pngCaptured && strayInk < 500;
+        console.log((clipPass ? 'PASS  ' : 'FAIL  ') +
+          `scrolled license text stays clipped above RichEdit (${strayInk} stray dark pixels)`);
+        if (!clipPass) failed++;
+      }
     }
     console.log('');
   }
@@ -226,3 +260,9 @@ for (const tc of CASES) {
 }
 
 process.exit(failed ? 1 : 0);
+}
+
+main().catch(e => {
+  console.error(e && e.stack ? e.stack : e);
+  process.exit(1);
+});
