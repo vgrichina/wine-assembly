@@ -2108,7 +2108,9 @@
     (block $done (loop $push_loop
       (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
       (br_if $done (i32.eq (local.get $i) (i32.const -1)))
-      (call $paint_flag_set_inv (call $wnd_slot_hwnd (local.get $i)))
+      (local.set $ctrl_hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and (call $wnd_get_style (local.get $ctrl_hwnd)) (i32.const 0x10000000))
+        (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG

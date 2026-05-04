@@ -339,6 +339,53 @@ for (const tc of CASES) {
     }
     console.log('');
 
+    const folderPng = path.join(__dirname, 'output', 'winamp295-folder-page.png');
+    const folderCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=900',
+      '--batch-size=5000',
+      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,821:png:' + folderPng,
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', folderCmd);
+
+    try {
+      execSync(folderCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (_) {}
+
+    const folderPngOk = fs.existsSync(folderPng) && fs.statSync(folderPng).size > 10000;
+    const hiddenCheckboxInk = folderPngOk
+      ? await countNonBtnFacePixels(folderPng, { x: 24, y: 164, w: 24, h: 24 })
+      : Number.POSITIVE_INFINITY;
+    const backButtonInk = folderPngOk
+      ? await countNonBtnFacePixels(folderPng, { x: 259, y: 271, w: 75, h: 24 })
+      : 0;
+    const installButtonInk = folderPngOk
+      ? await countNonBtnFacePixels(folderPng, { x: 337, y: 271, w: 75, h: 24 })
+      : 0;
+    const folderChecks = [
+      { name: 'folder page PNG captured', pass: folderPngOk },
+      { name: 'hidden checkbox remains unpainted', pass: hiddenCheckboxInk < 10 },
+      { name: 'folder Back button is not overdrawn by page controls', pass: backButtonInk > 350 },
+      { name: 'folder Install button is not overdrawn by page controls', pass: installButtonInk > 500 },
+    ];
+
+    console.log(`${tc.name} folder page`);
+    for (const c of folderChecks) {
+      console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+      if (!c.pass) failed++;
+    }
+    console.log('');
+
     const installingPng = path.join(__dirname, 'output', 'winamp295-installing-files.png');
     const installingCmd = [
       `node "${RUN}"`,
