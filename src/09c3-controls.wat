@@ -2067,6 +2067,7 @@
             (local.set $flags
               (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x01))) ;; pressed
             (i32.store offset=8 (local.get $state_w) (local.get $flags))
+            (global.set $capture_hwnd (local.get $hwnd))
             ;; BS_OWNERDRAW: ask parent to repaint via WM_DRAWITEM. Other
             ;; kinds rely on WM_PAINT → button_wndproc drawing the bevel.
             (if (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
@@ -2090,6 +2091,8 @@
             (local.set $flags (i32.load offset=8 (local.get $state_w)))
             ;; clear pressed
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFE)))
+            (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+              (then (global.set $capture_hwnd (i32.const 0))))
             ;; Toggle checked for BS_CHECKBOX(2)/BS_AUTOCHECKBOX(3)/
             ;; BS_3STATE(5)/BS_AUTO3STATE(6). BS_AUTORADIOBUTTON(9) clears
             ;; sibling autoradios then forces this one ON (radio mutex).
@@ -2945,6 +2948,8 @@
                               (global.set $capture_hwnd (local.get $hwnd))
                               (global.set $sb_pressed_hwnd (local.get $hwnd))
                               (global.set $sb_pressed_part (i32.const 5))))))))))
+                (drop (call $wnd_send_message
+                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
                 (call $invalidate_hwnd (local.get $hwnd))
                 (return (i32.const 0))))))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
@@ -5047,6 +5052,8 @@
 	                                  (global.set $edit_sb_drag_anchor_top (local.get $lo))
 	                                  (global.set $sb_pressed_hwnd (local.get $hwnd))
 	                                  (global.set $sb_pressed_part (i32.const 5))))))))))))))
+	                (drop (call $wnd_send_message
+	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
 	                (return (i32.const 0))))))
 	        (local.set $cur (call $edit_xy_to_offset
@@ -5770,7 +5777,7 @@
     (local $xy i32) (local $wh i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
     (local $px i32) (local $py i32) (local $style i32) (local $ch_lp i32)
-    (local $hit i32)
+    (local $hit i32) (local $dispatchable i32)
     (local.set $px (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
     (local.set $py (i32.shr_s (local.get $lParam) (i32.const 16)))
     (if (i32.and
@@ -5835,15 +5842,29 @@
                   (i32.ne (global.get $combo_open_hwnd) (i32.const 0))
                   (i32.ne (global.get $combo_open_hwnd) (local.get $ch))))
             (then (call $combobox_close_dropdown (global.get $combo_open_hwnd) (i32.const 0))))
-          (if (i32.and
-                (i32.eq (local.get $msg) (i32.const 0x0201))
-                (i32.eq (local.get $cls) (i32.const 1)))
+          (local.set $dispatchable
+            (i32.or
+              (i32.or
+                (i32.or (i32.eq (local.get $cls) (i32.const 1))
+                        (i32.eq (local.get $cls) (i32.const 2)))
+                (i32.or (i32.eq (local.get $cls) (i32.const 4))
+                        (i32.eq (local.get $cls) (i32.const 5))))
+              (i32.or
+                (i32.or (i32.eq (local.get $cls) (i32.const 6))
+                        (i32.eq (local.get $cls) (i32.const 7)))
+                (i32.or (i32.eq (local.get $cls) (i32.const 8))
+                        (i32.eq (local.get $cls) (i32.const 9))))))
+          (if (local.get $dispatchable)
             (then
-              (global.set $dialog_button_capture_parent (local.get $parent))
-              (global.set $dialog_button_capture_hwnd (local.get $ch))))
-          (drop (call $wnd_send_message (local.get $ch)
-                  (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
-          (return (i32.const 1))))
+              (if (i32.and
+                    (i32.eq (local.get $msg) (i32.const 0x0201))
+                    (i32.eq (local.get $cls) (i32.const 1)))
+                (then
+                  (global.set $dialog_button_capture_parent (local.get $parent))
+                  (global.set $dialog_button_capture_hwnd (local.get $ch))))
+              (drop (call $wnd_send_message (local.get $ch)
+                      (local.get $msg) (local.get $wParam) (local.get $ch_lp)))
+              (return (i32.const 1))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $walk)))
     ;; No child hit. If a combo is dropped, an empty-area click on the dialog
@@ -6326,6 +6347,8 @@
           (then
             (global.set $sb_pressed_hwnd (local.get $hwnd))
             (global.set $sb_pressed_part (local.get $part))
+            (drop (call $wnd_send_message
+              (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
             (call $invalidate_hwnd (local.get $hwnd))
             ;; Send WM_VSCROLL (0x115) / WM_HSCROLL (0x114) to parent.
             ;; SB_LINEUP=0, SB_LINEDOWN=1, SB_LINELEFT=0, SB_LINERIGHT=1.

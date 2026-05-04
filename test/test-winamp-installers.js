@@ -217,6 +217,43 @@ for (const tc of CASES) {
       }
     }
     console.log('');
+
+    const clickCmd = [
+      `node "${RUN}"`,
+      `--exe="${tc.exe}"`,
+      '--max-batches=760',
+      '--batch-size=5000',
+      '--input=600:mousedown:373:283,620:mouseup:373:283',
+      '--no-build',
+      '--quiet-api',
+    ].join(' ');
+
+    console.log('$', clickCmd);
+
+    let clickOut = '';
+    try {
+      clickOut = execSync(clickCmd, {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 180000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 80 * 1024 * 1024,
+      });
+    } catch (e) {
+      clickOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    }
+
+    const clickChecks = [
+      { name: 'canvas I Agree single-click advances installer', pass: /Winamp Setup: Installation Options/.test(clickOut) },
+      { name: 'canvas I Agree single-click does not crash', pass: !/\*\*\* CRASH|RuntimeError|UNIMPLEMENTED API/.test(clickOut) },
+    ];
+
+    console.log(`${tc.name} canvas button input`);
+    for (const c of clickChecks) {
+      console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+      if (!c.pass) failed++;
+    }
+    console.log('');
   }
 
   const interactiveCmd = [
