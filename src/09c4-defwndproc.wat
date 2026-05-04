@@ -201,7 +201,9 @@
 
     ;; Dialog style: only the close button.
     (if (local.get $is_dialog)
-      (then (return (local.get $cap_h))))
+      (then
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (local.get $cap_h))))
 
     ;; Re-fetch style bits for min/max presence — `$flags` only carries
     ;; active/dialog/maxed/has_caption. When the window lacks BOTH
