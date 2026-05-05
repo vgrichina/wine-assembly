@@ -552,6 +552,11 @@
         (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
+    ;; Do not synchronously paint children during CreateDialogParamA. Nested
+    ;; wizard pages can be created before USER has finalized the parent/child
+    ;; visible region, and painting them now leaves pixels that a later parent
+    ;; erase can wipe. Seeded paint is drained by ShowWindow/GetMessage once
+    ;; the visible clipped window tree is stable.
     ;; Fire WH_CBT/HCBT_CREATEWND for modeless dialogs. MFC's dialog
     ;; creation path installs a CBT hook and uses it to attach the freshly
     ;; created HWND to the CWnd/CDialog object before WM_INITDIALOG.
@@ -674,19 +679,39 @@
     (if (local.get $arg1)
       (then (drop (call $wnd_set_style (local.get $arg0)
               (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))))
-      (else (drop (call $wnd_set_style (local.get $arg0)
-              (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))))
+      (else
+        (drop (call $wnd_set_style (local.get $arg0)
+              (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
+        ;; A hidden child must not later consume an already-queued paint.
+        ;; Win98 validates the hidden window and repaints the parent surface;
+        ;; keeping our stale update region lets hidden controls draw fragments
+        ;; after SW_HIDE.
+        (call $paint_clear_subtree (local.get $arg0))))
     ;; Showing a window should trigger WM_PAINT. Region-driven dispatch only
     ;; sees windows with an update region, so non-main windows must use the
     ;; paint+invalidate helper rather than the legacy paint bit alone.
     (if (local.get $arg1)
       (then
+        ;; Dialog/page creation already fills the client background before
+        ;; WAT-native children paint. Do not erase child pages again here:
+        ;; on our top-level backing canvas that later erase can wipe child
+        ;; controls that Win98 would leave visible through USER's clipped
+        ;; update/visible-region pass.
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else
             (call $paint_flag_set_inv (local.get $arg0))
-            (if (call $wnd_get_parent (local.get $arg0))
-              (then (call $paint_flag_set_inv (call $wnd_get_parent (local.get $arg0)))))))))
+            ;; Showing a parent exposes its visible children. Win98's paint
+            ;; selection accounts for that visible-region relationship; seed
+            ;; it here before draining WAT-native controls.
+            (drop (call $paint_seed_child_paints (local.get $arg0)))))
+        ;; Dialogs that create/show a child page and immediately start work
+        ;; may not re-enter the normal message pump before their first visual
+        ;; capture/exit. Win98 native child controls are ready to repaint as
+        ;; part of showing the window; drain our WAT-native control queue here
+        ;; so visible statics/progress/list controls don't remain blank.
+        (drop (call $paint_drain_native_control_paints))
+        (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
     ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
     ;; with the new client dimensions so GetMessageA delivers correct values.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
@@ -1533,10 +1558,18 @@
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Built-in control wndproc — act as DefWindowProc (return 0)
+    ;; Built-in WAT-native controls receive their normal control wndproc.
+    ;; Real Win32 routes SendMessage(hwndControl, WM_SETTEXT/PBM_*/...) to
+    ;; the control's window procedure; returning 0 here drops dynamic labels
+    ;; and progress updates from installers.
     (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
       (then
-        (global.set $eax (i32.const 0))
+        (if (local.get $ctrl_class)
+          (then
+            (global.set $eax (call $control_wndproc_dispatch
+              (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))))
+          (else
+            (global.set $eax (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; Fall back to global wndproc if not in table (skip for child controls 0x20000+)

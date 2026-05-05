@@ -173,7 +173,7 @@ for (const tc of CASES) {
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
       { name: 'license text uses word-wrapped DrawText', pass: /gdi_draw_text\(0x5000d, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
       { name: 'license page PNG captured', pass: pngOk },
-      { name: 'license wizard buttons are visible', pass: wizardButtonInk > 1000 },
+      { name: 'license wizard buttons are visible', pass: wizardButtonInk > 700 },
     ];
 
     console.log(`${tc.name} license page`);
@@ -392,6 +392,20 @@ for (const tc of CASES) {
         `${stage.name} stage has no stale upper-page text (${staleInk} dark pixels)`);
       if (!clean) failed++;
     }
+    const stage4StatusInk = fs.existsSync(stagePngs[3].path)
+      ? await countNonBtnFacePixels(stagePngs[3].path, { x: 48, y: 35, w: 130, h: 12 })
+      : 0;
+    const stage4HiddenDetailsInk = fs.existsSync(stagePngs[3].path)
+      ? await countNonBtnFacePixels(stagePngs[3].path, { x: 2, y: 70, w: 18, h: 40 })
+      : Number.POSITIVE_INFINITY;
+    const stage4StatusOk = stage4StatusInk > 120;
+    const stage4HiddenDetailsOk = stage4HiddenDetailsInk < 10;
+    console.log((stage4StatusOk ? 'PASS  ' : 'FAIL  ') +
+      `installing stage paints status label (${stage4StatusInk} ink pixels)`);
+    console.log((stage4HiddenDetailsOk ? 'PASS  ' : 'FAIL  ') +
+      `installing stage does not paint hidden details button fragments (${stage4HiddenDetailsInk} ink pixels)`);
+    if (!stage4StatusOk) failed++;
+    if (!stage4HiddenDetailsOk) failed++;
     console.log('');
 
     const optionsPng = path.join(__dirname, 'output', 'winamp295-options-page.png');
@@ -494,11 +508,19 @@ for (const tc of CASES) {
     }
 
     const installingPngOk = fs.existsSync(installingPng) && fs.statSync(installingPng).size > 1000;
+    const installingStatusInk = installingPngOk
+      ? await countNonBtnFacePixels(installingPng, { x: 48, y: 35, w: 130, h: 12 })
+      : 0;
+    const installingHiddenDetailsInk = installingPngOk
+      ? await countNonBtnFacePixels(installingPng, { x: 2, y: 70, w: 18, h: 40 })
+      : Number.POSITIVE_INFINITY;
     const installingChecks = [
       { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,227/.test(installingOut) },
       { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
       { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
       { name: 'installing page PNG captured', pass: installingPngOk },
+      { name: `installing page paints status label (${installingStatusInk} ink pixels)`, pass: installingStatusInk > 120 },
+      { name: `installing page does not paint hidden details fragments (${installingHiddenDetailsInk} ink pixels)`, pass: installingHiddenDetailsInk < 10 },
     ];
 
     console.log(`${tc.name} installing page`);

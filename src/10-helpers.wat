@@ -789,6 +789,52 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 0)))
 
+  ;; A Win32 child is effectively visible only when it and every ancestor
+  ;; carry WS_VISIBLE. Hidden dialog pages keep child WS_VISIBLE bits, but
+  ;; USER's visible-region walk still suppresses their paint and hit testing.
+  (func $wnd_is_effectively_visible (param $hwnd i32) (result i32)
+    (local $cur i32) (local $style i32)
+    (local.set $cur (local.get $hwnd))
+    (block $done (loop $walk
+      (if (i32.eqz (local.get $cur)) (then (return (i32.const 1))))
+      (local.set $style (call $wnd_get_style (local.get $cur)))
+      (if (i32.eqz (i32.and (local.get $style) (i32.const 0x10000000)))
+        (then (return (i32.const 0))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (br $walk)))
+    (i32.const 1))
+
+  ;; True while any ancestor still has a queued WM_ERASEBKGND. Real USER/GDI
+  ;; will not let a child's pixels become durable under a later parent erase;
+  ;; defer WAT-native control paints until the ancestor erase has drained.
+  (func $wnd_has_pending_ancestor_erase (param $hwnd i32) (result i32)
+    (local $cur i32)
+    (local.set $cur (call $wnd_get_parent (local.get $hwnd)))
+    (block $done (loop $walk
+      (if (i32.eqz (local.get $cur)) (then (return (i32.const 0))))
+      (if (i32.and (call $nc_flags_test (local.get $cur)) (i32.const 2))
+        (then (return (i32.const 1))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (br $walk)))
+    (i32.const 0))
+
+  ;; Clear pending WAT-owned paint/update state for a subtree. ShowWindow(SW_HIDE)
+  ;; makes the whole child tree non-paintable even when descendants retain their
+  ;; own WS_VISIBLE style.
+  (func $paint_clear_subtree (param $hwnd i32)
+    (local $slot i32) (local $ch i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (call $paint_flag_clear_hwnd (local.get $hwnd))
+    (call $update_clear_hwnd (local.get $hwnd))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (call $paint_clear_subtree (local.get $ch))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan))))
+
   ;; $paint_flag_first() → hwnd of first dirty slot (0 if none), no clear.
   (func $paint_flag_first (result i32)
     (local $i i32)
@@ -842,15 +888,13 @@
           (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
           (local.set $style (call $wnd_get_style (local.get $hwnd)))
           (local.set $ctrl_wh (call $ctrl_get_wh_packed (local.get $hwnd)))
-          ;; Most WAT-native dialog controls are represented by CONTROL_GEOM
-          ;; even when their synthesized WND style is incomplete. Treat a
-          ;; non-empty control geometry as paintable; still drop truly
-          ;; invisible/top-level zero records.
-          (if (i32.and
-                (i32.eqz (i32.and (local.get $style) (i32.const 0x10000000))) ;; WS_VISIBLE
-                (i32.eqz (local.get $ctrl_wh)))
+          ;; Hidden windows do not receive WM_PAINT. Effective visibility must
+          ;; include ancestors: NSIS hides wizard pages while their children
+          ;; keep WS_VISIBLE, and Win98 still suppresses those children.
+          (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
             (then
               (call $paint_flag_clear_hwnd (local.get $hwnd))
+              (call $update_clear_hwnd (local.get $hwnd))
               (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                 (then (global.set $paint_pending (i32.const 0)))))
             (else
@@ -900,9 +944,7 @@
       (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
       (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
       (local.set $style (call $wnd_get_style (local.get $ch)))
-      (if (i32.or
-            (i32.and (local.get $style) (i32.const 0x10000000)) ;; WS_VISIBLE
-            (call $ctrl_get_wh_packed (local.get $ch)))
+      (if (call $wnd_is_effectively_visible (local.get $ch))
         (then
           (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
@@ -940,9 +982,10 @@
   ;; from owning control paint policy and ensures native controls validate
   ;; even though they paint through host GDI primitives without BeginPaint.
   (func $paint_drain_native_control_paints (result i32)
-    (local $i i32) (local $hwnd i32) (local $n i32) (local $guard i32)
+    (local $i i32) (local $hwnd i32) (local $n i32) (local $guard i32) (local $progress i32)
     (block $done (loop $again
       (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (local.set $progress (i32.const 0))
       (local.set $i (i32.const 0))
       (block $found (loop $scan
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
@@ -951,6 +994,15 @@
             (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
             (if (call $ctrl_table_get_class (local.get $hwnd))
               (then
+                (if (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
+                  (then
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $scan)))
+                (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+                  (then
+                    (call $paint_flag_clear_hwnd (local.get $hwnd))
+                    (call $update_clear_hwnd (local.get $hwnd))
+                    (br $found)))
                 (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
                   (then
                     (call $paint_flag_clear_hwnd (local.get $hwnd))
@@ -960,13 +1012,84 @@
                       (local.get $hwnd) (i32.const 0x000F)
                       (i32.const 0) (i32.const 0)))
                     (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                    (local.set $progress (i32.const 1))
                     (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
                     (br $found))
                   (else
                     (call $paint_flag_clear_hwnd (local.get $hwnd))))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $scan)))
+      (br_if $done (i32.eqz (local.get $progress)))
       (br $again)))
+    (local.get $n))
+
+  ;; Paint visible WAT-native controls below a shown parent immediately.
+  ;; This models the Win98 visible-region pass that exposes child controls
+  ;; when a dialog/page is shown. It is intentionally WAT-only: JS still only
+  ;; supplies canvases and primitive GDI operations.
+  (func $paint_flush_visible_native_children (param $parent i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $style i32) (local $n i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (call $wnd_is_effectively_visible (local.get $ch))
+        (then
+          (if (call $ctrl_table_get_class (local.get $ch))
+            (then
+              (if (call $wnd_has_pending_ancestor_erase (local.get $ch))
+                (then
+                  (call $paint_flag_set_inv (local.get $ch))
+                  (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+                  (br $scan)))
+              (call $update_invalidate_full (local.get $ch))
+              (drop (call $control_wndproc_dispatch
+                (local.get $ch) (i32.const 0x000F)
+                (i32.const 0) (i32.const 0)))
+              (call $update_clear_hwnd (local.get $ch))
+              (call $paint_flag_clear_hwnd (local.get $ch))
+              (local.set $n (i32.add (local.get $n) (i32.const 1))))
+            (else
+              (local.set $n (i32.add
+                (local.get $n)
+                (call $paint_flush_visible_native_children (local.get $ch))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  ;; ShowWindow has just made $parent visible, so its descendants should be
+  ;; paintable based on their own WS_VISIBLE bits even if ancestor style/state
+  ;; is still settling in a nested dialog transition.
+  (func $paint_flush_shown_native_children (param $parent i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $style i32) (local $n i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.and (local.get $style) (i32.const 0x10000000)) ;; WS_VISIBLE
+        (then
+          (if (call $ctrl_table_get_class (local.get $ch))
+            (then
+              (if (call $wnd_has_pending_ancestor_erase (local.get $ch))
+                (then
+                  (call $paint_flag_set_inv (local.get $ch))
+                  (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+                  (br $scan)))
+              (call $update_invalidate_full (local.get $ch))
+              (drop (call $control_wndproc_dispatch
+                (local.get $ch) (i32.const 0x000F)
+                (i32.const 0) (i32.const 0)))
+              (call $update_clear_hwnd (local.get $ch))
+              (call $paint_flag_clear_hwnd (local.get $ch))
+              (local.set $n (i32.add (local.get $n) (i32.const 1))))
+            (else
+              (local.set $n (i32.add
+                (local.get $n)
+                (call $paint_flush_shown_native_children (local.get $ch))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
     (local.get $n))
 
   ;; Called from $wnd_table_remove and slot-recycle paths.
@@ -1227,6 +1350,40 @@
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
+  ;; WM_ERASEBKGND on a parent must not clear visible child windows. On real
+  ;; USER/GDI this is enforced by the visible region. Our child dialogs and
+  ;; WAT-native controls draw into the top-level backing canvas, so the erase
+  ;; DC needs an explicit child exclusion even when the parent template did not
+  ;; carry WS_CLIPCHILDREN.
+  (func $dc_exclude_visible_children_for_erase (param $hdc i32) (param $hwnd i32) (param $origin_x i32) (param $origin_y i32)
+    (local $slot i32) (local $ch i32) (local $cstyle i32)
+    (local $xy i32) (local $wh i32) (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $cstyle (call $wnd_get_style (local.get $ch)))
+      (if (i32.and (local.get $cstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
+          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
+          (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
+                       (i32.gt_s (local.get $chh) (i32.const 0)))
+            (then
+              (drop (call $host_gdi_exclude_clip_rect
+                (local.get $hdc)
+                (i32.add (local.get $origin_x) (local.get $cx))
+                (i32.add (local.get $origin_y) (local.get $cy))
+                (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
+                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh)))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br 0))))
+
   (func $dc_exclude_siblings_for_clip (param $hdc i32) (param $hwnd i32)
     (local $style i32) (local $parent i32) (local $myxy i32) (local $myx i32) (local $myy i32)
     (local $slot i32) (local $my_slot i32) (local $sib i32) (local $sstyle i32)
@@ -1296,7 +1453,8 @@
         (drop (call $host_gdi_intersect_clip_rect
           (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
-    (call $dc_exclude_children_for_clip (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    (call $dc_exclude_visible_children_for_erase
+      (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
     (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
 
   (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)

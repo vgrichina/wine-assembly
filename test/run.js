@@ -1701,9 +1701,11 @@ async function main() {
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     tickState.batch = batch;
     tickState.callsInBatch = 0;
+    let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
+      injectedInputThisBatch = true;
       // UI-level events go through renderer handlers (mouse/keyboard pump),
       // raw events go directly into inputQueue.
       if (ev.action === 'focus-find' && renderer) {
@@ -2712,15 +2714,20 @@ if (VERBOSE) {
     } else {
       const ex = instance.exports;
       const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
-      if (eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
+      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
         if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
         prevApiCount = apiCount;
         prevRegFp = regFp;
         stuckCount = 0;
+      } else if (scheduledInput.length) {
+        // Scripted UI tests often wait inside a stable message-loop thunk
+        // until the next scheduled click/capture. Do not let that idle time
+        // accumulate and instantly trip after the last event is consumed.
+        stuckCount = 0;
       } else {
         stuckCount++;
-        if (stuckCount > STUCK_AFTER && !scheduledInput.length) {
+        if (stuckCount > STUCK_AFTER) {
           console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
           if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
           dumpStack();

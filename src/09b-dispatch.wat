@@ -46,9 +46,18 @@
               (then (global.set $eip (global.get $wndproc_addr))))
             (global.set $steps (i32.const 0))
             (return)))
-        ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA)
+        ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA).
+        ;; Before returning, flush WAT-native children now exposed by WM_CREATE /
+        ;; WM_INITDIALOG. NSIS creates/shows wizard pages from dialog init; Win98
+        ;; repaints those children through USER's visible-region pass before the
+        ;; dialog is observably idle.
+        (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (if (local.get $arg0)
+          (then
+            (drop (call $paint_drain_native_control_paints))
+            (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
         (global.set $eip (call $gl32 (global.get $esp)))
-        (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (global.set $eax (local.get $arg0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
 

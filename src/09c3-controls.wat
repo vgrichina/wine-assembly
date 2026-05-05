@@ -2025,7 +2025,7 @@
             (if (local.get $state)
               (then
                 (local.set $state_w (call $g2w (local.get $state)))
-                (drop (call $wnd_send_message
+                (drop (call $post_queue_push
                   (call $wnd_get_parent (local.get $hwnd))
                   (i32.const 0x0111)
                   (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
@@ -2047,7 +2047,8 @@
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
                 (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
                 (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
+              (then (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 1)))) ;; TRUE
         (return (i32.const 0))))
 
@@ -2135,7 +2136,7 @@
             ;; to parent. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
-                (drop (call $wnd_send_message
+                (drop (call $post_queue_push
                   (call $wnd_get_parent (local.get $hwnd))
                   (i32.const 0x0111)  ;; WM_COMMAND
                   ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
@@ -2153,6 +2154,12 @@
     ;;   7       = groupbox (etched border + label notch)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
+        ;; A real BUTTON window proc paints inside BeginPaint/EndPaint, which
+        ;; validates the update region. Our WAT-native painter draws directly
+        ;; through host GDI primitives, so clear the pending region here or a
+        ;; pressed button can keep the message pump returning child WM_PAINT.
+        (call $update_clear_hwnd (local.get $hwnd))
+        (call $paint_flag_clear_hwnd (local.get $hwnd))
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $flags (i32.load offset=8 (local.get $state_w)))
@@ -2538,7 +2545,8 @@
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
                 (i32.store       (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
                 (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
+              (then (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 1))))
         (return (i32.const 0))))
 
@@ -3870,6 +3878,13 @@
               (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
             (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
         (call $invalidate_hwnd (local.get $hwnd))
+        (if (call $wnd_is_effectively_visible (local.get $hwnd))
+          (then
+            (drop (call $edit_wndproc
+              (local.get $hwnd) (i32.const 0x000F)
+              (i32.const 0) (i32.const 0)))
+            (call $update_clear_hwnd (local.get $hwnd))
+            (call $paint_flag_clear_hwnd (local.get $hwnd))))
         (return (i32.const 1))))
 
     ;; ---------- WM_GETTEXT ----------
@@ -4780,6 +4795,13 @@
               (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
                                 (i32.const 0))))))
         (call $invalidate_hwnd (local.get $hwnd))
+        (if (call $wnd_is_effectively_visible (local.get $hwnd))
+          (then
+            (drop (call $edit_wndproc
+              (local.get $hwnd) (i32.const 0x000F)
+              (i32.const 0) (i32.const 0)))
+            (call $update_clear_hwnd (local.get $hwnd))
+            (call $paint_flag_clear_hwnd (local.get $hwnd))))
         (return (i32.load offset=4 (local.get $state_w)))))
 
     ;; ---------- WM_SETFOCUS (0x0007) ----------
@@ -5895,6 +5917,13 @@
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
       (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
       (local.set $cls (call $ctrl_table_get_class (local.get $ch)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      ;; Win98 hit-testing ignores effectively hidden child windows. NSIS
+      ;; wizard pages keep prior-page controls WS_VISIBLE under a hidden page.
+      (if (i32.eqz (call $wnd_is_effectively_visible (local.get $ch)))
+        (then
+          (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+          (br $walk)))
       (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
       (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
       (local.set $cx (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
@@ -5909,7 +5938,6 @@
       ;; Button group-box (kind=7) is non-interactive; ignore hits on it.
       (if (i32.and (local.get $hit) (i32.eq (local.get $cls) (i32.const 1)))
         (then
-          (local.set $style (call $wnd_get_style (local.get $ch)))
           (if (i32.eq (i32.and (local.get $style) (i32.const 0x0F)) (i32.const 7))
             (then (local.set $hit (i32.const 0))))))
       (if (local.get $hit)

@@ -1565,6 +1565,15 @@
     (local $wa i32) (local $len i32)
     (local.set $wa (call $g2w (local.get $arg1)))
     (local.set $len (call $guest_strlen (local.get $arg1)))
+    ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
+    ;; Top-level dialogs/windows still update the caption title table below.
+    (if (call $ctrl_table_get_class (local.get $arg0))
+      (then
+        (global.set $eax (call $control_wndproc_dispatch
+          (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $arg1)))
+        (call $host_set_window_text (local.get $arg0) (local.get $wa))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; Store in TITLE_TABLE so DefWindowProc WM_NCPAINT can redraw the
     ;; caption text from WAT-side state. Also post WM_NCPAINT.
     (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
@@ -2128,6 +2137,9 @@
         (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
+    ;; Do not synchronously paint children during DialogBoxParamA creation.
+    ;; The modal pump below drains seeded WAT-native paints after the dialog
+    ;; is visible and its USER-style visible region is stable.
     ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
     (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
