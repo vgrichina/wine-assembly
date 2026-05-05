@@ -38,6 +38,12 @@
   ;;   +8   style          (SS_LEFT=0, SS_CENTER=1, SS_RIGHT=2, SS_ICON=3 ...)
   ;;   +12  reserved
   ;;
+  ;; ProgressState (16 bytes)
+  ;;   +0   min
+  ;;   +4   max
+  ;;   +8   pos
+  ;;   +12  step
+  ;;
   ;; The wndproc that allocates the state struct in WM_CREATE is responsible
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
@@ -2674,20 +2680,111 @@
   ;; ---- ProgressBar WndProc ----
   ;;
   ;; Minimal native common-control progress bar. Enough for NSIS installers:
-  ;; it owns its HWND, paints a Win98 sunken progress well, and invalidates on
-  ;; PBM_* updates. Position/range state can be added later without changing
-  ;; dialog geometry or clipping.
+  ;; it owns its HWND, tracks Win32 PBM_* range/position state, paints a Win98
+  ;; sunken progress well, and invalidates on state changes.
 
   (func $progress_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $state i32) (local $sw i32) (local $old i32)
+    (local $min i32) (local $max i32) (local $pos i32) (local $range i32) (local $inner_w i32) (local $fill_w i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     ;; WM_CREATE
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
-      (then (return (i32.const 0))))
-    ;; PBM_SETRANGE(0x0401), PBM_SETPOS(0x0402), PBM_DELTAPOS(0x0403)
-    (if (i32.and
-          (i32.ge_u (local.get $msg) (i32.const 0x0401))
-          (i32.le_u (local.get $msg) (i32.const 0x0403)))
       (then
+        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store        (local.get $sw) (i32.const 0))
+        (i32.store offset=4  (local.get $sw) (i32.const 100))
+        (i32.store offset=8  (local.get $sw) (i32.const 0))
+        (i32.store offset=12 (local.get $sw) (i32.const 10))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+    ;; WM_DESTROY
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+    ;; Some template-created common controls can receive PBM_* before WM_CREATE
+    ;; state exists in older paths. Initialise lazily rather than dropping the
+    ;; update.
+    (if (i32.eqz (local.get $state))
+      (then
+        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store        (local.get $sw) (i32.const 0))
+        (i32.store offset=4  (local.get $sw) (i32.const 100))
+        (i32.store offset=8  (local.get $sw) (i32.const 0))
+        (i32.store offset=12 (local.get $sw) (i32.const 10))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
+    (local.set $sw (call $g2w (local.get $state)))
+    ;; PBM_SETRANGE(0x0401): lParam low=min, high=max.
+    (if (i32.eq (local.get $msg) (i32.const 0x0401))
+      (then
+        (local.set $min (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $max (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (if (i32.le_s (local.get $max) (local.get $min))
+          (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
+        (i32.store        (local.get $sw) (local.get $min))
+        (i32.store offset=4  (local.get $sw) (local.get $max))
+        (local.set $pos (i32.load offset=8 (local.get $sw)))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+    ;; PBM_SETPOS(0x0402): return previous position.
+    (if (i32.eq (local.get $msg) (i32.const 0x0402))
+      (then
+        (local.set $old (i32.load offset=8 (local.get $sw)))
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $pos (local.get $wParam))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
+        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $old))))
+    ;; PBM_DELTAPOS(0x0403): return previous position.
+    (if (i32.eq (local.get $msg) (i32.const 0x0403))
+      (then
+        (local.set $old (i32.load offset=8 (local.get $sw)))
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $pos (i32.add (local.get $old) (local.get $wParam)))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
+        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $old))))
+    ;; PBM_SETSTEP(0x0404), PBM_STEPIT(0x0405), PBM_SETRANGE32(0x0406).
+    (if (i32.eq (local.get $msg) (i32.const 0x0404))
+      (then
+        (local.set $old (i32.load offset=12 (local.get $sw)))
+        (i32.store offset=12 (local.get $sw) (local.get $wParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0405))
+      (then
+        (local.set $old (i32.load offset=8 (local.get $sw)))
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $pos (i32.add (local.get $old) (i32.load offset=12 (local.get $sw))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $min))))
+        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0406))
+      (then
+        (local.set $min (local.get $wParam))
+        (local.set $max (local.get $lParam))
+        (if (i32.le_s (local.get $max) (local.get $min))
+          (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
+        (i32.store        (local.get $sw) (local.get $min))
+        (i32.store offset=4  (local.get $sw) (local.get $max))
+        (local.set $pos (i32.load offset=8 (local.get $sw)))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
     ;; WM_PAINT
@@ -2704,6 +2801,27 @@
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30010))) ;; WHITE_BRUSH
+            (local.set $min (i32.load (local.get $sw)))
+            (local.set $max (i32.load offset=4 (local.get $sw)))
+            (local.set $pos (i32.load offset=8 (local.get $sw)))
+            (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
+            (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
+            (local.set $range (i32.sub (local.get $max) (local.get $min)))
+            (local.set $inner_w (i32.sub (local.get $w) (i32.const 4)))
+            (if (i32.and (i32.gt_s (local.get $range) (i32.const 0))
+                         (i32.gt_s (local.get $inner_w) (i32.const 0)))
+              (then
+                (local.set $fill_w
+                  (i32.div_s
+                    (i32.mul (i32.sub (local.get $pos) (local.get $min)) (local.get $inner_w))
+                    (local.get $range)))
+                (if (i32.gt_s (local.get $fill_w) (i32.const 0))
+                  (then
+                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (i32.const 2) (i32.const 2)
+                      (i32.add (i32.const 2) (local.get $fill_w))
+                      (i32.sub (local.get $h) (i32.const 2))
+                      (i32.const 14))))))) ;; COLOR_HIGHLIGHT
             (drop (call $host_gdi_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)

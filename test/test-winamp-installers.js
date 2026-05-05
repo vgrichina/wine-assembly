@@ -71,6 +71,22 @@ async function countNonBtnFacePixels(pngPath, rect) {
   return count;
 }
 
+async function countHighlightPixels(pngPath, rect) {
+  const img = await loadImage(pngPath);
+  const canvas = createCanvas(img.width, img.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, img.width, img.height).data;
+  let count = 0;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * img.width + x) * 4;
+      if (data[i] < 20 && data[i + 1] < 20 && data[i + 2] >= 80 && data[i + 2] <= 170) count++;
+    }
+  }
+  return count;
+}
+
 async function diffPixelsInRect(aPath, bPath, rect) {
   const a = await loadImage(aPath);
   const b = await loadImage(bPath);
@@ -488,7 +504,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=1040',
       '--batch-size=5000',
-      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283,1021:dlg-dump:all,1022:png:' + installingPng,
+      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283,1021:dlg-dump:all,1022:dlg-send:1004:1025:0:6553600,1023:dlg-send:1004:1026:60:0,1024:png:' + installingPng,
       '--quiet-api',
     ].join(' ');
 
@@ -514,12 +530,16 @@ for (const tc of CASES) {
     const installingHiddenDetailsInk = installingPngOk
       ? await countNonBtnFacePixels(installingPng, { x: 2, y: 70, w: 18, h: 40 })
       : Number.POSITIVE_INFINITY;
+    const installingProgressFill = installingPngOk
+      ? await countHighlightPixels(installingPng, { x: 50, y: 52, w: 358, h: 14 })
+      : 0;
     const installingChecks = [
       { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,227/.test(installingOut) },
       { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
       { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
       { name: 'installing page PNG captured', pass: installingPngOk },
       { name: `installing page paints status label (${installingStatusInk} ink pixels)`, pass: installingStatusInk > 120 },
+      { name: `installing page paints progress fill (${installingProgressFill} highlight pixels)`, pass: installingProgressFill > 1000 },
       { name: `installing page does not paint hidden details fragments (${installingHiddenDetailsInk} ink pixels)`, pass: installingHiddenDetailsInk < 10 },
     ];
 
