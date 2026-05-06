@@ -1,0 +1,171 @@
+WAT IMPLEMENTATION BUGS AND GAPS - ASCII TLDR
+Generated: 2026-04-28
+Audit: current workspace tree
+
+Validation
+----------
+- Reviewed all 31 src/*.wat files, 48206 lines total.
+- tools/build.sh: PASS, produced build/wine-assembly.wasm, 233951 bytes.
+- node tools/check-handler-count.js: PASS, handler table=281, elem entries=281, cache guard=281.
+- node tools/check-parens.js: PASS, 48207 combined lines, balanced labels/scope.
+  It still reports large-depth warnings only.
+- npm run test:quick: PASS, 12/12 unit tests.
+  New relevant coverage: test-fs-prefix.
+
+One-Screen Diagram
+------------------
+
+  src/*.wat, 48.2k lines
+  |
+  +-- STRUCTURE OK
+  |   +-- builds
+  |   +-- parens/labels OK
+  |   +-- dispatch table count OK
+  |   +-- quick tests 12/12
+  |
+  +-- RECENTLY IMPROVED
+  |   +-- FS segment override now centralized in decode_modrm/apply_seg_override
+  |   +-- FS memory EA paths have focused quick-test coverage
+  |   +-- 0x67 now fails loudly instead of silently misdecoding
+  |
+  +-- HARD GAPS
+  |   +-- 0x67 address-size override still unsupported
+  |   +-- GS segment override intentionally traps
+  |   +-- x87 is f64-lite, not true 80-bit x87
+  |   +-- SEH/C++ EH remains partial
+  |
+  +-- COMPAT GAPS
+  |   +-- Win32 APIs: many hard crash stubs and soft no-op stubs
+  |   +-- GDI/user/menu/dialog/control behavior: useful but partial
+  |   +-- DirectX/D3D: broad COM surface, shallow semantics
+  |   +-- controls: combo/listbox behavior improved, still partial
+  |
+  +-- FIX FIRST
+      +-- implement real 0x67 16-bit addressing or keep tested fail-fast
+      +-- decide GS policy: implement TEB-like GS or keep tested fail-fast
+      +-- remove/gate remaining debug traces
+      +-- triage real app crash_unimplemented hits
+
+Static Counts
+-------------
+- crash_unimplemented refs: 194
+- stub/STUB markers:       304
+- no-op markers:           93
+- TODO/placeholder/phase:   19
+
+Crash/no-op concentration:
+- src/09a-handlers.wat:            166 crash refs, 260 stub markers, 35 no-op markers
+- src/09a4-handlers-gdi.wat:         9 crash refs,  12 stub markers
+- src/09aa-handlers-d3dim.wat:       5 crash refs
+- src/09a7-handlers-dispatch.wat:    4 crash refs
+- src/09a8-handlers-directx.wat:     2 crash refs,  12 stub markers, 30 no-op markers
+- src/09ab-handlers-d3dim-core.wat:  2 crash refs
+- src/09c3-controls.wat:             1 crash ref,    3 stub markers,  7 no-op markers
+- src/09b-dispatch.wat:              1 crash ref
+- src/10-helpers.wat:                1 crash ref
+
+Updated Findings
+----------------
+1. FS segment handling is no longer the top open bug.
+   - src/07-decoder.wat now applies segment overrides centrally after decode_modrm.
+   - apply_seg_override is idempotent, so older emitter-side calls are safe guards.
+   - test/test-fs-prefix.js covers FS TEST/CMP/MOVZX/MOVSX/CMPXCHG/XADD and baseline MOV.
+   - Remaining risk: coverage is focused, not exhaustive for every memory opcode form.
+
+2. Address-size override 0x67 is now a deliberate fail-fast gap.
+   - src/07-decoder.wat still parses prefix_67.
+   - It now traps explicitly when prefix_67 is set instead of silently decoding 16-bit
+     addressing as 32-bit ModRM/SIB.
+   - Compatibility impact remains: any app using 0x67 address-size override will stop.
+   - This is better than silent corruption, but real 16-bit addressing is still missing.
+
+3. GS segment override is intentionally unsupported.
+   - src/10-helpers.wat seg_adj traps GS.
+   - src/07-decoder.wat apply_seg_override traps GS.
+   - FS is the Win32-relevant path for this emulator, but GS-prefixed code will stop.
+
+4. FPU is intentionally x87-lite and has known semantic holes.
+   - src/06-fpu.wat documents f64 instead of 80-bit extended precision.
+   - Rounding/exceptions/status are partial.
+   - FXTRACT remains placeholder stack-effect-only behavior.
+   - Unknown x87 encodings crash through fpu_crash_op.
+
+5. SEH/C++ EH is incomplete.
+   - src/11-seh.wat handles simplified SEH patterns.
+   - _CxxThrowException, __CxxFrameHandler, and _global_unwind2 still crash in
+     src/09a-handlers.wat.
+   - Apps using real C++ exception unwinding will fail outside the narrow handled cases.
+
+6. Direct3D Immediate Mode remains a compatibility scaffold.
+   - src/09aa-handlers-d3dim.wat started as generated stubs.
+   - src/09ab-handlers-d3dim-core.wat still describes Phase 0/Phase 1+ helper scaffolding.
+   - Unsupported execute-buffer ops crash.
+   - Unsupported draw cases crash.
+   - Texture, material, lighting, viewport, callback, and full fixed-function behavior are incomplete.
+
+7. DirectX wrappers mostly keep apps moving, not fully emulate devices.
+   - DirectDraw has many no-op or shallow methods: clipper, surfaces, attached surfaces,
+     clip lists, VBlank, cooperative level.
+   - DirectSound has shallow buffer/format/lock/seek behavior.
+   - DirectInput returns limited state; mouse deltas are explicitly TODO.
+
+8. Controls continue to grow around combo/listbox behavior.
+   - src/09c3-controls.wat is now 6020 lines.
+   - Recent changes route combo popup mouse events to the inner listbox and post combo
+     notifications to avoid nested dialog reentrancy.
+   - The explicit fail-fast control crash remains around the feedback/memory stub path.
+   - Controls are materially better than pure stubs, but still not full USER32/COMCTL32.
+
+9. Win32 API coverage is wide but shallow.
+   - Major hard-stub clusters: wide-char APIs, GDI mapping/fonts/metafiles/printing,
+     clipboard, menu query/mutation, MDI/dialog helpers, process/pipe/file metadata,
+     registry, atom/profile APIs.
+   - Many soft stubs return plausible success without backing state.
+
+10. Debug/app-specific tracing may still exist in instruction/export surface.
+    - Earlier call/push debug traces in src/05-alu.wat appear reduced by line-count changes,
+      but this audit did not prove all debug-only paths are gone.
+    - src/13-exports.wat still exposes host/test/debug-style helper exports.
+    - Risk is trace noise and app-specific behavior leaking into normal runs.
+
+Module Map
+----------
+- 01-header.wat: imports/globals/data. Fake FS/TIB/TLS/window/control state.
+- 01b-api-hashes.generated.wat: generated API hash table.
+- 02-thread-table.wat: opcode handler table; current count check passes.
+- 03-registers.wat: register and lazy-flag helpers.
+- 04-cache.wat: translation cache and guard behavior.
+- 05-alu.wat: core x86 runtime ops; edge-case risk remains.
+- 05b-string-ops.wat: string ops; depends on partial segment/REP behavior.
+- 06-fpu.wat: x87-lite, non-bit-exact, placeholder FXTRACT, crash on unknown encodings.
+- 07-decoder.wat: FS handling improved; 0x67 and GS remain explicit trap gaps.
+- 08-pe-loader.wat: minimal PE staging/validation, not a complete loader.
+- 08b-dll-loader.wat: targeted DLL/import loader, synthetic ordinal behavior.
+- 09a*.wat: main Win32/API handler layer; broad shims plus many hard/soft stubs.
+- 09b*.wat: Win32 dispatch and generated dispatch table.
+- 09c*.wat: help, controls, DefWindowProc, menus; useful but partial UI behavior.
+- 10-helpers.wat: shared helpers; seg_adj handles FS and traps GS.
+- 11-seh.wat: partial SEH/C++ EH support.
+- 12-wsprintf.wat: limited formatting implementation.
+- 13-exports.wat: host/test/debug exports.
+
+Recommended Fix Order
+---------------------
+1. Decide and test the address-size policy.
+   - Implement 0x67 16-bit addressing, or keep the fail-fast and add an explicit unit test.
+
+2. Decide and test the GS policy.
+   - Implement GS base semantics if a target app needs it, or add a focused test for the trap.
+
+3. Broaden FS-prefix tests only where real traces justify it.
+   - Current test covers the previously risky classes; expand only for newly hit opcodes.
+
+4. Gate or remove debug instrumentation.
+   - Search by debug exports/log sentinels before release-like runs.
+
+5. Triage hard crash stubs by real app traces.
+   - Prioritize crash_unimplemented hits over broad API completeness.
+
+6. Pick an explicit Direct3D target.
+   - Diagnostic stubs, basic raster compatibility, or real fixed-function emulation.
+   - The current layer mixes all three, which makes failures harder to classify.

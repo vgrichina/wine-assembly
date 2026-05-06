@@ -287,6 +287,7 @@ async function main() {
   //   B:dlg-send:CTRL_ID:MSG:WPARAM:LPARAM — send a message to a dialog control by id
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
+  //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
@@ -337,6 +338,22 @@ async function main() {
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
       } else if (kind === 'dlg-dump') {
         scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
+      } else if (kind === 'wait-title') {
+        scheduledInput.push({
+          batch,
+          action: 'wait-title',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-dlg-control') {
+        scheduledInput.push({
+          batch,
+          action: 'wait-dlg-control',
+          ctrlId: parseInt(parts[2]),
+          limit: parseInt(parts[3]) || 2000,
+          startBatch: batch,
+        });
       } else if (kind === 'open-dlg-pick') {
         // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
         // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
@@ -1220,6 +1237,20 @@ async function main() {
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
       exeName: path.basename(EXE_PATH),
       extraArgs: EXTRA_ARGS || '',
+      registerDllResources: (dllConfigs, results) => {
+        const { extractBitmapBytes } = require('../lib/dib');
+        ctx.dllResources = ctx.dllResources || {};
+        for (let i = 0; i < dllConfigs.length && i < results.length; i++) {
+          try {
+            const bitmapBytes = extractBitmapBytes(dllConfigs[i].bytes);
+            const count = Object.keys(bitmapBytes).length;
+            if (count > 0) {
+              ctx.dllResources[results[i].loadAddr] = { bitmapBytes };
+              console.log(`DLL resources: ${dllConfigs[i].name} has ${count} bitmaps`);
+            }
+          } catch (_) {}
+        }
+      },
     });
     if (dllResults) {
       for (const r of dllResults) {
@@ -1228,24 +1259,6 @@ async function main() {
       }
     }
     stopped = false;
-    // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT's
-    // $find_resource. DLL bitmaps (cards.dll for sol/freecell, etc.)
-    // still come from a per-module byte index extracted here because
-    // WAT's resource walker only knows about $rsrc_rva.
-    const { extractBitmapBytes } = require('../lib/dib');
-    ctx.dllResources = {};
-    if (dllResults) {
-      for (let i = 0; i < dlls.length && i < dllResults.length; i++) {
-        try {
-          const bitmapBytes = extractBitmapBytes(dlls[i].bytes);
-          const count = Object.keys(bitmapBytes).length;
-          if (count > 0) {
-            ctx.dllResources[dllResults[i].loadAddr] = { bitmapBytes };
-            console.log(`DLL resources: ${dlls[i].name} has ${count} bitmaps`);
-          }
-        } catch (_) {}
-      }
-    }
   }
 
   // Resolve any module-relative address specs now that all module bases are known.
@@ -2167,6 +2180,8 @@ async function main() {
             const xy = we.ctrl_get_xy ? we.ctrl_get_xy(ch) : 0;
             const wh = we.ctrl_get_wh ? we.ctrl_get_wh(ch) : 0;
             const style = we.wnd_get_style_export ? we.wnd_get_style_export(ch) >>> 0 : 0;
+            const sx = we.wnd_window_screen_x ? we.wnd_window_screen_x(ch) | 0 : 0;
+            const sy = we.wnd_window_screen_y ? we.wnd_window_screen_y(ch) | 0 : 0;
             let text = '';
             if (cls === 1 && we.button_get_text && we.guest_alloc) {
               const buf = we.guest_alloc(256);
@@ -2175,7 +2190,11 @@ async function main() {
               const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
               text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
             }
-            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16}${text}`);
+            let checked = '';
+            if (cls === 1 && we.send_message) {
+              checked = ` checked=${we.send_message(ch, 0x00F0, 0, 0) | 0}`;
+            }
+            controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16} screen=${sx},${sy}${text}${checked}`);
             s++;
           }
           return controls;
@@ -2190,7 +2209,67 @@ async function main() {
           }
         } else {
           const controls = dumpDialog(dlg);
-          logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
+          const modal = we.modal_dialog_hwnd ? (we.modal_dialog_hwnd() >>> 0) : 0;
+          logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} modal=${modal ? '0x' + modal.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
+        }
+      } else if (ev.action === 'wait-title') {
+        const title = ev.title || '';
+        const wins = renderer ? Object.values(renderer.windows || {}) : [];
+        const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
+        if (found) {
+          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          ev.batch = batch + 1;
+          for (const pending of scheduledInput) pending.batch++;
+          scheduledInput.push(ev);
+          scheduledInput.sort((a, b) => a.batch - b.batch);
+        } else {
+          logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-dlg-control') {
+        const we = instance.exports;
+        let found = 0;
+        const seen = new Set();
+        const findChildById = (parent) => {
+          if (!parent || seen.has(parent) || !we.wnd_next_child_slot || !we.wnd_slot_hwnd || !we.ctrl_get_id) return 0;
+          seen.add(parent);
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) return ch;
+            const nested = findChildById(ch);
+            if (nested) return nested;
+            s++;
+          }
+          return 0;
+        };
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          for (const w of wins) {
+            found = findChildById(w.hwnd | 0);
+            if (found) break;
+          }
+        }
+        if (!found && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) {
+              found = findChildById(hwnd);
+              if (found) break;
+            }
+          }
+        }
+        if (found) {
+          logs.push(`[input] wait-dlg-control: matched id=${ev.ctrlId} hwnd=0x${found.toString(16)} at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          ev.batch = batch + 1;
+          for (const pending of scheduledInput) pending.batch++;
+          scheduledInput.push(ev);
+          scheduledInput.sort((a, b) => a.batch - b.batch);
+        } else {
+          logs.push(`[input] wait-dlg-control: TIMEOUT id=${ev.ctrlId} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.

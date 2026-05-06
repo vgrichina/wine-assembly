@@ -520,7 +520,8 @@
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
-  ;; 0x00010B00  ~2.5KB  Free (up to GUEST_BASE)
+  ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
+  ;; 0x00010F00  ~3.25KB Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -587,6 +588,7 @@
   ;; nc_set_pressed / nc_clear_pressed.
   (global $nc_pressed_hwnd (mut i32) (i32.const 0))
   (global $nc_pressed_hit  (mut i32) (i32.const 0))
+  (global $nc_tracking_hit (mut i32) (i32.const 0))
   ;; Scrollbar press state. While the user holds LMB on a scrollbar part
   ;; (1=top/left arrow, 2=bottom/right arrow, 3=top/left page, 4=bottom/
   ;; right page), $sb_pressed_hwnd holds the scrollbar control's hwnd and
@@ -605,6 +607,10 @@
   ;;   +8 reserved
   ;;   +12 reserved
   (global $MCI_DEVICE_TABLE i32 (i32.const 0x00010A00))
+  ;; OWNER_TABLE: per-window owner hwnd, separate from WND_RECORDS.parent.
+  ;; Parent is only for WS_CHILD geometry/clipping. Owner is for owned
+  ;; top-level/modal windows and GetWindow(GW_OWNER).
+  (global $OWNER_TABLE i32 (i32.const 0x00010B00))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
@@ -964,6 +970,11 @@
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
+  ;; One-shot modal pump yield after guest dialog/window procs return.
+  ;; Real USER's modal loop returns to the scheduler between dispatched
+  ;; messages; this keeps NSIS/Richedit-heavy dialogs from monopolizing a
+  ;; single browser/test batch.
+  (global $dlg_callback_yield_pending (mut i32) (i32.const 0))
   ;; Flag set by continuation-thunk handlers that explicitly (re)direct EIP.
   ;; Read by $run's thunk-zone auto-pop: when a handler leaves EIP equal to
   ;; its own thunk addr (e.g. CACA0004 re-enters the dialog pump), the outer

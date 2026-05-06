@@ -272,6 +272,17 @@
             (global.set $dlg_ended (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))
+        ;; A guest DlgProc/WndProc has just returned to the modal loop.
+        ;; Yield once before draining the next modal-loop unit so host
+        ;; canvas/input/timer code gets the same observable boundary Win98
+        ;; USER provides between dispatched messages.
+        (if (global.get $dlg_callback_yield_pending)
+          (then
+            (global.set $dlg_callback_yield_pending (i32.const 0))
+            (global.set $yield_flag (i32.const 1))
+            (global.set $eip (global.get $dlg_loop_thunk))
+            (global.set $steps (i32.const 0))
+            (return)))
         ;; Drain nc_flags for the dialog hwnd only — children don't have
         ;; NC chrome. Without this filter, typing into an edit control
         ;; (which calls InvalidateRect → host_invalidate → nc_post_paint
@@ -332,6 +343,7 @@
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $dlg_callback_yield_pending (i32.const 1))
             (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
@@ -368,6 +380,7 @@
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $dlg_callback_yield_pending (i32.const 1))
             (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
@@ -408,6 +421,7 @@
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $dlg_callback_yield_pending (i32.const 1))
             (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))

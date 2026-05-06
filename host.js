@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=56');
+        const r = await fetch('src/api_table.json?v=66');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -377,6 +377,10 @@ class WineAssembly {
 
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     this._wasmModule = wasmModule;
+    if (this.renderer) {
+      this.renderer.wasm = this.instance;
+      this.renderer.wasmMemory = this.memory;
+    }
 
     // Create ThreadManager
     const self = this;
@@ -404,7 +408,7 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=56').then(r => r.text()));
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=66').then(r => r.text()));
         return WebAssembly.compile(bytes);
       })();
     }
@@ -510,29 +514,13 @@ class WineAssembly {
     const opts = {};
     if (this._exeName) opts.exeName = this._exeName;
     if (this._extraArgs) opts.extraArgs = this._extraArgs;
+    opts.registerDllResources = (dllConfigs, dllResults) => {
+      for (let i = 0; i < dllConfigs.length && i < dllResults.length; i++) {
+        this._registerDllBitmapResources(dllConfigs[i].name, dllConfigs[i].bytes, dllResults[i].loadAddr);
+      }
+    };
     const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log, opts);
     this._inDllInit = false;
-    // gdi_load_bitmap walks the main EXE's RT_BITMAP via WAT, but DLL
-    // bitmaps (e.g. cards.dll for sol/freecell) still need a JS-side
-    // per-module index because WAT's resource walker only knows about
-    // $rsrc_rva. extractBitmapBytes() slurps the raw DIB payload for
-    // every integer-keyed RT_BITMAP entry in a DLL.
-    const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
-      ? extractBitmapBytes
-      : (typeof dibLib !== 'undefined' && dibLib.extractBitmapBytes);
-    if (_extractBitmapBytes && results) {
-      this.dllResources = this.dllResources || {};
-      for (let i = 0; i < configs.length && i < results.length; i++) {
-        try {
-          const bitmapBytes = _extractBitmapBytes(configs[i].bytes);
-          const count = Object.keys(bitmapBytes).length;
-          if (count > 0) {
-            this.dllResources[results[i].loadAddr] = { bitmapBytes };
-            console.log(`DLL resources: ${configs[i].name} has ${count} bitmaps`);
-          }
-        } catch (_) {}
-      }
-    }
     this.running = true;
   }
 
@@ -762,6 +750,10 @@ class WineAssembly {
         if (self.threadManager && self.threadManager.checkMainYield()) {
           // Main still waiting — just run worker threads
         } else {
+          if (self.renderer) {
+            self.renderer.wasm = self.instance;
+            self.renderer.wasmMemory = self.memory;
+          }
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           self.instance.exports.run(activeStepsPerSlice);
           if (runStart && self.renderer && self.renderer._profileMark) {
@@ -769,6 +761,9 @@ class WineAssembly {
               steps: activeStepsPerSlice,
               ms: self.renderer._profileNow() - runStart,
             });
+          }
+          if (self.renderer && self.renderer.flushRepaint) {
+            self.renderer.flushRepaint();
           }
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
@@ -804,6 +799,9 @@ class WineAssembly {
           }
           if (self.threadManager.hasActiveThreads()) {
             self.threadManager.runSlice(Math.min(activeStepsPerSlice, 10000));
+            if (self.renderer && self.renderer.flushRepaint) {
+              self.renderer.flushRepaint();
+            }
           }
         }
       } catch (e) {

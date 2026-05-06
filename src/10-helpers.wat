@@ -946,10 +946,9 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (call $wnd_is_effectively_visible (local.get $ch))
         (then
-          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
-          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
-          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cx (call $ctrl_get_x_s (local.get $ch)))
+          (local.set $cy (call $ctrl_get_y_s (local.get $ch)))
           (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
           (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
           (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
@@ -1247,22 +1246,358 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 12))))
 
+  ;; WAT-owned absolute HWND geometry. JS owns only top-level canvas placement;
+  ;; child HWND origins/parent walks stay here so GDI target offsets, clipping,
+  ;; and input hit-testing all use the same Win32 window tree.
+  (func $ctrl_get_x_s (param $hwnd i32) (result i32)
+    (local $xy i32)
+    (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
+    (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
+
+  (func $ctrl_get_y_s (param $hwnd i32) (result i32)
+    (i32.shr_s (call $ctrl_get_xy_packed (local.get $hwnd)) (i32.const 16)))
+
+  (func $wnd_top_level (param $hwnd i32) (result i32)
+    (local $cur i32) (local $parent i32) (local $guard i32)
+    (local.set $cur (local.get $hwnd))
+    (block $done (loop $walk
+      (br_if $done (i32.eqz (local.get $cur)))
+      (br_if $done (i32.ge_u (local.get $guard) (i32.const 32)))
+      ;; Owned popup/dialog windows may have an owner in the parent slot for
+      ;; GetParent-style APIs, but only WS_CHILD windows inherit geometry from
+      ;; that relationship.
+      (br_if $done (i32.eqz (i32.and (call $wnd_get_style (local.get $cur)) (i32.const 0x40000000))))
+      (local.set $parent (call $wnd_get_parent (local.get $cur)))
+      (br_if $done (i32.eqz (local.get $parent)))
+      (local.set $cur (local.get $parent))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $walk)))
+    (local.get $cur))
+
+  (func $wnd_window_screen_x (param $hwnd i32) (result i32)
+    (local $parent i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.or
+          (i32.eqz (local.get $parent))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
+      (then
+        (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+        (return (i32.load (global.get $PAINT_SCRATCH)))))
+    (i32.add
+      (call $wnd_client_screen_x (local.get $parent))
+      (call $ctrl_get_x_s (local.get $hwnd))))
+
+  (func $wnd_window_screen_y (param $hwnd i32) (result i32)
+    (local $parent i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.or
+          (i32.eqz (local.get $parent))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
+      (then
+        (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+        (return (i32.load offset=4 (global.get $PAINT_SCRATCH)))))
+    (i32.add
+      (call $wnd_client_screen_y (local.get $parent))
+      (call $ctrl_get_y_s (local.get $hwnd))))
+
   ;; Screen origin of an HWND's client area. Win32 coordinate conversion uses
   ;; this, not the window origin; top-level client origins include NC chrome,
   ;; while child controls/dialogs usually have a zero client offset.
   (func $wnd_client_screen_x (param $hwnd i32) (result i32)
-    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
     (i32.add
-      (i32.load (global.get $PAINT_SCRATCH))
+      (call $wnd_window_screen_x (local.get $hwnd))
       (call $client_rect_get_l (local.get $hwnd))))
 
   (func $wnd_client_screen_y (param $hwnd i32) (result i32)
-    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
     (i32.add
-      (i32.load offset=4 (global.get $PAINT_SCRATCH))
+      (call $wnd_window_screen_y (local.get $hwnd))
       (call $client_rect_get_t (local.get $hwnd))))
+
+  (func $wnd_screen_w (param $hwnd i32) (result i32)
+    (local $parent i32) (local $wh i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.and
+          (local.get $parent)
+          (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (return (i32.and (local.get $wh) (i32.const 0xFFFF)))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (i32.sub
+      (i32.load offset=8 (global.get $PAINT_SCRATCH))
+      (i32.load (global.get $PAINT_SCRATCH))))
+
+  (func $wnd_screen_h (param $hwnd i32) (result i32)
+    (local $parent i32) (local $wh i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.and
+          (local.get $parent)
+          (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (return (i32.shr_u (local.get $wh) (i32.const 16)))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (i32.sub
+      (i32.load offset=12 (global.get $PAINT_SCRATCH))
+      (i32.load offset=4 (global.get $PAINT_SCRATCH))))
+
+  ;; Mouse-message coordinate origin for captured input. Win32 mouse lParams
+  ;; are client-relative for normal top-level windows, but child controls and
+  ;; popup windows (combo/list dropdowns, menus) use their own window origin.
+  (func $wnd_mouse_msg_origin_x (param $hwnd i32) (result i32)
+    (local $top i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (call $wnd_top_level (local.get $hwnd)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.or
+          (i32.and (local.get $style) (i32.const 0x40000000))
+          (i32.and (call $wnd_get_style (local.get $top)) (i32.const 0x80000000)))
+      (then (return (call $wnd_window_screen_x (local.get $hwnd)))))
+    (call $wnd_client_screen_x (local.get $top)))
+
+  (func $wnd_mouse_msg_origin_y (param $hwnd i32) (result i32)
+    (local $top i32) (local $style i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (call $wnd_top_level (local.get $hwnd)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.or
+          (i32.and (local.get $style) (i32.const 0x40000000))
+          (i32.and (call $wnd_get_style (local.get $top)) (i32.const 0x80000000)))
+      (then (return (call $wnd_window_screen_y (local.get $hwnd)))))
+    (call $wnd_client_screen_y (local.get $top)))
+
+  ;; Deep child WindowFromPoint helper. JS supplies only the browser point and
+  ;; current top-level candidate; USER-style child visibility/geometry/class
+  ;; filtering stays in WAT with the rest of the HWND tree.
+  (func $wnd_child_from_point_deep (param $parent i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $cls i32) (local $style i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $deep i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.eqz (call $wnd_is_effectively_visible (local.get $ch)))
+        (then
+          (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+          (br $scan)))
+      ;; Static/listbox/combobox/scrollbar controls are handled by the dialog
+      ;; router/control wndprocs. They should not steal generic client clicks.
+      (local.set $cls (call $ctrl_table_get_class (local.get $ch)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $cls) (i32.const 3))
+                    (i32.eq (local.get $cls) (i32.const 5)))
+            (i32.eq (local.get $cls) (i32.const 6)))
+        (then
+          (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+          (br $scan)))
+      (local.set $x (call $wnd_window_screen_x (local.get $ch)))
+      (local.set $y (call $wnd_window_screen_y (local.get $ch)))
+      (local.set $w (call $wnd_screen_w (local.get $ch)))
+      (local.set $h (call $wnd_screen_h (local.get $ch)))
+      (if (i32.and
+            (i32.and (i32.ge_s (local.get $sx) (local.get $x))
+                     (i32.lt_s (local.get $sx) (i32.add (local.get $x) (local.get $w))))
+            (i32.and (i32.ge_s (local.get $sy) (local.get $y))
+                     (i32.lt_s (local.get $sy) (i32.add (local.get $y) (local.get $h)))))
+        (then
+          (local.set $deep (call $wnd_child_from_point_deep
+            (local.get $ch) (local.get $sx) (local.get $sy)))
+          (return (select (local.get $deep) (local.get $ch) (local.get $deep)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Screen-coordinate wrapper around dialog_route_mouse. JS should not know
+  ;; whether the dialog/page origin is its window origin or client origin.
+  (func $dialog_route_mouse_screen
+    (param $parent i32) (param $msg i32) (param $wParam i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $ox i32) (local $oy i32)
+    (local.set $ox (call $wnd_client_screen_x (local.get $parent)))
+    (local.set $oy (call $wnd_client_screen_y (local.get $parent)))
+    (call $dialog_route_mouse
+      (local.get $parent)
+      (local.get $msg)
+      (local.get $wParam)
+      (i32.or
+        (i32.and (i32.sub (local.get $sx) (local.get $ox)) (i32.const 0xFFFF))
+        (i32.shl
+          (i32.and (i32.sub (local.get $sy) (local.get $oy)) (i32.const 0xFFFF))
+          (i32.const 16)))))
+
+  (func $dialog_ancestor (param $hwnd i32) (result i32)
+    (local $cur i32) (local $guard i32) (local $rec i32)
+    (local.set $cur (local.get $hwnd))
+    (block $done (loop $walk
+      (br_if $done (i32.eqz (local.get $cur)))
+      (br_if $done (i32.ge_u (local.get $guard) (i32.const 32)))
+      (local.set $rec (call $dlg_record_for_hwnd (local.get $cur)))
+      (if (i32.and (local.get $rec) (i32.load offset=28 (local.get $rec)))
+        (then (return (local.get $cur))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $walk)))
+    (i32.const 0))
+
+  (func $dialog_first_default_button (param $dlg i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $st i32) (local $state i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.and
+            (call $wnd_is_effectively_visible (local.get $ch))
+            (i32.eq (call $ctrl_table_get_class (local.get $ch)) (i32.const 1)))
+        (then
+          (local.set $st (call $wnd_get_state_ptr (local.get $ch)))
+          (if (local.get $st)
+            (then
+              (local.set $state (call $g2w (local.get $st)))
+              (if (i32.and (i32.load offset=8 (local.get $state)) (i32.const 0x04))
+                (then (return (local.get $ch))))))
+          (if (i32.eq (i32.and (call $wnd_get_style (local.get $ch)) (i32.const 0x0F)) (i32.const 1))
+            (then (return (local.get $ch))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dialog_next_tabstop (param $dlg i32) (param $focus i32) (param $dir i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $style i32)
+    (local $first i32) (local $last i32) (local $prev i32) (local $seen i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.and
+            (i32.and
+              (call $wnd_is_effectively_visible (local.get $ch))
+              (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000)))) ;; !WS_DISABLED
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00010000)) (i32.const 0))) ;; WS_TABSTOP
+        (then
+          (if (i32.eqz (local.get $first)) (then (local.set $first (local.get $ch))))
+          (if (i32.gt_s (local.get $dir) (i32.const 0))
+            (then
+              (if (local.get $seen) (then (return (local.get $ch))))
+              (if (i32.eq (local.get $ch) (local.get $focus)) (then (local.set $seen (i32.const 1)))))
+            (else
+              (if (i32.eq (local.get $ch) (local.get $focus))
+                (then
+                  (if (local.get $prev)
+                    (then (return (local.get $prev))))
+                  (local.set $seen (i32.const 1))))
+              (local.set $prev (local.get $ch))))
+          (local.set $last (local.get $ch))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (if (i32.gt_s (local.get $dir) (i32.const 0))
+      (then (return (select (local.get $first) (local.get $last) (local.get $first)))))
+    (select (local.get $last) (local.get $first) (local.get $last)))
+
+  (func $dialog_handle_key (param $dlg i32) (param $vk i32) (param $shift i32) (result i32)
+    (local $focus i32) (local $target i32) (local $id i32) (local $style i32)
+    (if (i32.eqz (local.get $dlg)) (then (return (i32.const 0))))
+    (local.set $focus (global.get $focus_hwnd))
+    ;; Esc: IDCANCEL
+    (if (i32.eq (local.get $vk) (i32.const 27))
+      (then
+        (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111) (i32.const 2) (i32.const 0)))
+        (return (i32.const 1))))
+    ;; Tab / Shift+Tab: next/previous visible tabstop.
+    (if (i32.eq (local.get $vk) (i32.const 9))
+      (then
+        (local.set $target (call $dialog_next_tabstop
+          (local.get $dlg) (local.get $focus)
+          (select (i32.const -1) (i32.const 1) (local.get $shift))))
+        (if (local.get $target)
+          (then
+            (call $set_focus (local.get $target))
+            (return (i32.const 1))))))
+    ;; Enter: current/default push button.
+    (if (i32.eq (local.get $vk) (i32.const 13))
+      (then
+        (local.set $target (call $dialog_first_default_button (local.get $dlg)))
+        (if (i32.eqz (local.get $target))
+          (then (local.set $target (call $ctrl_find_by_id (local.get $dlg) (i32.const 1)))))
+        (if (local.get $target)
+          (then
+            (local.set $id (call $ctrl_table_get_id (local.get $target)))
+            (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
+              (local.get $id) (local.get $target)))
+            (return (i32.const 1))))))
+    ;; Space: click focused button.
+    (if (i32.eq (local.get $vk) (i32.const 32))
+      (then
+        (if (i32.and
+              (local.get $focus)
+              (i32.eq (call $ctrl_table_get_class (local.get $focus)) (i32.const 1)))
+          (then
+            (local.set $id (call $ctrl_table_get_id (local.get $focus)))
+            (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
+              (local.get $id) (local.get $focus)))
+            (return (i32.const 1))))))
+    (i32.const 0))
+
+  (func $wnd_first_visible_control_class (param $cls i32) (result i32)
+    (local $i i32) (local $hwnd i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+      (if (i32.and
+            (i32.and
+              (local.get $hwnd)
+              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (local.get $cls)))
+            (call $wnd_is_effectively_visible (local.get $hwnd)))
+        (then (return (local.get $hwnd))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $edit_command_target (result i32)
+    (local $target i32)
+    (if (i32.and
+          (global.get $focus_hwnd)
+          (i32.eq (call $ctrl_table_get_class (global.get $focus_hwnd)) (i32.const 2)))
+      (then (return (global.get $focus_hwnd))))
+    (local.set $target (call $wnd_first_visible_control_class (i32.const 2)))
+    (if (local.get $target) (then (call $set_focus (local.get $target))))
+    (local.get $target))
+
+  (func $menu_try_edit_command (param $id i32) (result i32)
+    (local $target i32) (local $msg i32) (local $lParam i32)
+    (local.set $target (call $edit_command_target))
+    (if (i32.eqz (local.get $target)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const 7))
+      (then
+        (local.set $msg (i32.const 0x00B1)) ;; EM_SETSEL
+        (local.set $lParam (i32.const -1)))
+      (else
+        (if (i32.eq (local.get $id) (i32.const 768))
+          (then (local.set $msg (i32.const 0x0300))) ;; WM_CUT
+          (else
+            (if (i32.eq (local.get $id) (i32.const 769))
+              (then (local.set $msg (i32.const 0x0301))) ;; WM_COPY
+              (else
+                (if (i32.eq (local.get $id) (i32.const 770))
+                  (then (local.set $msg (i32.const 0x0302))) ;; WM_PASTE
+                  (else
+                    (if (i32.eq (local.get $id) (i32.const 771))
+                      (then (local.set $msg (i32.const 0x0303))) ;; WM_CLEAR
+                      (else (return (i32.const 0))))))))))))
+    (drop (call $wnd_send_message (local.get $target) (local.get $msg) (i32.const 0) (local.get $lParam)))
+    (call $paint_flag_set_inv (local.get $target))
+    (i32.const 1))
 
   (func $client_rect_reset_slot (param $slot i32)
     (local $rec i32)
@@ -1278,10 +1613,15 @@
 
   (func $wnd_client_w_for_clip (param $hwnd i32) (result i32)
     (local $style i32) (local $sz i32)
+    (local $cl i32) (local $cr i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
       (then
+        (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+        (if (i32.gt_s (local.get $cr) (local.get $cl))
+          (then (return (i32.sub (local.get $cr) (local.get $cl)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.and (local.get $sz) (i32.const 0xFFFF)))))
     (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
@@ -1289,10 +1629,15 @@
 
   (func $wnd_client_h_for_clip (param $hwnd i32) (result i32)
     (local $style i32) (local $sz i32)
+    (local $ct i32) (local $cb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
       (then
+        (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+        (if (i32.gt_s (local.get $cb) (local.get $ct))
+          (then (return (i32.sub (local.get $cb) (local.get $ct)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.shr_u (local.get $sz) (i32.const 16)))))
     (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
@@ -1303,9 +1648,8 @@
     (local $pw i32) (local $ph i32)
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
-    (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
-    (local.set $x (i32.and (local.get $xy) (i32.const 0xFFFF)))
-    (local.set $y (i32.shr_u (local.get $xy) (i32.const 16)))
+    (local.set $x (call $ctrl_get_x_s (local.get $hwnd)))
+    (local.set $y (call $ctrl_get_y_s (local.get $hwnd)))
     (local.set $pw (call $wnd_client_w_for_clip (local.get $parent)))
     (local.set $ph (call $wnd_client_h_for_clip (local.get $parent)))
     (if (i32.and (i32.gt_s (local.get $pw) (i32.const 0))
@@ -1332,10 +1676,9 @@
       (local.set $cstyle (call $wnd_get_style (local.get $ch)))
       (if (i32.and (local.get $cstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
         (then
-          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
-          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
-          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cx (call $ctrl_get_x_s (local.get $ch)))
+          (local.set $cy (call $ctrl_get_y_s (local.get $ch)))
           (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
           (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
           (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
@@ -1366,10 +1709,9 @@
       (local.set $cstyle (call $wnd_get_style (local.get $ch)))
       (if (i32.and (local.get $cstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
         (then
-          (local.set $xy (call $ctrl_get_xy_packed (local.get $ch)))
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
-          (local.set $cx (i32.and (local.get $xy) (i32.const 0xFFFF)))
-          (local.set $cy (i32.shr_u (local.get $xy) (i32.const 16)))
+          (local.set $cx (call $ctrl_get_x_s (local.get $ch)))
+          (local.set $cy (call $ctrl_get_y_s (local.get $ch)))
           (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
           (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
           (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
@@ -1395,9 +1737,8 @@
     (if (i32.eqz (local.get $parent)) (then (return)))
     (local.set $my_slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $my_slot) (i32.const 0)) (then (return)))
-    (local.set $myxy (call $ctrl_get_xy_packed (local.get $hwnd)))
-    (local.set $myx (i32.and (local.get $myxy) (i32.const 0xFFFF)))
-    (local.set $myy (i32.shr_u (local.get $myxy) (i32.const 16)))
+    (local.set $myx (call $ctrl_get_x_s (local.get $hwnd)))
+    (local.set $myy (call $ctrl_get_y_s (local.get $hwnd)))
     ;; Later slots are treated as above us; this matches existing WAT
     ;; sibling enumeration until an explicit z-order table exists.
     (local.set $slot (i32.add (local.get $my_slot) (i32.const 1)))
@@ -1411,10 +1752,9 @@
           (local.set $sstyle (call $wnd_get_style (local.get $sib)))
           (if (i32.and (local.get $sstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
             (then
-              (local.set $xy (call $ctrl_get_xy_packed (local.get $sib)))
               (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
-              (local.set $sx (i32.and (local.get $xy) (i32.const 0xFFFF)))
-              (local.set $sy (i32.shr_u (local.get $xy) (i32.const 16)))
+              (local.set $sx (call $ctrl_get_x_s (local.get $sib)))
+              (local.set $sy (call $ctrl_get_y_s (local.get $sib)))
               (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
               (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
               (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))

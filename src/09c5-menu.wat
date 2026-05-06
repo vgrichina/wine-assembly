@@ -140,6 +140,23 @@
   ;; routing so gdi_* primitives composite at the screen position
   ;; the renderer chose.
   ;; ============================================================
+  (func $menu_bar_screen_x (export "menu_bar_screen_x") (param $hwnd i32) (result i32)
+    (i32.add (call $wnd_window_screen_x (local.get $hwnd)) (i32.const 3)))
+
+  (func $menu_bar_screen_y (export "menu_bar_screen_y") (param $hwnd i32) (result i32)
+    (local $style i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (i32.add
+      (call $wnd_window_screen_y (local.get $hwnd))
+      (i32.add
+        (i32.const 3)
+        (select (i32.const 19) (i32.const 0)
+          (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                  (i32.const 0x00C00000))))))
+
+  (func $menu_bar_screen_h (export "menu_bar_screen_h") (result i32)
+    (i32.const 18))
+
   (func (export "menu_paint_bar")
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32)
         (param $open_idx i32)
@@ -213,7 +230,7 @@
   ;; $menu_hittest_bar — given a screen-relative click point and the
   ;; bar's left/top, return the index of the hit bar item, or -1.
   ;; ============================================================
-  (func (export "menu_hittest_bar")
+  (func $menu_hittest_bar (export "menu_hittest_bar")
         (param $hwnd i32) (param $bar_x i32) (param $bar_y i32)
         (param $click_x i32) (param $click_y i32)
         (result i32)
@@ -253,7 +270,7 @@
 
   ;; Returns x-offset (relative to bar_x) of bar item $idx — used by JS
   ;; to anchor the dropdown beneath the open menu.
-  (func (export "menu_bar_item_x")
+  (func $menu_bar_item_x (export "menu_bar_item_x")
         (param $hwnd i32) (param $idx i32) (result i32)
     (local $blob i32) (local $hdc i32)
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
@@ -596,7 +613,7 @@
 
   ;; Hit-test a click against an open dropdown of $tidx anchored at
   ;; (dx, dy). Returns child index, or -1 if outside / on a separator.
-  (func (export "menu_hittest_dropdown")
+  (func $menu_hittest_dropdown (export "menu_hittest_dropdown")
         (param $hwnd i32) (param $tidx i32) (param $dx i32) (param $dy i32)
         (param $click_x i32) (param $click_y i32) (result i32)
     (local $blob i32) (local $hdr i32) (local $count i32) (local $cidx i32)
@@ -1049,9 +1066,87 @@
   (func (export "menu_set_hover") (param $cidx i32)
     (global.set $menu_open_hover (local.get $cidx)))
 
+  ;; USER-side click routing for an already-open dropdown. The host supplies
+  ;; only the browser/screen point; WAT owns menu hit testing, hover, command
+  ;; activation, and close/switch behavior.
+  (func $menu_handle_mouse_open (export "menu_handle_mouse_open")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hwnd i32) (local $top i32)
+    (local $bar_x i32) (local $bar_y i32) (local $bar_h i32)
+    (local $dx i32) (local $dy i32) (local $idx i32)
+    (local.set $hwnd (global.get $menu_open_hwnd))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (global.get $menu_open_top))
+    (local.set $bar_x (call $menu_bar_screen_x (local.get $hwnd)))
+    (local.set $bar_y (call $menu_bar_screen_y (local.get $hwnd)))
+    (local.set $bar_h (call $menu_bar_screen_h))
+    (local.set $dx (i32.add
+      (local.get $bar_x)
+      (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
+    (local.set $dy (i32.add (local.get $bar_y) (local.get $bar_h)))
+
+    (local.set $idx (call $menu_hittest_dropdown
+      (local.get $hwnd) (local.get $top)
+      (local.get $dx) (local.get $dy)
+      (local.get $sx) (local.get $sy)))
+    (if (i32.ge_s (local.get $idx) (i32.const 0))
+      (then
+        (global.set $menu_open_hover (local.get $idx))
+        (drop (call $menu_activate))
+        (return (i32.const 1))))
+
+    (local.set $idx (call $menu_hittest_bar
+      (local.get $hwnd) (local.get $bar_x) (local.get $bar_y)
+      (local.get $sx) (local.get $sy)))
+    (if (i32.ge_s (local.get $idx) (i32.const 0))
+      (then
+        (call $menu_open (local.get $hwnd) (local.get $idx))
+        (return (i32.const 1))))
+
+    (call $menu_close)
+    (i32.const 1))
+
+  ;; Hover update for an open dropdown. Returns the resulting hover index
+  ;; (or -1) after updating WAT tracking state.
+  (func $menu_hover_from_point (export "menu_hover_from_point")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hwnd i32) (local $top i32)
+    (local $bar_x i32) (local $bar_y i32) (local $bar_h i32)
+    (local $dx i32) (local $dy i32) (local $idx i32)
+    (local.set $hwnd (global.get $menu_open_hwnd))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (local.set $top (global.get $menu_open_top))
+    (local.set $bar_x (call $menu_bar_screen_x (local.get $hwnd)))
+    (local.set $bar_y (call $menu_bar_screen_y (local.get $hwnd)))
+    (local.set $bar_h (call $menu_bar_screen_h))
+    (local.set $dx (i32.add
+      (local.get $bar_x)
+      (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
+    (local.set $dy (i32.add (local.get $bar_y) (local.get $bar_h)))
+    (local.set $idx (call $menu_hittest_dropdown
+      (local.get $hwnd) (local.get $top)
+      (local.get $dx) (local.get $dy)
+      (local.get $sx) (local.get $sy)))
+    (global.set $menu_open_hover (local.get $idx))
+    (local.get $idx))
+
+  ;; Open a top-level menu item for a particular hwnd and point. Used by the
+  ;; browser event shell after it has already selected the top-level window.
+  (func $menu_handle_bar_click (export "menu_handle_bar_click")
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $menu_hittest_bar
+      (local.get $hwnd)
+      (call $menu_bar_screen_x (local.get $hwnd))
+      (call $menu_bar_screen_y (local.get $hwnd))
+      (local.get $sx) (local.get $sy)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+    (call $menu_open (local.get $hwnd) (local.get $idx))
+    (i32.const 1))
+
   ;; Down/Up arrow nav: walk to next selectable child, wrapping. $dir
   ;; is +1 (Down) or -1 (Up).
-  (func (export "menu_advance") (param $dir i32)
+  (func $menu_advance (export "menu_advance") (param $dir i32)
     (local $n i32) (local $i i32) (local $k i32) (local $f i32)
     (local.set $n (call $menu_track_child_count))
     (if (i32.eqz (local.get $n)) (then (return)))
@@ -1078,7 +1173,7 @@
       (br $scan))))
 
   ;; Left/Right arrow nav: switch to neighbor bar item, wrapping.
-  (func (export "menu_switch_top") (param $dir i32)
+  (func $menu_switch_top (export "menu_switch_top") (param $dir i32)
     (local $n i32) (local $i i32)
     (if (i32.eqz (global.get $menu_open_hwnd)) (then (return)))
     (local.set $n (call $menu_bar_count (global.get $menu_open_hwnd)))
@@ -1090,6 +1185,31 @@
       (then (local.set $i (i32.const 0))))
     (global.set $menu_open_top (local.get $i))
     (global.set $menu_open_hover (i32.const -1)))
+
+  ;; Keyboard routing for an already-open dropdown. Returns 1 when the key was
+  ;; consumed by USER menu tracking.
+  (func $menu_handle_key_open (export "menu_handle_key_open")
+        (param $vk i32) (result i32)
+    (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $vk) (i32.const 27))
+      (then (call $menu_close) (return (i32.const 1))))     ;; Escape
+    (if (i32.eq (local.get $vk) (i32.const 40))
+      (then (call $menu_advance (i32.const 1)) (return (i32.const 1))))  ;; Down
+    (if (i32.eq (local.get $vk) (i32.const 38))
+      (then (call $menu_advance (i32.const -1)) (return (i32.const 1)))) ;; Up
+    (if (i32.eq (local.get $vk) (i32.const 39))
+      (then (call $menu_switch_top (i32.const 1)) (return (i32.const 1))))  ;; Right
+    (if (i32.eq (local.get $vk) (i32.const 37))
+      (then (call $menu_switch_top (i32.const -1)) (return (i32.const 1)))) ;; Left
+    (if (i32.eq (local.get $vk) (i32.const 13))
+      (then (drop (call $menu_activate)) (return (i32.const 1)))) ;; Enter
+    (if (i32.and
+          (i32.ge_s (local.get $vk) (i32.const 65))
+          (i32.le_s (local.get $vk) (i32.const 90)))
+      (then
+        (if (call $menu_handle_letter (local.get $vk))
+          (then (return (i32.const 1))))))
+    (i32.const 0))
 
   ;; Internal: enqueue a posted message for hwnd. Mirrors the body of
   ;; $handle_PostMessageA. Used by $menu_post_command on activation.
@@ -1121,15 +1241,17 @@
     (if (i32.and (local.get $f) (i32.const 0x03))
       (then (return (i32.const 0))))   ;; separator or grayed
     (local.set $id (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $hover)))
-    (if (i32.eq (local.get $id) (i32.const 28))
+    (if (call $menu_try_edit_command (local.get $id))
+      (then (nop))
+      (else (if (i32.eq (local.get $id) (i32.const 28))
       (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
-      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))))
     (call $menu_close)
     (local.get $id))
 
   ;; Find the bar item index whose accelerator char (uppercase ASCII)
   ;; matches $ch, or -1.
-  (func (export "menu_find_bar_accel") (param $hwnd i32) (param $ch i32) (result i32)
+  (func $menu_find_bar_accel (export "menu_find_bar_accel") (param $hwnd i32) (param $ch i32) (result i32)
     (local $n i32) (local $i i32)
     (local.set $n (call $menu_bar_count (local.get $hwnd)))
     (block $done (loop $scan
@@ -1140,9 +1262,48 @@
       (br $scan)))
     (i32.const -1))
 
+  ;; Open the first suitable top-level menu with a matching bar accelerator.
+  ;; Prefer the focused window's top-level ancestor, then scan WND_RECORDS in
+  ;; reverse slot order as the current z-order proxy.
+  (func $menu_open_bar_accel (export "menu_open_bar_accel")
+        (param $ch i32) (result i32)
+    (local $hwnd i32) (local $idx i32) (local $slot i32) (local $rec i32)
+    (local $style i32)
+    (if (global.get $focus_hwnd)
+      (then
+        (local.set $hwnd (call $wnd_top_level (global.get $focus_hwnd)))
+        (local.set $idx (call $menu_find_bar_accel (local.get $hwnd) (local.get $ch)))
+        (if (i32.ge_s (local.get $idx) (i32.const 0))
+          (then
+            (call $menu_open (local.get $hwnd) (local.get $idx))
+            (return (i32.const 1))))))
+    (local.set $slot (i32.sub (global.get $MAX_WINDOWS) (i32.const 1)))
+    (block $done (loop $scan
+      (local.set $rec (call $wnd_record_addr (local.get $slot)))
+      (local.set $hwnd (i32.load (local.get $rec)))
+      (if (local.get $hwnd)
+        (then
+          (local.set $style (call $wnd_get_style (local.get $hwnd)))
+          (if (i32.and
+                (i32.and
+                  (i32.ne (i32.and (local.get $style) (i32.const 0x10000000)) (i32.const 0))
+                  (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
+                (i32.eq (call $wnd_top_level (local.get $hwnd)) (local.get $hwnd)))
+            (then
+              (local.set $idx (call $menu_find_bar_accel
+                (local.get $hwnd) (local.get $ch)))
+              (if (i32.ge_s (local.get $idx) (i32.const 0))
+                (then
+                  (call $menu_open (local.get $hwnd) (local.get $idx))
+                  (return (i32.const 1))))))))
+      (br_if $done (i32.eqz (local.get $slot)))
+      (local.set $slot (i32.sub (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; Try to activate by child accelerator char while a menu is open.
   ;; Returns 1 if a matching item was found and activated, else 0.
-  (func (export "menu_handle_letter") (param $ch i32) (result i32)
+  (func $menu_handle_letter (export "menu_handle_letter") (param $ch i32) (result i32)
     (local $n i32) (local $i i32) (local $f i32)
     (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))
     (local.set $n (call $menu_track_child_count))

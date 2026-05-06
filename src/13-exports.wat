@@ -637,9 +637,54 @@
   (func (export "wnd_slot_hwnd") (param $slot i32) (result i32)
     (call $wnd_slot_hwnd (local.get $slot)))
 
-  ;; Get the parent hwnd of a window (0 if none).
+  ;; Get the geometry parent hwnd of a window (0 if none). Owned top-level
+  ;; windows expose their owner via wnd_get_owner instead.
   (func (export "wnd_get_parent") (param $hwnd i32) (result i32)
     (call $wnd_get_parent (local.get $hwnd)))
+  (func (export "wnd_get_owner") (param $hwnd i32) (result i32)
+    (call $wnd_get_owner (local.get $hwnd)))
+  (func (export "wnd_get_parent_api") (param $hwnd i32) (result i32)
+    (call $wnd_get_parent_api (local.get $hwnd)))
+
+  ;; Absolute HWND geometry in screen coordinates. Top-level placement is
+  ;; backed by the host canvas; child placement is fully WAT-owned.
+  (func (export "wnd_top_level") (param $hwnd i32) (result i32)
+    (call $wnd_top_level (local.get $hwnd)))
+  (func (export "wnd_window_screen_x") (param $hwnd i32) (result i32)
+    (call $wnd_window_screen_x (local.get $hwnd)))
+  (func (export "wnd_window_screen_y") (param $hwnd i32) (result i32)
+    (call $wnd_window_screen_y (local.get $hwnd)))
+  (func (export "wnd_client_screen_x") (param $hwnd i32) (result i32)
+    (call $wnd_client_screen_x (local.get $hwnd)))
+  (func (export "wnd_client_screen_y") (param $hwnd i32) (result i32)
+    (call $wnd_client_screen_y (local.get $hwnd)))
+  (func (export "wnd_screen_w") (param $hwnd i32) (result i32)
+    (call $wnd_screen_w (local.get $hwnd)))
+  (func (export "wnd_screen_h") (param $hwnd i32) (result i32)
+    (call $wnd_screen_h (local.get $hwnd)))
+  (func (export "modal_dialog_hwnd") (result i32)
+    (global.get $modal_dlg_hwnd))
+  (func (export "wnd_mouse_msg_origin_x") (param $hwnd i32) (result i32)
+    (call $wnd_mouse_msg_origin_x (local.get $hwnd)))
+  (func (export "wnd_mouse_msg_origin_y") (param $hwnd i32) (result i32)
+    (call $wnd_mouse_msg_origin_y (local.get $hwnd)))
+  (func (export "wnd_child_from_point_deep") (param $parent i32) (param $sx i32) (param $sy i32) (result i32)
+    (call $wnd_child_from_point_deep (local.get $parent) (local.get $sx) (local.get $sy)))
+  (func (export "dialog_route_mouse_screen")
+    (param $parent i32) (param $msg i32) (param $wParam i32) (param $sx i32) (param $sy i32) (result i32)
+    (call $dialog_route_mouse_screen
+      (local.get $parent) (local.get $msg) (local.get $wParam)
+      (local.get $sx) (local.get $sy)))
+  (func (export "dialog_ancestor") (param $hwnd i32) (result i32)
+    (call $dialog_ancestor (local.get $hwnd)))
+  (func (export "dialog_handle_key") (param $dlg i32) (param $vk i32) (param $shift i32) (result i32)
+    (call $dialog_handle_key (local.get $dlg) (local.get $vk) (local.get $shift)))
+  (func (export "wnd_first_visible_control_class") (param $cls i32) (result i32)
+    (call $wnd_first_visible_control_class (local.get $cls)))
+  (func (export "edit_command_target") (result i32)
+    (call $edit_command_target))
+  (func (export "menu_try_edit_command") (param $id i32) (result i32)
+    (call $menu_try_edit_command (local.get $id)))
 
   ;; Geometry getters: each returns x|y<<16 or w|h<<16 (i16 each).
   (func (export "ctrl_get_xy") (param $hwnd i32) (result i32)

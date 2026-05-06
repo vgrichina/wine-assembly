@@ -16,6 +16,12 @@ const { runRenderTest } = require('./render-helper');
 
 function controlCanvasPoint(h, hwnd, relX, relY) {
   const e = h.exports;
+  if (e.wnd_window_screen_x && e.wnd_window_screen_y) {
+    return {
+      x: (e.wnd_window_screen_x(hwnd) | 0) + relX,
+      y: (e.wnd_window_screen_y(hwnd) | 0) + relY,
+    };
+  }
   let x = relX;
   let y = relY;
   let cur = hwnd;

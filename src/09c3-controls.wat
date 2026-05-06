@@ -551,8 +551,8 @@
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (local.get $title_buf_w)
       (i32.add (local.get $app_len) (i32.const 6)))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     ;; Tag the parent dialog as control class 11 so $control_wndproc_dispatch
     ;; routes WM_COMMAND from the OK button (and WM_CLOSE from the title-bar X)
     ;; to $about_wndproc.
@@ -653,8 +653,8 @@
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (local.get $title_wa)
       (call $strlen (local.get $title_wa)))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 13) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
@@ -768,10 +768,15 @@
     (if (local.get $caption_wa)
       (then (call $title_table_set (local.get $dlg) (local.get $caption_wa)
               (local.get $cap_len))))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 16) (i32.const 0))
+    ;; Match the normal dialog path: establish client geometry before any
+    ;; erase/background/child paints. Otherwise the browser compositor can
+    ;; see only the frame while child controls are painted against stale
+    ;; window-local client bounds.
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     ;; Paint the frame/background immediately. MessageBox can be created
     ;; inside a synchronous button click; if it waits for the modal pump's
     ;; first paint pass, the browser mouse-up from the original click can
@@ -968,8 +973,8 @@
       (i32.const 1))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (i32.const 0x258) (i32.const 4))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 14) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
@@ -1236,8 +1241,8 @@
       (i32.const 1))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (i32.const 0x252) (i32.const 5))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 15) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
@@ -1665,10 +1670,15 @@
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (local.get $title_wa)
       (call $strlen (local.get $title_wa)))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 12) (i32.const 0))
+    ;; Match USER's create order: establish the dialog frame/client rect before
+    ;; painting the client area or any child controls. Otherwise child-control
+    ;; DCs see a zero client offset and draw into the title bar.
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
+    (call $defwndproc_do_ncpaint (local.get $dlg))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
     (call $dlg_fill_bkgnd (local.get $dlg))
     ;; Stash OFN ptr for the OK handler.
@@ -2138,11 +2148,13 @@
               (else
                 (drop (call $wnd_send_message
                   (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
-            ;; Post WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
-            ;; to parent. Skip groupbox (kind 7) — it's not interactive.
+            ;; Send WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
+            ;; to parent. Native BUTTON controls notify parents synchronously;
+            ;; dialog procs often update caller-owned structs before the click
+            ;; returns. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
-                (drop (call $post_queue_push
+                (drop (call $wnd_send_message
                   (call $wnd_get_parent (local.get $hwnd))
                   (i32.const 0x0111)  ;; WM_COMMAND
                   ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
@@ -2322,10 +2334,10 @@
                     (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))))
             (if (i32.and (local.get $flags) (i32.const 0x02))
               (then
-                (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30014)))
-                (drop (call $host_gdi_ellipse (local.get $hdc)
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
                         (i32.const 4) (i32.add (local.get $box_y) (i32.const 4))
-                        (i32.const 8) (i32.add (local.get $box_y) (i32.const 8))))))
+                        (i32.const 8) (i32.add (local.get $box_y) (i32.const 8))
+                        (i32.const 0x30014)))))
             (if (local.get $text_w)
               (then
                 (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
@@ -6257,12 +6269,16 @@
       (i32.const 2))      ;; kind bit 1 = isFindDialog
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (i32.const 0x1E3) (i32.const 4))
-    (call $wnd_set_parent (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x80C80000)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     ;; Tag the parent dialog as control class 10 so $control_wndproc_dispatch
     ;; routes WM_COMMAND from child buttons to $findreplace_wndproc.
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 10) (i32.const 0))
+    ;; Establish the dialog client rect before creating/painting children.
+    ;; Child geometry is client-relative; without NCCALCSIZE it is treated
+    ;; as window-relative until the later message pump catches up.
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     ;; Paint the dialog chrome/background before child creation. The modeless
     ;; Find dialog shares one back-canvas with its WAT children, so a later
     ;; queued parent paint would cover the children.

@@ -112,6 +112,15 @@ async function diffPngs(aPath, bPath) {
   checks.push({ name: 'deal snapshot written',     pass: sizeOf(dealPng) });
   checks.push({ name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) });
   checks.push({ name: 'no LinkError',               pass: !/LinkError/.test(out) });
+  checks.push({
+    name: 'CARDS.dll initializes Win98 card size 71x96',
+    pass: /Initialized CARDS\.dll cdtInit=1 card=71x96/.test(out),
+  });
+  const solRect = out.match(/CreateWindow\] hwnd=0x[0-9a-f]+ title="Solitaire".*size=(\d+)x(\d+)/);
+  checks.push({
+    name: 'Solitaire initial window is not tiny',
+    pass: !!solRect && Number(solRect[1]) >= 560 && Number(solRect[2]) >= 400,
+  });
 
   if (sizeOf(initialPng) && sizeOf(dealPng)) {
     // Compare initial deal vs a blank green rectangle — cards should be visible
@@ -139,14 +148,37 @@ async function diffPngs(aPath, bPath) {
     c.getContext('2d').drawImage(img, 0, 0);
     const data = c.getContext('2d').getImageData(0, 0, w, h).data;
     let nonGreen = 0;
+    let bottomCaptionBlue = 0;
+    let bottomBtnFaceGray = 0;
     for (let i = 0; i < data.length; i += 4) {
       // Green background is rgb(0, 128, 0) or close
       if (!(data[i] < 20 && data[i+1] > 100 && data[i+2] < 20)) nonGreen++;
     }
+    // Solitaire creates a bordered child status strip at the bottom. It must
+    // not get top-level caption chrome; the old bug drew a blue titlebar and
+    // close button across this band.
+    for (let y = 435; y < Math.min(450, h); y++) {
+      for (let x = 20; x < Math.min(613, w); x++) {
+        const i = (y * w + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (b > 70 && r < 60 && g < 130) bottomCaptionBlue++;
+        if (Math.abs(r - 192) <= 4 && Math.abs(g - 192) <= 4 && Math.abs(b - 192) <= 4) bottomBtnFaceGray++;
+      }
+    }
     console.log(`  non-green pixels in initial: ${nonGreen}`);
+    console.log(`  blue caption pixels in bottom status strip: ${bottomCaptionBlue}`);
+    console.log(`  btnface gray pixels in bottom status strip: ${bottomBtnFaceGray}`);
     checks.push({
       name: 'Initial deal shows cards (>= 5000 non-green px)',
       pass: nonGreen >= 5000,
+    });
+    checks.push({
+      name: 'Bottom status child has no caption chrome',
+      pass: bottomCaptionBlue < 50,
+    });
+    checks.push({
+      name: 'Bottom status child paints a Win98 gray status strip',
+      pass: bottomBtnFaceGray >= 4000,
     });
   }
 

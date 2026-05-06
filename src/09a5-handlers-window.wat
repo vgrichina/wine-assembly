@@ -4,8 +4,15 @@
 
   ;; 67: CreateWindowExA
   (func $handle_CreateWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $v i32) (local $i i32)
+    (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $detected_class i32) (local $name_w i32)
+    ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
+    ;; operation. Later helper/import calls may use scratch paths; do not keep
+    ;; treating the caller's stack frame as the source of truth.
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
+    (global.set $eax (local.get $hwnd))
+    (local.set $parent_hwnd (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
     (if (i32.eqz (global.get $wndproc_addr))
@@ -66,14 +73,16 @@
     (br $scan2)))))))
     ;; Allocate HWND; first top-level window becomes main_hwnd
     (if (i32.eqz (global.get $main_hwnd))
-    (then (global.set $main_hwnd (global.get $next_hwnd))))
+    (then (global.set $main_hwnd (local.get $hwnd))))
     ;; Resolve menu: explicit hMenu arg wins; if 0, fall back to the class's
     ;; lpszMenuName (WNDCLASSA+32) when it's a MAKEINTRESOURCE integer
     ;; (high 16 bits zero). Real Win32 does the same fallback. Without it,
     ;; the JS renderer used to guess "first menu resource" which was wrong
     ;; for apps that have menu resources only for popup TrackPopupMenu use.
     (local.set $tmp (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; explicit hMenu
-    (if (i32.eqz (local.get $tmp))
+    (if (i32.and
+          (i32.eqz (local.get $tmp))
+          (i32.eqz (i32.and (local.get $arg3) (i32.const 0x40000000))))
       (then
         (local.set $i (call $class_find_slot (call $class_name_key (local.get $arg1))))
         ;; Fallback: some EXEs pass a hard-coded class atom (e.g. EmPipe's
@@ -106,9 +115,24 @@
             ;; named menus work the same as integer-IDed ones.
             (if (i32.ne (local.get $v) (i32.const 0))
               (then (local.set $tmp (local.get $v))))))))
+    ;; Seed the top-level WND_RECORD before the host creates the renderer
+    ;; surface. The host may synchronously ask WAT for style/client/menu state
+    ;; while creating the canvas; Win98 USER already has the window record at
+    ;; that point, so WAT must too. The fuller lookup below still runs and
+    ;; updates the same slot once class/control detection has completed.
+    (if (i32.eqz (i32.and (local.get $arg3) (i32.const 0x40000000)))
+      (then
+        (local.set $v (call $class_table_lookup (call $class_name_key (local.get $arg1))))
+        (if (local.get $v)
+          (then (call $wnd_table_set (local.get $hwnd) (local.get $v)))
+          (else
+            (if (global.get $wndproc_addr)
+              (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
+              (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
+        (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3))))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
-    (global.get $next_hwnd)                                    ;; hwnd
+    (local.get $hwnd)                                    ;; hwnd
     (local.get $arg3)                                           ;; style
     (local.get $arg4)                                           ;; x
     (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
@@ -117,16 +141,25 @@
     (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
     (local.get $tmp)                                            ;; resolved menu
     ))
-    ;; Save resolved menu ID for nc_height calculation later ($tmp gets overwritten)
-    (local.set $v (local.get $tmp))
+    ;; Save resolved top-level menu ID; later code reuses $tmp/$v for wnd/control slots.
+    ;; For WS_CHILD, CreateWindowExA.hMenu is a child/control ID, not a menu.
+    (local.set $menu_id (select
+      (i32.const 0)
+      (local.get $tmp)
+      (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000)) (i32.const 0))))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
-    (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
+    (call $host_set_window_class (local.get $hwnd) (call $g2w (local.get $arg1)))
+    ;; Store style before any native control WM_CREATE. Edit/Button/etc. read
+    ;; style bits during creation just like USER32-created controls on Win98.
+    (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
     (local.set $tmp (call $class_table_lookup (call $class_name_key (local.get $arg1))))
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
     ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
-    (if (i32.and (i32.eqz (local.get $tmp)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $tmp)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
+          (i32.eqz (call $is_builtin_control_class (local.get $arg1))))
       (then
         (local.set $i (i32.const 0))
         (block $found3 (loop $scan3
@@ -141,7 +174,7 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $scan3)))))
     (if (local.get $tmp)
-      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
+      (then (call $wnd_table_set (local.get $hwnd) (local.get $tmp)))
       (else
         ;; System control class detection — atoms or case-insensitive name match.
         ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082, LISTBOX=0x0083,
@@ -243,8 +276,9 @@
         (if (local.get $detected_class)
           (then
             ;; System Edit/Button/Static class → WAT-native control
-            (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
-            (local.set $v (call $wnd_table_find (global.get $next_hwnd)))
+            (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+            (local.set $tmp (global.get $WNDPROC_CTRL_NATIVE))
+            (local.set $v (call $wnd_table_find (local.get $hwnd)))
             (call $ctrl_table_set (local.get $v) (local.get $detected_class)
               (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; hMenu = ctrl_id for children
             (call $ctrl_geom_set (local.get $v)
@@ -263,24 +297,32 @@
                 (i32.and
                   (i32.eq (local.get $detected_class) (i32.const 5))
                   (i32.ne (i32.and (local.get $arg3) (i32.const 0x3))
-                          (i32.const 1)))))) ;; CBS_SIMPLE keeps full height
+                          (i32.const 1))))) ;; CBS_SIMPLE keeps full height
+            (drop (call $wat_wndproc_dispatch
+              (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (i32.const 0)))) ;; WM_CREATE
           (else
-            (call $wnd_table_set (global.get $next_hwnd) (global.get $WNDPROC_BUILTIN))))))
-    ;; Store parent hwnd (hWndParent = [esp+36])
-    (call $wnd_set_parent (global.get $next_hwnd)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+            (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))))))
+    ;; hWndParent means geometry parent only for WS_CHILD. For top-level
+    ;; popup/overlapped windows it is an owner; keep that separate so owned
+    ;; modal dialogs do not inherit the owner's client coordinates.
+    (if (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000)) (i32.const 0))
+      (then
+        (call $wnd_set_parent (local.get $hwnd)
+          (local.get $parent_hwnd)))
+      (else
+        (call $wnd_set_owner (local.get $hwnd)
+          (local.get $parent_hwnd))))
     ;; Child window: hMenu param is the control ID. Store it so GetDlgCtrlID /
     ;; GetDlgItem work for arbitrary child wndprocs (not just the system
     ;; Edit/Button/Static classes handled above). Guard with logical booleans
     ;; (i32.and on raw pointers/style masks is a bitwise op — coerce to 0/1
     ;; first per feedback_wat_bitwise_and).
     (if (i32.and
-          (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 36)))
-                  (i32.const 0))
+          (i32.ne (local.get $parent_hwnd) (i32.const 0))
           (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000))
                   (i32.const 0)))
       (then
-        (local.set $v (call $wnd_table_find (global.get $next_hwnd)))
+        (local.set $v (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ne (local.get $v) (i32.const -1))
           (then
             (i32.store
@@ -307,35 +349,28 @@
                   (i32.ne (i32.and (local.get $arg3) (i32.const 0x3))
                           (i32.const 1))))))))) ;; CBS_SIMPLE keeps full height
     ;; Store window style (dwStyle = arg3)
-    (drop (call $wnd_set_style (global.get $next_hwnd) (local.get $arg3)))
+    (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
     (if (local.get $arg2)
-      (then (call $title_table_set (global.get $next_hwnd)
+      (then (call $title_table_set (local.get $hwnd)
                 (call $g2w (local.get $arg2))
                 (call $guest_strlen (local.get $arg2)))))
     ;; Queue an initial WM_NCPAINT (bit 0), WM_ERASEBKGND (bit 1), and
     ;; WM_NCCALCSIZE (bit 2) so the first repaint delivers chrome, background
     ;; fill, and client-rect computation via the message loop rather than JS.
-    (call $nc_flags_set (global.get $next_hwnd) (i32.const 7))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 7))
     ;; Eagerly load the menu blob now that the WND_RECORDS slot exists —
     ;; otherwise a CheckMenuItem fired from WM_CREATE (e.g. FreeCell
     ;; initialising the Messages toggle) would see an empty blob and the
     ;; renderer's lazy _ensureWatMenu would later reload fresh bytes,
     ;; wiping the check state. $menu_load is idempotent: if the blob is
     ;; already installed, it returns early.
-    (if (local.get $v)
-      (then (call $menu_load (global.get $next_hwnd) (local.get $v))))
-    ;; Send WM_CREATE synchronously for main window OR top-level windows with EXE-space wndproc.
-    ;; Child windows (hWndParent != 0) use the pending_child_create/size path instead,
-    ;; because the synchronous path overwrites pending_wm_size with child dimensions.
-    (if (i32.and
-      (i32.or
-        (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
-        (i32.and
-          (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-                   (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (i32.const 0x200000))))
-          (i32.ne (local.get $tmp) (i32.const 0))))
-      (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 36)))))
+    (if (local.get $menu_id)
+      (then (call $menu_load (local.get $hwnd) (local.get $menu_id))))
+    ;; Send WM_CREATE synchronously for top-level/owned windows. WS_CHILD
+    ;; windows use the pending_child_create/size path instead, because the
+    ;; synchronous path overwrites pending_wm_size with child dimensions.
+    (if (i32.eqz (i32.and (local.get $arg3) (i32.const 0x40000000)))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
     ;; Handle CW_USEDEFAULT (0x80000000) — use defaults matching renderer (400x300).
@@ -347,9 +382,9 @@
             (global.set $main_win_cy (i32.const 300))))
     (if (i32.eq (global.get $main_win_cy) (i32.const 0x80000000))
       (then (global.set $main_win_cy (i32.const 300))))
-    ;; $v holds the resolved menu ID (from hMenu param or class lpszMenuName fallback)
+    ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
-      (i32.ne (local.get $v) (i32.const 0))))
+      (i32.ne (local.get $menu_id) (i32.const 0))))
     (global.set $pending_wm_size (i32.or
       (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
       (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
@@ -358,12 +393,12 @@
     ;; implicit-show activation chain after WM_CREATE returns. This matches real
     ;; Win32, where CreateWindowEx with WS_VISIBLE implicitly calls ShowWindow.
     (if (i32.and (i32.and
-                   (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
+                   (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                    (i32.ne (i32.and (local.get $arg3) (i32.const 0x10000000)) (i32.const 0)))
                  (i32.eqz (global.get $show_window_activated)))
       (then (global.set $createwnd_implicit_show (i32.const 1))))
     ;; Save state for continuation thunk
-    (global.set $createwnd_saved_hwnd (global.get $next_hwnd))
+    (global.set $createwnd_saved_hwnd (local.get $hwnd))
     (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
     ;; Build CREATESTRUCT at scratch address image_base+0x100 (in DOS header area,
     ;; safe to overwrite). BEFORE cleaning frame — need stack args at esp+24..esp+48.
@@ -372,7 +407,7 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (local.get $parent_hwnd))                               ;; hwndParent
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))                               ;; cy
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))                               ;; cx
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
@@ -381,6 +416,21 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
+    ;; Built-in system classes (e.g. calc.exe's hidden top-level EDIT pump
+    ;; window) have WAT-native wndprocs, not guest x86 callbacks. Win98 USER
+    ;; calls the system class proc directly during CreateWindowEx; do the same
+    ;; and return to the API caller instead of jumping through a null/marker
+    ;; callback address.
+    (if (i32.ge_u (local.get $tmp) (i32.const 0xFFFF0000))
+      (then
+        (drop (call $wat_wndproc_dispatch
+          (local.get $hwnd)
+          (i32.const 0x0001)
+          (i32.const 0)
+          (i32.add (global.get $image_base) (i32.const 0x100))))
+        (global.set $eax (local.get $hwnd))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
+        (return)))
     ;; Clean CreateWindowExA frame (ret + 12 args = 52 bytes stdcall)
     (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
     ;; If CBT hook is installed, call it first; it will chain to WM_CREATE via thunk
@@ -393,7 +443,7 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x140)))     ;; lParam = &CBT_CREATEWND
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $next_hwnd))  ;; wParam = hwnd
+    (call $gs32 (global.get $esp) (local.get $hwnd))  ;; wParam = hwnd
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 3))            ;; nCode = HCBT_CREATEWND
     ;; Push CBT hook continuation thunk as return address
@@ -417,7 +467,7 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0x0001))               ;; WM_CREATE
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $next_hwnd))          ;; hwnd
+    (call $gs32 (global.get $esp) (local.get $hwnd))          ;; hwnd
     ;; Push return thunk: WM_CREATE returns directly to caller (CACA0001 pops saved_ret+hwnd).
     ;; Activation chain (WM_ACTIVATEAPP/ACTIVATE/SETFOCUS) is now triggered by first ShowWindow.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -425,17 +475,16 @@
     ;; Jump to WndProc (use class wndproc from lookup, not global wndproc_addr)
     (global.set $eip (local.get $tmp))
     ))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (global.set $steps (i32.const 0))
     (return))
     (else
     ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
-    (global.set $pending_child_create (global.get $next_hwnd))
-    (global.set $pending_child_size_hwnd (global.get $next_hwnd))
+    (global.set $pending_child_create (local.get $hwnd))
+    (global.set $pending_child_size_hwnd (local.get $hwnd))
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_flag_set_inv (global.get $next_hwnd))
+    (call $paint_flag_set_inv (local.get $hwnd))
     ;; Build CREATESTRUCT at image_base+0x100 for this child. Must run BEFORE
     ;; frame cleanup — needs [esp+24..esp+48]. MFC SDI passes a CCreateContext*
     ;; as lpParam (arg 12) so CView::OnCreate can call CDocument::AddView.
@@ -444,7 +493,7 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (call $gl32 (i32.add (global.get $esp) (i32.const 48)))) ;; lpCreateParams
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (call $gl32 (i32.add (global.get $esp) (i32.const 36)))) ;; hwndParent
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (local.get $parent_hwnd))                               ;; hwndParent
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (call $gl32 (i32.add (global.get $esp) (i32.const 32)))) ;; cy (nHeight)
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; cx (nWidth)
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
@@ -459,7 +508,7 @@
     (if (global.get $cbt_hook_proc)
     (then
     ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
-    (global.set $child_cbt_saved_hwnd (global.get $next_hwnd))
+    (global.set $child_cbt_saved_hwnd (local.get $hwnd))
     (global.set $child_cbt_saved_ret (call $gl32 (global.get $esp)))
     ;; Build CBT_CREATEWND at image_base+0x140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
     ;; CREATESTRUCT was already populated above.
@@ -470,20 +519,18 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x140)))  ;; lParam = &CBT_CREATEWND
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $next_hwnd))                               ;; wParam = child hwnd
+    (call $gs32 (global.get $esp) (local.get $hwnd))                               ;; wParam = child hwnd
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 3))                                         ;; nCode = HCBT_CREATEWND
     ;; Push CACA0026 return thunk
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $child_cbt_ret_thunk))
-    (global.set $eax (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eax (local.get $hwnd))
     (global.set $eip (global.get $cbt_hook_proc))
     (global.set $steps (i32.const 0))
     (return)))
     ))
-    (global.set $eax (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
   )
 
@@ -526,6 +573,26 @@
     (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
     (call $pop_rsrc_ctx)
+    ;; Dialog owner vs parent follows normal CreateWindow rules. Keep the
+    ;; early parent assignment above for legacy WM_INITDIALOG/GetParent timing,
+    ;; then normalize once the template style is known.
+    (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x40000000))
+      (then
+        (call $wnd_set_parent (local.get $hwnd) (local.get $arg2)))
+      (else
+        (call $wnd_set_parent (local.get $hwnd) (i32.const 0))
+        (call $wnd_set_owner (local.get $hwnd) (local.get $arg2))))
+    ;; Some apps create a hidden top-level system-class helper before their
+    ;; real UI (calc.exe creates a zero-size EDIT "CalcMsgPumpWnd"). Win98 is
+    ;; fine with that because messages are hwnd-targeted. Our emulator has a
+    ;; convenience main_hwnd used by tests/default input routing, so promote
+    ;; the first real dialog when main_hwnd currently points at a WAT-native
+    ;; helper window.
+    (if (i32.or
+          (i32.eqz (global.get $main_hwnd))
+          (i32.eq (call $wnd_table_get (global.get $main_hwnd))
+                  (global.get $WNDPROC_CTRL_NATIVE)))
+      (then (global.set $main_hwnd (local.get $hwnd))))
     ;; Tell the renderer the dialog has been loaded; it builds its JS
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.

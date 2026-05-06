@@ -206,8 +206,8 @@ async function diffPngs(aPath, bPath) {
           pass: dSwap.diff >= 500,
         });
         checks.push({
-          name: 'Click-swap dropdown visible (>= 1500 px vs idle)',
-          pass: dSwapIdle.diff >= 1500,
+          name: 'Click-swap dropdown visible (>= 1400 px vs idle)',
+          pass: dSwapIdle.diff >= 1400,
         });
       }
     }

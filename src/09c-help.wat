@@ -52,7 +52,8 @@
         (call $nc_flags_reset_slot (local.get $empty))
         (call $title_table_reset_slot (local.get $empty))
         (call $client_rect_reset_slot (local.get $empty))
-        (call $paint_flag_reset_slot (local.get $empty))))
+        (call $paint_flag_reset_slot (local.get $empty))
+        (call $wnd_owner_reset_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -86,6 +87,7 @@
           (call $title_table_reset_slot (local.get $i))
           (call $client_rect_reset_slot (local.get $i))
           (call $paint_flag_reset_slot (local.get $i))
+          (call $wnd_owner_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
@@ -171,6 +173,63 @@
       (then
         (i32.store offset=8 (call $wnd_record_addr (local.get $idx)) (local.get $parent))))
   )
+
+  ;; Owner hwnd for owned popup/top-level windows. This is deliberately
+  ;; separate from parent: only WS_CHILD windows inherit geometry from parent.
+  (func $wnd_owner_reset_slot (param $slot i32)
+    (i32.store (i32.add (global.get $OWNER_TABLE) (i32.mul (local.get $slot) (i32.const 4))) (i32.const 0)))
+
+  (func $wnd_get_owner (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $OWNER_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  (func $wnd_set_owner (param $hwnd i32) (param $owner i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store (i32.add (global.get $OWNER_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
+                   (local.get $owner)))))
+
+  ;; Win32 GetParent returns a child parent for WS_CHILD, otherwise the owner
+  ;; for owned popups/dialogs.
+  (func $wnd_get_parent_api (param $hwnd i32) (result i32)
+    (local $style i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.and (local.get $style) (i32.const 0x40000000))
+      (then (return (call $wnd_get_parent (local.get $hwnd)))))
+    (call $wnd_get_owner (local.get $hwnd)))
+
+  ;; USER32 built-in controls must keep their native WAT wndprocs. This guard
+  ;; prevents registered-class fallback from stealing common classes like Edit.
+  (func $is_builtin_control_class (param $class_name i32) (result i32)
+    (local $name_w i32)
+    (if (i32.and (i32.ge_u (local.get $class_name) (i32.const 0x0080))
+                 (i32.le_u (local.get $class_name) (i32.const 0x0085)))
+      (then (return (i32.const 1))))
+    (if (i32.lt_u (local.get $class_name) (i32.const 0x10000))
+      (then (return (i32.const 0))))
+    (local.set $name_w (call $g2w (local.get $class_name)))
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74696465))
+      (then (return (i32.const 1)))) ;; edit
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x68636972))
+      (then (return (i32.const 1)))) ;; rich*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74747562))
+      (then (return (i32.const 1)))) ;; butt*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74617473))
+      (then (return (i32.const 1)))) ;; stat*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7473696c))
+      (then (return (i32.const 1)))) ;; list*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x626d6f63))
+      (then (return (i32.const 1)))) ;; comb*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6f726373))
+      (then (return (i32.const 1)))) ;; scro*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74737973))
+      (then (return (i32.const 1)))) ;; syst*
+    (i32.const 0))
 
   ;; First child of $parent in slot order (z-order proxy). 0 if none.
   ;; parent=0 means "find first top-level window".

@@ -25,8 +25,8 @@ const input = [
   '120:mouseup:350:101',
   `150:png:${PNG}`,
   '155:dlg-dump:message',
-  '160:keydown:13',
-  '210:slot-count:after-enter',
+  '160:click:206:212',
+  '210:slot-count:after-click',
 ].join(',');
 
 const args = [
@@ -77,7 +77,7 @@ async function messageBoxLooksVisible() {
   check('not-found MessageBox was requested', out.includes('Cannot find "A"'));
   check('MessageBox controls exist', /dlg-dump:message: dlg=0x[0-9a-f]+ .* id=1 cls=1/.test(out));
   check('MessageBox is visible in PNG', await messageBoxLooksVisible());
-  check('Enter dismissed MessageBox and returned to Find dialog', /slot-count after-enter: used=11 dlg=0x10003/.test(out));
+  check('OK click dismissed MessageBox and returned to Find dialog', /slot-count after-click: used=11 dlg=0x10003/.test(out));
   check('no STUCK', !out.includes('STUCK'));
   check('no UNIMPLEMENTED', !out.includes('UNIMPLEMENTED'));
   check('no CRASH', !out.includes('CRASH'));

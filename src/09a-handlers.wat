@@ -1939,10 +1939,16 @@
       (br_if $done (i32.gt_u (local.get $id) (local.get $arg2)))
       (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $id)))
       (if (local.get $ctrl)
-        (then (call $ctrl_set_check_state (local.get $ctrl)
-                (select (i32.const 1) (i32.const 0)
-                  (i32.eq (local.get $id) (local.get $arg3))))
-              (call $host_invalidate (local.get $ctrl))))
+        (then
+          ;; Drive the real BUTTON message path so ButtonState.flags,
+          ;; CONTROL_TABLE fallback state, invalidation, and immediate repaint
+          ;; stay in sync. Calc relies on CheckRadioButton after BN_CLICKED.
+          (drop (call $wnd_send_message
+            (local.get $ctrl)
+            (i32.const 0x00F1) ;; BM_SETCHECK
+            (select (i32.const 1) (i32.const 0)
+              (i32.eq (local.get $id) (local.get $arg3)))
+            (i32.const 0)))))
       (local.set $id (i32.add (local.get $id) (i32.const 1)))
       (br $scan)))
     (global.set $eax (i32.const 1))
@@ -2156,6 +2162,10 @@
     (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
     ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)
     (global.set $eip (local.get $arg3))
+    ;; Let the host observe/show the modal shell before WM_INITDIALOG starts,
+    ;; then yield once more when that guest callback returns to CACA0004.
+    (global.set $dlg_callback_yield_pending (i32.const 1))
+    (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0))
   )
 
@@ -3709,7 +3719,7 @@
   ;; 303: GetParent — STUB: unimplemented
   ;; GetParent(hwnd) — 1 arg stdcall, return parent hwnd or 0
   (func $handle_GetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+    (global.set $eax (call $wnd_get_parent_api (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3743,10 +3753,10 @@
         (global.set $eax (call $wnd_find_prev_sibling (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    ;; GW_OWNER = 4 → return parent hwnd
+    ;; GW_OWNER = 4 → return owner hwnd, not child geometry parent.
     (if (i32.eq (local.get $arg1) (i32.const 4))
       (then
-        (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+        (global.set $eax (call $wnd_get_owner (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_CHILD = 5 → first child of hwnd
@@ -8775,15 +8785,19 @@
 
   ;; DrawStatusTextA(hDC, lprc, pszText, uFlags) — 4 args, void
   (func $handle_DrawStatusTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Draw text in a status bar style rect — delegate to host TextOut
+    ;; Draw text through the supplied HDC so the child-window origin and clip
+    ;; match USER/GDI. Comctl32 DrawStatusText uses a recessed border; for now
+    ;; preserve the app-provided rect and flags, but avoid the old global
+    ;; renderer text path.
     (if (local.get $arg2)
       (then
-        (call $host_draw_text
+        (drop (call $host_gdi_draw_text
           (local.get $arg0) ;; hDC
           (call $g2w (local.get $arg2)) ;; text
           (i32.const -1) ;; nCount=-1 (null terminated)
           (call $g2w (local.get $arg1)) ;; lpRect
-          (i32.const 0)))) ;; flags
+          (i32.or (local.get $arg3) (i32.const 0x24)) ;; DT_SINGLELINE|DT_VCENTER
+          (i32.const 0))))) ;; ANSI
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

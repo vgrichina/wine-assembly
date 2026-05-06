@@ -58,7 +58,7 @@ const dialogItems = [
   { id: 10, name: 'Open',      classId: 12, closeCmd: 2 },   // Open dialog, class 12, IDCANCEL=2
   { id: 2,  name: 'SaveAs',    classId: 12, closeCmd: 2 },   // SaveAs also uses class 12
   { id: 32, name: 'PageSetup', classId: 13, closeCmd: 2 },   // class 13 for page setup
-  { id: 14, name: 'Print',     classId: 13, closeCmd: 2 },   // class 13 for print
+  { id: 14, name: 'Print',     classId: 13, closeCmd: 2, afterCloseClassId: 16, afterCloseCmd: 1 }, // Print failure MessageBox
   { id: 37, name: 'SetFont',   classId: 14, closeCmd: 2 },   // class 14 for font
   { id: 3,  name: 'Find',      findClose: true },             // Find uses find-click:2
   { id: 11, name: 'About',     classId: 11, closeCmd: 1 },   // class 11, IDOK=1
@@ -80,6 +80,7 @@ for (const item of dialogItems) {
       `50:0x111:${item.id}`,
       '90:slot-count:after',
       `95:class-cmd:${item.classId}:${item.closeCmd}`,
+      ...(item.afterCloseClassId ? [`110:class-cmd:${item.afterCloseClassId}:${item.afterCloseCmd}`] : []),
       '120:slot-count:closed',
     ].join(',');
   }

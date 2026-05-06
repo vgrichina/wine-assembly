@@ -7,8 +7,9 @@
 //
 // We snapshot three states:
 //   1. initial Standard view
-//   2. after View → Scientific (post-cmd 303)
-//   3. after View → Standard (post-cmd 304)
+//   2. View menu open from a real mouse click
+//   3. after View → Scientific from real menu clicks
+//   4. after View → Standard from real menu clicks
 // and assert that the client-area black-pixel ratio is below a generous
 // threshold for each. A healthy calc shows almost no pure-black pixels in
 // the client (digit segments are dark blue/red, menu strip is grey).
@@ -29,26 +30,32 @@ if (!fs.existsSync(EXE)) { console.log('SKIP  calc.exe missing'); process.exit(0
 const OUT = path.join(ROOT, 'scratch');
 fs.mkdirSync(OUT, { recursive: true });
 const pngStd1 = path.join(OUT, 'calc_view_std1.png');
+const pngMenu1 = path.join(OUT, 'calc_view_menu1.png');
 const pngSci  = path.join(OUT, 'calc_view_sci.png');
+const pngMenu2 = path.join(OUT, 'calc_view_menu2.png');
 const pngStd2 = path.join(OUT, 'calc_view_std2.png');
-for (const p of [pngStd1, pngSci, pngStd2]) { try { fs.unlinkSync(p); } catch (_) {} }
+for (const p of [pngStd1, pngMenu1, pngSci, pngMenu2, pngStd2]) { try { fs.unlinkSync(p); } catch (_) {} }
 
 const inputSpec = [
   `30:png:${pngStd1}`,
-  `40:post-cmd:303`,
-  `70:mousedown:184:86`,
-  `73:mouseup:184:86`,
+  `40:click:96:31`,
+  `45:png:${pngMenu1}`,
+  `55:click:105:71`,
+  `80:mousedown:184:86`,
+  `83:mouseup:184:86`,
   `90:png:${pngSci}`,
-  `100:post-cmd:304`,
-  `135:png:${pngStd2}`,
+  `100:click:96:31`,
+  `105:png:${pngMenu2}`,
+  `115:click:105:51`,
+  `140:png:${pngStd2}`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=140 --batch-size=50000 --no-close`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=150 --batch-size=50000 --no-close --dump-backcanvas`;
 console.log('$', cmd);
 
 let out = '';
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 30000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   console.log('(run.js exited non-zero — output captured)');
@@ -117,10 +124,22 @@ function darkPixels(img, bbox) {
 
 (async () => {
   const checks = [];
+  const dialogRects = [...out.matchAll(/window hwnd=\d+ pos=(-?\d+),(-?\d+) size=(\d+)x(\d+) visible=true dialog=true/g)]
+    .map(m => ({ x: Number(m[1]), y: Number(m[2]), w: Number(m[3]), h: Number(m[4]) }));
+  checks.push({
+    name: 'calc dialog rectangles dumped',
+    pass: dialogRects.length >= 3,
+  });
+  checks.push({
+    name: 'calc fixed dialogs are not oversized vertically',
+    pass: dialogRects.length > 0 && dialogRects.every(r => r.h <= 330),
+  });
   const exists = (p) => fs.existsSync(p) && fs.statSync(p).size > 0;
-  const have1 = exists(pngStd1), haveS = exists(pngSci), have2 = exists(pngStd2);
+  const have1 = exists(pngStd1), haveM1 = exists(pngMenu1), haveS = exists(pngSci), haveM2 = exists(pngMenu2), have2 = exists(pngStd2);
   checks.push({ name: 'standard PNG #1 written', pass: have1 });
+  checks.push({ name: 'View menu PNG #1 written', pass: haveM1 });
   checks.push({ name: 'scientific PNG written',  pass: haveS });
+  checks.push({ name: 'View menu PNG #2 written', pass: haveM2 });
   checks.push({ name: 'standard PNG #2 written', pass: have2 });
 
   const THRESH = 0.10; // healthy calc has < 1% pure-black; bug fills >50%

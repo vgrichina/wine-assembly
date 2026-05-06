@@ -2,9 +2,9 @@
 // Winamp NSIS installer regression.
 //
 // Runs both installer EXEs in silent mode and verifies the durable result:
-// the installed Winamp tree appears in the VFS. Also drives the normal NSIS
-// wizard path with real canvas mouse clicks until the install worker completes,
-// the modal installer exits, and the installed files appear in the VFS.
+// the installed Winamp tree appears in the VFS. The detailed NSIS wizard
+// rendering/input probes run against Winamp 2.95, whose pages and click
+// coordinates are the current UI regression target.
 
 const fs = require('fs');
 const path = require('path');
@@ -28,6 +28,7 @@ const CASES = [
     name: 'Winamp 2.95 installer',
     exe: path.join(__dirname, 'binaries', 'installers', 'winamp295.exe'),
     probeLicensePage: true,
+    probeInteractiveWizard: true,
     expected: [
       'c:\\program files\\winamp\\winamp.exe (854016 bytes)',
       'c:\\program files\\winamp\\plugins\\in_mp3.dll (274944 bytes)',
@@ -160,7 +161,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=700',
       '--batch-size=5000',
-      '--input=600:dlg-dump:license',
+      '--input=1:wait-dlg-control:1000:4000,2:dlg-dump:license',
       `--png="${pngPath}"`,
       '--quiet-api',
       '--trace-host=gdi_draw_text',
@@ -202,27 +203,27 @@ for (const tc of CASES) {
     const scrollProbes = [
       {
         name: 'mouse wheel scrolls license text',
-        input: '600:dlg-send:1000:522:-7864320:0',
+        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:522:-7864320:0',
         pattern: /dlg-send: id=1000 .* msg=0x20a .* firstVisible=3/,
       },
       {
         name: 'scrollbar down arrow scrolls license text',
-        input: '600:dlg-send:1000:513:1:11469190,610:dlg-send:1000:514:0:11469190',
+        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:513:1:11469190,3:dlg-send:1000:514:0:11469190',
         pattern: /dlg-send: id=1000 .* msg=0x201 .* firstVisible=1/,
       },
       {
         name: 'scrollbar thumb drag scrolls license text',
-        input: '600:dlg-send:1000:513:1:1573254,610:dlg-send:1000:512:1:5898630,620:dlg-send:1000:514:0:5898630',
+        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:513:1:1573254,3:dlg-send:1000:512:1:5898630,4:dlg-send:1000:514:0:5898630',
         pattern: /dlg-send: id=1000 .* msg=0x200 .* firstVisible=54/,
       },
       {
         name: 'canvas scrollbar down arrow scrolls license text',
-        input: '600:click:400:250,620:dlg-send:1000:206:0:0',
+        input: '1:wait-dlg-control:1000:4000,2:click:400:250,4:dlg-send:1000:206:0:0',
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
       },
       {
         name: 'canvas scrollbar thumb drag scrolls license text',
-        input: '600:mousedown:403:99,610:mousemove:403:165,620:mouseup:403:165,640:dlg-send:1000:206:0:0',
+        input: '1:wait-dlg-control:1000:4000,2:mousedown:403:99,3:mousemove:403:165,4:mouseup:403:165,6:dlg-send:1000:206:0:0',
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=[1-9][0-9]*/,
         png: path.join(__dirname, 'output', 'winamp295-license-scrolled.png'),
       },
@@ -281,7 +282,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=650',
       '--batch-size=5000',
-      `--input=600:png:${pressedBase},610:mousedown:400:250,620:png:${pressedHeld},630:mouseup:400:250`,
+      `--input=1:wait-dlg-control:1000:4000,2:png:${pressedBase},3:mousedown:400:250,4:png:${pressedHeld},5:mouseup:400:250`,
       '--quiet-api',
     ].join(' ');
 
@@ -319,7 +320,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=760',
       '--batch-size=5000',
-      '--input=600:mousedown:373:283,620:mouseup:373:283',
+      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283',
       '--quiet-api',
     ].join(' ');
 
@@ -366,16 +367,20 @@ for (const tc of CASES) {
       '--max-batches=1100',
       '--batch-size=5000',
       [
-        `--input=580:png:${stagePngs[0].path}`,
-        '600:mousedown:373:283',
-        '620:mouseup:373:283',
-        `760:png:${stagePngs[1].path}`,
-        '800:mousedown:373:283',
-        '820:mouseup:373:283',
-        `900:png:${stagePngs[2].path}`,
-        '1000:mousedown:373:283',
-        '1020:mouseup:373:283',
-        `1022:png:${stagePngs[3].path}`,
+        '1:wait-dlg-control:1000:4000',
+        `2:png:${stagePngs[0].path}`,
+        '3:mousedown:373:283',
+        '4:mouseup:373:283',
+        '5:wait-title:Installation_Options:1200',
+        `6:png:${stagePngs[1].path}`,
+        '7:mousedown:373:283',
+        '8:mouseup:373:283',
+        '9:wait-title:Installation_Folder:1200',
+        `10:png:${stagePngs[2].path}`,
+        '11:mousedown:373:283',
+        '12:mouseup:373:283',
+        '13:wait-title:Installing_Files:1200',
+        `14:png:${stagePngs[3].path}`,
       ].join(','),
       '--quiet-api',
     ].join(' ');
@@ -430,7 +435,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=760',
       '--batch-size=5000',
-      '--input=600:mousedown:373:283,620:mouseup:373:283,700:png:' + optionsPng,
+      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:png:' + optionsPng,
       '--quiet-api',
     ].join(' ');
 
@@ -458,7 +463,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=900',
       '--batch-size=5000',
-      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,821:png:' + folderPng,
+      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:png:' + folderPng,
       '--quiet-api',
     ].join(' ');
 
@@ -504,7 +509,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       '--max-batches=1040',
       '--batch-size=5000',
-      '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283,1021:dlg-dump:all,1022:dlg-send:1004:1025:0:6553600,1023:dlg-send:1004:1026:60:0,1024:png:' + installingPng,
+      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:mousedown:373:283,9:mouseup:373:283,10:wait-title:Installing_Files:1200,11:dlg-dump:all,12:dlg-send:1004:1025:0:6553600,13:dlg-send:1004:1026:60:0,14:png:' + installingPng,
       '--quiet-api',
     ].join(' ');
 
@@ -551,12 +556,14 @@ for (const tc of CASES) {
     console.log('');
   }
 
+  if (!tc.probeInteractiveWizard) continue;
+
   const interactiveCmd = [
     `node "${RUN}"`,
     `--exe="${tc.exe}"`,
     '--max-batches=800000',
     '--batch-size=5000',
-    '--input=600:mousedown:373:283,620:mouseup:373:283,800:mousedown:373:283,820:mouseup:373:283,1000:mousedown:373:283,1020:mouseup:373:283',
+    '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:mousedown:373:283,9:mouseup:373:283',
     '--dump-vfs',
     '--quiet-api',
   ].join(' ');

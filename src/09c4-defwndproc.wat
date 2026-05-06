@@ -60,6 +60,7 @@
     (local $off i32)         ;; glyph offset (0 or 1) when pressed
     (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
     (local $nc_style i32) (local $has_min i32) (local $has_max i32)
+    (local $simple_child_border i32)
     (local $glyph_brush i32)
 
     ;; NC paint gets a real typed DC with a WAT-built visible clip:
@@ -71,8 +72,25 @@
     (local.set $is_dialog   (i32.and (local.get $flags) (i32.const 0x02)))
     (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
+    (local.set $nc_style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $simple_child_border
+      (i32.and
+        (i32.and
+          (i32.ne (i32.and (local.get $nc_style) (i32.const 0x40000000)) (i32.const 0))
+          (i32.eqz (local.get $has_caption)))
+        (i32.ne (i32.and (local.get $nc_style) (i32.const 0x00800000)) (i32.const 0))))
 
     (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd) (local.get $w) (local.get $h))
+    (if (local.get $simple_child_border)
+      (then
+        ;; Plain WS_CHILD|WS_BORDER controls get a simple 1px border, not
+        ;; a top-level raised frame. The NC clip excludes the client inset.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30014)))
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (i32.const 0))))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (i32.const 0) (i32.const 0)
             (local.get $w) (local.get $h)
@@ -381,7 +399,12 @@
     (local.set $flags (i32.const 1))                                ;; active (TODO: focus-aware)
     (if (call $get_flash_state_slot (local.get $hwnd))
       (then (local.set $flags (i32.xor (local.get $flags) (i32.const 1)))))
-    (if (i32.and (local.get $style) (i32.const 0x00C00000))         ;; WS_CAPTION
+    ;; WS_CAPTION is WS_BORDER|WS_DLGFRAME. A plain WS_BORDER child
+    ;; control (for example Solitaire's status strip) must not get a
+    ;; caption/titlebar; Win98 only treats the exact bit combination as
+    ;; caption chrome.
+    (if (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))                            ;; WS_CAPTION
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 8)))))
     ;; Dialog style (WS_DLGFRAME 0x00400000 without WS_THICKFRAME 0x00040000
     ;; and without WS_MINIMIZEBOX/MAXIMIZEBOX 0x00010000/0x00020000).
@@ -408,6 +431,7 @@
     (local $rect i32) (local $w i32) (local $h i32)
     (local $style i32)
     (local $has_cap i32) (local $has_border i32)
+    (local $is_child i32) (local $simple_child_border i32)
     (local $bw i32) (local $cy i32) (local $bot i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (local.set $rect (global.get $PAINT_SCRATCH))
@@ -420,16 +444,33 @@
                 (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (local.set $has_cap   (i32.and (local.get $style) (i32.const 0x00C00000)))
+    (local.set $has_cap
+      (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+              (i32.const 0x00C00000)))
     (local.set $has_border (i32.or (local.get $has_cap)
                                     (i32.and (local.get $style) (i32.const 0x00800000))))
-    (local.set $bw (select (i32.const 3) (i32.const 0) (local.get $has_border)))
-    (local.set $cy (local.get $bw))
-    (if (local.get $has_cap) (then (local.set $cy (i32.add (local.get $cy) (i32.const 19)))))
-    (if (i32.gt_s (call $menu_bar_count (local.get $hwnd)) (i32.const 0))
-      (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
-    (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
-    (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $simple_child_border
+      (i32.and
+        (i32.and
+          (local.get $is_child)
+          (i32.ne (local.get $has_border) (i32.const 0)))
+        (i32.eqz (local.get $has_cap))))
+    (if (local.get $simple_child_border)
+      (then
+        (local.set $bw (i32.const 1))
+        (local.set $cy (i32.const 1))
+        (local.set $bot (i32.const 1)))
+      (else
+        (local.set $bw (select (i32.const 3) (i32.const 0) (local.get $has_border)))
+        (local.set $cy (local.get $bw))
+        (if (local.get $has_cap) (then (local.set $cy (i32.add (local.get $cy) (i32.const 19)))))
+        (if (i32.and
+              (i32.eqz (local.get $is_child))
+              (i32.gt_s (call $menu_bar_count (local.get $hwnd)) (i32.const 0)))
+          (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
+        (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
+        (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))))
     ;; Store window-local l/t/r/b.
     (call $client_rect_set (local.get $hwnd)
       (local.get $bw) (local.get $cy)
@@ -471,7 +512,9 @@
                          (i32.ge_s (local.get $ly) (local.get $h))))
       (then (return (i32.const 0))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (local.set $has_cap   (i32.and (local.get $style) (i32.const 0x00C00000)))
+    (local.set $has_cap
+      (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+              (i32.const 0x00C00000)))
     (local.set $has_thick (i32.and (local.get $style) (i32.const 0x00040000)))
     ;; Maximized windows are pinned to the work area — Win98 disables
     ;; edge/corner resize until the user restores. Suppress the HT* resize
@@ -638,12 +681,69 @@
   ;; handleMouseMove / handleMouseUp around the press-and-release window.
   (func $nc_set_pressed (export "nc_set_pressed") (param $hwnd i32) (param $hit i32)
     (global.set $nc_pressed_hwnd (local.get $hwnd))
-    (global.set $nc_pressed_hit  (local.get $hit)))
+    (global.set $nc_pressed_hit  (local.get $hit))
+    (global.set $nc_tracking_hit (local.get $hit)))
   (func $nc_clear_pressed (export "nc_clear_pressed")
     (global.set $nc_pressed_hwnd (i32.const 0))
-    (global.set $nc_pressed_hit  (i32.const 0)))
+    (global.set $nc_pressed_hit  (i32.const 0))
+    (global.set $nc_tracking_hit (i32.const 0)))
   ;; Synchronous chrome repaint — JS invokes this right after toggling the
   ;; sysbutton press state so the back-canvas updates *now* instead of
   ;; waiting for the next message-pump tick to drain a posted WM_NCPAINT.
   (func (export "nc_repaint_now") (param $hwnd i32)
     (call $defwndproc_do_ncpaint (local.get $hwnd)))
+
+  ;; USER non-client button tracking. JS supplies raw screen coordinates only;
+  ;; WAT hit-tests, owns the pressed visual state, and posts the eventual
+  ;; WM_NCLBUTTONDOWN on release if the cursor is still over the same button.
+  (func $nc_sysbutton_down (export "nc_sysbutton_down")
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $hit i32)
+    (local.set $hit (call $defwndproc_do_nchittest
+      (local.get $hwnd) (local.get $sx) (local.get $sy)))
+    (if (i32.or
+          (i32.or (i32.eq (local.get $hit) (i32.const 20))
+                  (i32.eq (local.get $hit) (i32.const 8)))
+          (i32.eq (local.get $hit) (i32.const 9)))
+      (then
+        (call $nc_set_pressed (local.get $hwnd) (local.get $hit))
+        (call $defwndproc_do_ncpaint (local.get $hwnd))
+        (return (local.get $hit))))
+    (i32.const 0))
+
+  (func $nc_sysbutton_move (export "nc_sysbutton_move")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hit i32) (local $pressed i32)
+    (if (i32.eqz (global.get $nc_pressed_hwnd)) (then (return (i32.const 0))))
+    (local.set $hit (call $defwndproc_do_nchittest
+      (global.get $nc_pressed_hwnd) (local.get $sx) (local.get $sy)))
+    (local.set $pressed
+      (select (global.get $nc_tracking_hit) (i32.const 0)
+        (i32.eq (local.get $hit) (global.get $nc_tracking_hit))))
+    (if (i32.eq (local.get $pressed) (global.get $nc_pressed_hit))
+      (then (return (i32.const 0))))
+    (global.set $nc_pressed_hit (local.get $pressed))
+    (call $defwndproc_do_ncpaint (global.get $nc_pressed_hwnd))
+    (i32.const 1))
+
+  (func $nc_sysbutton_up (export "nc_sysbutton_up")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hwnd i32) (local $down_hit i32) (local $cur_hit i32) (local $lp i32)
+    (local.set $hwnd (global.get $nc_pressed_hwnd))
+    (local.set $down_hit (global.get $nc_tracking_hit))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $cur_hit (call $defwndproc_do_nchittest
+      (local.get $hwnd) (local.get $sx) (local.get $sy)))
+    (call $nc_clear_pressed)
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    (if (i32.and
+          (i32.ne (local.get $down_hit) (i32.const 0))
+          (i32.eq (local.get $cur_hit) (local.get $down_hit)))
+      (then
+        (local.set $lp
+          (i32.or
+            (i32.shl (i32.and (local.get $sy) (i32.const 0xFFFF)) (i32.const 16))
+            (i32.and (local.get $sx) (i32.const 0xFFFF))))
+        (drop (call $post_queue_push
+          (local.get $hwnd) (i32.const 0x00A1) (local.get $down_hit) (local.get $lp)))))
+    (i32.const 1))
