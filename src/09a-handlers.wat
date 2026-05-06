@@ -1913,7 +1913,9 @@
   ;; Unchecks items [idFirst..idLast], checks idCheck with radio bullet. Returns TRUE.
   ;; Menu item state is tracked in the renderer's menu model when available.
   (func $handle_CheckMenuRadioItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $menu_check_radio_global
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state

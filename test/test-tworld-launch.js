@@ -34,24 +34,24 @@ if (!createCanvas || !loadImage) {
 const OUT = path.join(ROOT, 'scratch');
 fs.mkdirSync(OUT, { recursive: true });
 const pngTitle = path.join(OUT, 'tworld_launch_title.png');
-const backTitle = pngTitle.replace(/\.png$/, '_back_65537.png');
-for (const p of [pngTitle, backTitle]) { try { fs.unlinkSync(p); } catch (_) {} }
+for (const p of [pngTitle]) { try { fs.unlinkSync(p); } catch (_) {} }
 
 // Schedule:
-//   - 2000 batches: enough for SDL_Init + level-pack scan + first repaint
-//   - inject Enter at 1800 to verify SDL receives keystrokes (we trace
+//   - 1200 batches: enough for SDL_Init + level-pack scan + first repaint
+//   - inject Enter at 900 to verify SDL receives keystrokes (we trace
 //     ToAsciiEx + FileTimeToLocalFileTime in the post-run output below)
 //   - --no-close keeps the renderer alive after the wndproc returns so
 //     the back-canvas dump captures the title screen rather than a frame
 //     mid-shutdown.
 const inputSpec = [
-  '1800:keydown:13',
-  '1810:keyup:13',
+  '900:keydown:13',
+  '910:keyup:13',
+  `920:png:${pngTitle}`,
 ].join(',');
 
 // --trace-api so we can grep for ToAsciiEx in stdout (proves SDL's win32
 // driver consumed the Enter and emitted an SDL_KEYDOWN event).
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=2500 --png="${pngTitle}" --trace-api --no-close`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=930 --trace-api=ToAsciiEx --no-close`;
 console.log('$', cmd);
 
 let out = '';
@@ -70,12 +70,12 @@ const hasSdlWindow  = /\[CreateWindow\] hwnd=0x10001 title="SDL_app"/.test(out);
 const hasKeydownIn  = /\[input\] keydown vk=13 at batch/.test(out);
 const hasKeyToSdl   = /\[check_input\] msg=0x100 wParam=0xd/.test(out);
 const hasToAsciiEx  = /ToAsciiEx\(0x0000000d/.test(out);
-const titleExists   = fs.existsSync(backTitle) && fs.statSync(backTitle).size > 0;
+const titleExists   = fs.existsSync(pngTitle) && fs.statSync(pngTitle).size > 0;
 
 (async () => {
   let textPixels = -1, w = 0, h = 0;
   if (titleExists) {
-    const img = await loadImage(backTitle);
+    const img = await loadImage(pngTitle);
     w = img.width; h = img.height;
     const cv = createCanvas(w, h);
     cv.getContext('2d').drawImage(img, 0, 0);
@@ -100,7 +100,7 @@ const titleExists   = fs.existsSync(backTitle) && fs.statSync(backTitle).size > 
     ['no UNIMPLEMENTED crashes',           !hasUnimpl],
     ['SDL.dll loaded',                     hasSdlLoad],
     ['SDL window created (0x10001)',       hasSdlWindow],
-    ['title back-canvas snapshot written', titleExists],
+    ['title snapshot written',             titleExists],
     ['title screen has rendered text',     textPixels >= 1500],
     ['Enter keydown injected',             hasKeydownIn],
     ['Enter delivered as WM_KEYDOWN',      hasKeyToSdl],
@@ -118,7 +118,7 @@ const titleExists   = fs.existsSync(backTitle) && fs.statSync(backTitle).size > 
 
   if (!pass) {
     console.log('');
-    console.log(`Inspect ${backTitle}`);
+    console.log(`Inspect ${pngTitle}`);
     process.exit(1);
   }
   console.log('OK');

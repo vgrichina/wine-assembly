@@ -377,6 +377,123 @@
       (then (return (local.get $prev))))
     (i32.const -1))
 
+  ;; CheckMenuRadioItem by submenu position. Fake submenu handles encode
+  ;; GetSubMenu(hMenu,nPos) as low-word | ((nPos+1)<<16), so $tidx is
+  ;; high-word-1. Sets bit2 on the selected child item and clears it on
+  ;; the rest of [first..last].
+  (func $menu_blob_check_radio_pos
+        (param $blob_w i32) (param $tidx i32)
+        (param $first i32) (param $last i32) (param $check i32) (result i32)
+    (local $bar_count i32) (local $bar_item i32) (local $hdr_off i32)
+    (local $hdr i32) (local $cc i32) (local $i i32) (local $it i32)
+    (local $flags i32) (local $lo i32) (local $hi i32)
+    (local.set $bar_count (i32.load (local.get $blob_w)))
+    (if (i32.ge_u (local.get $tidx) (local.get $bar_count)) (then (return (i32.const 0))))
+    (local.set $bar_item (i32.add (local.get $blob_w)
+                           (i32.add (i32.const 4) (i32.mul (local.get $tidx) (i32.const 12)))))
+    (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
+    (if (i32.eqz (local.get $hdr_off)) (then (return (i32.const 0))))
+    (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
+    (local.set $cc (i32.load (local.get $hdr)))
+    (local.set $lo
+      (select (local.get $first) (local.get $last)
+        (i32.le_u (local.get $first) (local.get $last))))
+    (local.set $hi
+      (select (local.get $last) (local.get $first)
+        (i32.le_u (local.get $first) (local.get $last))))
+    (local.set $i (local.get $lo))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $i) (local.get $hi)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cc)))
+      (local.set $it (i32.add (local.get $hdr)
+                       (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 24)))))
+      (local.set $flags (i32.load offset=16 (local.get $it)))
+      (if (i32.eq (local.get $i) (local.get $check))
+        (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
+        (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
+      (i32.store offset=16 (local.get $it) (local.get $flags))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; CheckMenuRadioItem by command id. Clears every command id in the
+  ;; requested range and checks idCheck.
+  (func $menu_blob_check_radio_cmd
+        (param $blob_w i32) (param $first i32) (param $last i32) (param $check i32) (result i32)
+    (local $bar_count i32) (local $i i32) (local $bar_item i32)
+    (local $hdr_off i32) (local $hdr i32) (local $cc i32) (local $j i32)
+    (local $it i32) (local $flags i32) (local $id i32) (local $lo i32) (local $hi i32)
+    (local $changed i32)
+    (local.set $lo
+      (select (local.get $first) (local.get $last)
+        (i32.le_u (local.get $first) (local.get $last))))
+    (local.set $hi
+      (select (local.get $last) (local.get $first)
+        (i32.le_u (local.get $first) (local.get $last))))
+    (local.set $bar_count (i32.load (local.get $blob_w)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $bar
+      (br_if $done (i32.ge_u (local.get $i) (local.get $bar_count)))
+      (local.set $bar_item (i32.add (local.get $blob_w)
+                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+      (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
+      (if (local.get $hdr_off)
+        (then
+          (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
+          (local.set $cc (i32.load (local.get $hdr)))
+          (local.set $j (i32.const 0))
+          (block $cdone (loop $child
+            (br_if $cdone (i32.ge_u (local.get $j) (local.get $cc)))
+            (local.set $it (i32.add (local.get $hdr)
+                             (i32.add (i32.const 4) (i32.mul (local.get $j) (i32.const 24)))))
+            (local.set $id (i32.load offset=20 (local.get $it)))
+            (if (i32.and (i32.ge_u (local.get $id) (local.get $lo))
+                         (i32.le_u (local.get $id) (local.get $hi)))
+              (then
+                (local.set $flags (i32.load offset=16 (local.get $it)))
+                (if (i32.eq (local.get $id) (local.get $check))
+                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
+                  (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
+                (i32.store offset=16 (local.get $it) (local.get $flags))
+                (local.set $changed (i32.const 1))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $child)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bar)))
+    (local.get $changed))
+
+  (func $menu_check_radio_global (export "menu_check_radio_global")
+        (param $hmenu i32) (param $first i32) (param $last i32)
+        (param $check i32) (param $flags i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $blob_w i32)
+    (local $tidx i32) (local $changed i32)
+    (local.set $tidx (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+      (if (local.get $hwnd)
+        (then
+          (local.set $blob_w (call $menu_blob_w (local.get $hwnd)))
+          (if (local.get $blob_w)
+            (then
+              (if (i32.and (local.get $flags) (i32.const 0x400)) ;; MF_BYPOSITION
+                (then
+                  (if (call $menu_blob_check_radio_pos
+                        (local.get $blob_w) (local.get $tidx)
+                        (local.get $first) (local.get $last) (local.get $check))
+                    (then (local.set $changed (i32.const 1)))))
+                (else
+                  (if (call $menu_blob_check_radio_cmd
+                        (local.get $blob_w)
+                        (local.get $first) (local.get $last) (local.get $check))
+                    (then (local.set $changed (i32.const 1))))))
+              (if (local.get $changed)
+                (then (call $invalidate_hwnd (local.get $hwnd))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (select (i32.const 1) (i32.const 0) (local.get $changed)))
+
   ;; Walk every window that has a menu blob and toggle the check state
   ;; of the first matching id. Invalidates any hwnd whose menu changed
   ;; so the next dropdown paint reflects the new state. Returns the

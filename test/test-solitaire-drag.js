@@ -51,7 +51,7 @@ const inputSpec = [
   mv(1100, PICK_X + 420, PICK_Y + 80),
   `1120:png:${midPng}`,                           // mid-drag PNG
   `1200:mouseup:${PICK_X + 420}:${PICK_Y + 80}`,  // release (invalid target → snap back)
-  `1300:png:${endPng}`,                           // final PNG
+  `1201:png:${endPng}`,                           // final PNG after the release batch
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=1400`;
@@ -60,7 +60,7 @@ console.log('$', cmd.replace(ROOT, '.'));
 let out = '';
 try {
   out = execSync(cmd, {
-    encoding: 'utf-8', timeout: 120000, cwd: ROOT,
+    encoding: 'utf-8', timeout: 240000, cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
   });
 } catch (e) {

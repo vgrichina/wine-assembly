@@ -72,6 +72,8 @@ const SCI_BBOX = STD_BBOX;
 const BTN_BBOX = { x0: 98, y0: 191, x1: 133, y1: 218 };
 const SCI_DEC_DOT = { x0: 117, y0: 81, x1: 128, y1: 92 };
 const SCI_OCT_DOT = { x0: 179, y0: 81, x1: 190, y1: 92 };
+const VIEW_STANDARD_CHECK = { x0: 84, y0: 48, x1: 96, y1: 60 };
+const VIEW_SCI_CHECK = { x0: 84, y0: 68, x1: 96, y1: 80 };
 
 async function readPixels(p) {
   const img = await loadImage(p);
@@ -161,6 +163,20 @@ function darkPixels(img, bbox) {
     const octDark = darkPixels(img, SCI_OCT_DOT);
     checks.push({ name: `scientific Oct radio selected after click (oct=${octDark}, dec=${decDark})`,
                   pass: octDark > decDark + 3 });
+  }
+  if (haveM1) {
+    const img = await readPixels(pngMenu1);
+    const stdCheck = darkPixels(img, VIEW_STANDARD_CHECK);
+    const sciCheck = darkPixels(img, VIEW_SCI_CHECK);
+    checks.push({ name: `View menu marks Standard initially (std=${stdCheck}, sci=${sciCheck})`,
+                  pass: stdCheck > sciCheck + 3 });
+  }
+  if (haveM2) {
+    const img = await readPixels(pngMenu2);
+    const stdCheck = darkPixels(img, VIEW_STANDARD_CHECK);
+    const sciCheck = darkPixels(img, VIEW_SCI_CHECK);
+    checks.push({ name: `View menu marks Scientific after switch (std=${stdCheck}, sci=${sciCheck})`,
+                  pass: sciCheck > stdCheck + 3 });
   }
   if (have2) {
     const img = await readPixels(pngStd2);

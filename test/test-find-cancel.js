@@ -14,7 +14,7 @@
 //   - Slot count drops by exactly 9 per cancel (back to baseline)
 //   - $findreplace_dlg_hwnd is cleared after cancel
 //   - Reopen allocates a fresh dlg hwnd (next_hwnd advanced)
-//   - 3 open/cancel cycles all behave identically
+//   - titlebar-X close and repeated button-cancel cycles all behave identically
 //   - No UNIMPLEMENTED API crash
 
 const fs = require('fs');
@@ -34,7 +34,7 @@ const inputSpec = [
   '40:slot-count:baseline',
   '50:0x111:3',                // open Find #1
   '80:slot-count:after-open1',
-  '82:find-click:2',           // Cancel
+  '82:click:390:72',           // titlebar X
   '84:slot-count:after-cancel1',
   '90:0x111:3',                // open Find #2
   '120:slot-count:after-open2',
@@ -61,6 +61,7 @@ const lines = out.split('\n');
 const interesting = lines.filter(l =>
   l.includes('slot-count') ||
   l.includes('find-click') ||
+  l.includes('click 390,72') ||
   l.includes('FindTextA') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH'));
@@ -85,8 +86,8 @@ const afterCancel3 = parseSlot('after-cancel3');
 const checks = [
   { name: 'baseline slot count read',          pass: !!baseline },
   { name: 'open #1 added 9 slots',             pass: !!afterOpen1 && afterOpen1.used === baseline.used + 9 },
-  { name: 'cancel #1 returned to baseline',    pass: !!afterCancel1 && afterCancel1.used === baseline.used },
-  { name: 'cancel #1 cleared dlg global',      pass: !!afterCancel1 && afterCancel1.dlg === 0 },
+  { name: 'titlebar X returned to baseline',   pass: !!afterCancel1 && afterCancel1.used === baseline.used },
+  { name: 'titlebar X cleared dlg global',     pass: !!afterCancel1 && afterCancel1.dlg === 0 },
   { name: 'open #2 added 9 slots',             pass: !!afterOpen2 && afterOpen2.used === baseline.used + 9 },
   { name: 'open #2 got a fresh dlg hwnd',      pass: !!afterOpen2 && afterOpen2.dlg !== 0 && afterOpen2.dlg !== afterOpen1.dlg },
   { name: 'cancel #2 returned to baseline',    pass: !!afterCancel2 && afterCancel2.used === baseline.used },

@@ -383,10 +383,25 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
         (local.set $cmd (i32.const 2))))  ;; fall through into the Cancel branch below
+    ;; Title-bar close starts as WM_NCLBUTTONDOWN/HTCLOSE from the WAT
+    ;; nonclient sysbutton tracker, then normally flows through
+    ;; DefWindowProc to SC_CLOSE/WM_CLOSE. Find's custom dialog proc is the
+    ;; whole dispatch target here, so mirror DefWindowProc's close mapping.
+    (if (i32.and (i32.eq (local.get $msg) (i32.const 0x00A1))
+                 (i32.eq (local.get $wParam) (i32.const 20)))
+      (then
+        (local.set $cmd (i32.const 2))))
+    (if (i32.and (i32.eq (local.get $msg) (i32.const 0x0112))
+                 (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060)))
+      (then
+        (local.set $cmd (i32.const 2))))
 
     ;; WM_COMMAND only past this point
-    (if (i32.and (i32.ne (local.get $msg) (i32.const 0x0111))
-                 (i32.ne (local.get $msg) (i32.const 0x0010)))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $msg) (i32.const 0x0111))
+                   (i32.ne (local.get $msg) (i32.const 0x0010)))
+          (i32.and (i32.ne (local.get $msg) (i32.const 0x00A1))
+                   (i32.ne (local.get $msg) (i32.const 0x0112))))
       (then (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0111))
       (then (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
