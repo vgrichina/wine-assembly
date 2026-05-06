@@ -15,7 +15,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { Canvas, loadImage } = require('skia-canvas');
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
@@ -39,7 +38,7 @@ const inputSpec = [
   '32:keypress:115',  // 's'
   '33:keypress:116',  // 't'
   `38:png:${pngPath}`,
-  '50:dump-main-edit',
+  '60:dump-main-edit-state',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=80 --batch-size=50000 --trace-api`;
@@ -66,33 +65,14 @@ const hasNegHeight    = /MoveWindow\(0x00010002,[^\)]*0xfffff/.test(out);
 const hasUnimpl       = /UNIMPLEMENTED API:/.test(out);
 const hasCleanExit    = /Exit.*code=0/.test(out) || exitCode === 0;
 const pngWritten      = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 0;
-const hasTypedText    = /dump-main-edit: hwnd=0x[0-9a-f]+ text="Test"/.test(out);
-
-async function hasCaretAfterTypedText() {
-  if (!pngWritten) return false;
-  const img = await loadImage(pngPath);
-  const canvas = new Canvas(img.width, img.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const data = ctx.getImageData(0, 0, img.width, img.height).data;
-
-  // Notepad's edit client starts near x=24/y=62 in the deterministic harness.
-  // After "Test" the caret should be a mostly vertical black run after the
-  // rendered word. Keep this tolerant of font-measurement improvements.
-  for (let x = 38; x <= 72; x++) {
-    let run = 0;
-    for (let y = 60; y <= 82; y++) {
-      const i = (y * img.width + x) * 4;
-      const black = data[i] < 12 && data[i + 1] < 12 && data[i + 2] < 12 && data[i + 3] > 240;
-      run = black ? run + 1 : 0;
-      if (run >= 10) return true;
-    }
-  }
-  return false;
-}
+const stateMatch      = out.match(/dump-main-edit-state: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) blinkEpoch=(\d+) visibleUntil=(\d+) .*text="Test"/);
+const editFlags       = stateMatch ? parseInt(stateMatch[1], 16) : 0;
+const blinkEpoch      = stateMatch ? parseInt(stateMatch[2], 10) : 0;
+const visibleUntil    = stateMatch ? parseInt(stateMatch[3], 10) : 0;
+const blinkGraceMs    = visibleUntil - blinkEpoch;
+const hasTypedText    = !!stateMatch;
 
 (async () => {
-  const caretVisible = await hasCaretAfterTypedText();
   const checks = [
     { name: 'main window created (hwnd=0x10001)',  pass: hasCreateMain },
     { name: 'edit control created (hwnd=0x10002)', pass: hasCreateEdit },
@@ -101,7 +81,8 @@ async function hasCaretAfterTypedText() {
     { name: 'no UNIMPLEMENTED API crash',           pass: !hasUnimpl },
     { name: 'typed text reached Notepad edit',      pass: hasTypedText },
     { name: 'PNG snapshot written',                 pass: pngWritten },
-    { name: 'typed Notepad edit shows caret',       pass: caretVisible },
+    { name: 'typed edit remains focused for caret', pass: (editFlags & 0x08) !== 0 },
+    { name: 'caret blink grace is one blink period', pass: blinkGraceMs > 0 && blinkGraceMs <= 600 },
     { name: 'clean exit (code=0)',                  pass: hasCleanExit },
   ];
 

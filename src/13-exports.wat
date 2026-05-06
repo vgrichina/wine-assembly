@@ -616,6 +616,19 @@
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
     (i32.load offset=16 (call $g2w (local.get $s))))
 
+  ;; EditState flags (offset+24), used by tests/debugging to verify focus.
+  (func (export "get_edit_flags") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=24 (call $g2w (local.get $s))))
+
+  (func (export "get_edit_caret_visible_until") (result i32)
+    (global.get $edit_caret_visible_until))
+
+  (func (export "get_edit_caret_blink_epoch") (result i32)
+    (global.get $edit_caret_blink_epoch))
+
   ;; EditState text length (offset+4).
   (func (export "get_edit_text_len") (param $hwnd i32) (result i32)
     (local $s i32)

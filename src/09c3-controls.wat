@@ -5041,7 +5041,7 @@
         (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x08))
           (then
             (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))))
+            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -5111,7 +5111,7 @@
       (then
         (global.set $focus_hwnd (local.get $hwnd))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
@@ -5153,7 +5153,7 @@
                           (i32.sub (local.get $lo) (i32.const 1))
                           (local.get $lo))))))
             (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
@@ -5163,7 +5163,7 @@
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
                 (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-                (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+                (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
                 (i32.store offset=24 (local.get $state_w)
                   (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
                 (call $invalidate_hwnd (local.get $hwnd))))
@@ -5172,7 +5172,7 @@
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -5397,7 +5397,7 @@
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
 	        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-	        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+	        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
 	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
@@ -5760,7 +5760,16 @@
               (br $wrapped_loop)))
 
             (local.set $flags (i32.load offset=24 (local.get $state_w)))
-            (if (i32.and (local.get $flags) (i32.const 0x08))
+            (local.set $vk (call $host_get_ticks))
+            (if (i32.and
+                  (i32.and (local.get $flags) (i32.const 0x08))
+                  (i32.or
+                    (i32.lt_u (local.get $vk) (global.get $edit_caret_visible_until))
+                    (i32.eqz (i32.and
+                      (i32.div_u
+                        (i32.sub (local.get $vk) (global.get $edit_caret_blink_epoch))
+                        (i32.const 530))
+                      (i32.const 1)))))
               (then
                 (local.set $cur (i32.load offset=12 (local.get $state_w)))
                 (local.set $lo (call $edit_layout_line_for_char (local.get $total_lines) (local.get $cur)))
@@ -5770,13 +5779,8 @@
                 (local.set $line_end (call $edit_layout_start (local.get $lo)))
                 (if (i32.gt_u (local.get $cur) (local.get $line_end))
                   (then
-                    (local.set $px (call $host_measure_text
-                      (local.get $hdc)
-                      (i32.add (call $g2w (local.get $buf)) (local.get $line_end))
-                      (i32.sub (local.get $cur) (local.get $line_end))))
-                    (if (i32.eqz (local.get $px))
-                      (then (local.set $px
-                        (i32.mul (i32.sub (local.get $cur) (local.get $line_end)) (i32.const 8)))))))
+                    (local.set $px
+                      (i32.mul (i32.sub (local.get $cur) (local.get $line_end)) (i32.const 8)))))
                 (if (i32.and
                       (i32.ge_s (local.get $a) (i32.const 0))
                       (i32.lt_s (local.get $hi) (local.get $h)))
@@ -5784,7 +5788,7 @@
                     (drop (call $host_gdi_fill_rect (local.get $hdc)
                             (i32.add (local.get $px) (i32.const 4))
                             (i32.add (local.get $hi) (i32.const 2))
-                            (i32.add (local.get $px) (i32.const 5))
+                            (i32.add (local.get $px) (i32.const 6))
                             (i32.add (local.get $hi) (i32.const 17))
                             (i32.const 0x30014)))))))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
@@ -5904,7 +5908,7 @@
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
                     (i32.add (local.get $hi) (i32.const 2))
-                    (i32.add (local.get $px) (i32.const 5))
+                    (i32.add (local.get $px) (i32.const 6))
                     (i32.add (local.get $hi) (i32.const 17))
                     (i32.const 0x30014))))))) ;; BLACK_BRUSH
         ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
@@ -6052,7 +6056,7 @@
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $invalidate_hwnd (local.get $hwnd))
