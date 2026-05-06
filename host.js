@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=73');
+        const r = await fetch('src/api_table.json?v=74');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -408,7 +408,7 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=73').then(r => r.text()));
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=74').then(r => r.text()));
         return WebAssembly.compile(bytes);
       })();
     }

@@ -77,8 +77,9 @@ async function hasCaretAfterTypedText() {
   const data = ctx.getImageData(0, 0, img.width, img.height).data;
 
   // Notepad's edit client starts near x=24/y=62 in the deterministic harness.
-  // After "Test" the caret should be a mostly vertical black run around x=58.
-  for (let x = 52; x <= 72; x++) {
+  // After "Test" the caret should be a mostly vertical black run after the
+  // rendered word. Keep this tolerant of font-measurement improvements.
+  for (let x = 38; x <= 72; x++) {
     let run = 0;
     for (let y = 60; y <= 82; y++) {
       const i = (y * img.width + x) * 4;

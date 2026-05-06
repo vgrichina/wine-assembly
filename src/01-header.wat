@@ -611,6 +611,11 @@
   ;; Parent is only for WS_CHILD geometry/clipping. Owner is for owned
   ;; top-level/modal windows and GetWindow(GW_OWNER).
   (global $OWNER_TABLE i32 (i32.const 0x00010B00))
+  ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
+  ;; Used by WAT EDIT controls so wrapped text, caret, hit-testing and scroll
+  ;; all share one layout model instead of mixing DrawText with manual math.
+  (global $EDIT_LAYOUT_SCRATCH i32 (i32.const 0x00010F00))
+  (global $EDIT_LAYOUT_MAX i32 (i32.const 384))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))

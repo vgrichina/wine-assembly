@@ -4709,6 +4709,159 @@
       (br $scan)))
     (i32.add (local.get $line_start) (local.get $line_len)))
 
+  (func $edit_layout_store (param $idx i32) (param $start i32) (param $len i32)
+    (local $p i32)
+    (if (i32.ge_u (local.get $idx) (global.get $EDIT_LAYOUT_MAX)) (then (return)))
+    (local.set $p (i32.add (global.get $EDIT_LAYOUT_SCRATCH)
+                    (i32.mul (local.get $idx) (i32.const 8))))
+    (i32.store (local.get $p) (local.get $start))
+    (i32.store offset=4 (local.get $p) (local.get $len)))
+
+  (func $edit_layout_start (param $idx i32) (result i32)
+    (i32.load (i32.add (global.get $EDIT_LAYOUT_SCRATCH)
+              (i32.mul (local.get $idx) (i32.const 8)))))
+
+  (func $edit_layout_len (param $idx i32) (result i32)
+    (i32.load offset=4 (i32.add (global.get $EDIT_LAYOUT_SCRATCH)
+                       (i32.mul (local.get $idx) (i32.const 8)))))
+
+  ;; Build the visual-line table used by wrapped multiline edits. This is the
+  ;; WAT-side equivalent of USER32 EDIT's internal line layout: explicit CR/LF
+  ;; breaks plus simple word wrapping against the edit client width.
+  (func $edit_layout_build (param $state_w i32) (param $hdc i32) (param $text_w i32) (result i32)
+    (local $buf_g i32) (local $buf_w i32) (local $text_len i32)
+    (local $count i32) (local $line_start i32) (local $pos i32)
+    (local $ch i32) (local $next_ch i32) (local $max_w i32)
+    (local $candidate_len i32) (local $width i32)
+    (local $last_space i32) (local $break_len i32) (local $next_start i32)
+
+    (local.set $buf_g (i32.load (local.get $state_w)))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_g))
+      (then
+        (call $edit_layout_store (i32.const 0) (i32.const 0) (i32.const 0))
+        (return (i32.const 1))))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    (local.set $max_w (i32.sub (local.get $text_w) (i32.const 8)))
+    (if (i32.lt_s (local.get $max_w) (i32.const 8))
+      (then (local.set $max_w (i32.const 8))))
+    (local.set $line_start (i32.const 0))
+    (local.set $count (i32.const 0))
+
+    (block $done (loop $outer
+      (br_if $done (i32.ge_u (local.get $count) (global.get $EDIT_LAYOUT_MAX)))
+      (if (i32.gt_u (local.get $line_start) (local.get $text_len))
+        (then (br $done)))
+
+      (local.set $pos (local.get $line_start))
+      (local.set $last_space (i32.const -1))
+      (block $line_done (loop $scan
+        (br_if $line_done (i32.ge_u (local.get $pos) (local.get $text_len)))
+        (local.set $ch (i32.load8_u (i32.add (local.get $buf_w) (local.get $pos))))
+        (if (i32.or (i32.eq (local.get $ch) (i32.const 10))
+                    (i32.eq (local.get $ch) (i32.const 13)))
+          (then
+            (local.set $break_len (i32.sub (local.get $pos) (local.get $line_start)))
+            (call $edit_layout_store (local.get $count) (local.get $line_start) (local.get $break_len))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $next_start (i32.add (local.get $pos) (i32.const 1)))
+            (if (i32.and
+                  (i32.eq (local.get $ch) (i32.const 13))
+                  (i32.lt_u (local.get $next_start) (local.get $text_len)))
+              (then
+                (local.set $next_ch (i32.load8_u (i32.add (local.get $buf_w) (local.get $next_start))))
+                (if (i32.eq (local.get $next_ch) (i32.const 10))
+                  (then (local.set $next_start (i32.add (local.get $next_start) (i32.const 1)))))))
+            (local.set $line_start (local.get $next_start))
+            (br $line_done)))
+        (if (i32.eq (local.get $ch) (i32.const 32))
+          (then (local.set $last_space (local.get $pos))))
+        (local.set $candidate_len (i32.add (i32.sub (local.get $pos) (local.get $line_start)) (i32.const 1)))
+        (local.set $width (call $host_measure_text
+          (local.get $hdc)
+          (i32.add (local.get $buf_w) (local.get $line_start))
+          (local.get $candidate_len)))
+        (if (i32.and (i32.gt_s (local.get $width) (local.get $max_w))
+                     (i32.gt_u (local.get $candidate_len) (i32.const 1)))
+          (then
+            (if (i32.and (i32.ge_s (local.get $last_space) (local.get $line_start))
+                         (i32.gt_u (local.get $last_space) (local.get $line_start)))
+              (then
+                (local.set $break_len (i32.sub (local.get $last_space) (local.get $line_start)))
+                (local.set $next_start (i32.add (local.get $last_space) (i32.const 1))))
+              (else
+                (local.set $break_len (i32.sub (local.get $pos) (local.get $line_start)))
+                (local.set $next_start (local.get $pos))))
+            (call $edit_layout_store (local.get $count) (local.get $line_start) (local.get $break_len))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $line_start (local.get $next_start))
+            (br $line_done)))
+        (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
+        (br $scan)))
+
+      (if (i32.ge_u (local.get $pos) (local.get $text_len))
+        (then
+          (call $edit_layout_store
+            (local.get $count)
+            (local.get $line_start)
+            (i32.sub (local.get $text_len) (local.get $line_start)))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
+          (br $done)))
+      (br $outer)))
+    (if (i32.eqz (local.get $count))
+      (then
+        (call $edit_layout_store (i32.const 0) (i32.const 0) (i32.const 0))
+        (return (i32.const 1))))
+    (local.get $count))
+
+  (func $edit_layout_line_for_char (param $line_count i32) (param $cur i32) (result i32)
+    (local $i i32) (local $s i32) (local $e i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $line_count)))
+      (local.set $s (call $edit_layout_start (local.get $i)))
+      (local.set $e (i32.add (local.get $s) (call $edit_layout_len (local.get $i))))
+      (if (i32.and (i32.ge_u (local.get $cur) (local.get $s))
+                   (i32.le_u (local.get $cur) (local.get $e)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (select (i32.sub (local.get $line_count) (i32.const 1)) (i32.const 0)
+            (i32.gt_u (local.get $line_count) (i32.const 0))))
+
+  (func $edit_layout_xy_to_offset
+        (param $state_w i32) (param $hdc i32) (param $text_w i32) (param $x i32) (param $y i32) (result i32)
+    (local $line_count i32) (local $line_num i32) (local $line_start i32) (local $line_len i32)
+    (local $buf_w i32) (local $i i32) (local $w i32) (local $prev_w i32) (local $mid i32)
+    (local.set $line_count (call $edit_layout_build (local.get $state_w) (local.get $hdc) (local.get $text_w)))
+    (local.set $x (i32.sub (local.get $x) (i32.const 4)))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
+    (local.set $y (i32.sub (local.get $y) (i32.const 4)))
+    (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
+    (local.set $line_num (i32.add
+      (i32.div_s (local.get $y) (i32.const 16))
+      (i32.load offset=20 (local.get $state_w))))
+    (if (i32.ge_u (local.get $line_num) (local.get $line_count))
+      (then (local.set $line_num (i32.sub (local.get $line_count) (i32.const 1)))))
+    (local.set $line_start (call $edit_layout_start (local.get $line_num)))
+    (local.set $line_len (call $edit_layout_len (local.get $line_num)))
+    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $prev_w (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $line_len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $w (call $host_measure_text
+        (local.get $hdc) (i32.add (local.get $buf_w) (local.get $line_start)) (local.get $i)))
+      (if (i32.eqz (local.get $w))
+        (then (local.set $w (i32.mul (local.get $i) (i32.const 8)))))
+      (local.set $mid (i32.shr_s (i32.add (local.get $prev_w) (local.get $w)) (i32.const 1)))
+      (if (i32.gt_s (local.get $mid) (local.get $x))
+        (then (return (i32.add (local.get $line_start) (i32.sub (local.get $i) (i32.const 1))))))
+      (local.set $prev_w (local.get $w))
+      (br $scan)))
+    (i32.add (local.get $line_start) (local.get $line_len)))
+
   ;; Count wrapped visual rows for multiline edit controls that paint through
   ;; DrawText(DT_WORDBREAK), such as RichEdit license viewers.
   (func $edit_wrapped_line_count
@@ -5258,9 +5411,8 @@
 	                (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
 	                  (then
 	                    (local.set $total_lines
-	                      (call $edit_wrapped_line_count
+	                      (call $edit_layout_build
 	                        (local.get $state_w) (local.get $hdc)
-	                        (i32.load offset=4 (local.get $state_w))
 	                        (i32.sub (local.get $full_w) (i32.const 16)))))
 	                  (else
 	                    (local.set $total_lines
@@ -5329,8 +5481,18 @@
 	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
 	                (return (i32.const 0))))))
-	        (local.set $cur (call $edit_xy_to_offset
-	          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
+	        (if (i32.and
+	              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
+	              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+	          (then
+	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+	            (local.set $cur (call $edit_layout_xy_to_offset
+	              (local.get $state_w) (local.get $hdc)
+	              (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16))
+	              (local.get $w) (local.get $h))))
+	          (else
+	            (local.set $cur (call $edit_xy_to_offset
+	              (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))))
         (if (i32.eq (local.get $msg) (i32.const 0x0203))
           (then
             ;; Double-click: select word spanning $cur
@@ -5371,9 +5533,8 @@
 	            (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
 	              (then
 	                (local.set $total_lines
-	                  (call $edit_wrapped_line_count
+	                  (call $edit_layout_build
 	                    (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
-	                    (i32.load offset=4 (local.get $state_w))
 	                    (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16)))))
 	              (else
 	                (local.set $total_lines
@@ -5429,8 +5590,18 @@
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-        (local.set $cur (call $edit_xy_to_offset
-          (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))
+        (if (i32.and
+              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
+              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $cur (call $edit_layout_xy_to_offset
+              (local.get $state_w) (local.get $hdc)
+              (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16))
+              (local.get $w) (local.get $h))))
+          (else
+            (local.set $cur (call $edit_xy_to_offset
+              (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))))
         (if (i32.ne (local.get $cur) (i32.load offset=12 (local.get $state_w)))
           (then
             (i32.store offset=12 (local.get $state_w) (local.get $cur))
@@ -5507,8 +5678,8 @@
                 (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))))
           (then
             (local.set $total_lines
-              (call $edit_wrapped_line_count
-                (local.get $state_w) (local.get $hdc) (local.get $text_len) (local.get $w)))
+              (call $edit_layout_build
+                (local.get $state_w) (local.get $hdc) (local.get $w)))
             (local.set $visible_lines (i32.div_u
               (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
                       (i32.gt_u (local.get $h) (i32.const 8)))
@@ -5520,37 +5691,92 @@
               (then (local.set $max_scroll (i32.const 0))))
             (if (i32.gt_s (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll))
               (then (i32.store offset=20 (local.get $state_w) (local.get $max_scroll))))
-            (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
-            (i32.store offset=4  (global.get $PAINT_SCRATCH)
-              (i32.sub (i32.const 4) (i32.mul (i32.load offset=20 (local.get $state_w)) (i32.const 16))))
-            (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $w) (i32.const 4)))
-            (i32.store offset=12 (global.get $PAINT_SCRATCH)
-              (i32.add (i32.sub (local.get $h) (i32.const 4))
-                (i32.mul (i32.load offset=20 (local.get $state_w)) (i32.const 16))))
-            (drop (call $host_gdi_draw_text (local.get $hdc)
-                    (call $g2w (local.get $buf))
-                    (local.get $text_len)
-                    (global.get $PAINT_SCRATCH)
-                    (i32.const 0x10) (i32.const 0)))
-            ;; DrawText handles word wrapping for this path, but USER32 still
-            ;; owns the edit caret. Keep the caret paint in the control so
-            ;; typing into wrapped multiline edits (Notepad) does not lose it.
+            (local.set $lo (i32.load offset=20 (local.get $state_w)))
+            (local.set $line_y (i32.const 4))
+            (block $wrapped_done (loop $wrapped_loop
+              (br_if $wrapped_done (i32.ge_u (local.get $lo) (local.get $total_lines)))
+              (br_if $wrapped_done (i32.ge_s (local.get $line_y) (local.get $h)))
+              (local.set $line_buf_w (call $edit_layout_start (local.get $lo)))
+              (local.set $hi (call $edit_layout_len (local.get $lo)))
+              (local.set $line_end (i32.add (local.get $line_buf_w) (local.get $hi)))
+              (local.set $a (i32.const 0))
+              (local.set $b (i32.const 0))
+              (if (i32.and (i32.lt_u (local.get $sel_lo) (local.get $sel_hi))
+                           (i32.and (i32.le_u (local.get $sel_lo) (local.get $line_end))
+                                    (i32.ge_u (local.get $sel_hi) (local.get $line_buf_w))))
+                (then
+                  (local.set $a (local.get $sel_lo))
+                  (if (i32.lt_u (local.get $a) (local.get $line_buf_w))
+                    (then (local.set $a (local.get $line_buf_w))))
+                  (local.set $a (i32.sub (local.get $a) (local.get $line_buf_w)))
+                  (local.set $b (local.get $sel_hi))
+                  (if (i32.gt_u (local.get $b) (local.get $line_end))
+                    (then (local.set $b (local.get $line_end))))
+                  (local.set $b (i32.sub (local.get $b) (local.get $line_buf_w)))))
+              (local.set $line_buf_w (i32.add (call $g2w (local.get $buf)) (local.get $line_buf_w)))
+              (if (i32.lt_u (local.get $a) (local.get $b))
+                (then
+                  (local.set $pre_w (i32.const 0))
+                  (if (local.get $a)
+                    (then (local.set $pre_w
+                      (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $a)))))
+                  (local.set $sel_w (i32.sub
+                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $b))
+                    (local.get $pre_w)))
+                  (if (i32.eqz (local.get $sel_w))
+                    (then (local.set $sel_w (i32.mul (i32.sub (local.get $b) (local.get $a)) (i32.const 8)))))
+                  (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $pre_w) (i32.const 4))
+                          (i32.sub (local.get $line_y) (i32.const 2))
+                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+                          (i32.add (local.get $line_y) (i32.const 13))
+                          (local.get $brush)))
+                  (drop (call $host_gdi_delete_object (local.get $brush)))
+                  (if (local.get $a)
+                    (then (drop (call $host_gdi_text_out
+                      (local.get $hdc) (i32.const 4) (local.get $line_y)
+                      (local.get $line_buf_w) (local.get $a) (i32.const 0)))))
+                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+                  (drop (call $host_gdi_text_out
+                    (local.get $hdc) (i32.add (local.get $pre_w) (i32.const 4)) (local.get $line_y)
+                    (i32.add (local.get $line_buf_w) (local.get $a))
+                    (i32.sub (local.get $b) (local.get $a)) (i32.const 0)))
+                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+                  (if (i32.lt_u (local.get $b) (local.get $hi))
+                    (then (drop (call $host_gdi_text_out
+                      (local.get $hdc)
+                      (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+                      (local.get $line_y)
+                      (i32.add (local.get $line_buf_w) (local.get $b))
+                      (i32.sub (local.get $hi) (local.get $b)) (i32.const 0))))))
+                (else
+                  (if (local.get $hi)
+                    (then (drop (call $host_gdi_text_out
+                      (local.get $hdc) (i32.const 4) (local.get $line_y)
+                      (local.get $line_buf_w) (local.get $hi) (i32.const 0)))))))
+              (local.set $lo (i32.add (local.get $lo) (i32.const 1)))
+              (local.set $line_y (i32.add (local.get $line_y) (i32.const 16)))
+              (br $wrapped_loop)))
+
             (local.set $flags (i32.load offset=24 (local.get $state_w)))
             (if (i32.and (local.get $flags) (i32.const 0x08))
               (then
                 (local.set $cur (i32.load offset=12 (local.get $state_w)))
-                (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
-                (local.set $a (i32.sub
-                                (call $edit_line_from_char (local.get $state_w) (local.get $cur))
-                                (i32.load offset=20 (local.get $state_w))))
+                (local.set $lo (call $edit_layout_line_for_char (local.get $total_lines) (local.get $cur)))
+                (local.set $a (i32.sub (local.get $lo) (i32.load offset=20 (local.get $state_w))))
                 (local.set $hi (i32.mul (local.get $a) (i32.const 16)))
                 (local.set $px (i32.const 0))
-                ;; In DrawText-wrapped edits the host measurement path can
-                ;; disagree with the bitmap dialog font state. Use the fixed
-                ;; Win9x edit-cell advance for the visible caret location.
-                (if (i32.gt_u (local.get $cur) (local.get $lo))
-                  (then (local.set $px
-                    (i32.mul (i32.sub (local.get $cur) (local.get $lo)) (i32.const 8)))))
+                (local.set $line_end (call $edit_layout_start (local.get $lo)))
+                (if (i32.gt_u (local.get $cur) (local.get $line_end))
+                  (then
+                    (local.set $px (call $host_measure_text
+                      (local.get $hdc)
+                      (i32.add (call $g2w (local.get $buf)) (local.get $line_end))
+                      (i32.sub (local.get $cur) (local.get $line_end))))
+                    (if (i32.eqz (local.get $px))
+                      (then (local.set $px
+                        (i32.mul (i32.sub (local.get $cur) (local.get $line_end)) (i32.const 8)))))))
                 (if (i32.and
                       (i32.ge_s (local.get $a) (i32.const 0))
                       (i32.lt_s (local.get $hi) (local.get $h)))
@@ -5912,9 +6138,9 @@
               (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
               (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
           (then
-            (local.set $b (call $edit_wrapped_line_count
+            (local.set $b (call $edit_layout_build
               (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
-              (local.get $text_len) (local.get $w))))
+              (local.get $w))))
           (else
             ;; total_lines = edit_line_from_char(text_len) + 1
             (local.set $b (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
