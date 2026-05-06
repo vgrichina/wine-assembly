@@ -811,7 +811,7 @@
   (global $focus_hwnd (mut i32) (i32.const 0))
   ;; EDIT caret should appear immediately after focus/input before settling
   ;; into its normal blink cadence.
-  (global $edit_caret_force_until (mut i32) (i32.const 0))
+  (global $edit_caret_blink_epoch (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   (global $guid_counter (mut i32) (i32.const 0))
   ;; waveOut audio state

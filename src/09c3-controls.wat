@@ -4953,8 +4953,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0007))
       (then
         (global.set $focus_hwnd (local.get $hwnd))
-        (global.set $edit_caret_force_until
-          (i32.add (call $host_get_ticks) (i32.const 1060)))
+        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
@@ -5003,15 +5002,13 @@
             (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01))
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
-                (global.set $edit_caret_force_until
-                  (i32.add (call $host_get_ticks) (i32.const 1060)))
+                (global.set $edit_caret_blink_epoch (call $host_get_ticks))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
-        (global.set $edit_caret_force_until
-          (i32.add (call $host_get_ticks) (i32.const 1060)))
+        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5233,8 +5230,7 @@
         ;; Mark focused + drag-tracking bit 4 (0x10).
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
-	        (global.set $edit_caret_force_until
-	          (i32.add (call $host_get_ticks) (i32.const 1060)))
+	        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
 	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
@@ -5624,11 +5620,11 @@
                                         (i32.sub (local.get $cur) (local.get $lo))))))
             (if (i32.and
                   (i32.ge_s (local.get $a) (i32.const 0))
-                  (i32.or
-                    (i32.lt_u (call $host_get_ticks) (global.get $edit_caret_force_until))
-                    (i32.eqz (i32.and
-                      (i32.div_u (call $host_get_ticks) (i32.const 530))
-                      (i32.const 1)))))
+                  (i32.eqz (i32.and
+                    (i32.div_u
+                      (i32.sub (call $host_get_ticks) (global.get $edit_caret_blink_epoch))
+                      (i32.const 530))
+                    (i32.const 1))))
               (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
@@ -5780,8 +5776,7 @@
               (call $edit_insert_char (local.get $state_w) (local.get $vk))
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
-        (global.set $edit_caret_force_until
-          (i32.add (call $host_get_ticks) (i32.const 1060)))
+        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
