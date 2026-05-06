@@ -548,21 +548,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=68"></script>
-  <script src="lib/dib.js?v=68"></script>
-  <script src="lib/resources-icon.js?v=68"></script>
-  <script src="lib/renderer-input.js?v=68"></script>
-  <script src="lib/renderer.js?v=68"></script>
-  <script src="lib/dll-loader.js?v=68"></script>
-  <script src="lib/storage.js?v=68"></script>
-  <script src="lib/filesystem.js?v=68"></script>
-  <script src="lib/hlp-parser.js?v=68"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=68"></script>
-  <script src="lib/host-imports.js?v=68"></script>
-  <script src="lib/compile-wat.js?v=68"></script>
-  <script src="lib/thread-manager.js?v=68"></script>
-  <script src="host.js?v=68"></script>
-  <script src="lib/recorder.js?v=68"></script>
+  <script src="lib/mem-utils.js?v=70"></script>
+  <script src="lib/dib.js?v=70"></script>
+  <script src="lib/resources-icon.js?v=70"></script>
+  <script src="lib/renderer-input.js?v=70"></script>
+  <script src="lib/renderer.js?v=70"></script>
+  <script src="lib/dll-loader.js?v=70"></script>
+  <script src="lib/storage.js?v=70"></script>
+  <script src="lib/filesystem.js?v=70"></script>
+  <script src="lib/hlp-parser.js?v=70"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=70"></script>
+  <script src="lib/host-imports.js?v=70"></script>
+  <script src="lib/compile-wat.js?v=70"></script>
+  <script src="lib/thread-manager.js?v=70"></script>
+  <script src="host.js?v=70"></script>
+  <script src="lib/recorder.js?v=70"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -899,7 +899,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=68');
+        const response = await fetch(url + '?v=70');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1072,9 +1072,29 @@ Resource-aware Win98 emulator
         if (e.key === 'Enter') return 13;
         return 0;
       };
+      const focusGuestCanvas = () => {
+        try {
+          const active = document.activeElement;
+          if (active && active !== canvas && active.blur) active.blur();
+          canvas.focus({ preventScroll: true });
+        } catch (_) {
+          try { canvas.focus(); } catch (_) {}
+        }
+      };
       const shouldIgnorePageKey = (e) => {
         const el = e.target;
         if (!el || el === canvas || el === document.body || el === document.documentElement) return false;
+        if (runningApps && runningApps.length) {
+          const toolbar = document.getElementById('toolbar');
+          if (toolbar && toolbar.contains(el) && !keepForBrowser(e)) {
+            // After a program is running, the Win98 guest owns normal
+            // keystrokes. Browser toolbar controls can retain DOM focus after
+            // Launch/program selection; refocus the canvas so Notepad-style
+            // text input is delivered to the guest, not swallowed by <select>.
+            focusGuestCanvas();
+            return false;
+          }
+        }
         const tag = (el.tagName || '').toUpperCase();
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
         if (el.isContentEditable) return true;

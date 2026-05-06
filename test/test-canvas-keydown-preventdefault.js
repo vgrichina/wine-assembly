@@ -19,6 +19,7 @@
 //     (preventDefault'd unless explicitly browser-reserved like F5/F11)
 //   - Browser-reserved (Ctrl+R, Ctrl+W, F5, F11, F12, Cmd+anything,
 //     Ctrl+Shift+I) -> NOT preventDefault'd (browser keeps them)
+//   - Toolbar focus after Launch does not swallow guest typing.
 
 const fs = require('fs');
 const path = require('path');
@@ -92,6 +93,13 @@ check('Ctrl+Shift+I not prevented',!wouldPreventDefault(ev(73, { ctrl: true, shi
 check('Cmd+A not prevented',       !wouldPreventDefault(ev(0x41, { meta: true })));
 check('Alt+F4 not prevented',      !wouldPreventDefault(ev(115, { alt: true })));
 
+// The web page can leave DOM focus on the program <select> / Launch button.
+// Once a guest app is running, normal keys must be re-owned by the canvas.
+check('toolbar focus is redirected to guest canvas',
+      html.includes('toolbar.contains(el)') &&
+      html.includes('focusGuestCanvas()') &&
+      html.includes('runningApps && runningApps.length'));
+
 // --- End-to-end: typing flows through to Notepad's edit ---
 //   Drives the CLI path that mirrors the browser flow.
 const { execSync } = require('child_process');
@@ -101,11 +109,13 @@ let cliOk = false;
 if (fs.existsSync(EXE)) {
   try {
     const out = execSync(
-      `node "${RUN}" --exe="${EXE}" --input=90:focus-main-window,100:keypress:72,110:keypress:73 --max-batches=200 --quiet-api`,
+      `node "${RUN}" --exe="${EXE}" --input=90:focus-main-window,100:keypress:72,110:keypress:73,130:dump-main-edit-state:typed --max-batches=200 --quiet-api`,
       { encoding: 'utf-8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
-    // run.js prints `[input] keypress code=NN` once per dispatch, and the
-    // edit accepts it if there is no UNIMPLEMENTED crash.
+    // The top-level window can own focus after a browser click; typing must
+    // still resolve to Notepad's child EDIT and mutate its text.
     cliOk = out.includes('keypress code=72') && out.includes('keypress code=73')
+            && out.includes('dump-main-edit-state typed:')
+            && out.includes('text="HI"')
             && !out.includes('UNIMPLEMENTED') && !out.includes('CRASH');
   } catch (e) { /* keep cliOk=false */ }
   check('CLI keypress flow into Notepad edit succeeds', cliOk);

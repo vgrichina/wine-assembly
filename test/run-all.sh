@@ -33,6 +33,7 @@ UNIT=(
   test/test-render-find-dlg.js
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js
+  test/test-canvas-keydown-preventdefault.js
 )
 
 E2E=(
