@@ -4885,6 +4885,10 @@
             (if (i32.load (local.get $state_w))
               (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
                                 (i32.const 0))))))
+        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x08))
+          (then
+            (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -4954,6 +4958,7 @@
       (then
         (global.set $focus_hwnd (local.get $hwnd))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
@@ -4994,6 +4999,8 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (i32.sub (local.get $lo) (i32.const 1))
                           (local.get $lo))))))
+            (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
@@ -5003,12 +5010,18 @@
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
                 (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+                (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+                (i32.store offset=24 (local.get $state_w)
+                  (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+        (i32.store offset=24 (local.get $state_w)
+          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5231,6 +5244,7 @@
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
 	        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+	        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
 	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
@@ -5518,6 +5532,35 @@
                     (local.get $text_len)
                     (global.get $PAINT_SCRATCH)
                     (i32.const 0x10) (i32.const 0)))
+            ;; DrawText handles word wrapping for this path, but USER32 still
+            ;; owns the edit caret. Keep the caret paint in the control so
+            ;; typing into wrapped multiline edits (Notepad) does not lose it.
+            (local.set $flags (i32.load offset=24 (local.get $state_w)))
+            (if (i32.and (local.get $flags) (i32.const 0x08))
+              (then
+                (local.set $cur (i32.load offset=12 (local.get $state_w)))
+                (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
+                (local.set $a (i32.sub
+                                (call $edit_line_from_char (local.get $state_w) (local.get $cur))
+                                (i32.load offset=20 (local.get $state_w))))
+                (local.set $hi (i32.mul (local.get $a) (i32.const 16)))
+                (local.set $px (i32.const 0))
+                ;; In DrawText-wrapped edits the host measurement path can
+                ;; disagree with the bitmap dialog font state. Use the fixed
+                ;; Win9x edit-cell advance for the visible caret location.
+                (if (i32.gt_u (local.get $cur) (local.get $lo))
+                  (then (local.set $px
+                    (i32.mul (i32.sub (local.get $cur) (local.get $lo)) (i32.const 8)))))
+                (if (i32.and
+                      (i32.ge_s (local.get $a) (i32.const 0))
+                      (i32.lt_s (local.get $hi) (local.get $h)))
+                  (then
+                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                            (i32.add (local.get $px) (i32.const 4))
+                            (i32.add (local.get $hi) (i32.const 2))
+                            (i32.add (local.get $px) (i32.const 5))
+                            (i32.add (local.get $hi) (i32.const 17))
+                            (i32.const 0x30014)))))))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
               (then
                 (call $paint_vscrollbar_rect (local.get $hdc)
@@ -5603,6 +5646,7 @@
               (br $line_loop)))))
         ;; 4) Caret (only if focused — bit 3 of flags)
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
+        (local.set $vk (call $host_get_ticks))
         (if (i32.and (local.get $flags) (i32.const 0x08))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
@@ -5618,13 +5662,18 @@
               (then (local.set $px (call $host_measure_text (local.get $hdc)
                                         (i32.add (call $g2w (local.get $buf)) (local.get $lo))
                                         (i32.sub (local.get $cur) (local.get $lo))))))
+            (if (i32.and (i32.eqz (local.get $px)) (i32.gt_u (local.get $cur) (local.get $lo)))
+              (then (local.set $px
+                (i32.mul (i32.sub (local.get $cur) (local.get $lo)) (i32.const 8)))))
             (if (i32.and
                   (i32.ge_s (local.get $a) (i32.const 0))
-                  (i32.eqz (i32.and
-                    (i32.div_u
-                      (i32.sub (call $host_get_ticks) (global.get $edit_caret_blink_epoch))
-                      (i32.const 530))
-                    (i32.const 1))))
+                  (i32.or
+                    (i32.lt_u (local.get $vk) (global.get $edit_caret_visible_until))
+                    (i32.eqz (i32.and
+                      (i32.div_u
+                        (i32.sub (local.get $vk) (global.get $edit_caret_blink_epoch))
+                        (i32.const 530))
+                      (i32.const 1)))))
               (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
@@ -5777,6 +5826,9 @@
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
         (global.set $edit_caret_blink_epoch (call $host_get_ticks))
+        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 3000)))
+        (i32.store offset=24 (local.get $state_w)
+          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
