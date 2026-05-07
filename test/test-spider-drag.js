@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+// Spider drag regression: a small post-drag invalidation must not let
+// BeginPaint's erase wipe the whole table outside rcPaint.
+
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+const ROOT = path.join(__dirname, '..');
+const RUN  = path.join(__dirname, 'run.js');
+const EXE  = path.join(__dirname, 'binaries', 'plus98', 'SPIDER.EXE');
+const DLL  = path.join(__dirname, 'binaries', 'entertainment-pack', 'cards.dll');
+const TMP  = path.join(ROOT, 'scratch');
+fs.mkdirSync(TMP, { recursive: true });
+
+if (!fs.existsSync(EXE) || !fs.existsSync(DLL)) {
+  console.log('SKIP  Spider.exe/cards.dll not found');
+  process.exit(0);
+}
+
+const basePng = path.join(TMP, 'spider_drag_base.png');
+const midPng  = path.join(TMP, 'spider_drag_mid.png');
+const endPng  = path.join(TMP, 'spider_drag_end.png');
+for (const p of [basePng, midPng, endPng]) { try { fs.unlinkSync(p); } catch (_) {} }
+
+const inputSpec = [
+  `200:png:${basePng}`,
+  '260:mousedown:620:135',
+  '280:mousemove:560:180',
+  '300:mousemove:500:220',
+  '320:mousemove:440:260',
+  `340:png:${midPng}`,
+  '380:mouseup:440:260',
+  `700:png:${endPng}`,
+].join(',');
+
+const cmd = `node "${RUN}" --exe="${EXE}" --dlls="${DLL}" --no-close --input=${inputSpec} --max-batches=850 --batch-size=50000 --quiet-api`;
+console.log('$', cmd.replace(ROOT, '.'));
+
+let out = '';
+let exitCode = 0;
+try {
+  out = execSync(cmd, {
+    encoding: 'utf-8', timeout: 120000, cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
+  });
+} catch (e) {
+  out = (e.stdout || '').toString() + (e.stderr || '').toString();
+  exitCode = e.status ?? 1;
+  console.log(`(run.js exited non-zero status=${exitCode} - output captured)`);
+}
+
+const sizeOf = p => fs.existsSync(p) ? fs.statSync(p).size : 0;
+const baseSize = sizeOf(basePng);
+const midSize = sizeOf(midPng);
+const endSize = sizeOf(endPng);
+
+const checks = [
+  { name: 'process exited cleanly', pass: exitCode === 0 },
+  { name: 'baseline PNG written', pass: baseSize > 20000 },
+  { name: 'mid-drag PNG written', pass: midSize > 20000 },
+  { name: 'post-release PNG keeps full tableau', pass: endSize > 20000 },
+  { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
+  { name: 'no crash marker', pass: !/CRASH|LinkError/.test(out) },
+];
+
+let failed = 0;
+for (const c of checks) {
+  console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+  if (!c.pass) failed++;
+}
+console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize}`);
+console.log(`${checks.length - failed}/${checks.length} checks passed`);
+process.exit(failed ? 1 : 0);

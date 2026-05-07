@@ -2991,7 +2991,6 @@
     ;; hooks.
     (local.set $brush (global.get $wndclass_bg_brush))
     (if (i32.eqz (local.get $brush)) (then (local.set $brush (i32.const 16)))) ;; COLOR_BTNFACE+1
-    (drop (call $host_erase_background (local.get $arg0) (local.get $brush)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
@@ -3020,6 +3019,16 @@
           (i32.load offset=8 (local.get $wa))
           (i32.load offset=12 (local.get $wa))))))
     (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
+    ;; Erase through the same clipped paint HDC. Win98's BeginPaint/WM_ERASEBKGND
+    ;; is constrained by the update/visible region; erasing before the clip is
+    ;; installed wipes too much during small invalidations (Spider card drags).
+    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+    (drop (call $host_gdi_fill_rect
+      (local.get $hdc)
+      (i32.const 0) (i32.const 0)
+      (i32.and (local.get $cs) (i32.const 0xFFFF))
+      (i32.shr_u (local.get $cs) (i32.const 16))
+      (local.get $brush)))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )

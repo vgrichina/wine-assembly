@@ -36,11 +36,11 @@ assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=80'), 'web host should cache-bust host-imports after GDI changes');
+assert(indexHtml.includes('lib/host-imports.js?v=81'), 'web host should cache-bust host-imports after GDI changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("'?v=80'"), 'host.js should cache-bust WAT source fetches');
+assert(hostJs.includes("'?v=81'"), 'host.js should cache-bust WAT source fetches');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
-for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
+for (const app of ['freecell', 'sol', 'cruel', 'golf', 'spider']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');
   assert(re.test(indexHtml), `${app} web manifest should explicitly load cards.dll`);
 }
