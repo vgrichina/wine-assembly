@@ -80,12 +80,36 @@ function statusTextPixels(pngPath) {
 
 const statusPixels = statusTextPixels(endPng);
 
+function countColorInRect(pngPath, x1, y1, x2, y2, rgb) {
+  if (!fs.existsSync(pngPath)) return 0;
+  const img = PNG.sync.read(fs.readFileSync(pngPath));
+  let count = 0;
+  const top = y1 < 0 ? img.height + y1 : y1;
+  const bottom = y2 < 0 ? img.height + y2 : y2;
+  for (let y = Math.max(0, top); y < Math.min(img.height, bottom); y++) {
+    for (let x = Math.max(0, x1); x < Math.min(img.width, x2); x++) {
+      const i = (y * img.width + x) * 4;
+      if (img.data[i] === rgb[0] && img.data[i + 1] === rgb[1] && img.data[i + 2] === rgb[2]) count++;
+    }
+  }
+  return count;
+}
+
+const suitRect = [350, -28, 480, -5];
+const badSuitColors =
+  countColorInRect(endPng, ...suitRect, [0, 255, 255]) +
+  countColorInRect(endPng, ...suitRect, [255, 255, 0]) +
+  countColorInRect(endPng, ...suitRect, [0, 128, 0]);
+const redSuitPixels = countColorInRect(endPng, ...suitRect, [255, 0, 0]);
+const blackSuitPixels = countColorInRect(endPng, ...suitRect, [0, 0, 0]);
+
 const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
   { name: 'baseline PNG written', pass: baseSize > 20000 },
   { name: 'mid-drag PNG written', pass: midSize > 20000 },
   { name: 'post-release PNG keeps full tableau', pass: endSize > 20000 },
   { name: 'post-release PNG keeps Spider status text', pass: statusPixels > 500 },
+  { name: 'Spider status suit icons use main EXE bitmaps', pass: badSuitColors === 0 && redSuitPixels > 20 && blackSuitPixels > 20 },
   { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no crash marker', pass: !/CRASH|LinkError/.test(out) },
 ];
@@ -95,6 +119,6 @@ for (const c of checks) {
   console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
   if (!c.pass) failed++;
 }
-console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize} statusTextPixels=${statusPixels}`);
+console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize} statusTextPixels=${statusPixels} badSuitColors=${badSuitColors} redSuitPixels=${redSuitPixels} blackSuitPixels=${blackSuitPixels}`);
 console.log(`${checks.length - failed}/${checks.length} checks passed`);
 process.exit(failed ? 1 : 0);
