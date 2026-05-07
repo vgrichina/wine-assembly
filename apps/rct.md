@@ -532,6 +532,22 @@ The operand-size audit found another family of gaps adjacent to the RCT fixes:
 New handlers now cover 16-bit two-operand IMUL and 16-bit BT/BTS/BTR/BTC
 register, immediate, and memory forms. Handler table/cache guard is now `307`.
 
+**2026-05-07 regression note — `F7 /4..7` decoder fallthrough.**
+
+Full `npm test` exposed a direct x86 regression after the operand-size work:
+`test-x86-ops` showed `MUL dword [mem]` executing its multiply handler and then
+falling through to the generic unrecognized-opcode path for the same `F7`
+opcode. The group-3 `/4..7` decoder has been rewritten as explicit `mr_reg`
+arms, each branching back to decode after emission, so valid MUL/IMUL/DIV/IDIV
+forms cannot append a bogus block-end after their real handler.
+
+The same pattern also hit `0F AF`: Calc's bignum multiply emitted the IMUL
+handler, then resumed at the second byte as standalone `AF` (`SCASD`), which
+advanced `EDI` and shifted the result layout. The `0F AF` decoder now emits a
+normal block-end (`th_block_end`, handler `45`) at the post-ModR/M EIP inside
+each concrete IMUL arm, so the interpreter commits EIP to the next instruction
+without appending the generic unknown-opcode terminator.
+
 Useful artifacts from this session:
 
 ```

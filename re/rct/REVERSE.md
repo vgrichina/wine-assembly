@@ -514,6 +514,21 @@ Implementation note: the handler table now extends to 307 entries. New handlers
 [check-handler-count] OK handler table=307 elem entries=307 cache guard=307
 ```
 
+Regression found by the full test suite: the `F6/F7` group-3 `/4..7` decoder
+could emit a valid MUL/IMUL/DIV/IDIV handler and still fall through to the
+unrecognized-opcode path. The unit symptom was broken `F7 25 disp32`
+(`MUL dword [abs]`) snippets that sometimes multiplied correctly but failed to
+return, and sometimes ran into unrelated cached code. The decoder is now
+structured as explicit `mr_reg` arms with a `br $decode` in each handled
+MUL/IMUL/DIV/IDIV path.
+
+Follow-up from `test-bignum-mul`: `0F AF` had the same fallthrough shape. Calc
+hit `0x01011542: 0F AF 03`; the emulator emitted IMUL, then resumed at `AF` as
+top-level `SCASD`, incrementing `EDI` and causing the result digit to land in
+the exponent slot. `0F AF` now emits `th_block_end` (handler `45`) with the
+post-ModR/M EIP inside each 16-bit and 32-bit emission arm, which commits EIP
+without adding the generic unknown-opcode terminator.
+
 Lower-priority notes:
 
 - `FF /3` and `FF /5` far call/jump remain effectively unimplemented; RCT has
