@@ -9,11 +9,29 @@
       (then (i32.load offset=4 (local.get $idx)))
       (else (i32.const 0))))
   (func $cache_store (param $ga i32) (param $off i32)
-    (local $idx i32)
+    (local $idx i32) (local $page i32) (local $page_end i32) (local $should_track i32)
     (local.set $idx (i32.add (global.get $CACHE_INDEX)
       (i32.mul (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (global.get $CACHE_MASK)) (i32.const 8))))
     (i32.store (local.get $idx) (local.get $ga))
-    (i32.store offset=4 (local.get $idx) (local.get $off)))
+    (i32.store offset=4 (local.get $idx) (local.get $off))
+    (local.set $should_track
+      (i32.and
+        (i32.ne (global.get $exe_size_of_image) (i32.const 0))
+        (i32.and
+          (i32.ge_u (local.get $ga) (global.get $image_base))
+          (i32.and
+            (i32.lt_u (local.get $ga) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
+            (i32.or (i32.lt_u (local.get $ga) (global.get $code_start))
+                    (i32.ge_u (local.get $ga) (global.get $code_end))))))))
+    (if (local.get $should_track)
+      (then
+        (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+        (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
+        (if (i32.or (i32.eqz (global.get $generated_code_start))
+                    (i32.lt_u (local.get $page) (global.get $generated_code_start)))
+          (then (global.set $generated_code_start (local.get $page))))
+        (if (i32.gt_u (local.get $page_end) (global.get $generated_code_end))
+          (then (global.set $generated_code_end (local.get $page_end))))))
   (func $clear_cache
     (local $i i32)
     (local.set $i (i32.const 0))
@@ -64,7 +82,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 282))
+    (if (i32.ge_u (local.get $fn) (i32.const 288))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))
@@ -80,4 +98,3 @@
     (local.set $v (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (local.get $v))
-

@@ -426,6 +426,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; mmioSeek(hmmio, lOffset, iOrigin) — 3 args stdcall
+  ;; Returns the new file position, or -1 on failure.
+  (func $handle_mmioSeek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_set_file_pointer
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   (func $mci_slot_addr (param $slot i32) (result i32)
     (i32.add (global.get $MCI_DEVICE_TABLE)
       (i32.mul (local.get $slot) (i32.const 16))))

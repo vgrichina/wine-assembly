@@ -11475,5 +11475,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1580905743
+  },
+  {
+    "id": 1520,
+    "name": "mmioSeek",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3500785251
   }
 ]

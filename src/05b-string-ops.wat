@@ -45,55 +45,70 @@
     (return_call $next))
   ;; REP versions (inline loop)
   (func $th_rep_movsb (param $op i32)
-    (local $n i32)
+    (local $n i32) (local $dst i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
       (if (global.get $df)
         (then
           ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
           (memory.copy
-            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+            (call $g2w (local.get $dst))
             (call $g2w (i32.sub (global.get $esi) (i32.sub (local.get $n) (i32.const 1))))
             (local.get $n))
           (global.set $esi (i32.sub (global.get $esi) (local.get $n)))
           (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
         (else
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $n))
           (global.set $esi (i32.add (global.get $esi) (local.get $n)))
           (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
       (global.set $ecx (i32.const 0))))
     (return_call $next))
   (func $th_rep_movsd (param $op i32)
-    (local $n i32) (local $bytes i32)
+    (local $n i32) (local $bytes i32) (local $dst i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
       (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
       (if (global.get $df)
         (then
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
           (memory.copy
-            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+            (call $g2w (local.get $dst))
             (call $g2w (i32.sub (global.get $esi) (i32.sub (local.get $bytes) (i32.const 4))))
             (local.get $bytes))
           (global.set $esi (i32.sub (global.get $esi) (local.get $bytes)))
           (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
         (else
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
           (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $bytes))
           (global.set $esi (i32.add (global.get $esi) (local.get $bytes)))
           (global.set $edi (i32.add (global.get $edi) (local.get $bytes)))))
       (global.set $ecx (i32.const 0))))
     (return_call $next))
   (func $th_rep_stosb (param $op i32)
-    (local $n i32)
+    (local $n i32) (local $dst i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
       (if (global.get $df)
         (then
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
           (memory.fill
-            (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+            (call $g2w (local.get $dst))
             (i32.and (global.get $eax) (i32.const 0xFF))
             (local.get $n))
           (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
         (else
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (memory.fill (call $g2w (global.get $edi)) (i32.and (global.get $eax) (i32.const 0xFF)) (local.get $n))
           (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
       (global.set $ecx (i32.const 0))))
@@ -112,18 +127,22 @@
         (then
           (if (global.get $df)
             (then
+              (call $invalidate_code_write (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+              (call $invalidate_code_write (global.get $edi))
               (memory.fill
                 (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
                 (local.get $al) (local.get $bytes))
               (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
             (else
+              (call $invalidate_code_write (global.get $edi))
+              (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
               (memory.fill (call $g2w (global.get $edi)) (local.get $al) (local.get $bytes))
               (global.set $edi (i32.add (global.get $edi) (local.get $bytes))))))
         (else
           ;; Slow path: arbitrary dword value
           (block $d (loop $l
             (br_if $d (i32.eqz (local.get $n)))
-            (i32.store (call $g2w (global.get $edi)) (global.get $eax))
+            (call $gs32 (global.get $edi) (global.get $eax))
             (if (global.get $df)
               (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
               (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
@@ -235,4 +254,3 @@
         (then (br_if $d (i32.ne (local.get $a) (local.get $b))))
         (else (br_if $d (i32.eq (local.get $a) (local.get $b)))))
       (br $l))) (return_call $next))
-

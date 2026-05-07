@@ -44,6 +44,47 @@ runs forever. **It is not a bounded init step.**
 
 ---
 
+## 2026-05-07 — Current Emulator Fixes for RCT Runtime
+
+Two operand-size bugs were confirmed on the live runtime path:
+
+- `66 8F /0` was decoded as 32-bit `POP r/m32`. RCT uses 16-bit memory pops in
+  generated-code epilogues around `0x00557bbc`; consuming 4 bytes instead of 2
+  corrupted the return stack and sent `ret` to data at `0x008e746c`.
+- `66 F7 /6` was decoded/executed as 32-bit `DIV r/m32`. RCT reaches
+  `0x00429034: div cx` with `AX=0x0204`, `DX=0x0000`, `CX=0x00ff`; the division
+  is valid on real x86. The old handler included stale high EDX bits
+  (`EDX=0xffff0000`) in the dividend, causing a false divide exception and the
+  `"GSK Exception Trapper"` path.
+
+The fixed line adds 16-bit handlers for `F7 /4..7` and routes `66 F7` to them
+for register and memory operands. Validate from here by rerunning past batch
+`41790`; the old GSK MessageBox at `0x0040319f -> 0x00402ca0` should disappear.
+
+Validation result: the old GSK path is gone in a 120k-batch run
+(`/tmp/rct-after-div16-fix-120k.log`), with zero hits at `0x00429034` and
+`0x00402ca0`. The current stop is a different bad-transfer path:
+`EIP=0x00012601`, `dbg_prev_eip=0x00012601`, stack top `[esp+0]=0x004301ae`.
+Trace the first transfer into `0x00012601` next; this is no longer the
+16-bit `DIV` false exception.
+
+Follow-up trace: the bad transfer is a corrupted return from `0x00457eb2`.
+The return slot at `0x03fffec8` is valid on entry to `0x00457d3c`
+(`0x009026b9`, caller `0x009026b4`), then the generated draw helper called at
+`0x00457e41 -> 0x008fb38b` overwrites it byte-by-byte. The concrete writer is
+the generated inner loop at `0x008fb75c`, with `EDI` walking into
+`0x03fffec8`.
+
+At entry to the inner draw routine (`0x008fb660`), the generated globals are
+already wrong for a bounded copy: `[0x008e9028]=0` (width),
+`[0x008e902c]=1` (height). The loop at `0x008fb72b` loads `CX=0`, decrements to
+`0xffff`, and copies past the 64-byte stack buffer. Next trace target is the
+clipping branch state immediately before `0x008fb5d2 call 0x008fb660`; determine
+whether the zero width comes from a 16-bit flags/Jcc emulator bug or bad guest
+draw metadata/clip inputs.
+
+---
+
 ## Phase B finding — tile walker writes ZERO pixels (2026-04-29)
 
 Hit counts over a 300 K-batch run from a clean boot:
@@ -249,7 +290,7 @@ Slots 4..N are zeros — only 4 valid types.
 
 ---
 
-## DDraw flow (verified pre-Phase-B)
+## DDraw / frame presentation (updated 2026-05-06)
 
 RCT loads DDraw dynamically via `LoadLibraryA + GetProcAddress` (no static
 import). Sequence observed:
@@ -260,9 +301,135 @@ import). Sequence observed:
 4. `CreateSurface` × 3 (primary + 2 offscreen)
 5. `SetPalette`, one `BitBlt` (splash logo via LoadImageA → GDI blit to offscreen)
 
-**After the splash, ZERO further DDraw calls.** No `Lock`, `Unlock`, `Blt`,
-`Flip`. The dump of all three surface DIBs confirms they remain
-all-zero. Phase B never reaches a paint point.
+For the current branch, a focused `--trace-dx` run shows the game buffer flow:
+
+```
+[dx] BltRect dst=7 <- src=-1 dstR=NULL srcR=NULL
+[dx] Blt     dst=7 <- src=-1 COLORFILL dstDib=0x017f0d6c flags=0x1000400
+[dx] CFill   dst=7 color=0x0 at=0,0
+[dx] BltRect dst=8 <- src=-1 dstR=NULL srcR=NULL
+[dx] Blt     dst=8 <- src=-1 COLORFILL dstDib=0x017f2d74 flags=0x1000400
+[dx] CFill   dst=8 color=0x0 at=0,0
+[dx] Lock    slot=8 caps=OFFSCR dib=0x017f2d74 firstNonZero=-1
+[dx] Unlock  slot=8 caps=OFFSCR dib=0x017f2d74 firstNonZero=-1
+[dx] SetPal  palSlot=6 start=10 count=236 palWA=0x017f0964
+```
+
+After setup there are no frame-time DirectDraw `Blt`, `BltFast`, `Flip`,
+`Unlock`, or `Present` calls. RCT writes directly into the locked slot-8 DIB
+from custom x86 render code. The emulator-side presentation bridge now copies
+slot 8 into the renderer back-canvas when the primary stays blank; this is a
+display workaround, not the root fix.
+
+At 30k batches:
+
+| Slot | Kind | Size | DIB | State |
+|------|------|------|-----|-------|
+| 4 | primary | 640x480x8 | 0x017e3cdc | all zero |
+| 7 | offscreen logo | 128x64x8 | 0x017f0d6c | all zero |
+| 8 | offscreen game buffer | 640x480x8 | 0x017f2d74 | nonzero partial frame |
+
+Slot 8's visible pixels occupy bbox `434,0-633,132`. The renderer back-canvas
+has the exact same bbox, so the observed "chunk" is not a pitch/offset mistake
+in JS; it is the current guest-memory contents.
+
+At 120k batches the render counters climb much higher, but execution corrupts:
+
+```
+0x00431245 = 9336292
+0x00444374 = 9336292
+0x00444437 = 9336292
+EIP=0x00000081
+ESP=0xfbaf5808
+```
+
+The DirectDraw surfaces are then full of nonzero bytes that look like corrupt
+output. Current root problem is execution correctness in/after the software
+render loop, not DirectDraw API composition.
+
+### Bad return / data execution trace (2026-05-06)
+
+The low-EIP crash is preceded by execution falling into data, not by a
+DirectDraw call:
+
+- `0x008fb7d3` is real generated render-copy code. The local sequence ends at
+  `0x008fb7e6: ret`.
+- Normal hits at `0x008fb7e6` have an unaligned `ESP` and return to
+  `0x008fb5d7`, a helper epilogue (`pop edi; ret`).
+- Normal hits at `0x008fb5d7` then return through sane callers such as
+  `0x00457e46`.
+- The recurring `0x008e746e` address is inside a data table. Running from there
+  executes bytes that increment `EDX` and eventually `push esi`; trace-at showed
+  `ESP` decreasing by 4 and stack filling with `0x008e75e4` on repeated hits.
+
+The important trace artifacts are:
+
+```
+/tmp/rct-baseline-quiet.log
+/tmp/rct-dump-8e74.log
+/tmp/rct-dump-8fb7.log
+/tmp/rct-trace-8e746e.log
+/tmp/rct-trace-8fb7e6.log
+/tmp/rct-dump-8fb5.log
+/tmp/rct-trace-8fb5d7.log
+```
+
+`test/run.js` now has late/limited trace-at controls:
+
+```
+--trace-at-start-batch=N
+--trace-at-limit=N
+```
+
+Use those instead of high-volume full-run `--trace-at` when chasing this path.
+`--trace-at-start-batch` delays both arming and logging, which avoids
+perturbing the hot generated-code path before the failure window. Also note
+that the trace-at stack print now uses exact unaligned dword reads; older logs
+printed `[esp..]` via aligned `Uint32Array` indexing and can be misleading when
+RCT's generated helpers use byte-unaligned `ESP`.
+
+### Root cause and fix: `66 8F /0` decoded as POP m32 (2026-05-07)
+
+The first true bad transfer was not from the generated blitter `ret`; it was
+from the RCT epilogue at `0x00557c96`:
+
+```
+0x00557c96: ret
+before fix: [esp+0] = 0x008e746c
+after fix:  [esp+0] = 0x00557a04
+```
+
+The enclosing function (`0x00557bbc`) restores a mixed 16/32-bit stack frame:
+
+```
+0x00557c4a  66 8f 05 ...   pop m16
+...
+0x00557c6d  8f 05 ...      pop m32
+0x00557c73  66 5d          pop bp
+...
+0x00557c96  c3             ret
+```
+
+The `0x8F` decoder path ignored operand-size prefix `0x66`, so each
+`66 8F /0` memory pop consumed 4 bytes instead of 2. `src/07-decoder.wat` now
+emits handler 268 for `66 8F /0` memory operands and handler 182 for
+`66 8F /0 mod=3`.
+
+Post-fix status:
+
+- The `0x008e746c` / `0x008e746e` data-execution path is gone in focused runs.
+- RCT reaches a missing `mmioSeek` after the decoder fix; that API is now
+  present and routes to `host_fs_set_file_pointer`.
+- A 120k-batch run reaches RCT's own exception trapper MessageBox:
+
+```
+"GSK Exception Trapper": "Exception Raised - Unspecified"
+EIP=0x042006e0
+dbg_prev_eip=0x00402cf8
+```
+
+That is the current blocker. The next trace should break around the exception
+raise/trapper path (`0x00428ede`, `0x00402cf8`) and dump SEH state and arguments.
 
 ---
 
@@ -282,9 +449,47 @@ Hypothesis ladder, cheapest to most invasive:
    gated on a window-message (WM_PAINT) that our loop never delivers because
    GetMessageA was never reached.
 
-Step 2 is the right next move. The cursor `[0x5706a4]` is a 4-byte global; a
-single `--watch=0x5706a4 --watch-log` from boot will show every writer up to
-the moment Phase B starts.
+Step 2 was the right next move for the older no-rendering state. On the current
+branch, the `0x008e746c` data-return bug is fixed. Next useful traces should
+follow the new GSK exception-trapper path rather than the old generated-helper
+return chain.
+
+### Generated draw helper cache invalidation (2026-05-07)
+
+After adding real 16-bit `66 F7 /4..7` semantics, the GSK trapper path stopped
+reproducing in the 120k-batch run. The new failure is a low-address return:
+
+```
+STUCK at EIP=0x00012601
+prev_eip=0x00457eb2
+return slot before generated call: 0x009026b9
+return slot after overwrite:       0x00012601
+```
+
+The overwrite happens inside generated draw code around `0x008fb75c` with
+`EDI` pointing into the caller's stack frame. The generated bytes in memory
+still contain the clipping guards:
+
+```
+0x008fb561  79 21    jns ...
+0x008fb56a  78 6b    js  ...
+0x008fb56c  74 69    jz  ...
+```
+
+But the cached translated path executed from `0x008fb575`, skipping those
+guards and reaching the inner copy with width zero. That points at stale
+translation for self-modifying/generated code, not at a missing branch
+instruction implementation.
+
+Current fix under validation:
+
+- `cache_store` marks image-data pages once they are translated as code.
+- `gs8/gs16/gs32` invalidate writes inside the loaded image. A narrower
+  `.text` plus executed-generated-page invalidator still let this stale helper
+  path reproduce, likely because the rewrite can happen before the page is
+  recorded as generated code.
+- Fast bulk string ops now invalidate the destination range before
+  `memory.copy` / `memory.fill`; the slow `REP STOSD` path uses `gs32`.
 
 ---
 

@@ -50,6 +50,50 @@
 
 **Meaning:** the investigation can now stop blaming the software renderer itself. The remaining correctness work is to replace the current compatibility fallback with a proper present path that promotes the real game buffer to the visible surface without needing PNG-time intervention.
 
+**2026-05-07 update — GSK trap traced to missing 16-bit `F7` semantics.**
+
+- The old data-execution crash at `0x008e746c` is fixed by decoding `66 8F /0`
+  as 16-bit `POP r/m16` instead of 32-bit `POP r/m32`.
+- After that fix and `mmioSeek`, the next blocker was RCT's own
+  `"GSK Exception Trapper"` MessageBox at batch `41790`.
+- Focused trace shows this was not an imported `RaiseException`; it was our
+  hardware-SEH path landing in RCT's `__except` body at `0x0040319f`.
+- The faulting guest instruction is `0x00429034: 66 f7 f1` (`div cx`). At
+  `0x00429031`, the live operands are `AX=0x0204`, `DX=0x0000`, `CX=0x00ff`,
+  which is a valid 16-bit division. The stale upper half of EDX is `0xffff`,
+  so the 32-bit `DIV` handler incorrectly saw a huge `EDX:EAX` dividend and
+  raised `#DE`.
+- Action landed: `66 F7 /4..7` now routes to 16-bit MUL/IMUL/DIV/IDIV handlers
+  for both register and memory operands. Handler table/cache guard now = `288`.
+- Validation after the fix: `build/wine-assembly.wasm` compiles and a
+  120k-batch RCT run no longer hits `0x00429034` or the GSK wrapper
+  `0x00402ca0`. The next blocker is a new low-address execution stop:
+  `EIP=0x00012601`, `dbg_prev_eip=0x00012601`, with `[esp+0]=0x004301ae`.
+  The next trace should catch the first branch/return into `0x00012601` and
+  inspect the caller around `0x004301ae`.
+
+**2026-05-07 follow-up — low-address stop is a generated draw overwrite.**
+
+- The transfer to `0x00012601` is a `ret` from `0x00457eb2`. The stack return
+  slot at `0x03fffec8` originally held the valid generated-code return
+  `0x009026b9`, from caller `0x009026b4`.
+- Function `0x00457d3c` builds an 8x8 stack buffer at `0x03fffe78` and calls
+  the generated sprite/glyph draw helper at `0x008fb38b` with descriptor
+  `0x03fffeb8 = {buf=0x03fffe78, x=0, y=0, w=8, h=8}`.
+- A watchpoint on `0x03fffec8` shows generated code writing through `EDI` into
+  the return-address dword at `0x008fb75c`. The bytes change from
+  `0x009026b9 -> 0x00902601 -> 0x00012601`.
+- The inner draw helper at `0x008fb660` enters with generated globals
+  `[0x008e9028]=0` (width), `[0x008e902c]=1` (height). The width-copy loop then
+  loads `CX=0`, decrements it to `0xffff`, and walks far past the 64-byte stack
+  buffer.
+
+**Next concrete probe:** prove whether the zero width is caused by an emulator
+flag/Jcc bug in the generated clipping code around `0x008fb584..0x008fb5d2`,
+or by bad guest draw metadata/clip inputs that real RCT would normally avoid.
+The useful dump point is the call to `0x008fb660` / trace at `0x008fb660`,
+dumping `0x008e9010:48`, `0x03fffeb8:32`, and the sprite metadata.
+
 **2026-04-30 follow-up — two stale assumptions corrected, one host-side bug fixed.**
 
 - The `0x00430344` trace needs careful reading: that address is the `pop eax` immediately before the compare, not the compare itself. Live trace shows stack-top `0x00000003` at `0x00430344`, so after the pop the compare is effectively `cmp ax, [0x00836522]` with both sides = `3`. The old "slot stays zero" theory is stale on the current branch.
@@ -341,6 +385,155 @@ RCT uses DirectDraw for display mode selection and surface management, but its r
 - **DirectInput** — keyboard and mouse via GetDeviceState
 - **DirectPlay** — multiplayer enumeration (stub)
 
+## Current rendering trace (2026-05-06)
+
+The old "no rendering" diagnosis is stale on this branch. A 30k-batch run now
+reaches the sprite renderer:
+
+```
+0x00431245 = 393221
+0x00444374 = 918608
+0x00444437 = 1441812
+```
+
+DirectDraw API tracing shows only setup-time surface operations:
+
+```
+[dx] BltRect dst=7 <- src=-1 COLORFILL
+[dx] BltRect dst=8 <- src=-1 COLORFILL
+[dx] Lock    slot=8 caps=OFFSCR dib=0x017f2d74 firstNonZero=-1
+[dx] Unlock  slot=8 caps=OFFSCR dib=0x017f2d74 firstNonZero=-1
+[dx] SetPal  palSlot=6 start=10 count=236 palWA=0x017f0964
+```
+
+After that, RCT does not call `Blt`, `BltFast`, `Flip`, `Unlock`, or any other
+DirectDraw present method for the frame. Its custom x86 renderer writes directly
+into the DIB pointer returned by `IDirectDrawSurface::Lock`.
+
+Surface state at 30k batches:
+
+| Slot | Kind | Size | DIB | State |
+|------|------|------|-----|-------|
+| 4 | primary | 640x480x8 | 0x017e3cdc | all zero |
+| 7 | offscreen logo | 128x64x8 | 0x017f0d6c | all zero |
+| 8 | offscreen game buffer | 640x480x8 | 0x017f2d74 | real partial frame |
+
+The valid non-black pixels in slot 8 occupy `434,0-633,132`; the renderer
+back-canvas has the exact same bbox. That means the visible "chunk" is not a
+JS presentation offset/pitch bug. It is exactly what exists in guest memory at
+the stop point.
+
+A longer 120k-batch run makes the render counters climb to `9336292`, but ends
+with corrupted control flow:
+
+```
+EIP=0x00000081
+ESP=0xfbaf5808
+```
+
+By that point the DirectDraw surfaces are full of nonzero bytes that look like
+corruption/garbage, while the live back-canvas still shows the earlier valid
+chunk. Current blocker: execution correctness inside or just after RCT's
+software render loop, not DirectDraw composition.
+
+Follow-up control-flow trace:
+
+- Baseline before the low-EIP crash passes through generated render-copy code
+  at `0x008fb7d3`, then helper epilogue code around `0x008fb5d7`.
+- `0x008fb7e6` is a real `ret`. With exact unaligned stack reads, normal hits
+  return to `0x008fb5d7` (`pop edi; ret`), and normal `0x008fb5d7` hits return
+  to a sane caller such as `0x00457e46`.
+- The repeated `0x008e746e` state is not code. Dump/disasm of
+  `0x008e7400..0x008e7600` shows a data table; accidental execution through it
+  runs byte sequences that increment `EDX` and repeatedly `push esi`, steadily
+  consuming stack until the later `EIP=0x00000081` failure.
+- Heavy `--trace-at` runs perturb the exact failure path, so `test/run.js` now
+  supports `--trace-at-start-batch=N` (delays arming and logging) and
+  `--trace-at-limit=N`, and prints stack dwords via exact unaligned reads
+  instead of aligned `Uint32Array` indexing.
+
+Current inference: the visible chunk is a real partial frame. The next bug is a
+bad/corrupted return address somewhere in or just after the generated render
+helper chain, not a DirectDraw present bug and not a simple aligned-stack print
+artifact.
+
+**2026-05-07 fix — `66 8F /0` POP r/m16 decoder bug.**
+
+The bad return source is now identified and fixed. The first real transfer into
+the data table was:
+
+```
+0x00557c96: ret
+[esp+0] = 0x008e746c
+```
+
+The enclosing RCT function at `0x00557bbc` uses an epilogue with five
+operand-size-prefixed memory pops:
+
+```
+66 8f 05 ...   ; pop m16
+```
+
+The decoder's `0x8F` path ignored `0x66`, emitting `pop m32` instead of
+`pop m16`. That over-advanced `ESP`, so `ret` consumed a viewport/data pointer
+as a code address. `src/07-decoder.wat` now routes `66 8F /0` to handler 268
+(`POP [addr] 16-bit`) and `66 8F /0 mod=3` to handler 182 (`POP r16`).
+
+Validation after the fix:
+
+- At `0x00557c96`, `[esp+0]` is now `0x00557a04`, not `0x008e746c`.
+- The `0x008e746c` / `0x008e746e` data-execution path no longer reproduces in
+  the focused run.
+- A 120k-batch run no longer hits `EIP=0x00000081` or the `mmioSeek` fallback.
+  It now reaches RCT's own exception-trapper MessageBox path after 48k API
+  calls, ending stuck in the MessageBox thunk (`EIP=0x042006e0`) with:
+
+```
+"GSK Exception Trapper": "Exception Raised - Unspecified"
+```
+
+`mmioSeek` was the next missing host API after the decoder fix; it is now wired
+through `host_fs_set_file_pointer`.
+
+**2026-05-07 follow-up — generated draw helper cache invalidation.**
+
+After fixing 16-bit `F7` divide semantics, the GSK trapper no longer appears in
+the 120k-batch run. The next stop is a low-address return:
+
+```
+STUCK at EIP=0x00012601
+prev_eip=0x00457eb2
+[esp+0]=0x004301ae
+```
+
+The return slot was overwritten while executing RCT-generated drawing code near
+`0x008fb75c`. A byte dump of the generated helper shows the clipping guards are
+present in memory (`jns` / `js` / `jz` around `0x008fb561..0x008fb56c`), but the
+translated cached block entered at `0x008fb575` and skipped them. That makes the
+helper call the inner copy with width zero, underflowing to `0xffff` and
+copying past the local 8x8 stack buffer.
+
+Current emulator change under test: track executed image-data pages as generated
+code and invalidate translated blocks when later stores touch them. Bulk string
+operations (`REP MOVSB/MOVSD/STOSB/STOSD`) now invalidate destination code pages
+before using `memory.copy` / `memory.fill`, because those paths bypass the
+normal `gs*` store helpers.
+
+Validation note: the first narrow version, which invalidated only `.text` plus
+already-executed generated pages, still reproduced the stale path. The current
+compiled variant widens the invalidator to all writes inside the loaded image,
+because RCT can rewrite a generated helper before that page has been observed
+and recorded as generated code.
+
+Useful artifacts from this session:
+
+```
+/tmp/rct-dx.log
+/tmp/rct-trace-ddraw/manifest.json
+/tmp/rct-trace-ddraw/dx_08_offscreen_640x480_8bpp.png
+/tmp/rct-long-ddraw/manifest.json
+```
+
 ## COM objects
 
 | Guest addr | Slot | Type | Notes |
@@ -357,7 +550,12 @@ RCT uses DirectDraw for display mode selection and surface management, but its r
 
 ## Next steps
 
-1. **Trace copy loop destination** — instrument 0x00444600 to log ESI source; find which allocation or computation produces the thunk-zone address
-2. **Fix memory collision** — either increase WASM memory to 256MB, or find and fix the pointer that leads into the thunk zone
-3. **Fix GetSystemPaletteEntries** — DONE (2026-04-16). Now returns standard 20 reserved system colors for indices 0-9 and 246-255.
-4. **Verify palette update** — once rendering works, confirm SetEntries loads the real palette
+1. **Trace slot-8 DIB writes** — watch `0x017f2d74` and sampled row offsets
+   while breaking/logging at `0x00444437`; find when the partial frame turns
+   into full-surface corruption.
+2. **Trace the new exception path** — break around `0x00428ede` /
+   `0x00402cf8` and dump the SEH/exception arguments that lead to the GSK
+   Exception Trapper MessageBox.
+3. **Keep DirectDraw as a presentation bridge only** — there are no frame-time
+   DDraw blits to fix for RCT after setup.
+4. **Fix GetSystemPaletteEntries** — DONE (2026-04-16). Now returns standard 20 reserved system colors for indices 0-9 and 246-255.

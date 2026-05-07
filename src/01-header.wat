@@ -727,6 +727,10 @@
   ;; Guest code section bounds (set by PE loader)
   (global $code_start (mut i32) (i32.const 0))
   (global $code_end   (mut i32) (i32.const 0))
+  ;; Guest pages outside .text that have been executed and cached. Some apps
+  ;; generate code into image data; writes to these pages must invalidate cache.
+  (global $generated_code_start (mut i32) (i32.const 0))
+  (global $generated_code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
   (global $thread_alloc (mut i32) (i32.const 0x03E52000))  ;; = THREAD_BASE

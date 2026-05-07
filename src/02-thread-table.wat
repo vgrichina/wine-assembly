@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 282 funcref)
+  (table $handlers 288 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -334,5 +334,10 @@
     $th_test_r16_i16       ;; 279: test r16, imm16 (op=reg, imm in next word)
     $th_xlat               ;; 280: XLAT — AL = [EBX + AL] (zero-ext AL as offset)
     $th_unary_m16          ;; 281: 16-bit unary [addr] (op=0/1/2/3 for inc/dec/not/neg, addr next word)
+    $th_mul16              ;; 282: MUL AX by r16 -> DX:AX
+    $th_imul16             ;; 283: IMUL AX by r16 -> DX:AX
+    $th_div16              ;; 284: DIV DX:AX by r16 -> AX quotient, DX remainder
+    $th_idiv16             ;; 285: IDIV DX:AX by r16
+    $th_muldiv_m16         ;; 286: 16-bit MUL/IMUL/DIV/IDIV [addr] (op=type, addr next word)
+    $th_muldiv_m16_ro      ;; 287: 16-bit MUL/IMUL/DIV/IDIV [base+disp] (op=type<<4|base, disp next word)
   )
-

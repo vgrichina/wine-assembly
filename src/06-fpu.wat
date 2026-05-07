@@ -845,10 +845,10 @@
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0x7)))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))))
-    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
-    (global.set $flag_sign_shift (i32.const 15))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $gs16 (local.get $addr) (local.get $val))))
+    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
+    (global.set $flag_sign_shift (i32.const 15))
     (return_call $next))
   ;; 161: r16 OP= [base+disp] (op=alu_op<<8|reg<<4|base, disp in word)
   (func $th_alu_r16_m16_ro (param $op i32)
@@ -869,10 +869,10 @@
     (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0x7)))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))))
-    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
-    (global.set $flag_sign_shift (i32.const 15))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $gs16 (local.get $addr) (local.get $val))))
+    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
+    (global.set $flag_sign_shift (i32.const 15))
     (return_call $next))
   ;; 163: mov [addr], r16 (op=reg, addr in next word)
   (func $th_mov_m16_r16 (param $op i32)
@@ -950,9 +950,9 @@
     (local $addr i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl16 (local.get $addr)) (local.get $imm)))
+    (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))
-    (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (return_call $next))
   (func $th_load8s (param $op i32)
     (local $v i32) (local.set $v (call $gl8 (call $read_addr)))
@@ -1097,9 +1097,9 @@
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (local.get $imm)))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))
-    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (return_call $next))
 
   ;; 133: mov [base+disp], imm32. op=base, disp+imm in next words.
@@ -1266,5 +1266,4 @@
 
             (func $th_emms (param $op i32)
             (global.set $fpu_tag (i32.const 0)) (return_call $next))
-
 

@@ -71,6 +71,8 @@ const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
+const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
+const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -97,12 +99,16 @@ const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break 
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
 const TRACE_AT_DUMP = getArg('trace-at-dump', null); // --trace-at-dump=0xADDR:LEN[,0xADDR:LEN,...]: hexdump these regions on each --trace-at hit
+const TRACE_AT_START_BATCH = parseInt(getArg('trace-at-start-batch', '0'), 10) || 0; // delay --trace-at logging until batch N
+const TRACE_AT_LIMIT = parseInt(getArg('trace-at-limit', '0'), 10) || 0; // stop logging after N --trace-at hits (0 = unlimited)
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
 const WATCH_SPEC = getArg('watch', null);    // --watch=0xADDR: break on memory change (dword)
 const WATCH_BYTE = getArg('watch-byte', null);   // --watch-byte=0xADDR: byte-granularity watch
 const WATCH_WORD = getArg('watch-word', null);   // --watch-word=0xADDR: 16-bit watch
 const WATCH_VALUE = getArg('watch-value', null); // --watch-value=0xVAL: only break when watch becomes this value
 const WATCH_LOG = hasFlag('watch-log');          // --watch-log: log each change and keep running (no debug prompt)
+const WATCH_START_BATCH = parseInt(getArg('watch-start-batch', '0'), 10) || 0; // delay arming --watch until batch N
+const WATCH_JS_ONLY = hasFlag('watch-js-only');  // --watch-js-only: sample in JS only; do not arm WAT watchpoint
 const TRACE_AT_WATCH = hasFlag('trace-at-watch'); // --trace-at-watch: diff --trace-at-dump regions vs previous hit, show changed bytes
 const SHOW_CSTRING = getArg('show-cstring', null); // --show-cstring=0xADDR[,0xADDR...]: decode MFC CString at these addrs in trace-at and debug prompt
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
@@ -192,6 +198,10 @@ const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
   const addr = /\+/.test(a) ? 0 : (parseInt(a, 16) >>> 0); // resolved later if module-relative
   return { addr, spec: a, len: parseInt(l) || 64, prev: null };
+}) : [];
+const traceEipDumps = TRACE_EIP_DUMP ? TRACE_EIP_DUMP.split(',').map(s => {
+  const [a, l] = s.split(':');
+  return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 32 };
 }) : [];
 const showCStringAddrs = SHOW_CSTRING ? SHOW_CSTRING.split(',').map(s => parseInt(s, 16) >>> 0) : [];
 const breakApis = BREAK_API ? BREAK_API.split(',') : [];
@@ -870,7 +880,25 @@ async function main() {
 
   if (traceEipOn) {
     h.log_eip = (eip) => {
-      logs.push(`[EIP] ${hex(eip >>> 0)}`);
+      let line = `[EIP] ${hex(eip >>> 0)}`;
+      if (TRACE_EIP_DETAIL && instance && instance.exports) {
+        line += ` ${regs()}`;
+        const e = instance.exports;
+        if (e.get_flag_res && e.get_flag_op && e.get_flag_a && e.get_flag_b && e.get_flag_sign_shift) {
+          line += ` flags{op=${e.get_flag_op()} a=${hex(e.get_flag_a())} b=${hex(e.get_flag_b())} res=${hex(e.get_flag_res())} sh=${e.get_flag_sign_shift()}}`;
+        }
+        if (traceEipDumps.length) {
+          const dv = new DataView(memory.buffer);
+          for (const d of traceEipDumps) {
+            const bytes = [];
+            for (let off = 0; off < d.len; off++) {
+              bytes.push(dv.getUint8(g2w((d.addr + off) >>> 0)).toString(16).padStart(2, '0'));
+            }
+            line += ` mem[${hex(d.addr)}:${d.len}]=${bytes.join(' ')}`;
+          }
+        }
+      }
+      logs.push(line);
     };
   }
 
@@ -1599,7 +1627,9 @@ async function main() {
   if (watchAddr) {
     const sizeName = { 1: 'byte', 2: 'word', 4: 'dword' }[watchSize];
     const extra = extraWatchAddrs.length ? ` +${extraWatchAddrs.length} more (JS fan-out)` : '';
-    console.log(`Watchpoint set: ${hex(watchAddr)} (${sizeName}, checked every block)${extra}`);
+    const delayed = WATCH_START_BATCH > 0 ? `, delayed until batch ${WATCH_START_BATCH}` : '';
+    const mode = WATCH_JS_ONLY ? 'JS-sampled' : 'checked every block';
+    console.log(`Watchpoint set: ${hex(watchAddr)} (${sizeName}, ${mode}${delayed})${extra}`);
   }
   const readGuestSized = (addr) => {
     const wa = g2w(addr);
@@ -1612,13 +1642,19 @@ async function main() {
     extraWatchPrev = extraWatchAddrs.map(a => readGuestSized(a) >>> 0);
   }
 
+  let watchActive = false;
   const activateWatchpoint = () => {
     if (!watchAddr) return;
-    if (instance.exports.set_watchpoint_size) instance.exports.set_watchpoint_size(watchSize);
-    instance.exports.set_watchpoint(watchAddr);
-    watchPrevVal = instance.exports.get_watch_val();
+    if (!WATCH_JS_ONLY) {
+      if (instance.exports.set_watchpoint_size) instance.exports.set_watchpoint_size(watchSize);
+      instance.exports.set_watchpoint(watchAddr);
+      watchPrevVal = instance.exports.get_watch_val();
+    } else {
+      watchPrevVal = readGuestSized(watchAddr) >>> 0;
+    }
+    watchActive = true;
   };
-  activateWatchpoint();
+  if (!WATCH_START_BATCH) activateWatchpoint();
 
   // Arm shadow call-stack (--trace-callstack). Gated WAT-side so off-runs pay
   // zero cost in the hot path.
@@ -1641,8 +1677,15 @@ async function main() {
 
   const checkWatchpoint = (batch) => {
     if (!watchAddr) return false;
+    if (!watchActive) {
+      if (batch < WATCH_START_BATCH) return false;
+      activateWatchpoint();
+      console.log(`Watchpoint armed at batch ${batch}: ${hex(watchAddr)} = ${hex(watchPrevVal)}`);
+      if (extraWatchAddrs.length) extraWatchPrev = extraWatchAddrs.map(a => readGuestSized(a) >>> 0);
+      return false;
+    }
     let hit = false;
-    const newVal = instance.exports.get_watch_val();
+    const newVal = WATCH_JS_ONLY ? (readGuestSized(watchAddr) >>> 0) : instance.exports.get_watch_val();
     if (newVal !== watchPrevVal) {
       const filtered = watchFilterVal !== null && (newVal >>> 0) !== (watchFilterVal >>> 0);
       if (!filtered) {
@@ -2456,8 +2499,10 @@ async function main() {
     if (breakAddrs.length === 1 && batch === 0 && instance.exports.set_bp) {
       instance.exports.set_bp(breakAddrs[0]);
     }
-    // --trace-at: arm set_bp once (mutually exclusive with --break; --break wins)
-    if (traceAtAddr && !breakAddrs.length && batch === 0 && instance.exports.set_bp) {
+    // --trace-at: arm set_bp once (mutually exclusive with --break; --break wins).
+    // If --trace-at-start-batch is set, delay arming too; otherwise early
+    // breakpoints can perturb hot generated-code paths before we need data.
+    if (traceAtAddr && !breakAddrs.length && batch === TRACE_AT_START_BATCH && instance.exports.set_bp) {
       instance.exports.set_bp(traceAtAddr);
     }
     // --trace-esp: arm range once
@@ -2587,26 +2632,42 @@ async function main() {
       }
       // --trace-at: one-line register dump per hit, no stop (matches any addr in traceAtAddrs)
       if (traceAtAddrs.length && traceAtAddrs.includes(eipNow >>> 0)) {
-        traceAtHits++;
-        const e = instance.exports;
-        const esp = e.get_esp() >>> 0;
-        const wEsp = g2w(esp);
-        const mem32 = new Uint32Array(memory.buffer);
-        let stk = '';
-        for (let i = 0; i < 6; i++) stk += hex(mem32[(wEsp >> 2) + i]) + ' ';
-        console.log(`[TRACE-AT #${traceAtHits}] ${regs()} [esp..]=${stk}`);
-        dumpCallstack('T0', e);
-        for (const d of traceAtDumps) {
-          if (TRACE_AT_WATCH && d.prev) {
-            d.prev = hexdumpDiff(d.addr, d.len, d.prev);
-          } else {
-            hexdump(d.addr, d.len);
-            if (TRACE_AT_WATCH) d.prev = readBytes(d.addr, d.len);
+        const shouldLog =
+          batch >= TRACE_AT_START_BATCH &&
+          (!TRACE_AT_LIMIT || traceAtHits < TRACE_AT_LIMIT);
+        if (shouldLog) {
+          traceAtHits++;
+          const e = instance.exports;
+          const esp = e.get_esp() >>> 0;
+          const dv = new DataView(memory.buffer);
+          let stk = '';
+          for (let i = 0; i < 6; i++) {
+            const addr = (esp + i * 4) >>> 0;
+            stk += `[esp+${i * 4}]=${hex(dv.getUint32(g2w(addr), true))} `;
           }
+          let prevInfo = '';
+          if (e.get_dbg_prev_eip) prevInfo += ` prev_eip=${hex(e.get_dbg_prev_eip())}`;
+          if (e.get_bp_first_caller) prevInfo += ` bp_first_caller=${hex(e.get_bp_first_caller())}`;
+          let flagInfo = '';
+          if (e.get_flag_res && e.get_flag_op && e.get_flag_a && e.get_flag_b && e.get_flag_sign_shift) {
+            flagInfo = ` flags{op=${e.get_flag_op()} a=${hex(e.get_flag_a())} b=${hex(e.get_flag_b())} res=${hex(e.get_flag_res())} sh=${e.get_flag_sign_shift()}}`;
+          }
+          console.log(`[TRACE-AT #${traceAtHits}] batch=${batch} ${regs()}${prevInfo}${flagInfo} ${stk}`);
+          dumpCallstack('T0', e);
+          for (const d of traceAtDumps) {
+            if (TRACE_AT_WATCH && d.prev) {
+              d.prev = hexdumpDiff(d.addr, d.len, d.prev);
+            } else {
+              hexdump(d.addr, d.len);
+              if (TRACE_AT_WATCH) d.prev = readBytes(d.addr, d.len);
+            }
+          }
+          const cs = showCStrings();
+          if (cs) console.log(cs);
         }
-        const cs = showCStrings();
-        if (cs) console.log(cs);
-        if (e.set_bp) e.set_bp(traceAtAddr);
+        if (instance.exports.set_bp && (!TRACE_AT_LIMIT || traceAtHits < TRACE_AT_LIMIT)) {
+          instance.exports.set_bp(traceAtAddr);
+        }
       }
     }
 

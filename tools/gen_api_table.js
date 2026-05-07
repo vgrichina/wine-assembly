@@ -436,6 +436,8 @@ const extra = [
   { name: 'GetRgnBox', nargs: 2 },
   // MSVCRT — binary search with guest-callback comparator (CACA000C continuation).
   { name: 'bsearch', nargs: 5 },
+  // WINMM — RIFF file seek used by RCT after the 16-bit POP decoder fix.
+  { name: 'mmioSeek', nargs: 3 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
