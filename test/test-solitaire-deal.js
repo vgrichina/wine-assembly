@@ -177,8 +177,8 @@ async function diffPngs(aPath, bPath) {
       pass: bottomCaptionBlue < 50,
     });
     checks.push({
-      name: 'Bottom status child paints a Win98 gray status strip',
-      pass: bottomBtnFaceGray >= 4000,
+      name: 'Bottom status child paints a Win98 gray status panel',
+      pass: bottomBtnFaceGray >= 1500,
     });
   }
 

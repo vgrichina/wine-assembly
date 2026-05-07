@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
@@ -55,11 +56,36 @@ const baseSize = sizeOf(basePng);
 const midSize = sizeOf(midPng);
 const endSize = sizeOf(endPng);
 
+function statusTextPixels(pngPath) {
+  if (!fs.existsSync(pngPath)) return 0;
+  const img = PNG.sync.read(fs.readFileSync(pngPath));
+  let count = 0;
+  const bands = [
+    [14, 85],   // Score
+    [96, 160],  // Moves
+    [176, 280], // Rows Remaining
+    [290, 365], // Suits Removed
+  ];
+  for (const [x1, x2] of bands) {
+    for (let y = img.height - 18; y < img.height - 9; y++) {
+      for (let x = x1; x < x2; x++) {
+        const i = (y * img.width + x) * 4;
+        const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+        if (!(r === 0 && g === 128 && b === 0)) count++;
+      }
+    }
+  }
+  return count;
+}
+
+const statusPixels = statusTextPixels(endPng);
+
 const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
   { name: 'baseline PNG written', pass: baseSize > 20000 },
   { name: 'mid-drag PNG written', pass: midSize > 20000 },
   { name: 'post-release PNG keeps full tableau', pass: endSize > 20000 },
+  { name: 'post-release PNG keeps Spider status text', pass: statusPixels > 500 },
   { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no crash marker', pass: !/CRASH|LinkError/.test(out) },
 ];
@@ -69,6 +95,6 @@ for (const c of checks) {
   console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
   if (!c.pass) failed++;
 }
-console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize}`);
+console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize} statusTextPixels=${statusPixels}`);
 console.log(`${checks.length - failed}/${checks.length} checks passed`);
 process.exit(failed ? 1 : 0);
