@@ -762,6 +762,10 @@ class WineAssembly {
               ms: self.renderer._profileNow() - runStart,
             });
           }
+          self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
+          if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
+            self.hostCtx.sharedGdi.presentBestDxOffscreen();
+          }
           if (self.renderer && self.renderer.flushRepaint) {
             self.renderer.flushRepaint(true);
           }
@@ -799,6 +803,10 @@ class WineAssembly {
           }
           if (self.threadManager.hasActiveThreads()) {
             self.threadManager.runSlice(Math.min(activeStepsPerSlice, 10000));
+            self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
+            if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
+              self.hostCtx.sharedGdi.presentBestDxOffscreen();
+            }
             if (self.renderer && self.renderer.flushRepaint) {
               self.renderer.flushRepaint(true);
             }

@@ -2982,15 +2982,12 @@
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32) (local $brush i32) (local $hdc i32) (local $wa i32) (local $partial i32)
     ;; Win98: BeginPaint sends WM_ERASEBKGND before returning. The default
-    ;; handler fills the client area with the class's hbrBackground. Our
-    ;; wndproc plumbing doesn't round-trip SendMessage cleanly for every
-    ;; hwnd, so do the default erase inline: dialogs default to COLOR_BTNFACE+1,
-    ;; other windows use the last-registered class brush. This is the
-    ;; single source of dialog/client background fill — it replaces both
-    ;; the old JS screen-canvas fallback and $dlg_fill_bkgnd creation-time
-    ;; hooks.
-    (local.set $brush (global.get $wndclass_bg_brush))
-    (if (i32.eqz (local.get $brush)) (then (local.set $brush (i32.const 16)))) ;; COLOR_BTNFACE+1
+    ;; handler fills the client area with this hwnd's registered class
+    ;; hbrBackground. A NULL hbrBackground means no default erase; the app owns
+    ;; the pixels. Do not use the last-registered class here: Solitaire's
+    ;; custom "Stat" child is created after the main class and must not change
+    ;; how unrelated hwnds erase.
+    (local.set $brush (call $wnd_get_bg_brush (local.get $arg0)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
@@ -3023,12 +3020,14 @@
     ;; is constrained by the update/visible region; erasing before the clip is
     ;; installed wipes too much during small invalidations (Spider card drags).
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-    (drop (call $host_gdi_fill_rect
-      (local.get $hdc)
-      (i32.const 0) (i32.const 0)
-      (i32.and (local.get $cs) (i32.const 0xFFFF))
-      (i32.shr_u (local.get $cs) (i32.const 16))
-      (local.get $brush)))
+    (if (local.get $brush)
+      (then
+        (drop (call $host_gdi_fill_rect
+          (local.get $hdc)
+          (i32.const 0) (i32.const 0)
+          (i32.and (local.get $cs) (i32.const 0xFFFF))
+          (i32.shr_u (local.get $cs) (i32.const 16))
+          (local.get $brush)))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -3561,7 +3560,7 @@
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
-    (global.set $eax (call $host_erase_background (local.get $arg0) (global.get $wndclass_bg_brush)))
+    (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)

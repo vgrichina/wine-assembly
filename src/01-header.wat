@@ -497,7 +497,8 @@
   ;; 0x00001000  4KB     Decoder scratch / ModRM result area
   ;; 0x00002000  4KB     UPDATE_RECT    (256 entries × 16 bytes — WAT-owned update bbox)
   ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
-  ;; 0x00003100  ~3.75KB Free
+  ;; 0x00003100  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
+  ;; 0x00003500  ~2.75KB Free
   ;; 0x00004000  12KB    API dispatch hash table (safe from guest writes via g2w)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
@@ -570,6 +571,7 @@
   ;; 256 entries × 24 bytes = 0x1800 (0x7000..0x8800)
   (global $WND_RECORDS   i32 (i32.const 0x00007000))
   (global $MAX_WINDOWS   i32 (i32.const 256))
+  (global $WND_BG_BRUSH_TABLE i32 (i32.const 0x00003100))
   ;; UPDATE_RECT / UPDATE_FLAGS: WAT-owned Win32 update-region state. We store
   ;; a bounding RECT per hwnd slot; JS is only asked to schedule canvas work.
   (global $UPDATE_RECT    i32 (i32.const 0x00002000))

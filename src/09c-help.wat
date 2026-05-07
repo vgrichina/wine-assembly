@@ -49,6 +49,7 @@
         (i32.store offset=16 (local.get $ptr) (i32.const 0))
         (i32.store offset=20 (local.get $ptr) (i32.const 0))
         ;; Clear parallel-table state for the recycled slot.
+        (call $wnd_bg_brush_reset_slot (local.get $empty))
         (call $nc_flags_reset_slot (local.get $empty))
         (call $title_table_reset_slot (local.get $empty))
         (call $client_rect_reset_slot (local.get $empty))
@@ -83,6 +84,7 @@
           (local.set $state (i32.load offset=20 (local.get $ptr)))
           (if (local.get $state) (then (call $heap_free (local.get $state))))
           ;; Drop parallel-table state tied to this slot.
+          (call $wnd_bg_brush_reset_slot (local.get $i))
           (call $nc_flags_reset_slot (local.get $i))
           (call $title_table_reset_slot (local.get $i))
           (call $client_rect_reset_slot (local.get $i))
@@ -173,6 +175,40 @@
       (then
         (i32.store offset=8 (call $wnd_record_addr (local.get $idx)) (local.get $parent))))
   )
+
+  ;; Per-window copy of WNDCLASS.hbrBackground. Win98 stores class metadata in
+  ;; USER and default WM_ERASEBKGND uses the class belonging to that hwnd, not a
+  ;; process-global "last registered class" value.
+  (func $wnd_bg_brush_reset_slot (param $slot i32)
+    (i32.store
+      (i32.add (global.get $WND_BG_BRUSH_TABLE) (i32.mul (local.get $slot) (i32.const 4)))
+      (i32.const 0)))
+
+  (func $wnd_set_bg_brush (param $hwnd i32) (param $brush i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store
+          (i32.add (global.get $WND_BG_BRUSH_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
+          (local.get $brush)))))
+
+  (func $wnd_get_bg_brush (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $WND_BG_BRUSH_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  (func $wnd_set_class_bg_brush_from_name (param $hwnd i32) (param $class_name_guest i32)
+    (local $slot i32)
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        ;; WNDCLASSA.hbrBackground is at +28 inside WNDCLASSA, i.e. class record +36.
+        (call $wnd_set_bg_brush
+          (local.get $hwnd)
+          (i32.load offset=36 (call $class_record_addr (local.get $slot)))))))
 
   ;; Owner hwnd for owned popup/top-level windows. This is deliberately
   ;; separate from parent: only WS_CHILD windows inherit geometry from parent.

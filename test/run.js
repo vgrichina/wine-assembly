@@ -2560,6 +2560,10 @@ async function main() {
       }
     }
 
+    if ((batch & 0x7f) === 0 && base.gdi && base.gdi.presentBestDxOffscreen) {
+      base.gdi.presentBestDxOffscreen();
+    }
+
     // Flush deferred repaint so back canvas composites after all GDI writes
     if (renderer && renderer.flushRepaint) renderer.flushRepaint();
 

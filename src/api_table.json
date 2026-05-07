@@ -994,14 +994,62 @@
     "name": "DrawTextA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4189274127
+    "hash": 4189274127,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "lpString",
+        "type": "LPCSTR_N",
+        "lengthFrom": "nCount"
+      },
+      {
+        "name": "nCount",
+        "type": "INT"
+      },
+      {
+        "name": "lpRect",
+        "type": "LPRECT"
+      },
+      {
+        "name": "uFormat",
+        "type": "flags:DT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 124,
     "name": "DrawTextW",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3887276985
+    "hash": 3887276985,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "lpString",
+        "type": "LPCWSTR_N",
+        "lengthFrom": "nCount"
+      },
+      {
+        "name": "nCount",
+        "type": "INT"
+      },
+      {
+        "name": "lpRect",
+        "type": "LPRECT"
+      },
+      {
+        "name": "uFormat",
+        "type": "flags:DT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 125,
@@ -1225,7 +1273,22 @@
     "name": "FillRect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 979982022
+    "hash": 979982022,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "lprc",
+        "type": "LPRECT"
+      },
+      {
+        "name": "hbr",
+        "type": "HBRUSH"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 157,
@@ -3760,7 +3823,34 @@
     "name": "PatBlt",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 221597160
+    "hash": 221597160,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "w",
+        "type": "INT"
+      },
+      {
+        "name": "h",
+        "type": "INT"
+      },
+      {
+        "name": "rop",
+        "type": "ROP"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 487,
@@ -4052,7 +4142,30 @@
     "name": "Rectangle",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 385702446
+    "hash": 385702446,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "left",
+        "type": "INT"
+      },
+      {
+        "name": "top",
+        "type": "INT"
+      },
+      {
+        "name": "right",
+        "type": "INT"
+      },
+      {
+        "name": "bottom",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 520,
@@ -4582,14 +4695,36 @@
     "name": "SetBkColor",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2711128575
+    "hash": 2711128575,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "color",
+        "type": "COLORREF"
+      }
+    ],
+    "ret": "COLORREF"
   },
   {
     "id": 590,
     "name": "SetBkMode",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 506799675
+    "hash": 506799675,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "mode",
+        "type": "BKMODE"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 591,
@@ -5042,7 +5177,18 @@
     "name": "SetTextColor",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3822662763
+    "hash": 3822662763,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "color",
+        "type": "COLORREF"
+      }
+    ],
+    "ret": "COLORREF"
   },
   {
     "id": 652,
@@ -5372,14 +5518,62 @@
     "name": "TextOutA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3988924089
+    "hash": 3988924089,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "lpString",
+        "type": "LPCSTR_N",
+        "lengthFrom": "c"
+      },
+      {
+        "name": "c",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 696,
     "name": "TextOutW",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4290921231
+    "hash": 4290921231,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "lpString",
+        "type": "LPCWSTR_N",
+        "lengthFrom": "c"
+      },
+      {
+        "name": "c",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 697,
@@ -7247,7 +7441,43 @@
     "name": "ExtTextOutA",
     "nargs": 8,
     "convention": "stdcall",
-    "hash": 2497760028
+    "hash": 2497760028,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "fuOptions",
+        "type": "DWORD"
+      },
+      {
+        "name": "lprc",
+        "type": "LPRECT"
+      },
+      {
+        "name": "lpString",
+        "type": "LPCSTR_N",
+        "lengthFrom": "cbCount"
+      },
+      {
+        "name": "cbCount",
+        "type": "INT"
+      },
+      {
+        "name": "lpDx",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 950,

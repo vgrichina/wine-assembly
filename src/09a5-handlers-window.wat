@@ -129,7 +129,8 @@
             (if (global.get $wndproc_addr)
               (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
               (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
-        (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3))))
+        (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
+        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1)))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
@@ -302,6 +303,7 @@
               (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (i32.const 0)))) ;; WM_CREATE
           (else
             (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))))))
+    (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.
@@ -1476,7 +1478,7 @@
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
-    (global.set $eax (call $host_erase_background (local.get $arg0) (global.get $wndclass_bg_brush)))
+    (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_NCPAINT (0x85): redraw chrome.  Handler reads title/style/flags
     ;; from WAT-side tables and paints into the back-canvas.
