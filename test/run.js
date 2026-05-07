@@ -1785,13 +1785,11 @@ async function main() {
           const cursor = we.get_edit_cursor ? we.get_edit_cursor(found) : 0;
           const sel = we.get_edit_sel_start ? we.get_edit_sel_start(found) : cursor;
           const flags = we.get_edit_flags ? we.get_edit_flags(found) : 0;
-          const blinkEpoch = we.get_edit_caret_blink_epoch ? we.get_edit_caret_blink_epoch() : 0;
-          const visibleUntil = we.get_edit_caret_visible_until ? we.get_edit_caret_visible_until() : 0;
           const len = we.get_edit_text_len ? we.get_edit_text_len(found) : n;
           const lineCount = we.send_message ? we.send_message(found, 0x00BA, 0, 0) : 1; // EM_GETLINECOUNT
           const firstVisible = we.send_message ? we.send_message(found, 0x00CE, 0, 0) : 0; // EM_GETFIRSTVISIBLELINE
           const label = ev.label ? ` ${ev.label}` : '';
-          logs.push(`[input] dump-main-edit-state${label}: hwnd=0x${found.toString(16)} len=${len} cursor=${cursor} sel=${sel} flags=0x${flags.toString(16)} blinkEpoch=${blinkEpoch} visibleUntil=${visibleUntil} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
+          logs.push(`[input] dump-main-edit-state${label}: hwnd=0x${found.toString(16)} len=${len} cursor=${cursor} sel=${sel} flags=0x${flags.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           const label = ev.label ? ` ${ev.label}` : '';
           logs.push(`[input] dump-main-edit-state${label}: NO EDIT at batch ${batch}`);

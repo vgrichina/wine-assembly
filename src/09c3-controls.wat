@@ -4496,7 +4496,19 @@
   ;;   +16  sel_anchor     selection anchor (== cursor → no selection)
   ;;   +20  scroll_top     reserved for multi-line (0 in single-line)
   ;;   +24  flags          bit0=multiline bit1=password bit2=readonly bit3=focused
+  ;;                       bit4=dragging selection bit5=caret visible
   ;;   +28  max_length     0 = unlimited
+
+  (func $edit_reset_caret_timer (param $hwnd i32) (param $state_w i32)
+    (global.set $tick_count (call $host_get_ticks))
+    (i32.store offset=24 (local.get $state_w)
+      (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x20)))
+    (call $timer_set (local.get $hwnd) (i32.const 0xCA47) (i32.const 530) (i32.const 0)))
+
+  (func $edit_stop_caret_timer (param $hwnd i32) (param $state_w i32)
+    (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
+    (i32.store offset=24 (local.get $state_w)
+      (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFDF))))
 
   ;; Right-shift n bytes by 1 (memmove src→src+1). Reverse copy so overlap is safe.
   (func $edit_memmove_right (param $src i32) (param $n i32)
@@ -4997,6 +5009,7 @@
       (then
         (if (local.get $state)
           (then
+            (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
             (local.set $state_w (call $g2w (local.get $state)))
             (if (i32.load (local.get $state_w))
               (then (call $heap_free (i32.load (local.get $state_w)))))
@@ -5040,8 +5053,7 @@
                                 (i32.const 0))))))
         (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x08))
           (then
-            (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))))
+            (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -5110,13 +5122,12 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0007))
       (then
         (global.set $focus_hwnd (local.get $hwnd))
-        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             (i32.store offset=24 (local.get $state_w)
-              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))))
+              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+            (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5128,8 +5139,27 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
+            (call $edit_stop_caret_timer (local.get $hwnd) (local.get $state_w))
             (i32.store offset=24 (local.get $state_w)
               (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_TIMER (0x0113) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0113))
+      (then
+        (if (i32.ne (local.get $wParam) (i32.const 0xCA47))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+        (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x08)))
+          (then
+            (call $edit_stop_caret_timer (local.get $hwnd) (local.get $state_w))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (return (i32.const 0))))
+        (i32.store offset=24 (local.get $state_w)
+          (i32.xor (local.get $flags) (i32.const 0x20)))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5152,8 +5182,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (i32.sub (local.get $lo) (i32.const 1))
                           (local.get $lo))))))
-            (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-            (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
+            (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
@@ -5162,19 +5191,17 @@
             (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01))
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
-                (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-                (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
                 (i32.store offset=24 (local.get $state_w)
                   (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+                (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
-        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+        (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5396,8 +5423,7 @@
         ;; Mark focused + drag-tracking bit 4 (0x10).
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
-	        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-	        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
+        (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
 	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
@@ -5760,16 +5786,9 @@
               (br $wrapped_loop)))
 
             (local.set $flags (i32.load offset=24 (local.get $state_w)))
-            (local.set $vk (call $host_get_ticks))
             (if (i32.and
                   (i32.and (local.get $flags) (i32.const 0x08))
-                  (i32.or
-                    (i32.lt_u (local.get $vk) (global.get $edit_caret_visible_until))
-                    (i32.eqz (i32.and
-                      (i32.div_u
-                        (i32.sub (local.get $vk) (global.get $edit_caret_blink_epoch))
-                        (i32.const 530))
-                      (i32.const 1)))))
+                  (i32.and (local.get $flags) (i32.const 0x20)))
               (then
                 (local.set $cur (i32.load offset=12 (local.get $state_w)))
                 (local.set $lo (call $edit_layout_line_for_char (local.get $total_lines) (local.get $cur)))
@@ -5876,8 +5895,9 @@
               (br $line_loop)))))
         ;; 4) Caret (only if focused — bit 3 of flags)
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
-        (local.set $vk (call $host_get_ticks))
-        (if (i32.and (local.get $flags) (i32.const 0x08))
+        (if (i32.and
+              (i32.and (local.get $flags) (i32.const 0x08))
+              (i32.and (local.get $flags) (i32.const 0x20)))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
             ;; Find which line the cursor is on and the offset within that line.
@@ -5897,13 +5917,7 @@
                 (i32.mul (i32.sub (local.get $cur) (local.get $lo)) (i32.const 8)))))
             (if (i32.and
                   (i32.ge_s (local.get $a) (i32.const 0))
-                  (i32.or
-                    (i32.lt_u (local.get $vk) (global.get $edit_caret_visible_until))
-                    (i32.eqz (i32.and
-                      (i32.div_u
-                        (i32.sub (local.get $vk) (global.get $edit_caret_blink_epoch))
-                        (i32.const 530))
-                      (i32.const 1)))))
+                  (i32.const 1))
               (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $px) (i32.const 4))
@@ -6055,10 +6069,9 @@
               (call $edit_insert_char (local.get $state_w) (local.get $vk))
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
-        (global.set $edit_caret_blink_epoch (call $host_get_ticks))
-        (global.set $edit_caret_visible_until (i32.add (call $host_get_ticks) (i32.const 530)))
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+        (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 

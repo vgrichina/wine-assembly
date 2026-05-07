@@ -37,7 +37,9 @@ const inputSpec = [
   '31:keypress:101',  // 'e'
   '32:keypress:115',  // 's'
   '33:keypress:116',  // 't'
+  '34:dump-main-edit-state:visible',
   `38:png:${pngPath}`,
+  '40:dump-main-edit-state:hidden',
   '60:dump-main-edit-state',
 ].join(',');
 
@@ -65,11 +67,12 @@ const hasNegHeight    = /MoveWindow\(0x00010002,[^\)]*0xfffff/.test(out);
 const hasUnimpl       = /UNIMPLEMENTED API:/.test(out);
 const hasCleanExit    = /Exit.*code=0/.test(out) || exitCode === 0;
 const pngWritten      = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 0;
-const stateMatch      = out.match(/dump-main-edit-state: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) blinkEpoch=(\d+) visibleUntil=(\d+) .*text="Test"/);
+const stateMatch      = out.match(/dump-main-edit-state: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
+const visibleMatch    = out.match(/dump-main-edit-state visible: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
+const hiddenMatch     = out.match(/dump-main-edit-state hidden: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
 const editFlags       = stateMatch ? parseInt(stateMatch[1], 16) : 0;
-const blinkEpoch      = stateMatch ? parseInt(stateMatch[2], 10) : 0;
-const visibleUntil    = stateMatch ? parseInt(stateMatch[3], 10) : 0;
-const blinkGraceMs    = visibleUntil - blinkEpoch;
+const visibleFlags    = visibleMatch ? parseInt(visibleMatch[1], 16) : 0;
+const hiddenFlags     = hiddenMatch ? parseInt(hiddenMatch[1], 16) : 0;
 const hasTypedText    = !!stateMatch;
 
 (async () => {
@@ -82,7 +85,7 @@ const hasTypedText    = !!stateMatch;
     { name: 'typed text reached Notepad edit',      pass: hasTypedText },
     { name: 'PNG snapshot written',                 pass: pngWritten },
     { name: 'typed edit remains focused for caret', pass: (editFlags & 0x08) !== 0 },
-    { name: 'caret blink grace is one blink period', pass: blinkGraceMs > 0 && blinkGraceMs <= 600 },
+    { name: 'WAT caret timer toggles visibility',   pass: (visibleFlags & 0x20) !== 0 && (hiddenFlags & 0x20) === 0 },
     { name: 'clean exit (code=0)',                  pass: hasCleanExit },
   ];
 
