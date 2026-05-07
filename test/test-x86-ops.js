@@ -143,6 +143,15 @@ async function main() {
   test('SHLD eax,edx,1', e.get_eax(), 0x00000000);
 
   // ================================================================
+  // IMUL r32, r/m32 — signed two-operand multiply
+  // ================================================================
+  runCode([0x0F, 0xAF, 0xD6], () => { e.set_edx(10); e.set_esi(10); });
+  test('IMUL edx,esi', e.get_edx(), 100);
+
+  runCode([0x0F, 0xAF, 0xD6], () => { e.set_edx(0xFFFFFFFF); e.set_esi(7); });
+  test('IMUL edx,esi signed negative', e.get_edx(), 0xFFFFFFF9);
+
+  // ================================================================
   // STC + ADC — carry flag set/read
   // ================================================================
   runCode([0x31, 0xC0, 0xF9, 0x83, 0xD0, 0x00]); // xor eax,eax; stc; adc eax,0
