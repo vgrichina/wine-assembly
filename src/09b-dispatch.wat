@@ -255,6 +255,23 @@
             (global.set $dlg_ended (i32.const 1))
             (global.set $dlg_result (i32.load (global.get $SHARED_DLG_RESULT)))
             (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))))
+        ;; Initial WM_INITDIALOG just returned. If the dialog proc accepted
+        ;; default focus (TRUE), mirror USER's post-init focus step now,
+        ;; after the app has populated controls. Edit controls receive
+        ;; EM_SETSEL(0,-1), matching Win98's selected default edit text.
+        (if (global.get $dlg_init_focus_hwnd)
+          (then
+            (if (global.get $eax)
+              (then
+                (call $set_focus (global.get $dlg_init_focus_hwnd))
+                (if (i32.eq (call $ctrl_table_get_class (global.get $dlg_init_focus_hwnd)) (i32.const 2))
+                  (then
+                    (drop (call $wnd_send_message
+                      (global.get $dlg_init_focus_hwnd)
+                      (i32.const 0x00B1)  ;; EM_SETSEL
+                      (i32.const 0)
+                      (i32.const -1)))))))
+            (global.set $dlg_init_focus_hwnd (i32.const 0))))
         ;; If EndDialog was called, destroy dialog and return result
         (if (global.get $dlg_ended)
           (then

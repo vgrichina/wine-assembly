@@ -982,6 +982,10 @@
   ;; messages; this keeps NSIS/Richedit-heavy dialogs from monopolizing a
   ;; single browser/test batch.
   (global $dlg_callback_yield_pending (mut i32) (i32.const 0))
+  ;; HWND that DialogBoxParamA passed as WM_INITDIALOG wParam. If the dialog
+  ;; proc returns TRUE, USER applies focus after init returns, after the app
+  ;; has populated controls.
+  (global $dlg_init_focus_hwnd (mut i32) (i32.const 0))
   ;; Flag set by continuation-thunk handlers that explicitly (re)direct EIP.
   ;; Read by $run's thunk-zone auto-pop: when a handler leaves EIP equal to
   ;; its own thunk addr (e.g. CACA0004 re-enters the dialog pump), the outer

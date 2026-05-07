@@ -48,6 +48,7 @@ E2E=(
   test/test-about-cancel.js
   test/test-open-cancel.js
   test/test-help.js
+  test/test-freecell-select-game.js
   test/test-freecell-move.js
   test/test-freecell-dblclick.js
   test/test-freecell-stats.js

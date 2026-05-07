@@ -2114,6 +2114,14 @@
     (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
     (call $pop_rsrc_ctx)
+    ;; DialogBoxParam creates a top-level owned dialog and shows it before
+    ;; WM_INITDIALOG. Template styles commonly omit WS_VISIBLE; USER's modal
+    ;; creation path still makes the HWND visible, so keep WAT style in sync
+    ;; before visibility-dependent hit-testing/painting runs.
+    (call $wnd_set_parent (local.get $hwnd) (i32.const 0))
+    (call $wnd_set_owner (local.get $hwnd) (local.get $arg2))
+    (drop (call $wnd_set_style (local.get $hwnd)
+      (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
@@ -2160,7 +2168,8 @@
     (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))  ;; ret → dialog message loop
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $hwnd))          ;; hDlg
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG
-    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))             ;; wParam (focus hwnd)
+    (global.set $dlg_init_focus_hwnd (global.get $focus_hwnd))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (global.get $dlg_init_focus_hwnd)) ;; wParam (focus hwnd)
     (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
     ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)
     (global.set $eip (local.get $arg3))
