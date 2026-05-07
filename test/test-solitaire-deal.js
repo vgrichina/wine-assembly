@@ -149,7 +149,8 @@ async function diffPngs(aPath, bPath) {
     const data = c.getContext('2d').getImageData(0, 0, w, h).data;
     let nonGreen = 0;
     let bottomCaptionBlue = 0;
-    let bottomBtnFaceGray = 0;
+    let bottomWhite = 0;
+    let bottomBlackText = 0;
     for (let i = 0; i < data.length; i += 4) {
       // Green background is rgb(0, 128, 0) or close
       if (!(data[i] < 20 && data[i+1] > 100 && data[i+2] < 20)) nonGreen++;
@@ -162,12 +163,14 @@ async function diffPngs(aPath, bPath) {
         const i = (y * w + x) * 4;
         const r = data[i], g = data[i + 1], b = data[i + 2];
         if (b > 70 && r < 60 && g < 130) bottomCaptionBlue++;
-        if (Math.abs(r - 192) <= 4 && Math.abs(g - 192) <= 4 && Math.abs(b - 192) <= 4) bottomBtnFaceGray++;
+        if (r > 245 && g > 245 && b > 245) bottomWhite++;
+        if (r < 40 && g < 40 && b < 40) bottomBlackText++;
       }
     }
     console.log(`  non-green pixels in initial: ${nonGreen}`);
     console.log(`  blue caption pixels in bottom status strip: ${bottomCaptionBlue}`);
-    console.log(`  btnface gray pixels in bottom status strip: ${bottomBtnFaceGray}`);
+    console.log(`  white pixels in bottom status strip: ${bottomWhite}`);
+    console.log(`  black text pixels in bottom status strip: ${bottomBlackText}`);
     checks.push({
       name: 'Initial deal shows cards (>= 5000 non-green px)',
       pass: nonGreen >= 5000,
@@ -177,8 +180,12 @@ async function diffPngs(aPath, bPath) {
       pass: bottomCaptionBlue < 50,
     });
     checks.push({
-      name: 'Bottom status child paints a Win98 gray status panel',
-      pass: bottomBtnFaceGray >= 1500,
+      name: 'Bottom status child paints a Win98 white status field',
+      pass: bottomWhite >= 4000,
+    });
+    checks.push({
+      name: 'Bottom status child draws black status text',
+      pass: bottomBlackText >= 50,
     });
   }
 
