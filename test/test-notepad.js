@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
@@ -38,7 +39,7 @@ const inputSpec = [
   '32:keypress:115',  // 's'
   '33:keypress:116',  // 't'
   '34:dump-main-edit-state:visible',
-  `38:png:${pngPath}`,
+  `35:png:${pngPath}`,
   '40:dump-main-edit-state:hidden',
   '60:dump-main-edit-state',
 ].join(',');
@@ -67,6 +68,19 @@ const hasNegHeight    = /MoveWindow\(0x00010002,[^\)]*0xfffff/.test(out);
 const hasUnimpl       = /UNIMPLEMENTED API:/.test(out);
 const hasCleanExit    = /Exit.*code=0/.test(out) || exitCode === 0;
 const pngWritten      = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 0;
+let caretPixels = false;
+if (pngWritten) {
+  const img = PNG.sync.read(fs.readFileSync(pngPath));
+  for (let x = 35; x < 90 && !caretPixels; x++) {
+    let run = 0;
+    for (let y = 55; y < 85; y++) {
+      const i = (y * img.width + x) * 4;
+      const black = img.data[i] < 30 && img.data[i + 1] < 30 && img.data[i + 2] < 30;
+      run = black ? run + 1 : 0;
+      if (run >= 10) { caretPixels = true; break; }
+    }
+  }
+}
 const stateMatch      = out.match(/dump-main-edit-state: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
 const visibleMatch    = out.match(/dump-main-edit-state visible: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
 const hiddenMatch     = out.match(/dump-main-edit-state hidden: hwnd=0x[0-9a-f]+ len=4 cursor=4 sel=4 flags=0x([0-9a-f]+) .*text="Test"/);
@@ -84,6 +98,7 @@ const hasTypedText    = !!stateMatch;
     { name: 'no UNIMPLEMENTED API crash',           pass: !hasUnimpl },
     { name: 'typed text reached Notepad edit',      pass: hasTypedText },
     { name: 'PNG snapshot written',                 pass: pngWritten },
+    { name: 'PNG snapshot shows edit caret',         pass: caretPixels },
     { name: 'typed edit remains focused for caret', pass: (editFlags & 0x08) !== 0 },
     { name: 'WAT caret timer toggles visibility',   pass: (visibleFlags & 0x20) !== 0 && (hiddenFlags & 0x20) === 0 },
     { name: 'clean exit (code=0)',                  pass: hasCleanExit },

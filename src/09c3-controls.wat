@@ -5786,9 +5786,9 @@
               (br $wrapped_loop)))
 
             (local.set $flags (i32.load offset=24 (local.get $state_w)))
-            (if (i32.and
-                  (i32.and (local.get $flags) (i32.const 0x08))
-                  (i32.and (local.get $flags) (i32.const 0x20)))
+            (if (i32.eq
+                  (i32.and (local.get $flags) (i32.const 0x28))
+                  (i32.const 0x28))
               (then
                 (local.set $cur (i32.load offset=12 (local.get $state_w)))
                 (local.set $lo (call $edit_layout_line_for_char (local.get $total_lines) (local.get $cur)))
@@ -5797,6 +5797,12 @@
                 (local.set $px (i32.const 0))
                 (local.set $line_end (call $edit_layout_start (local.get $lo)))
                 (if (i32.gt_u (local.get $cur) (local.get $line_end))
+                  (then
+                    (local.set $px (call $host_measure_text
+                      (local.get $hdc)
+                      (i32.add (call $g2w (local.get $buf)) (local.get $line_end))
+                      (i32.sub (local.get $cur) (local.get $line_end))))))
+                (if (i32.and (i32.eqz (local.get $px)) (i32.gt_u (local.get $cur) (local.get $line_end)))
                   (then
                     (local.set $px
                       (i32.mul (i32.sub (local.get $cur) (local.get $line_end)) (i32.const 8)))))
@@ -5895,9 +5901,9 @@
               (br $line_loop)))))
         ;; 4) Caret (only if focused — bit 3 of flags)
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
-        (if (i32.and
-              (i32.and (local.get $flags) (i32.const 0x08))
-              (i32.and (local.get $flags) (i32.const 0x20)))
+        (if (i32.eq
+              (i32.and (local.get $flags) (i32.const 0x28))
+              (i32.const 0x28))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
             ;; Find which line the cursor is on and the offset within that line.
