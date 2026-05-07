@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=78');
+        const r = await fetch('src/api_table.json?v=79');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -408,7 +408,7 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=78').then(r => r.text()));
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=79').then(r => r.text()));
         return WebAssembly.compile(bytes);
       })();
     }
@@ -763,7 +763,7 @@ class WineAssembly {
             });
           }
           if (self.renderer && self.renderer.flushRepaint) {
-            self.renderer.flushRepaint();
+            self.renderer.flushRepaint(true);
           }
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
@@ -800,7 +800,7 @@ class WineAssembly {
           if (self.threadManager.hasActiveThreads()) {
             self.threadManager.runSlice(Math.min(activeStepsPerSlice, 10000));
             if (self.renderer && self.renderer.flushRepaint) {
-              self.renderer.flushRepaint();
+              self.renderer.flushRepaint(true);
             }
           }
         }
