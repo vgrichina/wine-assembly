@@ -1395,13 +1395,6 @@
           (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x80)) (i32.le_u (local.get $op) (i32.const 0x8F)))
             (then
               (local.set $disp (call $d_fetch32))
-              ;; DEBUG: log JCC emits in our range
-              (if (i32.and (i32.ge_u (global.get $d_pc) (i32.const 0x010095f0))
-                           (i32.le_u (global.get $d_pc) (i32.const 0x01009620)))
-                (then
-                  (call $host_log_i32 (i32.const 0xDEC0DECC))
-                  (call $host_log_i32 (global.get $d_pc))         ;; fall
-                  (call $host_log_i32 (i32.add (global.get $d_pc) (local.get $disp)))))
               (call $te (i32.const 44) (i32.and (local.get $op) (i32.const 0xF)))
               (call $te_raw (global.get $d_pc))
               (call $te_raw (i32.add (global.get $d_pc) (local.get $disp)))
@@ -1431,61 +1424,109 @@
                       (call $te_raw (local.get $a))))))
               (br $decode)))
 
-          ;; 0x0F 0xA3: BT r/m32, r32
+          ;; 0x0F 0xA3: BT r/m32, r32 (or r/m16, r16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xA3))
             (then (call $decode_modrm)
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 198) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                (else (call $apply_seg_override)
-                      (local.set $a (call $emit_sib_or_abs))
-                      (call $te (i32.const 227) (global.get $mr_reg))
-                      (call $te_raw (local.get $a))))
+              (if (local.get $prefix_66)
+                (then
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 295) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 303) (global.get $mr_reg))
+                          (call $te_raw (local.get $a)))))
+                (else
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 198) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 227) (global.get $mr_reg))
+                          (call $te_raw (local.get $a))))))
               (br $decode)))
-          ;; 0x0F 0xAB: BTS r/m32, r32
+          ;; 0x0F 0xAB: BTS r/m32, r32 (or r/m16, r16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xAB))
             (then (call $decode_modrm)
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 199) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                (else (call $apply_seg_override)
-                      (local.set $a (call $emit_sib_or_abs))
-                      (call $te (i32.const 228) (global.get $mr_reg))
-                      (call $te_raw (local.get $a))))
+              (if (local.get $prefix_66)
+                (then
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 296) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 304) (global.get $mr_reg))
+                          (call $te_raw (local.get $a)))))
+                (else
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 199) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 228) (global.get $mr_reg))
+                          (call $te_raw (local.get $a))))))
               (br $decode)))
-          ;; 0x0F 0xB3: BTR r/m32, r32
+          ;; 0x0F 0xB3: BTR r/m32, r32 (or r/m16, r16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xB3))
             (then (call $decode_modrm)
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 200) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                (else (call $apply_seg_override)
-                      (local.set $a (call $emit_sib_or_abs))
-                      (call $te (i32.const 229) (global.get $mr_reg))
-                      (call $te_raw (local.get $a))))
+              (if (local.get $prefix_66)
+                (then
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 297) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 305) (global.get $mr_reg))
+                          (call $te_raw (local.get $a)))))
+                (else
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 200) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 229) (global.get $mr_reg))
+                          (call $te_raw (local.get $a))))))
               (br $decode)))
-          ;; 0x0F 0xBB: BTC r/m32, r32
+          ;; 0x0F 0xBB: BTC r/m32, r32 (or r/m16, r16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xBB))
             (then (call $decode_modrm)
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 201) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                (else (call $apply_seg_override)
-                      (local.set $a (call $emit_sib_or_abs))
-                      (call $te (i32.const 230) (global.get $mr_reg))
-                      (call $te_raw (local.get $a))))
+              (if (local.get $prefix_66)
+                (then
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 298) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 306) (global.get $mr_reg))
+                          (call $te_raw (local.get $a)))))
+                (else
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 201) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                    (else (call $apply_seg_override)
+                          (local.set $a (call $emit_sib_or_abs))
+                          (call $te (i32.const 230) (global.get $mr_reg))
+                          (call $te_raw (local.get $a))))))
               (br $decode)))
 
-          ;; 0x0F 0xAF: IMUL r32, r/m32
+          ;; 0x0F 0xAF: IMUL r32, r/m32 (or r16, r/m16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xAF))
             (then
               (call $decode_modrm)
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else ;; imul reg, [mem] — dedicated opcodes to avoid clobbering dst
-                  (if (call $mr_simple_base)
-                    (then (call $te (i32.const 157) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
-                          (call $te_raw (global.get $mr_disp)))
-                    (else (local.set $imm (call $emit_sib_or_abs))
-                          (call $te (i32.const 158) (global.get $mr_reg))
-                          (call $te_raw (local.get $imm))))))
-              (br $decode)))
+              (if (local.get $prefix_66)
+                (then
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 288) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                    (else (call $apply_seg_override)
+                      (if (call $mr_simple_base)
+                        (then (call $te (i32.const 290) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
+                              (call $te_raw (global.get $mr_disp)))
+                        (else (local.set $imm (call $emit_sib_or_abs))
+                              (call $te (i32.const 289) (global.get $mr_reg))
+                              (call $te_raw (local.get $imm)))))))
+                (else
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                    (else ;; imul reg, [mem] — dedicated opcodes to avoid clobbering dst
+                      (if (call $mr_simple_base)
+                        (then (call $te (i32.const 157) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
+                              (call $te_raw (global.get $mr_disp)))
+                        (else (local.set $imm (call $emit_sib_or_abs))
+                              (call $te (i32.const 158) (global.get $mr_reg))
+                              (call $te_raw (local.get $imm)))))))
+              (br $decode))))
 
           ;; 0x0F 0xB6: MOVZX r32, r/m8
           (if (i32.eq (local.get $op) (i32.const 0xB6))
@@ -1583,22 +1624,35 @@
                           (call $te_raw (local.get $imm))))))
               (br $decode)))
 
-          ;; 0x0F 0xBA: BT/BTS/BTR/BTC r/m32, imm8
+          ;; 0x0F 0xBA: BT/BTS/BTR/BTC r/m32, imm8 (or r/m16 with 66h)
           (if (i32.eq (local.get $op) (i32.const 0xBA))
             (then
               (call $decode_modrm)
               (local.set $imm (call $d_fetch8))
               ;; mr_reg: 4=BT, 5=BTS, 6=BTR, 7=BTC
-              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+              (if (local.get $prefix_66)
                 (then
-                  (call $te (i32.add (i32.const 92) (global.get $mr_reg)) (global.get $mr_val)) ;; 96-99
-                  (call $te_raw (local.get $imm)))
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then
+                      (call $te (i32.add (i32.const 287) (global.get $mr_reg)) (global.get $mr_val)) ;; 291-294
+                      (call $te_raw (local.get $imm)))
+                    (else
+                      (call $apply_seg_override)
+                      (local.set $a (call $emit_sib_or_abs))
+                      (call $te (i32.add (i32.const 295) (global.get $mr_reg)) (i32.const 0)) ;; 299-302
+                      (call $te_raw (local.get $a))
+                      (call $te_raw (local.get $imm)))))
                 (else
-                  ;; Memory BT/BTS/BTR/BTC: mr_reg 4=BT,5=BTS,6=BTR,7=BTC → handler 176-179
-                  (local.set $a (call $emit_sib_or_abs))
-                  (call $te (i32.add (i32.const 172) (global.get $mr_reg)) (i32.const 0))
-                  (call $te_raw (local.get $a))
-                  (call $te_raw (local.get $imm))))
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then
+                      (call $te (i32.add (i32.const 92) (global.get $mr_reg)) (global.get $mr_val)) ;; 96-99
+                      (call $te_raw (local.get $imm)))
+                    (else
+                      ;; Memory BT/BTS/BTR/BTC: mr_reg 4=BT,5=BTS,6=BTR,7=BTC -> handler 176-179
+                      (local.set $a (call $emit_sib_or_abs))
+                      (call $te (i32.add (i32.const 172) (global.get $mr_reg)) (i32.const 0))
+                      (call $te_raw (local.get $a))
+                      (call $te_raw (local.get $imm))))))
               (br $decode)))
 
           ;; 0x0F 0xBC: BSF, 0x0F 0xBD: BSR (with 66h → 16-bit)

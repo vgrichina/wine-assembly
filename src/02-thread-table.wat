@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 288 funcref)
+  (table $handlers 307 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -340,4 +340,23 @@
     $th_idiv16             ;; 285: IDIV DX:AX by r16
     $th_muldiv_m16         ;; 286: 16-bit MUL/IMUL/DIV/IDIV [addr] (op=type, addr next word)
     $th_muldiv_m16_ro      ;; 287: 16-bit MUL/IMUL/DIV/IDIV [base+disp] (op=type<<4|base, disp next word)
+    $th_imul_r16_r16       ;; 288: IMUL r16, r/m16 register form (op=dst<<4|src)
+    $th_imul_r16_m         ;; 289: IMUL r16, [addr] (op=dst, addr next word)
+    $th_imul_r16_m_ro      ;; 290: IMUL r16, [base+disp] (op=dst<<4|base, disp next word)
+    $th_bt_r16_i8          ;; 291: BT r16, imm8
+    $th_bts_r16_i8         ;; 292: BTS r16, imm8
+    $th_btr_r16_i8         ;; 293: BTR r16, imm8
+    $th_btc_r16_i8         ;; 294: BTC r16, imm8
+    $th_bt_r16_r16         ;; 295: BT r16, r16
+    $th_bts_r16_r16        ;; 296: BTS r16, r16
+    $th_btr_r16_r16        ;; 297: BTR r16, r16
+    $th_btc_r16_r16        ;; 298: BTC r16, r16
+    $th_bt_m16_i8          ;; 299: BT [addr], imm8
+    $th_bts_m16_i8         ;; 300: BTS [addr], imm8
+    $th_btr_m16_i8         ;; 301: BTR [addr], imm8
+    $th_btc_m16_i8         ;; 302: BTC [addr], imm8
+    $th_bt_m16_r16         ;; 303: BT [addr], r16
+    $th_bts_m16_r16        ;; 304: BTS [addr], r16
+    $th_btr_m16_r16        ;; 305: BTR [addr], r16
+    $th_btc_m16_r16        ;; 306: BTC [addr], r16
   )

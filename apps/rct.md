@@ -525,6 +525,13 @@ compiled variant widens the invalidator to all writes inside the loaded image,
 because RCT can rewrite a generated helper before that page has been observed
 and recorded as generated code.
 
+**2026-05-07 x86 coverage follow-up — more 16-bit `0F` forms.**
+
+The operand-size audit found another family of gaps adjacent to the RCT fixes:
+`66 0F AF` and `66 0F A3/AB/B3/BB/BA` were still routed through 32-bit handlers.
+New handlers now cover 16-bit two-operand IMUL and 16-bit BT/BTS/BTR/BTC
+register, immediate, and memory forms. Handler table/cache guard is now `307`.
+
 Useful artifacts from this session:
 
 ```

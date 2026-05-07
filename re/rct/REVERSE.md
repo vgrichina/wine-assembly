@@ -491,6 +491,40 @@ Current fix under validation:
 - Fast bulk string ops now invalidate the destination range before
   `memory.copy` / `memory.fill`; the slow `REP STOSD` path uses `gs32`.
 
+### Similar x86 emulation gaps audit (2026-05-07)
+
+The recent RCT fixes came from operand-size override gaps, so the next audit
+target is any decoded opcode where `66h` should select a 16-bit form but the
+decoder still emits a 32-bit handler.
+
+Fixed in the next pass:
+
+- `0F AF` (`IMUL r, r/m`) ignored `prefix_66` and always emitted the 32-bit
+  two-operand IMUL path.
+- `0F A3/AB/B3/BB` (`BT/BTS/BTR/BTC r/m, r`) ignored `prefix_66` and used
+  32-bit bit indexes/memory words.
+- `0F BA /4..7` (`BT/BTS/BTR/BTC r/m, imm8`) ignored `prefix_66` and used the
+  32-bit memory/register handlers.
+
+Implementation note: the handler table now extends to 307 entries. New handlers
+288-306 cover `66 0F AF`, 16-bit BT/BTS/BTR/BTC register/immediate forms, and
+16-bit BT/BTS/BTR/BTC memory forms. The build validates with:
+
+```
+[check-handler-count] OK handler table=307 elem entries=307 cache guard=307
+```
+
+Lower-priority notes:
+
+- `FF /3` and `FF /5` far call/jump remain effectively unimplemented; RCT has
+  not hit them.
+- `FF /7` is decoded as a pop form even though group-5 `/7` is invalid on real
+  x86. If guest code reaches it, treating it as a pop could hide a real decode
+  error.
+- `66 0F C8..CF` (`BSWAP`) is undefined/invalid on older x86 and currently
+  routes to the 32-bit BSWAP handler. That is probably harmless unless a guest
+  probes invalid-op behavior.
+
 ---
 
 ## Sessions
