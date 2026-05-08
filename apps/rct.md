@@ -56,6 +56,16 @@ After invalidation fix:  real   4.35s, user   3.78s
 Post-fix CPU profile no longer shows `invalidate_page` as a hot frame; normal
 `run` / threaded-instruction handlers dominate.
 
+**2026-05-08 web blink follow-up:** after startup became fast enough to reach
+runtime in the browser, the visible canvas blinked between a real RCT frame and
+black. DirectDraw dumps at batch 40 showed a valid 640x480 primary and matching
+640x480 offscreen surface. The likely web-only issue was the renderer's normal
+window back-canvas being cleared/painted between periodic DX presents. The DX
+present path now stores the last presented surface in a retained per-window DX
+frame layer and composites that layer after the normal back-canvas, so ordinary
+WM_PAINT/GDI clears cannot blank the fullscreen DirectDraw frame between
+presents.
+
 **Current fatal-path evidence (2026-04-30):**
 
 - `timeGetTime` is not frozen in the headless path. A `--count=0x438248,0x43867d` run over 120k batches ended with `0x00438248 = 180` and `0x0043867d = 1466`, so the 25 ms pacing loop at `0x0043867d` is entered and exited repeatedly.
