@@ -10,7 +10,7 @@ class WineAssembly {
     this.resourceJson = null;
     this.threadManager = null;
     this._wasmModule = null;
-    this.stepsPerSlice = 50000;
+    this.stepsPerSlice = 100000;
     this.verbose = false;
   }
 
@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=87');
+        const r = await fetch('src/api_table.json?v=88');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -408,11 +408,40 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=87').then(r => r.text()));
+        const tailCalls = WineAssembly.supportsWasmTailCalls();
+        console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
+        const bytes = await compileWat(
+          f => fetch('src/' + f + '?v=88').then(r => r.text()),
+          { tailCalls }
+        );
         return WebAssembly.compile(bytes);
       })();
     }
     return WineAssembly._wasmModulePromise;
+  }
+
+  static supportsWasmTailCalls() {
+    if (WineAssembly._supportsWasmTailCalls !== undefined) {
+      return WineAssembly._supportsWasmTailCalls;
+    }
+    // Minimal module:
+    // (module (type (func)) (func (type 0) (return_call 1)) (func (type 0)))
+    const probe = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00,
+      0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+      0x03, 0x03, 0x02, 0x00, 0x00,
+      0x0A, 0x09, 0x02, 0x04, 0x00, 0x12, 0x01, 0x0B, 0x02, 0x00, 0x0B,
+    ]);
+    let ok = false;
+    try {
+      ok = typeof WebAssembly !== 'undefined' &&
+        typeof WebAssembly.validate === 'function' &&
+        WebAssembly.validate(probe);
+    } catch (_) {
+      ok = false;
+    }
+    WineAssembly._supportsWasmTailCalls = ok;
+    return ok;
   }
 
   async loadExe(url) {
@@ -760,7 +789,7 @@ class WineAssembly {
     }
   }
 
-  run(stepsPerSlice = 50000) {
+  run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     this.running = true;
     const self = this;
