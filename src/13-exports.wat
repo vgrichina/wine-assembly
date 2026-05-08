@@ -223,6 +223,16 @@
   (func (export "host_resize_commit")
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
     (call $post_resize_messages (local.get $hwnd) (i32.const 0)))
+  ;; User-initiated move commit (host title-bar drag). Moving a Win98 window
+  ;; sends WM_MOVE but does not imply WM_SIZE/NCCALCSIZE; dialog controls keep
+  ;; their layout and only the top-level screen origin changes.
+  (func (export "host_move_commit")
+        (param $hwnd i32) (param $x i32) (param $y i32)
+    (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0003) ;; WM_MOVE
+      (i32.const 0)
+      (i32.or (i32.and (local.get $x) (i32.const 0xFFFF))
+              (i32.shl (local.get $y) (i32.const 16)))))
+    (call $defwndproc_do_ncpaint (local.get $hwnd)))
   ;; Cursor state readback — for tests / JS to verify SetCursor plumbing.
   (func (export "get_cursor") (result i32) (global.get $current_cursor))
   ;; Synchronous NCHITTEST helper — JS calls before generating mouse
