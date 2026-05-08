@@ -568,6 +568,10 @@
       (i32.add (local.get $app_len) (i32.const 6)))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    ;; USER calculates the client rect before the first WM_NCPAINT. The NC
+    ;; painter's clip is window minus client; without this, ShellAbout's
+    ;; frame repaint erases the child STATIC/BUTTON controls.
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     ;; Tag the parent dialog as control class 11 so $control_wndproc_dispatch
     ;; routes WM_COMMAND from the OK button (and WM_CLOSE from the title-bar X)
     ;; to $about_wndproc.
@@ -626,6 +630,15 @@
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+    ;; ShellAbout is a modal shell-owned dialog on Win98: by the time the
+    ;; caller observes it, USER has already exposed/erased the dialog and
+    ;; delivered paint to built-in child controls. Our ShellAbout handler is
+    ;; WAT-side and returns through the guest's normal message loop, so run
+    ;; that initial exposure pass here to keep child STATIC/BUTTON controls
+    ;; visible without JS special-casing control drawing.
+    (call $nc_flags_clear (local.get $dlg) (i32.const 2))
+    (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))
+    (drop (call $paint_flush_visible_native_children (local.get $dlg))))
 
   ;; ============================================================
   ;; Generic "stub" common-dialog parent (control class 13)
@@ -670,6 +683,7 @@
       (call $strlen (local.get $title_wa)))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 13) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
@@ -1003,6 +1017,7 @@
     (call $title_table_set (local.get $dlg) (i32.const 0x258) (i32.const 4))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 14) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
@@ -1271,6 +1286,7 @@
     (call $title_table_set (local.get $dlg) (i32.const 0x252) (i32.const 5))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
     (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
       (i32.const 15) (i32.const 0))
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
