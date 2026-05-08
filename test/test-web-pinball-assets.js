@@ -40,6 +40,22 @@ assert(indexHtml.includes('lib/host-imports.js?v=83'), 'web host should cache-bu
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(hostJs.includes("'?v=83'"), 'host.js should cache-bust WAT source fetches');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
+assert(indexHtml.includes('const rctFiles = ['), 'web RCT should preload shareware data files');
+assert(indexHtml.includes("rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles }"), 'web RCT app should attach data files');
+for (const rel of [
+  'Data/csg1.dat',
+  'Data/css1.dat',
+  'Scenarios/SC.IDX',
+  'Tracks/Manic Miner.TD4',
+  'Saved Games/001',
+]) {
+  assert(indexHtml.includes(JSON.stringify(rel)), `web RCT manifest should include ${rel}`);
+  assert(fs.existsSync(path.join(ROOT, 'binaries', 'shareware', 'rct', rel)), `web RCT asset should exist: ${rel}`);
+}
+assert(indexHtml.includes("vfsPath: 'c:\\\\' + p"), 'web RCT files should preserve root-relative VFS paths');
+assert(/const RCT_PATH_PREFIX\s*=\s*'binaries\/shareware\/rct\/'/.test(deployJs), 'deploy should include RCT shareware asset exception');
+assert(/!rctAsset && parts\.some\(p => SKIP_BIN_DIRS\.has\(p\)\)/.test(deployJs), 'deploy should not skip RCT shareware assets');
+assert(/!isRctPath\(f\.rel\)/.test(deployJs), 'deploy should allow large RCT data files');
 for (const app of ['freecell', 'sol', 'cruel', 'golf', 'spider']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');
   assert(re.test(indexHtml), `${app} web manifest should explicitly load cards.dll`);
@@ -53,3 +69,5 @@ console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');
 console.log('PASS  web host cache-buster is current');
 console.log('PASS  web card games explicitly load cards.dll');
+console.log('PASS  web RCT preloads shareware data files');
+console.log('PASS  deploy includes RCT shareware assets');

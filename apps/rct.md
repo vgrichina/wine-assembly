@@ -604,6 +604,21 @@ timeout 2400 npm test
 TOTAL: 41 passed, 0 failed
 ```
 
+**2026-05-07 web launch follow-up.**
+
+The browser app entry originally loaded only `binaries/shareware/rct/English/RCT.exe`.
+The local CLI runner recursively preloads companion files from the executable
+directory, but the web launcher only fetches files listed in `apps.rct.files`.
+That left the browser VFS without RCT's `Data`, `Scenarios`, `Tracks`, and
+`Saved Games` trees, which makes the game show the "insert CD" dialog.
+
+Implemented web fix: `index.html` now lists all 76 files under
+`binaries/shareware/rct/` and maps them into VFS root-relative paths like
+`c:\Data\csg1.dat`, `c:\Scenarios\SC.IDX`, and `c:\Tracks\Manic Miner.TD4`.
+The deploy script now also exempts `binaries/shareware/rct/` from the generic
+shareware and large-file skips so those assets are available on the hosted web
+build.
+
 Useful artifacts from this session:
 
 ```

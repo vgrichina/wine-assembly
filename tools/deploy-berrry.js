@@ -46,6 +46,8 @@ const LARGE_OK_PATHS = new Set([
   'binaries/pinball/PINBALL.DAT',
   'binaries/pinball-plus95/PINBALL.DAT',
 ]);
+const RCT_PATH_PREFIX = 'binaries/shareware/rct/';
+const isRctPath = rel => rel.startsWith(RCT_PATH_PREFIX);
 
 // Binary extensions to include
 const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf']);
@@ -100,16 +102,18 @@ function collectBinaries() {
     if (!fs.existsSync(dir)) continue;
     const realDir = fs.realpathSync(dir);
     const found = walk(realDir, subdir, (name, rel) => {
-      if (!BINARY_EXTS.has(path.extname(name).toLowerCase())) return false;
+      const rctAsset = isRctPath(rel);
+      if (!BINARY_EXTS.has(path.extname(name).toLowerCase()) && !rctAsset) return false;
       const parts = rel.split('/');
-      if (parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
+      if (!rctAsset && parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
       return true;
     });
     for (const f of found) {
       const stat = fs.statSync(f.full);
       if (stat.size > MAX_BINARY_SIZE &&
           !LARGE_OK.has(path.basename(f.full).toLowerCase()) &&
-          !LARGE_OK_PATHS.has(f.rel)) {
+          !LARGE_OK_PATHS.has(f.rel) &&
+          !isRctPath(f.rel)) {
         console.log('  SKIP (too large): ' + f.rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
         continue;
       }
