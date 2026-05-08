@@ -12,10 +12,11 @@
   ;;
   ;; Blob layout (see also MENU_DATA_TABLE comment in 01-header.wat):
   ;;   +0       i32  bar_count
-  ;;   +4       bar_items[bar_count] × 12:
+  ;;   +4       bar_items[bar_count] × 16:
   ;;              +0  i32 text_offset  (offset in blob)
   ;;              +4  i32 text_len
   ;;              +8  i32 child_offset (offset to child header, 0 = none)
+  ;;              +12 i32 id (0 for popup bar items; command id otherwise)
   ;;   <child header> per submenu:
   ;;     +0  i32 child_count
   ;;     +4  child_items[child_count] × 24:
@@ -110,7 +111,7 @@
                           (result i32)
     (local $base i32) (local $text_w i32)
     (local.set $base (i32.add (local.get $blob_w)
-                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 12)))))
+                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 16)))))
     (local.set $text_w
       (call $measure_text (local.get $hdc)
         (i32.add (local.get $blob_w) (i32.load (local.get $base)))
@@ -186,7 +187,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $base (i32.add (local.get $blob)
-                         (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+                         (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 16)))))
       (local.set $text_wa (i32.add (local.get $blob) (i32.load (local.get $base))))
       (local.set $text_len (i32.load offset=4 (local.get $base)))
       (local.set $iw (i32.add (call $measure_text (local.get $hdc)
@@ -253,7 +254,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $base (i32.add (local.get $blob)
-                         (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+                         (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 16)))))
       (local.set $text_wa (i32.add (local.get $blob) (i32.load (local.get $base))))
       (local.set $text_len (i32.load offset=4 (local.get $base)))
       (local.set $iw (i32.add (call $measure_text (local.get $hdc)
@@ -286,7 +287,7 @@
   (func $child_hdr_w (param $blob_w i32) (param $idx i32) (result i32)
     (local $base i32) (local $cof i32)
     (local.set $base (i32.add (local.get $blob_w)
-                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 12)))))
+                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 16)))))
     (local.set $cof (i32.load offset=8 (local.get $base)))
     (if (i32.eqz (local.get $cof)) (then (return (i32.const 0))))
     (i32.add (local.get $blob_w) (local.get $cof)))
@@ -300,6 +301,19 @@
     (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $idx)))
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
     (i32.load (local.get $hdr)))
+
+  ;; Command id of a top-level bar item. Most Win98 menu bars use popups
+  ;; here, but Spider's "Deal!" is a real command item with no dropdown.
+  (func $menu_bar_id (export "menu_bar_id")
+        (param $hwnd i32) (param $idx i32) (result i32)
+    (local $blob i32) (local $count i32) (local $base i32)
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $count (i32.load (local.get $blob)))
+    (if (i32.ge_u (local.get $idx) (local.get $count)) (then (return (i32.const 0))))
+    (local.set $base (i32.add (local.get $blob)
+                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 16)))))
+    (i32.load offset=12 (local.get $base)))
 
   ;; Address (in blob_w) of child item $cidx within top item $tidx, or 0.
   (func $child_item_w (param $blob_w i32) (param $tidx i32) (param $cidx i32)
@@ -346,7 +360,7 @@
     (block $done (loop $bar
       (br_if $done (i32.ge_u (local.get $i) (local.get $bar_count)))
       (local.set $bar_item (i32.add (local.get $blob_w)
-                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 16)))))
       (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
       (if (local.get $hdr_off)
         (then
@@ -390,7 +404,7 @@
     (local.set $bar_count (i32.load (local.get $blob_w)))
     (if (i32.ge_u (local.get $tidx) (local.get $bar_count)) (then (return (i32.const 0))))
     (local.set $bar_item (i32.add (local.get $blob_w)
-                           (i32.add (i32.const 4) (i32.mul (local.get $tidx) (i32.const 12)))))
+                           (i32.add (i32.const 4) (i32.mul (local.get $tidx) (i32.const 16)))))
     (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
     (if (i32.eqz (local.get $hdr_off)) (then (return (i32.const 0))))
     (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
@@ -435,7 +449,7 @@
     (block $done (loop $bar
       (br_if $done (i32.ge_u (local.get $i) (local.get $bar_count)))
       (local.set $bar_item (i32.add (local.get $blob_w)
-                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+                             (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 16)))))
       (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
       (if (local.get $hdr_off)
         (then
@@ -532,7 +546,7 @@
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
     (local.set $base (i32.add (local.get $blob)
-                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 12)))))
+                       (i32.add (i32.const 4) (i32.mul (local.get $idx) (i32.const 16)))))
     (local.set $text_wa (i32.add (local.get $blob) (i32.load (local.get $base))))
     (local.set $text_len (i32.load offset=4 (local.get $base)))
     (local.set $i (i32.const 0))
@@ -882,7 +896,7 @@
         (then (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))))
       (drop (call $ml_load_label))
       (global.set $ml_bar_count (i32.add (global.get $ml_bar_count) (i32.const 1)))
-      (global.set $ml_struct_size (i32.add (global.get $ml_struct_size) (i32.const 12)))
+      (global.set $ml_struct_size (i32.add (global.get $ml_struct_size) (i32.const 16)))
       (global.set $ml_string_size
         (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))
       (if (i32.and (local.get $flags) (i32.const 0x10))
@@ -1052,7 +1066,7 @@
       (local.set $chars (global.get $ml_label_chars))
       (local.set $bar_addr
         (i32.add (global.get $ml_blob_w)
-                 (i32.add (i32.const 4) (i32.mul (local.get $bar_idx) (i32.const 12)))))
+                 (i32.add (i32.const 4) (i32.mul (local.get $bar_idx) (i32.const 16)))))
       ;; Copy bar label
       (local.set $label_off (global.get $ml_string_cur))
       (call $ml_copy_ascii (local.get $str_w)
@@ -1062,6 +1076,7 @@
       (i32.store          (local.get $bar_addr) (local.get $label_off))
       (i32.store offset=4 (local.get $bar_addr) (local.get $chars))
       (i32.store offset=8 (local.get $bar_addr) (i32.const 0))
+      (i32.store offset=12 (local.get $bar_addr) (local.get $id))
       (if (local.get $isPopup)
         (then
           (local.set $child_off (global.get $ml_struct_cur))
@@ -1128,7 +1143,7 @@
     ;; that begins right after the struct region.
     (global.set $ml_string_cur (global.get $ml_struct_size))
     (global.set $ml_struct_cur
-      (i32.add (i32.const 4) (i32.mul (global.get $ml_bar_count) (i32.const 12))))
+      (i32.add (i32.const 4) (i32.mul (global.get $ml_bar_count) (i32.const 16))))
     (global.set $ml_pos (i32.add (local.get $bytes_w) (i32.const 4)))
     (call $ml_pass2))
 
@@ -1183,6 +1198,20 @@
   (func (export "menu_set_hover") (param $cidx i32)
     (global.set $menu_open_hover (local.get $cidx)))
 
+  ;; Activate a top-level command item, if the bar slot is a command
+  ;; instead of a popup. Returns 1 when a command was posted.
+  (func $menu_activate_bar_command (param $hwnd i32) (param $top_idx i32) (result i32)
+    (local $id i32)
+    (if (call $menu_child_count (local.get $hwnd) (local.get $top_idx))
+      (then (return (i32.const 0))))
+    (local.set $id (call $menu_bar_id (local.get $hwnd) (local.get $top_idx)))
+    (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const 28))
+      (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+    (call $menu_close)
+    (i32.const 1))
+
   ;; USER-side click routing for an already-open dropdown. The host supplies
   ;; only the browser/screen point; WAT owns menu hit testing, hover, command
   ;; activation, and close/switch behavior.
@@ -1217,6 +1246,8 @@
       (local.get $sx) (local.get $sy)))
     (if (i32.ge_s (local.get $idx) (i32.const 0))
       (then
+        (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
+          (then (return (i32.const 1))))
         (call $menu_open (local.get $hwnd) (local.get $idx))
         (return (i32.const 1))))
 
@@ -1258,6 +1289,8 @@
       (call $menu_bar_screen_y (local.get $hwnd))
       (local.get $sx) (local.get $sy)))
     (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+    (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
+      (then (return (i32.const 1))))
     (call $menu_open (local.get $hwnd) (local.get $idx))
     (i32.const 1))
 
@@ -1392,6 +1425,8 @@
         (local.set $idx (call $menu_find_bar_accel (local.get $hwnd) (local.get $ch)))
         (if (i32.ge_s (local.get $idx) (i32.const 0))
           (then
+            (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
+              (then (return (i32.const 1))))
             (call $menu_open (local.get $hwnd) (local.get $idx))
             (return (i32.const 1))))))
     (local.set $slot (i32.sub (global.get $MAX_WINDOWS) (i32.const 1)))
@@ -1411,6 +1446,8 @@
                 (local.get $hwnd) (local.get $ch)))
               (if (i32.ge_s (local.get $idx) (i32.const 0))
                 (then
+                  (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
+                    (then (return (i32.const 1))))
                   (call $menu_open (local.get $hwnd) (local.get $idx))
                   (return (i32.const 1))))))))
       (br_if $done (i32.eqz (local.get $slot)))

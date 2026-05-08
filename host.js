@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=86');
+        const r = await fetch('src/api_table.json?v=87');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -408,7 +408,7 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=86').then(r => r.text()));
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=87').then(r => r.text()));
         return WebAssembly.compile(bytes);
       })();
     }
@@ -793,11 +793,20 @@ class WineAssembly {
           }
           self._runSliceCount = (self._runSliceCount || 0) + 1;
           self._runHeartbeat = ((self._runHeartbeat || 0) + 1) & 31;
-          if ((self._runSliceCount <= 8 || self._runHeartbeat === 0) && self.instance && self.instance.exports) {
-            const eip = self.instance.exports.get_eip ? self.instance.exports.get_eip() >>> 0 : 0;
-            const yr = self.instance.exports.get_yield_reason ? self.instance.exports.get_yield_reason() >>> 0 : 0;
+          if (self.instance && self.instance.exports) {
+            const ex = self.instance.exports;
             const windows = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
-            self.logToUI(`[run] slice=${self._runSliceCount} eip=0x${eip.toString(16).padStart(8, '0')} yield=${yr} windows=${windows}`);
+            const shouldLog = windows === 0
+              ? (self._runSliceCount <= 64 || (self._runSliceCount & 7) === 0)
+              : (self._runSliceCount <= 8 || self._runHeartbeat === 0);
+            if (shouldLog) {
+              const hex32 = v => (v >>> 0).toString(16).padStart(8, '0');
+              const eip = ex.get_eip ? ex.get_eip() >>> 0 : 0;
+              const ecx = ex.get_ecx ? ex.get_ecx() >>> 0 : 0;
+              const esi = ex.get_esi ? ex.get_esi() >>> 0 : 0;
+              const yr = ex.get_yield_reason ? ex.get_yield_reason() >>> 0 : 0;
+              self.logToUI(`[run] slice=${self._runSliceCount} eip=0x${hex32(eip)} ecx=0x${hex32(ecx)} esi=0x${hex32(esi)} yield=${yr} windows=${windows}`);
+            }
           }
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {

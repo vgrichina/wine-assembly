@@ -36,9 +36,9 @@ assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=86'), 'web host should cache-bust host-imports after GDI changes');
+assert(indexHtml.includes('lib/host-imports.js?v=87'), 'web host should cache-bust host-imports after GDI changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("'?v=86'"), 'host.js should cache-bust WAT source fetches');
+assert(hostJs.includes("'?v=87'"), 'host.js should cache-bust WAT source fetches');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(indexHtml.includes('const rctFiles = ['), 'web RCT should preload shareware data files');
 assert(indexHtml.includes("rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles, requiredFiles: true, fileConcurrency: 10 }"), 'web RCT app should attach required data files');
@@ -58,8 +58,8 @@ assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web l
 assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');
 assert(indexHtml.includes('Data files ready: ${app.files.length}'), 'web launcher should log data-file preload completion');
 assert(indexHtml.includes('Starting run slice=${runSlice}'), 'web launcher should log run-loop start');
-assert(indexHtml.includes("appKey === 'pinball_plus95' || appKey === 'rct'"), 'web RCT should use the fast auto run slice');
-assert(hostJs.includes('[run] slice='), 'web runner should report runtime heartbeat progress');
+assert(indexHtml.includes("if (appKey === 'rct') return 5000000;"), 'web RCT should use an accelerated startup run slice');
+assert(hostJs.includes('ecx=0x${hex32(ecx)}'), 'web runner should report runtime register heartbeat progress');
 assert(/const RCT_PATH_PREFIX\s*=\s*'binaries\/shareware\/rct\/'/.test(deployJs), 'deploy should include RCT shareware asset exception');
 assert(/!rctAsset && parts\.some\(p => SKIP_BIN_DIRS\.has\(p\)\)/.test(deployJs), 'deploy should not skip RCT shareware assets');
 assert(/!isRctPath\(f\.rel\)/.test(deployJs), 'deploy should allow large RCT data files');

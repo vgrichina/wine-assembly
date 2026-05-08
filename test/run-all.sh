@@ -54,6 +54,7 @@ E2E=(
   test/test-freecell-stats.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
+  test/test-spider-deal-menu.js
   test/test-spider-drag.js
   test/test-spider-messagebox.js
   test/test-solitaire-maximize.js

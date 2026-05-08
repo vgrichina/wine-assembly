@@ -671,10 +671,11 @@
   ;; $menu_paint_dropdown / $menu_hittest_dropdown). 0 = no menu.
   ;; Blob layout (heap-resident, owned by WAT):
   ;;   +0       i32  bar_count
-  ;;   +4       bar_items[bar_count] × 12 bytes:
+  ;;   +4       bar_items[bar_count] × 16 bytes:
   ;;              +0  i32  text_offset (relative to blob base)
   ;;              +4  i32  text_len
   ;;              +8  i32  child_offset (offset to child header, 0 if none)
+  ;;              +12 i32  id (0 for popup bar items; command id otherwise)
   ;;   header per child group:
   ;;     +0  i32  child_count
   ;;     +4  child_items[child_count] × 24 bytes:

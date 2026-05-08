@@ -6,6 +6,15 @@
 **Window:** Fullscreen 640x480 8bpp (Chris Sawyer's custom engine)
 **Status (2026-04-30):** PR #1 fixed the `0x67` `LOOP/LOOPE/LOOPNE/JCXZ` decoder trap. With that in place, RCT gets past the splash, loads `SC3.SC4`, and enters the auto-demo/runtime path. The active investigation is now firmly in runtime/render/game-tick, not startup: `timeGetTime` is advancing, the `1x1` viewport write at `0x004311c2` appears intentional and is not the main bug, and `0x0043867d` is active but not the root deadlock. Presentation is also no longer a one-shot init artifact: repeated full-screen `SetDIBitsToDevice` calls occur, but the output remains black. The first hard failure currently seen is the fatal path at batch `1407`, where `0x00430344` compares the `SC3.SC4` scenario result against `word [0x00836522]`; that word stays zero, so the scenario handoff never reports success.
 
+**ASCII TLDR current state (2026-05-08):** Native/CLI RCT reaches a real
+640x480 DirectDraw frame after a long pre-window loader path. Web now preloads
+all 82 VFS entries and starts executing, but the pasted browser trace is still
+inside the early `0x0042f5xx` data/scenario loop with `windows=0`. This is
+slow progress, not the old missing-file Insert CD dialog. Web Auto mode now
+uses a larger RCT-only startup slice (`5000000`) and logs `EIP/ECX/ESI` until
+the first window appears, so the browser trace should visibly move through the
+loader instead of looking frozen after the preload completes.
+
 **Current fatal-path evidence (2026-04-30):**
 
 - `timeGetTime` is not frozen in the headless path. A `--count=0x438248,0x43867d` run over 120k batches ended with `0x00438248 = 180` and `0x0043867d = 1466`, so the 25 ms pacing loop at `0x0043867d` is entered and exited repeatedly.
