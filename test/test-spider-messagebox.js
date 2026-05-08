@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
@@ -59,11 +60,25 @@ try {
 }
 
 const pngSize = fs.existsSync(png) ? fs.statSync(png).size : 0;
+let noButtonChrome = false;
+if (pngSize > 0) {
+  const img = PNG.sync.read(fs.readFileSync(png));
+  const pixel = (x, y) => {
+    const i = (y * img.width + x) * 4;
+    return [img.data[i], img.data[i + 1], img.data[i + 2]].join(',');
+  };
+  noButtonChrome =
+    pixel(230, 140) === '255,255,255' &&  // raised top edge
+    pixel(195, 152) === '255,255,255' &&  // raised left edge
+    pixel(266, 152) === '64,64,64' &&     // shadow right edge
+    pixel(230, 163) === '64,64,64';       // shadow bottom edge
+}
 const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
   { name: 'Spider called MessageBoxA with MB_YESNO', pass: /MessageBoxA\(.*MB_ICONQUESTION\|MB_YESNO/.test(out) },
   { name: 'Yes button text preserved', pass: /id=6 cls=1[\s\S]*text="Yes"/.test(out) },
   { name: 'No button text preserved', pass: /id=7 cls=1[\s\S]*text="No"/.test(out) },
+  { name: 'No button has full raised frame', pass: noButtonChrome },
   { name: 'messagebox PNG written', pass: pngSize > 20000 },
   { name: 'no crash marker', pass: !/CRASH|LinkError/.test(out) },
 ];

@@ -802,7 +802,7 @@
     (local.set $text_g (call $wat_str_to_heap (local.get $text_wa) (local.get $text_len)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 16) (i32.const 24)
-            (i32.sub (local.get $w) (i32.const 32)) (i32.const 60)
+            (i32.sub (local.get $w) (i32.const 32)) (i32.const 45)
             (i32.const 0x50000000)
             (local.get $text_g)))
     ;; Button row, left edge centered around dialog midpoint.
@@ -902,7 +902,20 @@
           (local.get $ch) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $paint_children)))
-    (call $dlg_seed_focus (local.get $dlg)))
+    (call $dlg_seed_focus (local.get $dlg))
+    ;; Focus seeding can repaint the default button and touch the dialog
+    ;; background. Repaint children once more so non-focused sibling buttons
+    ;; are not left partially covered in the first visible modal frame.
+    (local.set $slot (i32.const 0))
+    (block $paint_done2 (loop $paint_children2
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $paint_done2 (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (local.get $ch)
+        (then (drop (call $wnd_send_message
+          (local.get $ch) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $paint_children2))))
 
   ;; ============================================================
   ;; Font (ChooseFont) dialog — control class 14
@@ -2197,6 +2210,10 @@
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $flags (i32.load offset=8 (local.get $state_w)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Native controls paint with a fresh BeginPaint DC. Our synthetic
+        ;; hwnd+0x40000 DC can retain a clip region from a previous draw,
+        ;; which clipped Spider's MessageBox "No" button top edge.
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
         ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
         ;; that have no JS-side window record).
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
