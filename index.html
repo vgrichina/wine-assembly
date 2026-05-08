@@ -1271,7 +1271,7 @@ Resource-aware Win98 emulator
         const n = parseInt(raw, 10);
         if (Number.isFinite(n) && n > 0) return n;
       }
-      return (appKey === 'pinball' || appKey === 'pinball_plus95') ? 500000 : 10000;
+      return (appKey === 'pinball' || appKey === 'pinball_plus95' || appKey === 'rct') ? 500000 : 10000;
     }
 
     function applyRunSlice() {

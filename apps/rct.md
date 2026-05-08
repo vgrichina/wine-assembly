@@ -625,6 +625,10 @@ bounded concurrency, and `index.html` reports progress as `Loading data files
 N/76`. RCT marks these files as required, so a failed asset fetch reports an
 error instead of continuing into the guest with a missing-data/CD prompt.
 
+Second follow-up: after `76/76`, RCT still has a CPU-heavy startup pass before
+the first `CreateWindow`. Web "Auto" slice was `10000` for RCT, which made that
+phase look stalled. RCT now uses the same fast `500000` auto slice as Pinball.
+
 Useful artifacts from this session:
 
 ```

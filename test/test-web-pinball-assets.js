@@ -55,6 +55,7 @@ for (const rel of [
 assert(indexHtml.includes("vfsPath: 'c:\\\\' + p"), 'web RCT files should preserve root-relative VFS paths');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
 assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');
+assert(indexHtml.includes("appKey === 'pinball_plus95' || appKey === 'rct'"), 'web RCT should use the fast auto run slice');
 assert(/const RCT_PATH_PREFIX\s*=\s*'binaries\/shareware\/rct\/'/.test(deployJs), 'deploy should include RCT shareware asset exception');
 assert(/!rctAsset && parts\.some\(p => SKIP_BIN_DIRS\.has\(p\)\)/.test(deployJs), 'deploy should not skip RCT shareware assets');
 assert(/!isRctPath\(f\.rel\)/.test(deployJs), 'deploy should allow large RCT data files');
