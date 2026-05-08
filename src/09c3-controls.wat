@@ -515,6 +515,24 @@
     ;; WM_CLOSE → close
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then (local.set $close (i32.const 1))))
+    ;; Title-bar X follows the normal DefWindowProc route:
+    ;; WM_NCLBUTTONDOWN/HTCLOSE -> WM_SYSCOMMAND/SC_CLOSE -> WM_CLOSE.
+    ;; ShellAbout's dialog proc is WAT-native, so handle that translation
+    ;; here instead of dropping the NC click on the floor.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x00A1))
+          (i32.eq (local.get $wParam) (i32.const 20))) ;; HTCLOSE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0112) (i32.const 0xF060) (i32.const 0))) ;; SC_CLOSE
+        (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0112))
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060))) ;; SC_CLOSE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+        (return (i32.const 0))))
     ;; WM_COMMAND with id=IDOK → close
     (if (i32.eq (local.get $msg) (i32.const 0x0111))
       (then
