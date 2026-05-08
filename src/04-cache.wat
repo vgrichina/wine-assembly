@@ -55,7 +55,7 @@
 
   ;; Thread emit helpers
   (func $te (param $fn i32) (param $op i32)
-    ;; Inline overflow check — reset cache if within 4KB of CACHE_INDEX
+    ;; Inline overflow check — reset this thread's decoded arena before THREAD_END.
     (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
       (then
         (call $host_log_i32 (i32.const 0xCA00F10F))  ;; 0xCA00F10F = cache overflow marker

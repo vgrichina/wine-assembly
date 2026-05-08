@@ -15,6 +15,27 @@ uses a larger RCT-only startup slice (`5000000`) and logs `EIP/ECX/ESI` until
 the first window appears, so the browser trace should visibly move through the
 loader instead of looking frozen after the preload completes.
 
+**2026-05-08 cache-size update:** RCT startup was overflowing the decoded
+thread cache repeatedly (`0xca00f10f` markers). The fixed emulator memory map
+now reserves 32 MB for decoded thread caches: 8 thread slots at 4 MB each.
+The block-cache indexes, PE staging, DLL tables, and MapViewOfFile arena moved
+above that region.
+
+```
+Before:
+0x03E52000  [T0 512K][T1 512K]...[T7 512K]  0x04252000  [indexes/staging/tables]
+
+After:
+0x03E52000  [T0 4M][T1 4M][T2 4M][T3 4M][T4 4M][T5 4M][T6 4M][T7 4M]
+0x05E52000  [cache indexes 256K][PE staging 2M][DLL tables][MapViewOfFile arena]
+```
+
+Validation run:
+`timeout 300 node test/run.js --exe=test/binaries/shareware/rct/English/RCT.exe --max-batches=25 --batch-size=5000000 --quiet-blocks`
+still reaches the first `CreateWindowExA` at batch 25. Cache-overflow markers
+dropped from 461 to 17 over the same 125M-step pre-window window, so 4 MB/thread
+removes most decode-cache churn but does not fully cover RCT's startup footprint.
+
 **Current fatal-path evidence (2026-04-30):**
 
 - `timeGetTime` is not frozen in the headless path. A `--count=0x438248,0x43867d` run over 120k batches ended with `0x00438248 = 180` and `0x0043867d = 1466`, so the 25 ms pacing loop at `0x0043867d` is entered and exited repeatedly.

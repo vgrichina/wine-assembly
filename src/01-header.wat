@@ -375,7 +375,7 @@
   (import "host" "create_semaphore" (func $host_create_semaphore (param i32 i32) (result i32)))
   (import "host" "release_semaphore" (func $host_release_semaphore (param i32 i32 i32) (result i32)))
 
-  ;; ---- Memory: imported from host, 1024 pages = 64MB initial ----
+  ;; ---- Memory: imported from host, 2048 pages = 128MB initial ----
   ;; Audio output — waveOut bridge to Web Audio API
   (import "host" "wave_out_open" (func $host_wave_out_open (param i32 i32 i32 i32) (result i32)))
   ;; wave_out_open(sampleRate, channels, bitsPerSample, callbackType) → handle
@@ -548,16 +548,16 @@
   ;; 0x03C12000  1MB     Guest stack (ESP starts at top)
   ;; 0x03D12000  1MB     Guest heap
   ;; 0x03E12000  256KB   IAT thunk zone
-  ;; 0x03E52000  4MB     Thread cache
-  ;; 0x04252000  64KB    Block cache index (4096 slots × 16 bytes)
-  ;; 0x04262000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x04462000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x04462200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
-  ;; 0x04462400  ...     File mapping zone (MapViewOfFile allocations)
+  ;; 0x03E52000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
+  ;; 0x05E52000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
+  ;; 0x05E92000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x06092000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x06092200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x06092400  ...     File mapping zone (MapViewOfFile allocations)
   ;; Total: 2048 pages = 128MB
 
   ;; Memory region bases
-  (global $PE_STAGING   i32 (i32.const 0x04262000))
+  (global $PE_STAGING   i32 (i32.const 0x05E92000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
   (global $GUEST_STACK  i32 (i32.const 0x03C12000))
   (global $THUNK_BASE   i32 (i32.const 0x03E12000))
@@ -566,11 +566,11 @@
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (i32.const 0x03E52000))
-  ;; THREAD_END = THREAD_BASE + 0x80000. Per-thread partition limit; overflow
+  ;; THREAD_END = THREAD_BASE + 0x400000. Per-thread partition limit; overflow
   ;; checks use this instead of CACHE_INDEX so main (tid=0) doesn't trample
   ;; T1's thread cache region. Updated in $init_thread per tid.
-  (global $THREAD_END   (mut i32) (i32.const 0x03ED2000))
-  (global $CACHE_INDEX  (mut i32) (i32.const 0x04252000))
+  (global $THREAD_END   (mut i32) (i32.const 0x04252000))
+  (global $CACHE_INDEX  (mut i32) (i32.const 0x05E52000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
   ;; All four tables live in the 0x7000..0xC000 region; the old 0x2000..0x4000
@@ -863,9 +863,9 @@
   (global $bsearch_thunk   (mut i32) (i32.const 0))  ;; guest addr of CACA000C thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x04462000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (i32.const 0x06092000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
-  (global $DLL_RSRC_TABLE i32 (i32.const 0x04462200))
+  (global $DLL_RSRC_TABLE i32 (i32.const 0x06092200))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.
