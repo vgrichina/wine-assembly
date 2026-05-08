@@ -479,6 +479,20 @@
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
 
+  ;; MessageBox system strings mirrored in the WAT-owned reserved page just
+  ;; below guest memory. The legacy low-page copies above are kept for older
+  ;; dialog helpers, but apps can disturb that scratch/null-page area during
+  ;; execution; MessageBox must copy from stable USER-owned storage.
+  (data (i32.const 0x11000) "OK\00")
+  (data (i32.const 0x11003) "Cancel\00")
+  (data (i32.const 0x1100A) "Abort\00")
+  (data (i32.const 0x11010) "Retry\00")
+  (data (i32.const 0x11016) "Ignore\00")
+  (data (i32.const 0x1101D) "Yes\00")
+  (data (i32.const 0x11021) "No\00")
+  (data (i32.const 0x11024) "Try Again\00")
+  (data (i32.const 0x1102E) "Continue\00")
+
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
   (data (i32.const 0x3100) "Button\00")
@@ -522,7 +536,9 @@
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
   ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
-  ;; 0x00010F00  ~3.25KB Free (up to GUEST_BASE)
+  ;; 0x00010F00  256B    Free
+  ;; 0x00011000  64B     WAT-owned MessageBox system strings
+  ;; 0x00011040  ~3KB    Free (up to GUEST_BASE)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
