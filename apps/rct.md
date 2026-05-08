@@ -629,6 +629,12 @@ Second follow-up: after `76/76`, RCT still has a CPU-heavy startup pass before
 the first `CreateWindow`. Web "Auto" slice was `10000` for RCT, which made that
 phase look stalled. RCT now uses the same fast `500000` auto slice as Pinball.
 
+Third follow-up: the CLI harness maps the executable's `English/` directory
+flat into `C:\` before loading sibling data directories. The web manifest now
+keeps the `C:\English\...` copies and also mirrors those files as
+`C:\English.txt`, `C:\README.TXT`, etc., so browser VFS lookup matches CLI more
+closely.
+
 Useful artifacts from this session:
 
 ```
