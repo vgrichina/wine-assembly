@@ -36,6 +36,26 @@ still reaches the first `CreateWindowExA` at batch 25. Cache-overflow markers
 dropped from 461 to 17 over the same 125M-step pre-window window, so 4 MB/thread
 removes most decode-cache churn but does not fully cover RCT's startup footprint.
 
+**2026-05-08 profile follow-up:** V8 CPU profiling of the same 25-batch
+pre-window run showed most sampled CPU in WASM cache invalidation:
+`invalidate_page` ~46%, `th_unary_m8` ~38%, `th_unary_m16` ~6.5%, and
+`invalidate_code_write` ~5.8%. The cause was broad invalidation on every write
+inside the EXE image. RCT mutates large image-data buffers during startup, so
+byte/word updates were scanning the entire 4096-entry block-cache index even
+when the write could not affect decoded code. The invalidation rule is now
+limited to the real code section plus generated-code pages that have already
+been decoded.
+
+Wall-time result for the same 25 x 5M-step run:
+
+```
+Before invalidation fix: real 142.40s, user 138.25s
+After invalidation fix:  real   4.35s, user   3.78s
+```
+
+Post-fix CPU profile no longer shows `invalidate_page` as a hot frame; normal
+`run` / threaded-instruction handlers dominate.
+
 **Current fatal-path evidence (2026-04-30):**
 
 - `timeGetTime` is not frozen in the headless path. A `--count=0x438248,0x43867d` run over 120k batches ended with `0x00438248 = 180` and `0x0043867d = 1466`, so the 25 ms pacing loop at `0x0043867d` is entered and exited repeatedly.

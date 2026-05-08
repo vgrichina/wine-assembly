@@ -76,20 +76,22 @@
   (func $gl16 (param $ga i32) (result i32) (i32.load16_u (call $g2w (local.get $ga))))
   (func $gl8 (param $ga i32) (result i32) (i32.load8_u (call $g2w (local.get $ga))))
   (func $invalidate_code_write (param $ga i32)
-    (local $in_image i32) (local $in_generated i32)
-    ;; RCT generates executable helpers in image data. Some writes arrive
-    ;; before the page has been observed as code, so invalidate all image writes.
+    (local $in_code i32) (local $in_generated i32)
+    ;; Invalidate decoded blocks only when writes can affect already-decoded
+    ;; executable bytes. RCT mutates large image-data buffers during startup;
+    ;; treating every image write as self-modifying code makes each byte/word
+    ;; update scan the whole block-cache index.
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return)))
-    (local.set $in_image
+    (local.set $in_code
       (i32.and
-        (i32.ge_u (local.get $ga) (global.get $image_base))
-        (i32.lt_u (local.get $ga) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+        (i32.ge_u (local.get $ga) (global.get $code_start))
+        (i32.lt_u (local.get $ga) (global.get $code_end))))
     (local.set $in_generated
       (i32.and
         (i32.ne (global.get $generated_code_start) (i32.const 0))
         (i32.and (i32.ge_u (local.get $ga) (global.get $generated_code_start))
                  (i32.lt_u (local.get $ga) (global.get $generated_code_end)))))
-    (if (i32.or (local.get $in_image) (local.get $in_generated))
+    (if (i32.or (local.get $in_code) (local.get $in_generated))
       (then (call $invalidate_page (local.get $ga)))))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32)
