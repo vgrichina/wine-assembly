@@ -461,16 +461,22 @@ class WineAssembly {
     return entry;
   }
 
-  async loadFiles(urls) {
+  async loadFiles(urls, options = {}) {
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
-    for (const item of urls) {
+    const concurrency = Math.max(1, options.concurrency || 6);
+    let loaded = 0, failed = 0, next = 0;
+    const total = urls.length;
+    const loadOne = async (item) => {
       // Accept plain string (flat → c:\basename) or {url, vfsPath} for nested layouts.
       const url = (typeof item === 'string') ? item : item.url;
       const explicit = (typeof item === 'object') ? item.vfsPath : null;
       try {
         const resp = await fetch(url);
-        if (!resp.ok) continue;
+        if (!resp.ok) {
+          failed++;
+          return;
+        }
         const data = new Uint8Array(await resp.arrayBuffer());
         let vfsPath;
         if (explicit) {
@@ -488,7 +494,23 @@ class WineAssembly {
           vfsPath = 'c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase();
         }
         vfs.files.set(vfsPath, { data, attrs: 0x20 });
-      } catch (_) {}
+        loaded++;
+      } catch (_) {
+        failed++;
+      } finally {
+        if (options.onProgress) options.onProgress({ loaded, failed, total, url });
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
+      while (next < total) {
+        const item = urls[next++];
+        await loadOne(item);
+      }
+    });
+    await Promise.all(workers);
+    if (failed && options.required) {
+      throw new Error(`failed to load ${failed} of ${total} data files`);
     }
   }
 

@@ -41,7 +41,7 @@ assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API source
 assert(hostJs.includes("'?v=83'"), 'host.js should cache-bust WAT source fetches');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(indexHtml.includes('const rctFiles = ['), 'web RCT should preload shareware data files');
-assert(indexHtml.includes("rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles }"), 'web RCT app should attach data files');
+assert(indexHtml.includes("rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles, requiredFiles: true, fileConcurrency: 10 }"), 'web RCT app should attach required data files');
 for (const rel of [
   'Data/csg1.dat',
   'Data/css1.dat',
@@ -53,6 +53,8 @@ for (const rel of [
   assert(fs.existsSync(path.join(ROOT, 'binaries', 'shareware', 'rct', rel)), `web RCT asset should exist: ${rel}`);
 }
 assert(indexHtml.includes("vfsPath: 'c:\\\\' + p"), 'web RCT files should preserve root-relative VFS paths');
+assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
+assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');
 assert(/const RCT_PATH_PREFIX\s*=\s*'binaries\/shareware\/rct\/'/.test(deployJs), 'deploy should include RCT shareware asset exception');
 assert(/!rctAsset && parts\.some\(p => SKIP_BIN_DIRS\.has\(p\)\)/.test(deployJs), 'deploy should not skip RCT shareware assets');
 assert(/!isRctPath\(f\.rel\)/.test(deployJs), 'deploy should allow large RCT data files');

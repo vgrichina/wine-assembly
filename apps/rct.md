@@ -619,6 +619,12 @@ The deploy script now also exempts `binaries/shareware/rct/` from the generic
 shareware and large-file skips so those assets are available on the hosted web
 build.
 
+Follow-up: the browser launcher was still silent while it fetched the full RCT
+asset list before starting the guest. `host.js` now loads app data files with
+bounded concurrency, and `index.html` reports progress as `Loading data files
+N/76`. RCT marks these files as required, so a failed asset fetch reports an
+error instead of continuing into the guest with a missing-data/CD prompt.
+
 Useful artifacts from this session:
 
 ```

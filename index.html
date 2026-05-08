@@ -857,7 +857,7 @@ Resource-aware Win98 emulator
       ] },
       mcm:        { exe: 'binaries/shareware/mcm/mcm_ex/MCM.EXE' },
       mw3:        { exe: 'binaries/shareware/mw3/ex/Program_Files/mech3demo.exe' },
-      rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles },
+      rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles, requiredFiles: true, fileConcurrency: 10 },
       dx_ddex1:   { exe: 'binaries/dx-sdk/bin/ddex1.exe' },
       dx_ddex2:   { exe: 'binaries/dx-sdk/bin/ddex2.exe' },
       dx_ddex3:   { exe: 'binaries/dx-sdk/bin/ddex3.exe' },
@@ -1397,7 +1397,21 @@ Resource-aware Win98 emulator
       if (ok) {
         if (app.files && app.files.length) {
           document.getElementById('status').textContent = 'Loading data files...';
-          await wine.loadFiles(app.files);
+          log.textContent += `Loading ${app.files.length} data file(s)...\n`;
+          const progressStride = Math.max(1, Math.ceil(app.files.length / 20));
+          await wine.loadFiles(app.files, {
+            required: !!app.requiredFiles,
+            concurrency: app.fileConcurrency || 6,
+            onProgress: ({ loaded, failed, total }) => {
+              const done = loaded + failed;
+              if (done === total || done === 1 || done % progressStride === 0) {
+                const msg = `Loading data files ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
+                document.getElementById('status').textContent = msg;
+                log.textContent += msg + '\n';
+                log.scrollTop = log.scrollHeight;
+              }
+            },
+          });
         }
         if (app.winver && wine.instance.exports.set_winver) {
           wine.instance.exports.set_winver(app.winver);
