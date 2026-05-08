@@ -362,7 +362,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=85');
+        const r = await fetch('src/api_table.json?v=86');
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -408,7 +408,7 @@ class WineAssembly {
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
       WineAssembly._wasmModulePromise = (async () => {
-        const bytes = await compileWat(f => fetch('src/' + f + '?v=85').then(r => r.text()));
+        const bytes = await compileWat(f => fetch('src/' + f + '?v=86').then(r => r.text()));
         return WebAssembly.compile(bytes);
       })();
     }
@@ -791,12 +791,13 @@ class WineAssembly {
           if (self.renderer && self.renderer.flushRepaint) {
             self.renderer.flushRepaint(true);
           }
-          self._runHeartbeat = ((self._runHeartbeat || 0) + 1) & 127;
-          if (self._runHeartbeat === 0 && self.instance && self.instance.exports) {
+          self._runSliceCount = (self._runSliceCount || 0) + 1;
+          self._runHeartbeat = ((self._runHeartbeat || 0) + 1) & 31;
+          if ((self._runSliceCount <= 8 || self._runHeartbeat === 0) && self.instance && self.instance.exports) {
             const eip = self.instance.exports.get_eip ? self.instance.exports.get_eip() >>> 0 : 0;
             const yr = self.instance.exports.get_yield_reason ? self.instance.exports.get_yield_reason() >>> 0 : 0;
             const windows = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
-            self.logToUI(`[run] eip=0x${eip.toString(16).padStart(8, '0')} yield=${yr} windows=${windows}`);
+            self.logToUI(`[run] slice=${self._runSliceCount} eip=0x${eip.toString(16).padStart(8, '0')} yield=${yr} windows=${windows}`);
           }
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
