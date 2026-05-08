@@ -529,6 +529,22 @@ the exponent slot. `0F AF` now emits `th_block_end` (handler `45`) with the
 post-ModR/M EIP inside each 16-bit and 32-bit emission arm, which commits EIP
 without adding the generic unknown-opcode terminator.
 
+### DirectDraw presentation note (2026-05-07)
+
+After the decode fixes, a 120000-batch RCT run no longer crashes and both the
+DirectDraw primary (`slot 4`) and game offscreen (`slot 8`) dump as non-zero
+`640x480x8` images with 203 colors. The renderer PNG remained black because the
+presentation bridge only promoted an offscreen surface while the primary was
+empty. RCT now writes the primary, so the bridge must present a populated
+primary first and only fall back to matching offscreen surfaces when the primary
+has no pixels.
+
+Verified with a quiet 30000-batch run: `/tmp/rct-30k.png`,
+`/tmp/rct-30k_back_65538.png`, and the dumped primary surface all report
+`640x480`, 234 colors, and 55887 non-black pixels. Use `--quiet-blocks` for
+long RCT runs; otherwise the harness's per-block EIP progress logging dominates
+runtime in the generated draw loop.
+
 Lower-priority notes:
 
 - `FF /3` and `FF /5` far call/jump remain effectively unimplemented; RCT has

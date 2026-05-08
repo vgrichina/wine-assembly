@@ -41,6 +41,7 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 // batch-size=1 so each block run hits the check loop.
 let BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 const VERBOSE = hasFlag('verbose');
+const QUIET_BLOCKS = hasFlag('quiet-blocks'); // --quiet-blocks: suppress per-block EIP progress logs
 const TRACE = hasFlag('trace');           // --trace: log every block's EIP
 // --trace-api[=Name1,Name2]: log API calls with args + return values; with =NAMES, only those APIs
 const TRACE_API_RAW = args.find(a => a === '--trace-api' || a.startsWith('--trace-api='));
@@ -2860,7 +2861,7 @@ if (VERBOSE) {
       const ex = instance.exports;
       const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
       if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
-        if (eip !== prevEip) console.log(`[${batch}] ${regs()}`);
+        if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
         prevApiCount = apiCount;
         prevRegFp = regFp;
@@ -3092,6 +3093,7 @@ if (VERBOSE) {
   };
 
   if (PNG_OUT && renderer) {
+    if (base.gdi && base.gdi.presentBestDxOffscreen) base.gdi.presentBestDxOffscreen(true);
     renderer.repaint();
     const { mem, surfaces } = getDxSurfaceManifest();
     const primary = surfaces.find(s => (s.flags & 1) && s.w === 640 && s.h === 480);

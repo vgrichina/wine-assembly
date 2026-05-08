@@ -548,6 +548,62 @@ normal block-end (`th_block_end`, handler `45`) at the post-ModR/M EIP inside
 each concrete IMUL arm, so the interpreter commits EIP to the next instruction
 without appending the generic unknown-opcode terminator.
 
+**2026-05-07 DirectDraw presentation follow-up.**
+
+After the x86 fixes, RCT can run 120000 batches without a crash or message box:
+
+```
+Stats: 62135 API calls, 120000 batches
+Hit counts:
+  0x00438248 = 1023
+  0x0043867d = 7617
+```
+
+The game now renders real pixels into DirectDraw. The dumped `640x480x8`
+primary surface and matching offscreen surface both have non-zero image data,
+203 colors, and checksum `1061936`. The saved compositor PNG and window
+back-canvas were still all black because `presentBestDxOffscreen()` only copied
+a matching offscreen surface when the primary surface was empty. Since RCT's
+primary is now populated directly, the present bridge skipped it entirely.
+
+Implemented fix: present a non-empty DirectDraw primary to the main window
+first, then fall back to matching offscreen surfaces. The headless PNG dump also
+forces one final DirectDraw present before repainting.
+
+Validation update: a quiet 30000-batch run now writes the DirectDraw primary to
+both the compositor PNG and the window back-canvas:
+
+```
+Stats: 24485 API calls, 30000 batches
+Hit counts:
+  0x00438248 = 445
+  0x0043867d = 3002
+PNG: 640x480, 234 colors, 55887 non-black pixels
+DirectDraw primary: 640x480, 234 colors, 55887 non-black pixels
+```
+
+Artifacts:
+
+```
+/tmp/rct-30k.log
+/tmp/rct-30k.png
+/tmp/rct-30k_back_65538.png
+/tmp/rct-30k-ddraw/manifest.json
+```
+
+Harness note: long RCT validations need `--quiet-blocks` in addition to
+`--quiet-api`; the default runner logs every changing EIP and the generated draw
+loop emits enough block transitions to dominate runtime.
+
+Post-fix validation:
+
+```
+timeout 180 ./tools/build.sh
+timeout 60 node test/test-web-pinball-assets.js
+timeout 2400 npm test
+TOTAL: 41 passed, 0 failed
+```
+
 Useful artifacts from this session:
 
 ```
