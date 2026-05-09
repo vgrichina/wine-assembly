@@ -22,6 +22,10 @@ assert(html.includes('renderer.handleMouseUp(p.x, p.y, 0)'), 'touchend/cancel sh
 assert(html.includes('forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)'), 'touch should launch desktop icons when tapping empty canvas overlay');
 assert(html.includes("cv.addEventListener('touchstart'"), 'pre-launch canvas overlay should forward mobile taps to icons');
 assert(html.includes('e.preventDefault();'), 'touch handlers should prevent browser scroll/zoom defaults');
+assert(html.includes('id="viewport-meta"'), 'page should own the mobile viewport meta tag');
+assert(html.includes('const MIN_VIEWPORT_WIDTH = 640'), 'small mobile browsers should get a 640px minimum layout viewport');
+assert(html.includes('const availableW = Math.min(screenW, innerW)'), 'viewport minimum should apply to narrow browser viewports, not just narrow devices');
+assert(html.includes("width=${width}, initial-scale=1, viewport-fit=cover"), 'viewport controller should switch between 640px and device-width layouts');
 assert(html.includes('const MIN_BACKING_WIDTH = 640'), 'small screens should still get at least a 640px emulated backing width');
 assert(html.includes('displayW') && html.includes('displayH'), 'canvas backing size should be separate from CSS display size');
 assert(html.includes('Math.max(1, MIN_BACKING_WIDTH / displayW)'), 'narrow viewports should scale backing height proportionally');
