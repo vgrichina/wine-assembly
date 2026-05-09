@@ -2,6 +2,8 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
+  static SOURCE_VERSION = '100';
+
   constructor() {
     this.instance = null;
     this.memory = null;
@@ -362,7 +364,7 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     if (!this.apiTable) {
       try {
-        const r = await fetch('src/api_table.json?v=97');
+        const r = await fetch(`src/api_table.json?v=${WineAssembly.SOURCE_VERSION}`);
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -411,8 +413,8 @@ class WineAssembly {
         const tailCalls = WineAssembly.supportsWasmTailCalls();
         console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
         const bytes = await compileWat(
-          f => fetch('src/' + f + '?v=97').then(r => r.text()),
-          { tailCalls }
+          f => fetch(`src/${f}?v=${WineAssembly.SOURCE_VERSION}`).then(r => r.text()),
+          { tailCalls, sourceVersion: WineAssembly.SOURCE_VERSION }
         );
         return WebAssembly.compile(bytes);
       })();

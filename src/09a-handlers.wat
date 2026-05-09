@@ -21,10 +21,13 @@
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
-        ;; Check if this slot matches (same hwnd + id) — update in place
+        ;; Check if this slot matches (same hwnd + id) — update in place.
+        ;; hwnd may legitimately be NULL for callback timers; id=0 marks empty.
         (if (i32.and
-              (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
-              (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
+              (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0))
+              (i32.and
+                (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+                (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id))))
           (then
             (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
             (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
@@ -32,10 +35,10 @@
             (return)
           )
         )
-        ;; Track first free slot (hwnd=0 means empty)
+        ;; Track first free slot (id=0 means empty)
         (if (i32.and
               (i32.eq (local.get $free_slot) (i32.const -1))
-              (i32.eqz (i32.load (local.get $addr))))
+              (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 4)))))
           (then (local.set $free_slot (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)
@@ -68,8 +71,9 @@
               (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
               (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
           (then
-            ;; Clear the slot (set hwnd=0)
+            ;; Clear the slot (id=0 means empty; hwnd may legitimately be NULL)
             (i32.store (local.get $addr) (i32.const 0))
+            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
             (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
             (return (i32.const 1))
           )
@@ -94,8 +98,8 @@
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
-        ;; Skip empty slots (hwnd=0 means empty)
-        (if (i32.load (local.get $addr))
+        ;; Skip empty slots (id=0 means empty; hwnd may legitimately be NULL)
+        (if (i32.load (i32.add (local.get $addr) (i32.const 4)))
           (then
             (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
             (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))

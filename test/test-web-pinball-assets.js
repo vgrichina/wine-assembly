@@ -39,9 +39,10 @@ assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=97'), 'web host should cache-bust host-imports after GDI changes');
+assert(indexHtml.includes('lib/host-imports.js?v=100'), 'web host should cache-bust host-imports after GDI changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("'?v=97'"), 'host.js should cache-bust WAT source fetches');
+assert(hostJs.includes("SOURCE_VERSION = '100'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
 assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');
