@@ -2,7 +2,7 @@
 
 Run real Windows 98 executables in your browser. No emulation layer, no porting — just raw WebAssembly interpreting x86 machine code.
 
-**Live demo:** https://wine-assembly.berrry.app
+**Live demo:** https://wine-assembly.berrry.app  
 **Project story:** [PROJECT_STORY.md](PROJECT_STORY.md) — a retrospective of the first ~810 commits in 34 days.
 
 Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssembly Text (WAT). It loads unmodified Win32 `.exe` files, decodes x86 instructions into a Forth-style threaded code representation, and executes them while reimplementing the Win32 API surface needed by each application.
@@ -47,6 +47,8 @@ python3 -m http.server 8080
 
 Select an application from the dropdown and click Launch.
 
+On iPhone/iPad, open the live demo in Safari and use **Share → Add to Home Screen** to launch it as a standalone web app without Safari tabs/address bar. Touch input is mapped to the Win98 mouse, and text input uses a hidden keyboard proxy so the iOS software keyboard can type into canvas-backed controls like Notepad.
+
 ### CLI
 
 ```bash
@@ -63,17 +65,14 @@ Key flags:
 
 ## Building
 
-Requires [wabt](https://github.com/WebAssembly/wabt) (`wat2wasm`).
+Requires Node.js. The project uses its own JS WAT compiler (`lib/compile-wat.js`) and writes both tail-call and compatibility WASM builds.
 
 ```bash
-# Install wabt (macOS)
-brew install wabt
-
 # Build
 bash tools/build.sh
 ```
 
-The build concatenates `src/parts/*.wat` files in alphabetical order into a single module, then compiles to `.wasm`.
+The build checks the handler table, concatenates `src/*.wat` in filename order for inspection, then compiles `build/wine-assembly.wasm` and `build/wine-assembly.compat.wasm`.
 
 ## Architecture
 
@@ -81,7 +80,7 @@ The entire interpreter is written in WAT (WebAssembly Text Format) — no C, no 
 
 - Canvas rendering (GDI operations)
 - File I/O (reading executables, help files, DLLs)
-- Input handling (keyboard, mouse)
+- Input handling (keyboard, mouse, touch, and mobile software-keyboard proxy)
 - Timer management
 
 Everything else — x86 decoding, memory management, PE loading, Win32 API implementation, structured exception handling, sprintf — is implemented in ~48,000 lines of hand-written WAT, compiling to a ~230 KB `.wasm` module.
@@ -89,10 +88,12 @@ Everything else — x86 decoding, memory management, PE loading, Win32 API imple
 ## Project Structure
 
 ```
-src/parts/          WAT source files (concatenated in filename order)
+src/                WAT source files (compiled in filename order)
 src/api_table.json  Win32 API name -> handler ID mapping
 lib/                JS libraries (renderer, resource parser, DLL loader)
 index.html, host.js Browser frontend
+manifest.webmanifest, icons/
+                    PWA/iOS Home Screen metadata and icons
 test/               CLI test runner and test binaries
 tools/              Build scripts, code generators, debug tools
 docs/               Memory map, design notes
