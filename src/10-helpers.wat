@@ -1374,6 +1374,37 @@
       (then (return (call $wnd_window_screen_y (local.get $hwnd)))))
     (call $wnd_client_screen_y (local.get $top)))
 
+  ;; Fill MSG.time/MSG.pt for delivered input. Real Win32 records screen-space
+  ;; cursor coordinates in MSG.pt and GetMessagePos(); client-relative lParam is
+  ;; not enough for control/button tracking loops.
+  (func $msg_store_input_tail (param $msg_ptr i32) (param $hwnd i32) (param $msg i32) (param $lparam i32)
+    (local $x i32) (local $y i32)
+    (local.set $x (global.get $last_msg_pos_x))
+    (local.set $y (global.get $last_msg_pos_y))
+    (if
+      (i32.or
+        (i32.and
+          (i32.ge_u (local.get $msg) (i32.const 0x0200))
+          (i32.le_u (local.get $msg) (i32.const 0x020D)))
+        (i32.and
+          (i32.ge_u (local.get $msg) (i32.const 0x00A0))
+          (i32.le_u (local.get $msg) (i32.const 0x00AD))))
+      (then
+        (local.set $x
+          (i32.add
+            (call $wnd_mouse_msg_origin_x (local.get $hwnd))
+            (i32.extend16_s (local.get $lparam))))
+        (local.set $y
+          (i32.add
+            (call $wnd_mouse_msg_origin_y (local.get $hwnd))
+            (i32.extend16_s (i32.shr_u (local.get $lparam) (i32.const 16)))))
+        (global.set $last_msg_pos_x (local.get $x))
+        (global.set $last_msg_pos_y (local.get $y))))
+    (global.set $last_msg_time (call $host_get_ticks))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 16)) (global.get $last_msg_time))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 20)) (local.get $x))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 24)) (local.get $y)))
+
   ;; Deep child WindowFromPoint helper. JS supplies only the browser point and
   ;; current top-level candidate; USER-style child visibility/geometry/class
   ;; filtering stays in WAT with the rest of the HWND tree.

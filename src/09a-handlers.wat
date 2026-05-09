@@ -1501,8 +1501,8 @@
 
   ;; 97: GetCursorPos
   (func $handle_GetCursorPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg0) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0))
+    (call $gs32 (local.get $arg0) (global.get $last_msg_pos_x))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (global.get $last_msg_pos_y))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -7211,23 +7211,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 611: GetMessagePos — returns the cursor position (y<<16 | x) at the
-  ;; time of the last retrieved message. We don't track screen-space mouse
-  ;; coords separately; fall back to the last message's lParam (client
-  ;; coords of the hwnd it was dispatched to). Good enough for mspaint's
-  ;; pencil/tool dispatch which only reads the packed DWORD.
+  ;; 611: GetMessagePos — returns the screen-space cursor position
+  ;; (y<<16 | x) at the time of the last retrieved message.
   (func $handle_GetMessagePos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $pending_input_lparam))
+    (global.set $eax
+      (i32.or
+        (i32.and (global.get $last_msg_pos_x) (i32.const 0xFFFF))
+        (i32.shl
+          (i32.and (global.get $last_msg_pos_y) (i32.const 0xFFFF))
+          (i32.const 16))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 612: GetMessageTime — return tick count of last message retrieved via
-  ;; GetMessage. We don't track per-message timestamps separately, so return
-  ;; the current tick count; good enough for double-click interval checks
-  ;; and idle-detection logic that compares two GetMessageTime samples.
+  ;; 612: GetMessageTime — return tick count of the last message retrieved via
+  ;; GetMessage/PeekMessage.
   (func $handle_GetMessageTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $tick_count (call $host_get_ticks))
-    (global.set $eax (global.get $tick_count))
+    (global.set $eax (global.get $last_msg_time))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 

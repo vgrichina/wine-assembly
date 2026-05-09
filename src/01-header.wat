@@ -966,6 +966,12 @@
   (global $pending_input_packed (mut i32) (i32.const 0))
   (global $pending_input_lparam (mut i32) (i32.const 0))
   (global $pending_input_hwnd   (mut i32) (i32.const 0))
+  ;; Win32 MSG bookkeeping for GetMessagePos/GetMessageTime and MSG.pt.
+  ;; Stored in screen coordinates, as USER does. Host only provides raw
+  ;; hwnd/client lParam input; WAT converts it using the HWND tree geometry.
+  (global $last_msg_pos_x (mut i32) (i32.const 0))
+  (global $last_msg_pos_y (mut i32) (i32.const 0))
+  (global $last_msg_time  (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $wait_handle  (mut i32) (i32.const 0))

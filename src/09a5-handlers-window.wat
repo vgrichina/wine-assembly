@@ -935,6 +935,11 @@
     (i32.shr_u (local.get $packed) (i32.const 16)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
     (global.get $pending_input_lparam))
+    (call $msg_store_input_tail
+      (local.get $msg_ptr)
+      (local.get $tmp)
+      (i32.and (local.get $packed) (i32.const 0xFFFF))
+      (global.get $pending_input_lparam))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire
@@ -1206,6 +1211,11 @@
             (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
               (i32.shr_u (local.get $packed) (i32.const 16)))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+              (global.get $pending_input_lparam))
+            (call $msg_store_input_tail
+              (local.get $arg0)
+              (local.get $tmp)
+              (local.get $msg)
               (global.get $pending_input_lparam))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
