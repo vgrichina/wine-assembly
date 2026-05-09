@@ -64,6 +64,9 @@ const DESKTOP_BINARY_FILES = new Set([
   'binaries/entertainment-pack/winmine.exe',
   'binaries/entertainment-pack/ski32.exe',
   'binaries/pinball/pinball.exe',
+  'binaries/plus98/SPIDER.EXE',
+  'binaries/plus98/SPIDER.CHM',
+  'binaries/plus98/SPIDER.HLP',
 ]);
 
 const DESKTOP_BINARY_PREFIXES = [
@@ -71,7 +74,7 @@ const DESKTOP_BINARY_PREFIXES = [
 ];
 
 // Binary extensions to include
-const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf', '.png']);
+const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf', '.png']);
 
 function walk(dir, base, filter) {
   const results = [];
@@ -125,10 +128,11 @@ function collectBinaries() {
     const found = walk(realDir, subdir, (name, rel) => {
       if (!BINARY_EXTS.has(path.extname(name).toLowerCase())) return false;
       if (rel.startsWith('binaries/')) {
-        const desktopAsset = DESKTOP_BINARY_FILES.has(rel) || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
+        const explicitDesktopAsset = DESKTOP_BINARY_FILES.has(rel);
+        const desktopAsset = explicitDesktopAsset || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
         if (!desktopAsset) return false;
         const parts = rel.split('/');
-        if (parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
+        if (!explicitDesktopAsset && parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
       }
       return true;
     });
