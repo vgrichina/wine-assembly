@@ -108,6 +108,9 @@
       top: 0; left: 0;
       width: 100%;
       height: 100%;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     #log {
       width: 320px;
@@ -548,21 +551,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=90"></script>
-  <script src="lib/dib.js?v=90"></script>
-  <script src="lib/resources-icon.js?v=90"></script>
-  <script src="lib/renderer-input.js?v=90"></script>
-  <script src="lib/renderer.js?v=90"></script>
-  <script src="lib/dll-loader.js?v=90"></script>
-  <script src="lib/storage.js?v=90"></script>
-  <script src="lib/filesystem.js?v=90"></script>
-  <script src="lib/hlp-parser.js?v=90"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=90"></script>
-  <script src="lib/host-imports.js?v=90"></script>
-  <script src="lib/compile-wat.js?v=90"></script>
-  <script src="lib/thread-manager.js?v=90"></script>
-  <script src="host.js?v=90"></script>
-  <script src="lib/recorder.js?v=90"></script>
+  <script src="lib/mem-utils.js?v=92"></script>
+  <script src="lib/dib.js?v=92"></script>
+  <script src="lib/resources-icon.js?v=92"></script>
+  <script src="lib/renderer-input.js?v=92"></script>
+  <script src="lib/renderer.js?v=92"></script>
+  <script src="lib/dll-loader.js?v=92"></script>
+  <script src="lib/storage.js?v=92"></script>
+  <script src="lib/filesystem.js?v=92"></script>
+  <script src="lib/hlp-parser.js?v=92"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=92"></script>
+  <script src="lib/host-imports.js?v=92"></script>
+  <script src="lib/compile-wat.js?v=92"></script>
+  <script src="lib/thread-manager.js?v=92"></script>
+  <script src="host.js?v=92"></script>
+  <script src="lib/recorder.js?v=92"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -596,12 +599,24 @@ Resource-aware Win98 emulator
       // wiring takes over (wireCanvasInput overwrites these handlers).
       const cv = document.getElementById('screen');
       cv.onmousedown = e => {
+        if (inputWired) return;
         cv.style.pointerEvents = 'none';
         const under = document.elementFromPoint(e.clientX, e.clientY);
         cv.style.pointerEvents = '';
         const iconEl = under && under.closest && under.closest('.desktop-icon');
         if (iconEl) iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: e.clientX, clientY: e.clientY }));
       };
+      cv.addEventListener('touchstart', e => {
+        if (inputWired) return;
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+        e.preventDefault();
+        cv.style.pointerEvents = 'none';
+        const under = document.elementFromPoint(t.clientX, t.clientY);
+        cv.style.pointerEvents = '';
+        const iconEl = under && under.closest && under.closest('.desktop-icon');
+        if (iconEl) iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
+      }, { passive: false });
       const sel = document.getElementById('app-select');
       for (const opt of [...sel.querySelectorAll('option')]) {
         if (!DEFAULT_APP_SET.has(opt.value)) opt.remove();
@@ -985,7 +1000,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=90');
+        const response = await fetch(url + '?v=92');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1030,12 +1045,15 @@ Resource-aware Win98 emulator
       if (inputWired) return;
       inputWired = true;
       canvas.oncontextmenu = e => e.preventDefault();
-      function eventPoint(e) {
+      function eventPointFromClient(clientX, clientY) {
         const r = canvas.getBoundingClientRect();
         const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        const x = Math.floor((e.clientX - r.left) * sx);
-        const y = Math.floor((e.clientY - r.top) * sy);
+        const x = Math.floor((clientX - r.left) * sx);
+        const y = Math.floor((clientY - r.top) * sy);
         return renderer.mapCanvasPoint ? renderer.mapCanvasPoint(x, y) : { x, y };
+      }
+      function eventPoint(e) {
+        return eventPointFromClient(e.clientX, e.clientY);
       }
       function requestBrowserFullscreen() {
         const target = document.getElementById('screen-wrap') || canvas;
@@ -1054,13 +1072,42 @@ Resource-aware Win98 emulator
         }
         return null;
       }
+      function forwardEmptyDesktopClick(clientX, clientY, cx, cy) {
+        if (DEBUG_MODE || windowAtCanvas(cx, cy)) return false;
+        canvas.style.pointerEvents = 'none';
+        const under = document.elementFromPoint(clientX, clientY);
+        canvas.style.pointerEvents = '';
+        const iconEl = under && under.closest && under.closest('.desktop-icon');
+        if (iconEl) {
+          iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY }));
+          return true;
+        }
+        for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
+        return false;
+      }
       let mouseDragActive = false;
       let mouseDownActive = false;
+      let activeTouchId = null;
+      let lastTouchPoint = null;
       function stopMouseDragCapture() {
         mouseDragActive = false;
         mouseDownActive = false;
         window.removeEventListener('mousemove', windowMouseMove, true);
         window.removeEventListener('mouseup', windowMouseUp, true);
+      }
+      function touchById(list, id) {
+        if (!list) return null;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].identifier === id) return list[i];
+        }
+        return null;
+      }
+      function stopTouchCapture() {
+        activeTouchId = null;
+        lastTouchPoint = null;
+        window.removeEventListener('touchmove', windowTouchMove, true);
+        window.removeEventListener('touchend', windowTouchEnd, true);
+        window.removeEventListener('touchcancel', windowTouchCancel, true);
       }
       function windowMouseMove(e) {
         if (!mouseDownActive) return;
@@ -1078,24 +1125,40 @@ Resource-aware Win98 emulator
         renderer.handleMouseUp(x, y, e.button);
         stopMouseDragCapture();
       }
+      function windowTouchMove(e) {
+        if (activeTouchId === null) return;
+        const t = touchById(e.changedTouches, activeTouchId) || touchById(e.touches, activeTouchId);
+        if (!t) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { x, y } = eventPointFromClient(t.clientX, t.clientY);
+        lastTouchPoint = { x, y };
+        renderer.handleMouseMove(x, y);
+      }
+      function windowTouchEnd(e) {
+        if (activeTouchId === null) return;
+        const t = touchById(e.changedTouches, activeTouchId);
+        if (!t) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const p = eventPointFromClient(t.clientX, t.clientY);
+        renderer.handleMouseUp(p.x, p.y, 0);
+        stopTouchCapture();
+      }
+      function windowTouchCancel(e) {
+        if (activeTouchId === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const p = lastTouchPoint;
+        if (p) renderer.handleMouseUp(p.x, p.y, 0);
+        stopTouchCapture();
+      }
       canvas.onmousedown = e => {
         e.preventDefault();
         canvas.focus();
         if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPoint(e);
-        if (!DEBUG_MODE && !windowAtCanvas(cx, cy)) {
-          // No window here — forward click to the icon under the cursor.
-          canvas.style.pointerEvents = 'none';
-          const under = document.elementFromPoint(e.clientX, e.clientY);
-          canvas.style.pointerEvents = '';
-          const iconEl = under && under.closest && under.closest('.desktop-icon');
-          if (iconEl) {
-            iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY }));
-            return;
-          }
-          // Empty desktop click: clear icon selection.
-          for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
-        }
+        if (forwardEmptyDesktopClick(e.clientX, e.clientY, cx, cy)) return;
         renderer.handleMouseDown(cx, cy, e.button);
         mouseDownActive = true;
         mouseDragActive = false;
@@ -1111,6 +1174,22 @@ Resource-aware Win98 emulator
         e.preventDefault();
         const { x, y } = eventPoint(e);
         renderer.handleWheel(x, y, e.deltaY);
+      }, { passive: false });
+      canvas.addEventListener('touchstart', e => {
+        if (activeTouchId !== null) return;
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+        e.preventDefault();
+        canvas.focus();
+        if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
+        const { x: cx, y: cy } = eventPointFromClient(t.clientX, t.clientY);
+        if (forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)) return;
+        activeTouchId = t.identifier;
+        lastTouchPoint = { x: cx, y: cy };
+        renderer.handleMouseDown(cx, cy, 0);
+        window.addEventListener('touchmove', windowTouchMove, { capture: true, passive: false });
+        window.addEventListener('touchend', windowTouchEnd, { capture: true, passive: false });
+        window.addEventListener('touchcancel', windowTouchCancel, { capture: true, passive: false });
       }, { passive: false });
       canvas.setAttribute('tabindex', '0');
       canvas.focus();
@@ -1489,43 +1568,43 @@ Resource-aware Win98 emulator
     function screenCanvasSize() {
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
+      const MIN_BACKING_WIDTH = 640;
       const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
       const fullscreen = fsElement === wrap || fsElement === canvas;
-      if (!fullscreen) {
-        return { fullscreen, w: wrap.clientWidth, h: wrap.clientHeight };
-      }
-
       const fsRect = fsElement && fsElement.getBoundingClientRect ? fsElement.getBoundingClientRect() : null;
       const vv = window.visualViewport;
-      const w = Math.floor(Math.max(
+      const displayW = Math.floor(fullscreen ? Math.max(
         (fsRect && fsRect.width) || 0,
         (vv && vv.width) || 0,
         window.innerWidth || 0,
         wrap.clientWidth || 0,
         canvas.clientWidth || 0
-      ));
-      const h = Math.floor(Math.max(
+      ) : wrap.clientWidth);
+      const displayH = Math.floor(fullscreen ? Math.max(
         (fsRect && fsRect.height) || 0,
         (vv && vv.height) || 0,
         window.innerHeight || 0,
         wrap.clientHeight || 0,
         canvas.clientHeight || 0
-      ));
-      return { fullscreen, w, h };
+      ) : wrap.clientHeight);
+      const scale = displayW > 0 ? Math.max(1, MIN_BACKING_WIDTH / displayW) : 1;
+      const w = Math.max(MIN_BACKING_WIDTH, displayW | 0);
+      const h = Math.max(1, Math.round((displayH || 1) * scale));
+      return { fullscreen, displayW, displayH, w, h };
     }
 
     // Resize canvas to match container
     function resizeCanvas() {
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
-      const { fullscreen, w, h } = screenCanvasSize();
+      const { fullscreen, displayW, displayH, w, h } = screenCanvasSize();
       if (fullscreen) {
-        wrap.style.width = w + 'px';
-        wrap.style.height = h + 'px';
+        wrap.style.width = displayW + 'px';
+        wrap.style.height = displayH + 'px';
         wrap.style.position = 'fixed';
         wrap.style.inset = '0';
-        canvas.style.width = w + 'px';
-        canvas.style.height = h + 'px';
+        canvas.style.width = displayW + 'px';
+        canvas.style.height = displayH + 'px';
         canvas.style.position = 'fixed';
         canvas.style.inset = '0';
       } else {

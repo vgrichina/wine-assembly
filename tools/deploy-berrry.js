@@ -31,7 +31,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools'
 const BINARY_DIRS = ['binaries'];
 
 // Skip these binary subdirs (too large, not used by app, or 16-bit).
-// Default deploy ships only desktop-icon binaries; skip everything else.
+// Default deploy ships only assets reachable from the desktop icons. Debug-only
+// apps can still be pushed with --files=... when needed.
 const SKIP_BIN_DIRS = new Set([
   'installers', 'win98-16bit', 'demos', 'plus', 'plus98',
   'shareware', 'wep32-community', 'screensavers', 'xp', 'win98-apps',
@@ -44,10 +45,30 @@ const MAX_BINARY_SIZE = 500 * 1024;
 const LARGE_OK = new Set(['cards.dll', 'comctl32.dll']);
 const LARGE_OK_PATHS = new Set([
   'binaries/pinball/PINBALL.DAT',
-  'binaries/pinball-plus95/PINBALL.DAT',
 ]);
-const RCT_PATH_PREFIX = 'binaries/shareware/rct/';
-const isRctPath = rel => rel.startsWith(RCT_PATH_PREFIX);
+
+const DESKTOP_BINARY_FILES = new Set([
+  'binaries/notepad.exe',
+  'binaries/calc.exe',
+  'binaries/dlls/msvcrt.dll',
+  'binaries/entertainment-pack/cards.dll',
+  'binaries/entertainment-pack/freecell.exe',
+  'binaries/entertainment-pack/sol.exe',
+  'binaries/entertainment-pack/cruel.exe',
+  'binaries/entertainment-pack/golf.exe',
+  'binaries/entertainment-pack/pegged.exe',
+  'binaries/entertainment-pack/snake.exe',
+  'binaries/entertainment-pack/taipei.exe',
+  'binaries/entertainment-pack/tictac.exe',
+  'binaries/entertainment-pack/reversi.exe',
+  'binaries/entertainment-pack/winmine.exe',
+  'binaries/entertainment-pack/ski32.exe',
+  'binaries/pinball/pinball.exe',
+]);
+
+const DESKTOP_BINARY_PREFIXES = [
+  'binaries/pinball/',
+];
 
 // Binary extensions to include
 const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf']);
@@ -102,18 +123,18 @@ function collectBinaries() {
     if (!fs.existsSync(dir)) continue;
     const realDir = fs.realpathSync(dir);
     const found = walk(realDir, subdir, (name, rel) => {
-      const rctAsset = isRctPath(rel);
-      if (!BINARY_EXTS.has(path.extname(name).toLowerCase()) && !rctAsset) return false;
+      if (!BINARY_EXTS.has(path.extname(name).toLowerCase())) return false;
+      const desktopAsset = DESKTOP_BINARY_FILES.has(rel) || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
+      if (!desktopAsset) return false;
       const parts = rel.split('/');
-      if (!rctAsset && parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
+      if (parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
       return true;
     });
     for (const f of found) {
       const stat = fs.statSync(f.full);
       if (stat.size > MAX_BINARY_SIZE &&
           !LARGE_OK.has(path.basename(f.full).toLowerCase()) &&
-          !LARGE_OK_PATHS.has(f.rel) &&
-          !isRctPath(f.rel)) {
+          !LARGE_OK_PATHS.has(f.rel)) {
         console.log('  SKIP (too large): ' + f.rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
         continue;
       }
