@@ -11,6 +11,8 @@ apps/*.log
 binaries
 *.exe
 *.png
+!icons/
+!icons/*.png
 *.dll
 *.DLL
 *.wav

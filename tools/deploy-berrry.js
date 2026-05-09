@@ -19,7 +19,7 @@ const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
 
 // Text file extensions (served as-is)
-const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md']);
+const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md', '.webmanifest']);
 
 // Skip these root text files
 const SKIP_FILES = new Set(['package.json', 'package-lock.json']);
@@ -28,7 +28,7 @@ const SKIP_FILES = new Set(['package.json', 'package-lock.json']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
 
 // Directories that contain binary assets (base64-encoded)
-const BINARY_DIRS = ['binaries'];
+const BINARY_DIRS = ['binaries', 'icons'];
 
 // Skip these binary subdirs (too large, not used by app, or 16-bit).
 // Default deploy ships only assets reachable from the desktop icons. Debug-only
@@ -71,7 +71,7 @@ const DESKTOP_BINARY_PREFIXES = [
 ];
 
 // Binary extensions to include
-const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf']);
+const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf', '.png']);
 
 function walk(dir, base, filter) {
   const results = [];
@@ -124,10 +124,12 @@ function collectBinaries() {
     const realDir = fs.realpathSync(dir);
     const found = walk(realDir, subdir, (name, rel) => {
       if (!BINARY_EXTS.has(path.extname(name).toLowerCase())) return false;
-      const desktopAsset = DESKTOP_BINARY_FILES.has(rel) || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
-      if (!desktopAsset) return false;
-      const parts = rel.split('/');
-      if (parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
+      if (rel.startsWith('binaries/')) {
+        const desktopAsset = DESKTOP_BINARY_FILES.has(rel) || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
+        if (!desktopAsset) return false;
+        const parts = rel.split('/');
+        if (parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
+      }
       return true;
     });
     for (const f of found) {

@@ -1,0 +1,26 @@
+{
+  "name": "Wine-Assembly Windows 98 Emulator",
+  "short_name": "Wine98",
+  "description": "Resource-aware Windows 98 emulator in the browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#008080",
+  "theme_color": "#008080",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
