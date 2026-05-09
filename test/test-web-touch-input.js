@@ -29,5 +29,9 @@ assert(html.includes('const MIN_BACKING_WIDTH = 640'), 'small screens should sti
 assert(html.includes('displayW') && html.includes('displayH'), 'canvas backing size should be separate from CSS display size');
 assert(html.includes('Math.max(1, MIN_BACKING_WIDTH / displayW)'), 'narrow viewports should scale backing height proportionally');
 assert(html.includes("canvas.style.width = displayW + 'px'"), 'fullscreen CSS width should use physical display width, not minimum backing width');
+assert(html.includes("desktopIcons.style.width = w + 'px'"), 'desktop icon overlay should use guest backing width');
+assert(html.includes('desktopIcons.style.transform = `scale(${sx}, ${sy})`'), 'desktop icon overlay should scale with the canvas');
+assert(html.includes("window.visualViewport.addEventListener('resize', resizeCanvas)"), 'mobile browser chrome viewport changes should resize the canvas');
+assert(html.includes('requestAnimationFrame(resizeCanvas)'), 'desktop icon overlay should be scaled on initial paint');
 
 console.log('PASS  web canvas supports mobile touch input');
