@@ -211,6 +211,11 @@
       (local.get $size_w)
       (i32.or (i32.and (local.get $cw) (i32.const 0xFFFF))
               (i32.shl (local.get $ch) (i32.const 16)))))
+    ;; Win98 invalidates the newly exposed client region when a window is
+    ;; resized/maximized. Some apps repaint from WM_SIZE, but others (Spider)
+    ;; wait for the subsequent WM_PAINT; without this the freshly reallocated
+    ;; backing canvas remains the default grey fill.
+    (call $paint_flag_set_inv (local.get $hwnd))
     ;; Resize reallocates the back-canvas (grey-filled), wiping the previous
     ;; chrome. The guest's WM_SIZE handler invalidates the client area but
     ;; not the NC region, so synchronously redraw chrome here — same pattern
@@ -222,7 +227,11 @@
   ;; and post WM_MOVE + WM_SIZE so the guest wndproc relays out.
   (func (export "host_resize_commit")
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
-    (call $post_resize_messages (local.get $hwnd) (i32.const 0)))
+    (call $post_resize_messages
+      (local.get $hwnd)
+      (select (i32.const 2) (i32.const 0) (call $wnd_max_get (local.get $hwnd)))))
+  (func (export "wnd_is_maximized") (param $hwnd i32) (result i32)
+    (call $wnd_max_get (local.get $hwnd)))
   ;; User-initiated move commit (host title-bar drag). Moving a Win98 window
   ;; sends WM_MOVE but does not imply WM_SIZE/NCCALCSIZE; dialog controls keep
   ;; their layout and only the top-level screen origin changes.
@@ -497,6 +506,8 @@
   ;; JS does not need to drive dialog construction.)
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "get_capture_hwnd")     (result i32) (global.get $capture_hwnd))
+  (func (export "release_capture")
+    (global.set $capture_hwnd (i32.const 0)))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
   ;; Set focus via the proper SETFOCUS/KILLFOCUS message round-trip so
   ;; per-class focus bits + default-button flip + invalidates fire.

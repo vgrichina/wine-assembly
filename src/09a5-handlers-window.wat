@@ -785,7 +785,9 @@
     ;; with the new client dimensions so GetMessageA delivers correct values.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
                  (i32.eq (local.get $arg0) (global.get $main_hwnd)))
-      (then (global.set $pending_wm_size (local.get $client_size))))
+      (then
+        (call $wnd_max_set (local.get $arg0) (i32.const 1))
+        (global.set $pending_wm_size (local.get $client_size))))
     ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
     ;; chain: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS. WM_SIZE (from
     ;; pending_wm_size) is delivered later by GetMessageA's drain.

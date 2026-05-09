@@ -60,7 +60,9 @@ E2E=(
   test/test-solitaire-drag.js
   test/test-spider-deal-menu.js
   test/test-spider-drag.js
+  test/test-spider-maximized-canvas-resize.js
   test/test-spider-messagebox.js
+  test/test-spider-show-available-move-menu.js
   test/test-solitaire-maximize.js
   test/test-solitaire-resize.js
   test/test-minesweeper-click.js

@@ -392,6 +392,9 @@ async function main() {
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
+      } else if (kind === 'canvas-resize') {
+        // B:canvas-resize:WIDTH:HEIGHT — emulate browser backing-canvas resize.
+        scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
@@ -2374,6 +2377,16 @@ async function main() {
         } catch (e) {
           logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'canvas-resize' && renderer && renderer.canvas) {
+        const oldW = renderer.canvas.width | 0;
+        const oldH = renderer.canvas.height | 0;
+        renderer.canvas.width = ev.w | 0;
+        renderer.canvas.height = ev.h | 0;
+        if (typeof renderer.handleScreenResize === 'function') {
+          renderer.handleScreenResize(oldW, oldH, ev.w | 0, ev.h | 0);
+        }
+        if (typeof renderer.repaint === 'function') renderer.repaint();
+        logs.push(`[input] canvas-resize ${oldW}x${oldH} -> ${ev.w}x${ev.h} at batch ${batch}`);
       } else if (ev.action === 'winamp-play') {
         // Winamp IPC: write filename to guest memory, send WM_USER messages
         const we = instance.exports;
