@@ -99,6 +99,20 @@ check('toolbar focus is redirected to guest canvas',
       html.includes('toolbar.contains(el)') &&
       html.includes('focusGuestCanvas()') &&
       html.includes('runningApps && runningApps.length'));
+check('mobile keyboard proxy exists',
+      html.includes('id="mobile-keyboard-proxy"') &&
+      html.includes('<textarea id="mobile-keyboard-proxy"'));
+check('touch/click focuses mobile keyboard proxy',
+      html.includes('function focusGuestKeyboardProxy()') &&
+      html.includes('keyboardProxy.focus({ preventScroll: true })') &&
+      html.includes('focusGuestKeyboardProxy();'));
+check('proxy keyboard events are claimed by guest',
+      html.includes('const isKeyboardProxy = el =>') &&
+      html.includes('if (isKeyboardProxy(el)) return false'));
+check('proxy input forwards text to guest WM_CHAR path',
+      html.includes("keyboardProxy.addEventListener('input', handleProxyInput)") &&
+      html.includes("startInputProfile('proxy-input'") &&
+      html.includes('renderer.handleKeyPress(charCode)'));
 
 // --- End-to-end: typing flows through to Notepad's edit ---
 //   Drives the CLI path that mirrors the browser flow.
