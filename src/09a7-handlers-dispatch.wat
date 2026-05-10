@@ -179,10 +179,18 @@
       (then
         (global.set $eax (i32.const 0x60001))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
-    ;; IMAGE_CURSOR (2): return fake cursor handle (same as LoadCursorA)
+    ;; IMAGE_CURSOR (2): return cursor handle (same encoding as LoadCursorA)
     (if (i32.eq (local.get $arg2) (i32.const 2))
       (then
-        (global.set $eax (i32.const 0x60002))
+        (if (i32.and (i32.eqz (local.get $arg0))
+                     (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
+          (then (global.set $eax (i32.or (i32.const 0x60000)
+                                         (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
+          (else
+            (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+              (then (global.set $eax (i32.or (i32.const 0x680000)
+                                             (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
+              (else (global.set $eax (i32.const 0x67F00))))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
     ;; Unknown type: return NULL
     (global.set $eax (i32.const 0))
