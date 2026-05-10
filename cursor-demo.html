@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cursor Resource Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #0b6f6b;
+      --panel: #c0c0c0;
+      --shadow: #808080;
+      --light: #fff;
+      --dark: #000;
+      --blue: #000080;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      font: 12px "MS Sans Serif", Tahoma, Arial, sans-serif;
+      color: #000;
+    }
+    .window {
+      width: min(920px, calc(100vw - 32px));
+      margin: 24px auto;
+      background: var(--panel);
+      border: 1px solid var(--dark);
+      box-shadow: inset 1px 1px var(--light), inset -1px -1px var(--shadow), 2px 2px 0 rgba(0,0,0,.35);
+    }
+    .titlebar {
+      height: 22px;
+      line-height: 22px;
+      padding: 0 8px;
+      color: #fff;
+      background: var(--blue);
+      font-weight: bold;
+    }
+    .content { padding: 12px; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    button, input[type="file"]::file-selector-button {
+      height: 24px;
+      padding: 2px 12px;
+      border: 1px solid #000;
+      background: var(--panel);
+      box-shadow: inset 1px 1px #fff, inset -1px -1px #808080;
+      font: inherit;
+    }
+    button:active {
+      box-shadow: inset 1px 1px #808080, inset -1px -1px #fff;
+      padding: 3px 11px 1px 13px;
+    }
+    code {
+      background: #fff;
+      padding: 1px 4px;
+      border: 1px solid #808080;
+    }
+    .status {
+      min-height: 18px;
+      margin-bottom: 10px;
+    }
+    .main {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 12px;
+    }
+    .list, .test {
+      border: 1px solid #808080;
+      box-shadow: inset 1px 1px #000, inset -1px -1px #fff;
+      background: #fff;
+    }
+    .list {
+      min-height: 360px;
+      max-height: 560px;
+      overflow: auto;
+      padding: 4px;
+    }
+    .item {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 4px;
+      min-height: 42px;
+      cursor: default;
+    }
+    .item.selected {
+      background: var(--blue);
+      color: #fff;
+    }
+    .iconbox {
+      width: 32px;
+      height: 32px;
+      border: 1px solid #808080;
+      background:
+        linear-gradient(45deg, #ddd 25%, transparent 25%),
+        linear-gradient(-45deg, #ddd 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #ddd 75%),
+        linear-gradient(-45deg, transparent 75%, #ddd 75%);
+      background-color: #fff;
+      background-size: 8px 8px;
+      background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+      display: grid;
+      place-items: center;
+    }
+    .iconbox img {
+      max-width: 32px;
+      max-height: 32px;
+      image-rendering: pixelated;
+    }
+    .meta { line-height: 16px; }
+    .muted { color: #333; }
+    .selected .muted { color: #ddd; }
+    .test {
+      min-height: 360px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    .test-head, .test-foot {
+      padding: 8px;
+      background: var(--panel);
+      border-bottom: 1px solid #808080;
+    }
+    .test-foot {
+      border-top: 1px solid #808080;
+      border-bottom: 0;
+    }
+    .target {
+      position: relative;
+      min-height: 280px;
+      background:
+        linear-gradient(#f4f4f4 1px, transparent 1px),
+        linear-gradient(90deg, #f4f4f4 1px, transparent 1px);
+      background-size: 24px 24px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    .target::before {
+      content: "";
+      width: 180px;
+      height: 180px;
+      border: 1px solid #808080;
+      background:
+        linear-gradient(90deg, transparent 49%, #800 49%, #800 51%, transparent 51%),
+        linear-gradient(transparent 49%, #800 49%, #800 51%, transparent 51%);
+    }
+    .fallback {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    @media (max-width: 720px) {
+      .main { grid-template-columns: 1fr; }
+      .list { max-height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="titlebar">Cursor Resource Demo</div>
+    <div class="content">
+      <div class="row">
+        <button id="load-default">Load EmPipe cursors</button>
+        <input id="file" type="file" accept=".exe,.dll,.scr">
+        <div class="fallback">
+          <label><input id="use-hotspot" type="checkbox" checked> CSS hotspot</label>
+        </div>
+      </div>
+      <div class="status" id="status">Ready. Default path: <code>binaries/wep32-community/EmPipe/EMPIPE.EXE</code></div>
+      <div class="main">
+        <div class="list" id="list"></div>
+        <div class="test">
+          <div class="test-head" id="selected">No cursor selected</div>
+          <div class="target" id="target"></div>
+          <div class="test-foot">
+            Hover the grid above. This applies <code>canvas.style.cursor</code> style syntax to a plain div.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DEFAULT_EXE = 'binaries/wep32-community/EmPipe/EMPIPE.EXE';
+    const RT_CURSOR = 1;
+    const RT_GROUP_CURSOR = 12;
+
+    const statusEl = document.getElementById('status');
+    const listEl = document.getElementById('list');
+    const targetEl = document.getElementById('target');
+    const selectedEl = document.getElementById('selected');
+    const hotspotEl = document.getElementById('use-hotspot');
+    let selectedCursor = null;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function toBase64(bytes) {
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    }
+
+    function cursorImageInfo(image) {
+      const fallback = { payload: image, hotX: null, hotY: null };
+      if (!image || image.length < 16) return fallback;
+      const dv = new DataView(image.buffer, image.byteOffset, image.byteLength);
+      const at0 = dv.getUint32(0, true);
+      const at4 = dv.getUint32(4, true);
+      const isDibHeader = v => v === 12 || v === 40 || v === 52 || v === 56 || v === 108 || v === 124;
+      if (isDibHeader(at4) && !isDibHeader(at0)) {
+        return {
+          payload: image.slice(4),
+          hotX: dv.getUint16(0, true),
+          hotY: dv.getUint16(2, true)
+        };
+      }
+      return fallback;
+    }
+
+    function makeCursorUrl(image, width, height, colorCount, hotX, hotY) {
+      const info = cursorImageInfo(image);
+      const payload = info.payload;
+      const cursorHotX = info.hotX == null ? hotX : info.hotX;
+      const cursorHotY = info.hotY == null ? hotY : info.hotY;
+      const cur = new Uint8Array(22 + payload.length);
+      const dv = new DataView(cur.buffer);
+      dv.setUint16(0, 0, true);
+      dv.setUint16(2, 2, true);
+      dv.setUint16(4, 1, true);
+      cur[6] = width === 256 ? 0 : width;
+      cur[7] = height === 256 ? 0 : height;
+      cur[8] = colorCount;
+      cur[9] = 0;
+      dv.setUint16(10, cursorHotX, true);
+      dv.setUint16(12, cursorHotY, true);
+      dv.setUint32(14, payload.length, true);
+      dv.setUint32(18, 22, true);
+      cur.set(payload, 22);
+      return 'data:image/x-icon;base64,' + toBase64(cur);
+    }
+
+    function decodeCursorBitmap(image) {
+      const payload = cursorImageInfo(image).payload;
+      if (!payload || payload.length < 12) return null;
+      const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+      const r16 = o => dv.getUint16(o, true);
+      const r32 = o => dv.getUint32(o, true);
+      const s32 = o => dv.getInt32(o, true);
+      const biSize = r32(0);
+      let w = 0;
+      let storedH = 0;
+      let bpp = 0;
+      let paletteOff = 0;
+      let palEntry = 0;
+      let clrUsed = 0;
+      if (biSize === 12) {
+        w = r16(4);
+        storedH = r16(6);
+        bpp = r16(10);
+        paletteOff = 12;
+        palEntry = 3;
+      } else if (biSize >= 40) {
+        w = s32(4);
+        storedH = s32(8);
+        bpp = r16(14);
+        clrUsed = r32(32);
+        paletteOff = biSize;
+        palEntry = 4;
+      } else {
+        return null;
+      }
+      const h = Math.abs(storedH) >> 1;
+      if (w <= 0 || h <= 0) return null;
+      const colors = clrUsed || (bpp <= 8 ? 1 << bpp : 0);
+      const pixelOff = paletteOff + colors * palEntry;
+      const colorRow = Math.ceil(w * bpp / 32) * 4;
+      const maskRow = Math.ceil(w / 32) * 4;
+      const maskOff = pixelOff + colorRow * h;
+      const pixels = new Uint8ClampedArray(w * h * 4);
+      const palette = [];
+      for (let i = 0; i < colors; i++) {
+        const p = paletteOff + i * palEntry;
+        palette.push([payload[p + 2] || 0, payload[p + 1] || 0, payload[p] || 0, 255]);
+      }
+      for (let y = 0; y < h; y++) {
+        const srcRow = h - 1 - y;
+        const rowOff = pixelOff + srcRow * colorRow;
+        for (let x = 0; x < w; x++) {
+          let rgba = [0, 0, 0, 255];
+          if (bpp === 1) {
+            const idx = (payload[rowOff + (x >> 3)] >> (7 - (x & 7))) & 1;
+            rgba = palette[idx] || rgba;
+          } else if (bpp === 4) {
+            const v = payload[rowOff + (x >> 1)];
+            const idx = (x & 1) ? (v & 0x0f) : (v >> 4);
+            rgba = palette[idx] || rgba;
+          } else if (bpp === 8) {
+            rgba = palette[payload[rowOff + x]] || rgba;
+          } else if (bpp === 24) {
+            const p = rowOff + x * 3;
+            rgba = [payload[p + 2], payload[p + 1], payload[p], 255];
+          } else if (bpp === 32) {
+            const p = rowOff + x * 4;
+            rgba = [payload[p + 2], payload[p + 1], payload[p], payload[p + 3]];
+          }
+          if (maskOff + maskRow * h <= payload.length) {
+            const bit = (payload[maskOff + srcRow * maskRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+            if (bit) rgba[3] = 0;
+          }
+          const d = (y * w + x) * 4;
+          pixels[d] = rgba[0];
+          pixels[d + 1] = rgba[1];
+          pixels[d + 2] = rgba[2];
+          pixels[d + 3] = rgba[3];
+        }
+      }
+      return { w, h, bpp, pixels };
+    }
+
+    function drawPreview(canvas, bitmap) {
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 32, 32);
+      ctx.imageSmoothingEnabled = false;
+      if (!bitmap) return;
+      const src = document.createElement('canvas');
+      src.width = bitmap.w;
+      src.height = bitmap.h;
+      const sc = src.getContext('2d');
+      sc.putImageData(new ImageData(bitmap.pixels, bitmap.w, bitmap.h), 0, 0);
+      ctx.drawImage(src, 0, 0, Math.min(32, bitmap.w), Math.min(32, bitmap.h));
+    }
+
+    function parsePeResources(bytes) {
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      const r16 = o => dv.getUint16(o, true);
+      const r32 = o => dv.getUint32(o, true);
+      if (u8.length < 0x40 || r16(0) !== 0x5a4d) throw new Error('Not an MZ executable');
+      const peOff = r32(0x3c);
+      if (peOff + 24 > u8.length || r32(peOff) !== 0x00004550) throw new Error('PE header not found');
+      const numSec = r16(peOff + 6);
+      const optSize = r16(peOff + 20);
+      let rsrcRva = 0;
+      let rsrcOff = 0;
+      let sec = peOff + 24 + optSize;
+      for (let i = 0; i < numSec; i++, sec += 40) {
+        let name = '';
+        for (let j = 0; j < 8 && u8[sec + j]; j++) name += String.fromCharCode(u8[sec + j]);
+        if (name === '.rsrc') {
+          rsrcRva = r32(sec + 12);
+          rsrcOff = r32(sec + 20);
+          break;
+        }
+      }
+      if (!rsrcRva || !rsrcOff) throw new Error('.rsrc section not found');
+
+      const rd16 = off => dv.getUint16(rsrcOff + off, true);
+      const rd32 = off => dv.getUint32(rsrcOff + off, true);
+
+      function entries(dirOff) {
+        const named = rd16(dirOff + 12);
+        const ids = rd16(dirOff + 14);
+        const out = [];
+        for (let i = 0; i < named + ids; i++) {
+          const off = dirOff + 16 + i * 8;
+          const nameRaw = rd32(off);
+          const childRaw = rd32(off + 4);
+          out.push({
+            id: nameRaw & 0x7fffffff,
+            named: i < named,
+            child: childRaw & 0x7fffffff,
+            isDir: !!(childRaw & 0x80000000)
+          });
+        }
+        return out;
+      }
+
+      function leafBytes(typeId, nameId) {
+        const type = entries(0).find(e => !e.named && e.id === typeId && e.isDir);
+        if (!type) return null;
+        const name = entries(type.child).find(e => !e.named && e.id === nameId && e.isDir);
+        if (!name) return null;
+        let cur = name.child;
+        while (true) {
+          const kids = entries(cur);
+          if (!kids.length) return null;
+          const next = kids[0];
+          if (!next.isDir) {
+            const dataOff = next.child;
+            const rva = rd32(dataOff);
+            const size = rd32(dataOff + 4);
+            const fileOff = rva - rsrcRva + rsrcOff;
+            if (fileOff < 0 || fileOff + size > u8.length) return null;
+            return u8.slice(fileOff, fileOff + size);
+          }
+          cur = next.child;
+        }
+      }
+
+      function groupIds() {
+        const type = entries(0).find(e => !e.named && e.id === RT_GROUP_CURSOR && e.isDir);
+        if (!type) return [];
+        return entries(type.child).filter(e => !e.named).map(e => e.id).sort((a, b) => a - b);
+      }
+
+      return { leafBytes, groupIds };
+    }
+
+    function extractCursors(bytes) {
+      const pe = parsePeResources(bytes);
+      const ids = pe.groupIds();
+      const cursors = [];
+      for (const id of ids) {
+        const group = pe.leafBytes(RT_GROUP_CURSOR, id);
+        if (!group || group.length < 6) continue;
+        const count = group[4] | (group[5] << 8);
+        for (let i = 0; i < count; i++) {
+          const o = 6 + i * 14;
+          if (o + 14 > group.length) break;
+          let width = group[o] || 256;
+          let height = group[o + 1] || 256;
+          const colorCount = group[o + 2];
+          const hotX = group[o + 4] | (group[o + 5] << 8);
+          const hotY = group[o + 6] | (group[o + 7] << 8);
+          const bytesInRes = group[o + 8] | (group[o + 9] << 8) | (group[o + 10] << 16) | (group[o + 11] << 24);
+          const imageId = group[o + 12] | (group[o + 13] << 8);
+          const image = pe.leafBytes(RT_CURSOR, imageId);
+          if (!image) continue;
+          const bitmap = decodeCursorBitmap(image);
+          if (bitmap) {
+            width = bitmap.w;
+            height = bitmap.h;
+          }
+          const info = cursorImageInfo(image);
+          const actualHotX = info.hotX == null ? hotX : info.hotX;
+          const actualHotY = info.hotY == null ? hotY : info.hotY;
+          const url = makeCursorUrl(image, width, height, colorCount, hotX, hotY);
+          cursors.push({ id, imageId, width, height, colorCount, hotX: actualHotX, hotY: actualHotY, groupHotX: hotX, groupHotY: hotY, bytesInRes, url, bitmap });
+        }
+      }
+      return cursors;
+    }
+
+    function cursorCss(cur) {
+      if (!cur) return 'default';
+      if (hotspotEl.checked) return `url(${cur.url}) ${cur.hotX} ${cur.hotY}, default`;
+      return `url(${cur.url}), default`;
+    }
+
+    function selectCursor(cur, row) {
+      selectedCursor = cur;
+      for (const el of listEl.querySelectorAll('.item')) el.classList.remove('selected');
+      if (row) row.classList.add('selected');
+      targetEl.style.cursor = cursorCss(cur);
+      selectedEl.innerHTML = `Selected group #${cur.id}, image #${cur.imageId}, ${cur.width}x${cur.height}, hotspot ${cur.hotX},${cur.hotY}`;
+    }
+
+    function render(cursors) {
+      listEl.textContent = '';
+      selectedCursor = null;
+      targetEl.style.cursor = 'default';
+      selectedEl.textContent = 'No cursor selected';
+      if (!cursors.length) {
+        listEl.textContent = 'No RT_GROUP_CURSOR resources found.';
+        return;
+      }
+      for (const cur of cursors) {
+        const row = document.createElement('div');
+        row.className = 'item';
+        const box = document.createElement('div');
+        box.className = 'iconbox';
+        const preview = document.createElement('canvas');
+        drawPreview(preview, cur.bitmap);
+        box.appendChild(preview);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.innerHTML = `<div>Group #${cur.id}, image #${cur.imageId}</div><div class="muted">${cur.width}x${cur.height}, hotspot ${cur.hotX},${cur.hotY}</div>`;
+        row.appendChild(box);
+        row.appendChild(meta);
+        row.addEventListener('click', () => selectCursor(cur, row));
+        listEl.appendChild(row);
+      }
+      selectCursor(cursors[0], listEl.querySelector('.item'));
+    }
+
+    async function loadDefault() {
+      setStatus('Loading ' + DEFAULT_EXE + '...');
+      const res = await fetch(DEFAULT_EXE);
+      if (!res.ok) throw new Error('Fetch failed: HTTP ' + res.status);
+      const cursors = extractCursors(new Uint8Array(await res.arrayBuffer()));
+      render(cursors);
+      setStatus(`Loaded ${cursors.length} cursor image(s) from ${DEFAULT_EXE}.`);
+    }
+
+    document.getElementById('load-default').addEventListener('click', () => {
+      loadDefault().catch(err => setStatus('ERROR: ' + (err && err.message || err)));
+    });
+
+    document.getElementById('file').addEventListener('change', async ev => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      try {
+        setStatus('Loading ' + file.name + '...');
+        const cursors = extractCursors(new Uint8Array(await file.arrayBuffer()));
+        render(cursors);
+        setStatus(`Loaded ${cursors.length} cursor image(s) from ${file.name}.`);
+      } catch (err) {
+        setStatus('ERROR: ' + (err && err.message || err));
+      }
+    });
+
+    hotspotEl.addEventListener('change', () => {
+      targetEl.style.cursor = cursorCss(selectedCursor);
+    });
+  </script>
+</body>
+</html>
