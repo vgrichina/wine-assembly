@@ -22,7 +22,9 @@ if (!fs.existsSync(EXE)) {
 }
 
 const optionsPng = path.join(OUT, 'funtris_options.png');
+const afterOkPng = path.join(OUT, 'funtris_after_options_ok_new.png');
 try { fs.unlinkSync(optionsPng); } catch (_) {}
+try { fs.unlinkSync(afterOkPng); } catch (_) {}
 
 const inputSpec = [
   '3800:mousedown:44:52',
@@ -33,7 +35,15 @@ const inputSpec = [
   '3860:dlg-paint',
   '3861:dlg-dump:funtris-options',
   `3862:dlg-png:${optionsPng}`,
-  '3863:stop',
+  '3880:mousedown:558:44',
+  '3881:mouseup:558:44',
+  '3920:dlg-dump:after-ok',
+  '3960:mousedown:44:52',
+  '3961:mouseup:44:52',
+  '3970:mousedown:56:72',
+  '3971:mouseup:56:72',
+  `4300:png:${afterOkPng}`,
+  '4320:stop',
 ].join(',');
 
 const args = [
@@ -41,7 +51,7 @@ const args = [
   `--exe=${EXE}`,
   '--no-close',
   `--input=${inputSpec}`,
-  '--max-batches=3870',
+  '--max-batches=4330',
   '--batch-size=100',
   '--stuck-after=100',
   '--quiet-api',
@@ -76,7 +86,9 @@ for (const line of out.split('\n')) {
 
 const sizeOf = p => fs.existsSync(p) ? fs.statSync(p).size : 0;
 const optionsSize = sizeOf(optionsPng);
+const afterOkSize = sizeOf(afterOkPng);
 const dumpLine = out.split('\n').find(l => l.includes('dlg-dump:funtris-options:')) || '';
+const afterOkDumpLine = out.split('\n').find(l => l.includes('dlg-dump:after-ok:')) || '';
 
 async function countBrickColorPixels(pngPath) {
   if (!fs.existsSync(pngPath)) return 0;
@@ -111,6 +123,10 @@ async function countBrickColorPixels(pngPath) {
     { name: 'Slider controls are native trackbars', pass: /id=1003 cls=19/.test(dumpLine) && /id=1008 cls=19/.test(dumpLine) },
     { name: 'Options GDI PNG written', pass: /dlg-png .*funtris_options\.png/.test(out) && optionsSize > 1000 },
     { name: 'Bricks bitmap previews rendered', pass: brickColorPixels > 250 },
+    { name: 'OK click delivered through mouse path', pass: /mousedown 558,44/.test(out) && /mouseup 558,44/.test(out) },
+    { name: 'Options dialog closed after OK', pass: /dlg-dump:after-ok: dlg=none/.test(afterOkDumpLine) },
+    { name: 'Game menu still responds after Options OK', pass: /mousedown 44,52 at batch 3960/.test(out) && /mouseup 56,72 at batch 3971/.test(out) },
+    { name: 'New Game after Options OK rendered PNG', pass: /png .*funtris_after_options_ok_new\.png/.test(out) && afterOkSize > 1000 },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];
 
@@ -120,6 +136,7 @@ async function countBrickColorPixels(pngPath) {
     if (!c.pass) failed++;
   }
   console.log(`optionsPng=${optionsPng} size=${optionsSize} brickColorPixels=${brickColorPixels}`);
+  console.log(`afterOkPng=${afterOkPng} size=${afterOkSize}`);
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
   process.exit(failed ? 1 : 0);
 })().catch(e => {
