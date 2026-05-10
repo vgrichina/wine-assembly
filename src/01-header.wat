@@ -73,6 +73,12 @@
   ;; set_parent(hwnd, newParentHwnd) — update renderer's parentHwnd (reparenting)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
   ;; set_menu(hwnd, menu_resource_id)
+  (import "host" "menu_create" (func $host_menu_create (result i32)))
+  (import "host" "menu_destroy" (func $host_menu_destroy (param i32) (result i32)))
+  (import "host" "menu_append" (func $host_menu_append (param i32 i32 i32 i32 i32) (result i32)))
+  ;; menu_append(hMenu, flags, idOrSubmenu, text_wa, isWide) -> bool
+  (import "host" "menu_track_popup" (func $host_menu_track_popup (param i32 i32 i32 i32 i32) (result i32)))
+  ;; menu_track_popup(hMenu, flags, x, y, hwnd) -> bool/command for TPM_RETURNCMD
   (import "host" "shell_about" (func $host_shell_about (param i32 i32 i32) (result i32)))
   ;; shell_about(dlg_hwnd, owner_hwnd, szApp_ptr) → result
   ;; Bare logging hook only — the actual dialog is built entirely in WAT

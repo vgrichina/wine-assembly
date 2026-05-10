@@ -1256,7 +1256,7 @@
 
   ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
   (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_menu_destroy (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -2119,25 +2119,13 @@
 
   ;; 134: GetSysColorBrush(nIndex) — 1 arg stdcall
   (func $handle_GetSysColorBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $color i32)
-    (if (i32.eq (local.get $arg0) (i32.const 5))
-      (then (local.set $color (i32.const 0x00FFFFFF)))
-      (else (if (i32.eq (local.get $arg0) (i32.const 15))
-        (then (local.set $color (i32.const 0x00C0C0C0)))
-        (else (local.set $color (i32.const 0x00C0C0C0))))))
-    (global.set $eax (call $host_gdi_create_solid_brush (local.get $color)))
+    (global.set $eax (call $host_gdi_create_solid_brush (call $win98_sys_color (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 135: GetSysColor
   (func $handle_GetSysColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return reasonable defaults for common colors
-    ;; COLOR_WINDOW=5 → white, COLOR_BTNFACE=15 → 0xC0C0C0
-    (if (i32.eq (local.get $arg0) (i32.const 5))
-    (then (global.set $eax (i32.const 0x00FFFFFF)))
-    (else (if (i32.eq (local.get $arg0) (i32.const 15))
-    (then (global.set $eax (i32.const 0x00C0C0C0)))
-    (else (global.set $eax (i32.const 0x00C0C0C0))))))
+    (global.set $eax (call $win98_sys_color (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -2258,9 +2246,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 138: TrackPopupMenuEx — STUB: unimplemented
+  ;; 138: TrackPopupMenuEx(hMenu, uFlags, x, y, hWnd, lptpm)
   (func $handle_TrackPopupMenuEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_menu_track_popup
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 139: OffsetRect — STUB: unimplemented
@@ -7465,9 +7456,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 619: TrackPopupMenu — STUB: unimplemented
+  ;; 619: TrackPopupMenu(hMenu, uFlags, x, y, nReserved, hWnd, prcRect)
   (func $handle_TrackPopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $wa_esp i32) (local $hwnd i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $hwnd (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $host_menu_track_popup
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $hwnd)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
   ;; 620: GetMenuItemID — STUB: unimplemented
@@ -8158,14 +8155,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 655: AppendMenuW — STUB: unimplemented
+  ;; 655: AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem)
   (func $handle_AppendMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_menu_append
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; AppendMenuA(hMenu, uFlags, uIDNewItem, lpNewItem) — return TRUE
   (func $handle_AppendMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_menu_append
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -8372,7 +8372,8 @@
 
   ;; 673: ModifyMenuW — STUB: unimplemented
   (func $handle_ModifyMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 674: GetMenuState — STUB: unimplemented
@@ -8526,15 +8527,13 @@
   ;; a return-TRUE no-op. The handle just needs to be non-zero and distinguishable so
   ;; downstream APIs that validate it won't trip.
   (func $handle_CreateMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $next_hmenu))
-    (global.set $next_hmenu (i32.add (global.get $next_hmenu) (i32.const 1)))
+    (global.set $eax (call $host_menu_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; CreatePopupMenu() — same allocator as CreateMenu.
   (func $handle_CreatePopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $next_hmenu))
-    (global.set $next_hmenu (i32.add (global.get $next_hmenu) (i32.const 1)))
+    (global.set $eax (call $host_menu_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

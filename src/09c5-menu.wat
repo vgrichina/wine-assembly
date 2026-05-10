@@ -344,6 +344,44 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=16 (local.get $it)))
 
+  (func (export "menu_child_label_ptr")
+        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
+    (local $blob i32) (local $it i32)
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $cidx)))
+    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
+    (i32.add (local.get $blob) (i32.load (local.get $it))))
+
+  (func (export "menu_child_label_len")
+        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
+    (local $blob i32) (local $it i32)
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $cidx)))
+    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
+    (i32.load offset=4 (local.get $it)))
+
+  (func (export "menu_child_shortcut_ptr")
+        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
+    (local $blob i32) (local $it i32) (local $off i32)
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $cidx)))
+    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
+    (local.set $off (i32.load offset=8 (local.get $it)))
+    (if (i32.eqz (local.get $off)) (then (return (i32.const 0))))
+    (i32.add (local.get $blob) (local.get $off)))
+
+  (func (export "menu_child_shortcut_len")
+        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
+    (local $blob i32) (local $it i32)
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $cidx)))
+    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
+    (i32.load offset=12 (local.get $it)))
+
   ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every child
   ;; item in this blob whose command id matches $id. Returns the item's
   ;; previous checked state (MF_CHECKED=8 or MF_UNCHECKED=0) for the

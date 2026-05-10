@@ -218,12 +218,17 @@ async function main() {
   // Minimal window-state plumbing the renderer needs
   const readStr = base.readStr;
   h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
-    if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, readStr(titlePtr), menuId);
+    const title = readStr(titlePtr);
+    if (!ctx._windowText) ctx._windowText = new Map();
+    ctx._windowText.set(hwnd, title);
+    if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
     return hwnd;
   };
   h.dialog_loaded = (hwnd, parentHwnd) => { if (renderer) renderer.createDialog(hwnd, parentHwnd); };
   h.set_window_text = (hwnd, textPtr) => {
     const t = readStr(textPtr);
+    if (!ctx._windowText) ctx._windowText = new Map();
+    ctx._windowText.set(hwnd, t);
     if (renderer) renderer.setWindowText(hwnd, t);
     if (t.includes('Installing')) installingFiles = true;
   };

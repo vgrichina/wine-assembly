@@ -1031,6 +1031,8 @@ async function main() {
   h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
     const title = readStr(titlePtr);
     logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" style=0x${style.toString(16)} pos=${x},${y} size=${cx}x${cy} menu=${menuId}`);
+    if (!ctx._windowText) ctx._windowText = new Map();
+    ctx._windowText.set(hwnd, title);
     if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
     return hwnd;
   };
@@ -1064,6 +1066,8 @@ async function main() {
   h.set_window_text = (hwnd, textPtr) => {
     const text = readStr(textPtr);
     logs.push(`[SetWindowText] "${text}"`);
+    if (!ctx._windowText) ctx._windowText = new Map();
+    ctx._windowText.set(hwnd, text);
     if (renderer) renderer.setWindowText(hwnd, text);
     // Track "Installing Files" page for button delay
     if (text.includes('Installing')) installingFiles = true;

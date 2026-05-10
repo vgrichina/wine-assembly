@@ -1800,6 +1800,31 @@
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
+  (func $win98_sys_color (param $idx i32) (result i32)
+    ;; COLORREF values for the stock Windows 98 classic palette.
+    (if (i32.eq (local.get $idx) (i32.const 0)) (then (return (i32.const 0x00C0C0C0)))) ;; SCROLLBAR
+    (if (i32.eq (local.get $idx) (i32.const 1)) (then (return (i32.const 0x00808000)))) ;; BACKGROUND
+    (if (i32.eq (local.get $idx) (i32.const 2)) (then (return (i32.const 0x00800000)))) ;; ACTIVECAPTION
+    (if (i32.eq (local.get $idx) (i32.const 3)) (then (return (i32.const 0x00C0C0C0)))) ;; INACTIVECAPTION
+    (if (i32.eq (local.get $idx) (i32.const 4)) (then (return (i32.const 0x00C0C0C0)))) ;; MENU
+    (if (i32.eq (local.get $idx) (i32.const 5)) (then (return (i32.const 0x00FFFFFF)))) ;; WINDOW
+    (if (i32.eq (local.get $idx) (i32.const 6)) (then (return (i32.const 0x00000000)))) ;; WINDOWFRAME
+    (if (i32.eq (local.get $idx) (i32.const 7)) (then (return (i32.const 0x00000000)))) ;; MENUTEXT
+    (if (i32.eq (local.get $idx) (i32.const 8)) (then (return (i32.const 0x00000000)))) ;; WINDOWTEXT
+    (if (i32.eq (local.get $idx) (i32.const 9)) (then (return (i32.const 0x00FFFFFF)))) ;; CAPTIONTEXT
+    (if (i32.eq (local.get $idx) (i32.const 10)) (then (return (i32.const 0x00C0C0C0)))) ;; ACTIVEBORDER
+    (if (i32.eq (local.get $idx) (i32.const 11)) (then (return (i32.const 0x00C0C0C0)))) ;; INACTIVEBORDER
+    (if (i32.eq (local.get $idx) (i32.const 12)) (then (return (i32.const 0x00808080)))) ;; APPWORKSPACE
+    (if (i32.eq (local.get $idx) (i32.const 13)) (then (return (i32.const 0x00800000)))) ;; HIGHLIGHT
+    (if (i32.eq (local.get $idx) (i32.const 14)) (then (return (i32.const 0x00FFFFFF)))) ;; HIGHLIGHTTEXT
+    (if (i32.eq (local.get $idx) (i32.const 15)) (then (return (i32.const 0x00C0C0C0)))) ;; BTNFACE
+    (if (i32.eq (local.get $idx) (i32.const 16)) (then (return (i32.const 0x00808080)))) ;; BTNSHADOW
+    (if (i32.eq (local.get $idx) (i32.const 17)) (then (return (i32.const 0x00808080)))) ;; GRAYTEXT
+    (if (i32.eq (local.get $idx) (i32.const 18)) (then (return (i32.const 0x00000000)))) ;; BTNTEXT
+    (if (i32.eq (local.get $idx) (i32.const 19)) (then (return (i32.const 0x00000000)))) ;; INACTIVECAPTIONTEXT
+    (if (i32.eq (local.get $idx) (i32.const 20)) (then (return (i32.const 0x00FFFFFF)))) ;; BTNHIGHLIGHT
+    (i32.const 0x00C0C0C0))
+
   (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)
     (local $w i32) (local $h i32)
     (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
