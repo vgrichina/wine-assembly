@@ -24,6 +24,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-storage-registry.js
   test/test-midi-mci.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
@@ -58,6 +59,7 @@ E2E=(
   test/test-freecell-move.js
   test/test-freecell-dblclick.js
   test/test-freecell-stats.js
+  test/test-funtris-hall-of-fame-ok.js
   test/test-funtris-options.js
   test/test-funtris-new-game.js
   test/test-empipe-start.js
