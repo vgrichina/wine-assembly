@@ -45,6 +45,9 @@ const hKey = readGuestU32(phkGA);
 assert(hKey, 'reg_create_key should write a handle');
 
 assert.strictEqual(storage.reg_set_value(hKey, g2w(valueNameGA, IMAGE_BASE), 1, valueGA, 4, 0), 0);
+writeGuestU32(cbGA, 0);
+assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, 0, cbGA, 0), 0);
+assert.strictEqual(readGuestU32(cbGA), 4);
 writeGuestU32(cbGA, 32);
 assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, outGA, cbGA, 0), 0);
 assert.strictEqual(readStrA(memory, g2w(outGA, IMAGE_BASE)), 'Ada');
