@@ -214,6 +214,9 @@ class FakeAudioContext {
   resume() {
     this.state = 'running';
   }
+  close() {
+    this.state = 'closed';
+  }
 }
 
 const oldAudioContext = globalThis.AudioContext;
@@ -479,6 +482,22 @@ try {
   assert.strictEqual(primedHost.host.midi_out_close(primedHandle), 0);
   assert.strictEqual(primedCtx.started.length, 1, 'host should reuse pre-unlocked browser AudioContext');
 
+  const cleanupCtx = {
+    getMemory: () => mem.buffer,
+    _audioCtx: new FakeAudioContext(),
+    readFile: (p) => p.toLowerCase() === 'song.mid' ? oneNoteMidi : null,
+  };
+  const cleanupImports = createHostImports(cleanupCtx);
+  writeStr(0x3d0, 'song.mid');
+  const cleanupId = cleanupImports.host.mci_open(0x100, 0x3d0, 0x2000);
+  const cleanupHandle = cleanupImports.host.midi_out_open(0, 0, 0, 0);
+  assert.strictEqual(cleanupImports.host.mci_command(cleanupId, 0x0806, 0, 0), 0);
+  assert.strictEqual(cleanupImports.host.midi_out_short_msg(cleanupHandle, 0x00643C90), 0);
+  cleanupCtx.stopAudio();
+  assert.strictEqual(cleanupCtx._mci.devices.size, 0, 'audio cleanup should close MCI devices');
+  assert.strictEqual(cleanupCtx._midiOut.devices.size, 0, 'audio cleanup should close midiOut devices');
+  assert.strictEqual(cleanupCtx._audioCtx, null, 'audio cleanup should release the AudioContext');
+
   console.log('PASS  MCI sequencer opens explicit MIDI files and schedules Web Audio notes');
   console.log('PASS  SMF parser exposes timed MIDI events for synth backends');
   console.log('PASS  WebAudioTinySynth backend receives MCI and midiOut events');
@@ -491,6 +510,7 @@ try {
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
   console.log('PASS  browser audio unlock creates the shared AudioContext on user input');
   console.log('PASS  host reuses a launch-primed browser AudioContext');
+  console.log('PASS  host audio cleanup stops MCI and midiOut playback');
   console.log('PASS  empty sequencer open does not invent default MIDI playback');
 } finally {
   if (oldAudioContext === undefined) delete globalThis.AudioContext;

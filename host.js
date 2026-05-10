@@ -86,8 +86,18 @@ class WineAssembly {
         } catch (_) {}
         return null;
       },
+      onTopLevelWindowDestroyed: (hwnd) => {
+        if (!self._multiApp || !self.renderer || !self._hwndBase) return;
+        const lo = self._hwndBase;
+        const hi = lo + 0x10000;
+        if (hwnd < lo || hwnd >= hi) return;
+        const stillHasTopLevel = Object.values(self.renderer.windows).some(w =>
+          w && !w.isChild && w.hwnd >= lo && w.hwnd < hi
+        );
+        if (!stillHasTopLevel) self.stop({ repaint: false });
+      },
       onExit: (code) => {
-        self.running = false;
+        self.stop({ repaint: false });
         if (self.renderer) {
           if (self._multiApp) {
             self._removeAppWindows();
@@ -197,7 +207,7 @@ class WineAssembly {
       if (!self._inDllInit) {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
-        self.running = false;
+        self.stop({ repaint: false });
         if (self.renderer) {
           if (self._multiApp) {
             self._removeAppWindows();
@@ -818,6 +828,34 @@ class WineAssembly {
     }
   }
 
+  _cleanupAudio() {
+    if (this.hostCtx && typeof this.hostCtx.stopAudio === 'function') {
+      try { this.hostCtx.stopAudio(); } catch (_) {}
+    } else if (this._audioCtx) {
+      try {
+        if (this._audioCtx.close) this._audioCtx.close();
+        else if (this._audioCtx.suspend) this._audioCtx.suspend();
+      } catch (_) {}
+      this._audioCtx = null;
+    }
+  }
+
+  stop(options = {}) {
+    this.running = false;
+    this._cleanupAudio();
+    if (this.renderer) {
+      if (this._multiApp) {
+        this._removeAppWindows();
+      } else {
+        this.renderer._exited = true;
+        this.renderer.windows = {};
+      }
+      if (options.repaint !== false && this.renderer.repaint) {
+        this.renderer.repaint();
+      }
+    }
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     this.running = true;
@@ -869,7 +907,7 @@ class WineAssembly {
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
-          self.running = false;
+          self.stop({ repaint: false });
           if (self.renderer && self._multiApp) {
             self._removeAppWindows();
             self.renderer.repaint();
@@ -918,7 +956,7 @@ class WineAssembly {
         const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
         console.error('WASM crash:', e, 'EIP=' + eipHex, 'yield=' + yr, tag);
         self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' yield=' + yr + tag);
-        self.running = false;
+        self.stop({ repaint: false });
         return;
       }
       if (self.running) {
