@@ -1944,6 +1944,7 @@
   ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cx i32) (local $cy i32) (local $cs i32) (local $dlg_rec i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
@@ -1970,7 +1971,7 @@
         (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
                 (i32.shl (local.get $cy) (i32.const 16)))))))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
+    (return)
   )
 
   ;; 121: CheckMenuRadioItem(hMenu, idFirst, idLast, idCheck, uFlags)
