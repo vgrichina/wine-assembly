@@ -7307,7 +7307,7 @@
   ;; Stack on entry: [ret][lpPrevWndFunc][hWnd][Msg][wParam][lParam]
   ;; We set up a call frame to the WndProc so it returns to our caller.
   (func $handle_CallWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
+    (local $ret_addr i32) (local $ctrl_class i32)
     ;; NULL wndproc — route TreeView messages or return 0
     (if (i32.eqz (local.get $arg0))
       (then
@@ -7322,10 +7322,20 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    ;; Sentinel 0xFFFE0001 = built-in control default wndproc — act as DefWindowProc
+    ;; Sentinel 0xFFFE0001 = built-in control default wndproc.
+    ;; Subclassed WAT controls chain here for stateful control messages such as
+    ;; BM_SETIMAGE; deliver those to the native control proc instead of dropping
+    ;; them as DefWindowProc.
     (if (i32.eq (local.get $arg0) (global.get $WNDPROC_BUILTIN))
       (then
-        (global.set $eax (i32.const 0))
+        (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg1)))
+        (if (i32.and (local.get $ctrl_class)
+                     (i32.ne (local.get $arg2) (i32.const 0x000F)))
+          (then
+            (global.set $eax (call $control_wndproc_dispatch
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
+          (else
+            (global.set $eax (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; WAT-native wndprocs (for current controls, 0xFFFF0002) are markers,
@@ -7341,8 +7351,13 @@
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)))
-        (global.set $eax (call $wat_wndproc_dispatch
-          (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+        (if (i32.eq (local.get $arg0) (global.get $WNDPROC_CTRL_NATIVE))
+          (then
+            (global.set $eax (call $control_wndproc_dispatch
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
+          (else
+            (global.set $eax (call $wat_wndproc_dispatch
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)
@@ -8067,7 +8082,7 @@
     (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer due — return WM_NULL and yield to let browser process input events
+    ;; No timer due — return WM_NULL and yield to let browser process input events.
     (global.set $yield_flag (i32.const 1))
     (if (local.get $msg_ptr)
       (then

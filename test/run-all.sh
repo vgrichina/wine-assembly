@@ -30,6 +30,7 @@ UNIT=(
   test/test-web-pwa-metadata.js
   test/test-radio-mutex.js
   test/test-listbox.js
+  test/test-tooltip.js
   test/test-open-nav.js
   test/test-render-color-dlg.js
   test/test-render-find-dlg.js

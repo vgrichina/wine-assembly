@@ -1039,6 +1039,20 @@
                      (i32.or (i32.const 0x50000000) (local.get $cbs_style)) (i32.const 0)))
     (local.get $cb))
 
+  ;; Test helper: create a parent + tooltip window. Tooltips are usually
+  ;; popup-style owned windows, but routing through a WAT-native control class
+  ;; is enough for exercising TTM_* message behavior.
+  (func (export "test_create_tooltip") (result i32)
+    (local $parent i32) (local $tt i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $tt (call $ctrl_create_child (local.get $parent) (i32.const 20) (i32.const 0)
+                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                     (i32.const 0x80000000) (i32.const 0)))
+    (local.get $tt))
+
   ;; ComboBoxState readers for tests.
   (func (export "combobox_get_cur_sel") (param $hwnd i32) (result i32)
     (local $s i32)

@@ -155,6 +155,35 @@
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
     (local.set $tmp (call $class_table_lookup (call $class_name_key (local.get $arg1))))
+    ;; Prefer the WAT-native ListView for SysListView32 even if comctl32.dll has
+    ;; registered its own class. The real Win98 listview code is large and can
+    ;; spend unbounded time rebuilding item arrays during Winamp startup; our
+    ;; native shell is enough for the optional details/list panes we support.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x6c737973)) ;; "sysl"
+            (i32.and
+              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x76747369)) ;; "istv"
+              (i32.and
+                (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                        (i32.const 0x33776569)) ;; "iew3"
+                (i32.and
+                  (i32.eq (i32.load8_u offset=12 (call $g2w (local.get $arg1))) (i32.const 0x32))
+                  (i32.eqz (i32.load8_u offset=13 (call $g2w (local.get $arg1)))))))))
+      (then (local.set $tmp (i32.const 0))))
+    ;; Same for tooltips_class32. Match the stable "tooltips" prefix because
+    ;; some comctl32 callers use class aliases with the same prefix.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x6c6f6f74)) ;; "tool"
+            (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x73706974)))) ;; "tips"
+      (then (local.set $tmp (i32.const 0))))
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
     ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
@@ -231,6 +260,29 @@
                   (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x76656572)))
               (then (local.set $detected_class (i32.const 8))))
+            ;; "SysListView32" → class 18 (ListView)
+            ;; LE dwords: "sysl"=0x6c737973, "istv"=0x76747369, "iew3"=0x33776569
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x6c737973))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x76747369))
+                    (i32.and
+                      (i32.eq (i32.or (i32.load offset=8 (local.get $name_w)) (i32.const 0x20202020))
+                              (i32.const 0x33776569))
+                      (i32.and
+                        (i32.eq (i32.load8_u offset=12 (local.get $name_w)) (i32.const 0x32))
+                        (i32.eqz (i32.load8_u offset=13 (local.get $name_w)))))))
+              (then (local.set $detected_class (i32.const 18))))
+            ;; "tooltips_class32" → class 20 (Tooltip)
+            ;; LE dwords: "tool"=0x6c6f6f74, "tips"=0x73706974
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x6c6f6f74))
+                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x73706974)))
+              (then (local.set $detected_class (i32.const 20))))
             ;; "listbox\0" — LE dwords: "list"=0x7473696c, "box\0" = u32 0x00786f62.
             (if (i32.and
                   (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
@@ -1097,7 +1149,7 @@
           (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer due — return WM_NULL and yield to let browser process input events
+    ;; No timer due — return WM_NULL and yield to let browser process input events.
     (global.set $yield_flag (i32.const 1))
     (if (local.get $msg_ptr)
       (then

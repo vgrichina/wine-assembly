@@ -265,6 +265,8 @@
       (then (return (i32.const 1)))) ;; scro*
     (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74737973))
       (then (return (i32.const 1)))) ;; syst*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c6f6f74))
+      (then (return (i32.const 1)))) ;; tool*
     (i32.const 0))
 
   ;; First child of $parent in slot order (z-order proxy). 0 if none.

@@ -332,6 +332,9 @@
     ;; Class 19 = TrackBar/Slider (Slider1, msctls_trackbar32)
     (if (i32.eq (local.get $class) (i32.const 19))
       (then (return (call $trackbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 20 = Tooltip (tooltips_class32)
+    (if (i32.eq (local.get $class) (i32.const 20))
+      (then (return (call $tooltip_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -3022,6 +3025,300 @@
                         (local.get $w) (local.get $h)
                         (i32.const 0x0A) (i32.const 0x0F)))))))
         (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; ---- Tooltip WndProc ----
+  ;;
+  ;; Stateful tooltips_class32 subset. State layout:
+  ;; +0 items_guest (array of 48-byte TOOLINFOA snapshots)
+  ;; +4 count, +8 capacity, +12 active flag, +16 current index
+  ;; +20 bk color, +24 text color, +28 max tip width, +32 autopop delay
+  ;; +36 initial delay, +40 reshow delay, +44 margin l/t/r/b.
+  (func $tooltip_item_ptr (param $sw i32) (param $idx i32) (result i32)
+    (i32.add (call $g2w (i32.load (local.get $sw)))
+             (i32.mul (local.get $idx) (i32.const 48))))
+
+  (func $tooltip_find_tool (param $sw i32) (param $tool_hwnd i32) (param $tool_id i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32)
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $tool_hwnd))
+            (i32.eq (i32.load offset=12 (local.get $rec)) (local.get $tool_id)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $tooltip_hit_test (param $sw i32) (param $tool_hwnd i32) (param $x i32) (param $y i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32)
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $tool_hwnd))
+            (i32.and
+              (i32.ge_s (local.get $x) (i32.load offset=16 (local.get $rec)))
+              (i32.and
+                (i32.lt_s (local.get $x) (i32.load offset=24 (local.get $rec)))
+                (i32.and
+                  (i32.ge_s (local.get $y) (i32.load offset=20 (local.get $rec)))
+                  (i32.lt_s (local.get $y) (i32.load offset=28 (local.get $rec)))))))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $tooltip_copy_in (param $dst i32) (param $src_guest i32)
+    (local $src i32) (local $size i32)
+    (local.set $src (call $g2w (local.get $src_guest)))
+    (call $zero_memory (local.get $dst) (i32.const 48))
+    (if (i32.eqz (local.get $src_guest)) (then (return)))
+    (local.set $size (i32.load (local.get $src)))
+    (if (i32.gt_u (local.get $size) (i32.const 48)) (then (local.set $size (i32.const 48))))
+    (if (i32.lt_u (local.get $size) (i32.const 40)) (then (local.set $size (i32.const 40))))
+    (call $memcpy (local.get $dst) (local.get $src) (local.get $size)))
+
+  (func $tooltip_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $items i32) (local $new_items i32)
+    (local $count i32) (local $cap i32) (local $idx i32) (local $rec i32)
+    (local $src i32) (local $dst i32) (local $text_src i32) (local $text_dst i32)
+    (local $len i32) (local $ti i32) (local $x i32) (local $y i32) (local $old i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (local.set $state (call $heap_alloc (i32.const 64)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (call $zero_memory (local.get $sw) (i32.const 64))
+        (local.set $items (call $heap_alloc (i32.mul (i32.const 4) (i32.const 48))))
+        (call $zero_memory (call $g2w (local.get $items)) (i32.mul (i32.const 4) (i32.const 48)))
+        (i32.store (local.get $sw) (local.get $items))
+        (i32.store offset=8 (local.get $sw) (i32.const 4))
+        (i32.store offset=12 (local.get $sw) (i32.const 1))
+        (i32.store offset=16 (local.get $sw) (i32.const -1))
+        (i32.store offset=20 (local.get $sw) (i32.const 0x00FFFFE1))
+        (i32.store offset=24 (local.get $sw) (i32.const 0x00000000))
+        (i32.store offset=28 (local.get $sw) (i32.const -1))
+        (i32.store offset=32 (local.get $sw) (i32.const 5000))
+        (i32.store offset=36 (local.get $sw) (i32.const 500))
+        (i32.store offset=40 (local.get $sw) (i32.const 100))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    ;; WM_CREATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0001)) (then (return (i32.const 0))))
+    ;; WM_DESTROY
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (call $heap_free (i32.load (local.get $sw)))
+        (call $heap_free (local.get $state))
+        (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))
+        (return (i32.const 0))))
+
+    ;; TTM_ACTIVATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0401))
+      (then
+        (i32.store offset=12 (local.get $sw) (select (i32.const 1) (i32.const 0) (i32.ne (local.get $wParam) (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; TTM_SETDELAYTIME / TTM_GETDELAYTIME
+    (if (i32.eq (local.get $msg) (i32.const 0x0403))
+      (then
+        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (i32.store offset=40 (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (i32.store offset=32 (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (i32.store offset=36 (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 0))
+          (then
+            (i32.store offset=36 (local.get $sw) (local.get $lParam))
+            (i32.store offset=40 (local.get $sw) (i32.div_s (local.get $lParam) (i32.const 5)))
+            (i32.store offset=32 (local.get $sw) (i32.mul (local.get $lParam) (i32.const 10)))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0415))
+      (then
+        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (return (i32.load offset=40 (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (return (i32.load offset=32 (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (return (i32.load offset=36 (local.get $sw)))))
+        (return (i32.load offset=36 (local.get $sw)))))
+
+    ;; TTM_ADDTOOLA
+    (if (i32.eq (local.get $msg) (i32.const 0x0404))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $src (call $g2w (local.get $lParam)))
+        (local.set $idx (call $tooltip_find_tool (local.get $sw)
+          (i32.load offset=8 (local.get $src)) (i32.load offset=12 (local.get $src))))
+        (if (i32.ge_s (local.get $idx) (i32.const 0))
+          (then
+            (call $tooltip_copy_in (call $tooltip_item_ptr (local.get $sw) (local.get $idx)) (local.get $lParam))
+            (return (i32.const 1))))
+        (local.set $count (i32.load offset=4 (local.get $sw)))
+        (local.set $cap (i32.load offset=8 (local.get $sw)))
+        (if (i32.ge_u (local.get $count) (local.get $cap))
+          (then
+            (local.set $new_items (call $heap_alloc (i32.mul (i32.mul (local.get $cap) (i32.const 2)) (i32.const 48))))
+            (call $zero_memory (call $g2w (local.get $new_items)) (i32.mul (i32.mul (local.get $cap) (i32.const 2)) (i32.const 48)))
+            (call $memcpy (call $g2w (local.get $new_items)) (call $g2w (i32.load (local.get $sw))) (i32.mul (local.get $count) (i32.const 48)))
+            (call $heap_free (i32.load (local.get $sw)))
+            (i32.store (local.get $sw) (local.get $new_items))
+            (i32.store offset=8 (local.get $sw) (i32.mul (local.get $cap) (i32.const 2)))))
+        (call $tooltip_copy_in (call $tooltip_item_ptr (local.get $sw) (local.get $count)) (local.get $lParam))
+        (i32.store offset=4 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (if (i32.lt_s (i32.load offset=16 (local.get $sw)) (i32.const 0))
+          (then (i32.store offset=16 (local.get $sw) (local.get $count))))
+        (return (i32.const 1))))
+
+    ;; TTM_DELTOOLA
+    (if (i32.eq (local.get $msg) (i32.const 0x0405))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $src (call $g2w (local.get $lParam)))
+        (local.set $idx (call $tooltip_find_tool (local.get $sw)
+          (i32.load offset=8 (local.get $src)) (i32.load offset=12 (local.get $src))))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+        (local.set $count (i32.load offset=4 (local.get $sw)))
+        (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $idx)))
+        (if (i32.lt_u (i32.add (local.get $idx) (i32.const 1)) (local.get $count))
+          (then
+            (call $memcpy (local.get $rec)
+              (i32.add (local.get $rec) (i32.const 48))
+              (i32.mul (i32.sub (i32.sub (local.get $count) (local.get $idx)) (i32.const 1)) (i32.const 48)))))
+        (i32.store offset=4 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+        (if (i32.ge_s (i32.load offset=16 (local.get $sw)) (i32.sub (local.get $count) (i32.const 1)))
+          (then (i32.store offset=16 (local.get $sw) (i32.sub (i32.load offset=4 (local.get $sw)) (i32.const 1)))))
+        (return (i32.const 1))))
+
+    ;; TTM_NEWTOOLRECTA / TTM_SETTOOLINFOA / TTM_UPDATETIPTEXTA
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0406))
+                (i32.or (i32.eq (local.get $msg) (i32.const 0x0409))
+                        (i32.eq (local.get $msg) (i32.const 0x040C))))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $src (call $g2w (local.get $lParam)))
+        (local.set $idx (call $tooltip_find_tool (local.get $sw)
+          (i32.load offset=8 (local.get $src)) (i32.load offset=12 (local.get $src))))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+        (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $idx)))
+        (if (i32.eq (local.get $msg) (i32.const 0x0406))
+          (then (call $memcpy (i32.add (local.get $rec) (i32.const 16)) (i32.add (local.get $src) (i32.const 16)) (i32.const 16)))
+          (else
+            (if (i32.eq (local.get $msg) (i32.const 0x040C))
+              (then (i32.store offset=36 (local.get $rec) (i32.load offset=36 (local.get $src))))
+              (else (call $tooltip_copy_in (local.get $rec) (local.get $lParam))))))
+        (return (i32.const 1))))
+
+    ;; TTM_GETTOOLINFOA / TTM_ENUMTOOLSA / TTM_GETCURRENTTOOLA
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0408))
+                (i32.or (i32.eq (local.get $msg) (i32.const 0x040E))
+                        (i32.eq (local.get $msg) (i32.const 0x040F))))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $dst (call $g2w (local.get $lParam)))
+        (if (i32.eq (local.get $msg) (i32.const 0x040E))
+          (then (local.set $idx (local.get $wParam)))
+          (else
+            (if (i32.eq (local.get $msg) (i32.const 0x040F))
+              (then (local.set $idx (i32.load offset=16 (local.get $sw))))
+              (else
+                (local.set $idx (call $tooltip_find_tool (local.get $sw)
+                  (i32.load offset=8 (local.get $dst)) (i32.load offset=12 (local.get $dst))))))))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (call $memcpy (local.get $dst) (call $tooltip_item_ptr (local.get $sw) (local.get $idx)) (i32.const 48))
+        (return (i32.const 1))))
+
+    ;; TTM_GETTEXTA
+    (if (i32.eq (local.get $msg) (i32.const 0x040B))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $ti (call $g2w (local.get $lParam)))
+        (local.set $idx (call $tooltip_find_tool (local.get $sw)
+          (i32.load offset=8 (local.get $ti)) (i32.load offset=12 (local.get $ti))))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+        (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $idx)))
+        (local.set $text_dst (call $g2w (i32.load offset=36 (local.get $ti))))
+        (local.set $text_src (call $g2w (i32.load offset=36 (local.get $rec))))
+        (if (i32.and
+              (i32.ne (local.get $text_dst) (i32.const 0))
+              (i32.ne (local.get $text_src) (i32.const 0)))
+          (then
+            (local.set $len (call $strlen (local.get $text_src)))
+            (if (i32.gt_u (local.get $len) (i32.const 255)) (then (local.set $len (i32.const 255))))
+            (call $memcpy (local.get $text_dst) (local.get $text_src) (local.get $len))
+            (i32.store8 (i32.add (local.get $text_dst) (local.get $len)) (i32.const 0))))
+        (return (i32.const 1))))
+
+    ;; TTM_GETTOOLCOUNT
+    (if (i32.eq (local.get $msg) (i32.const 0x040D))
+      (then (return (i32.load offset=4 (local.get $sw)))))
+
+    ;; TTM_HITTESTA. TTHITTESTINFOA: hwnd(+0), pt(+4,+8), ti(+12).
+    (if (i32.eq (local.get $msg) (i32.const 0x040A))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $src (call $g2w (local.get $lParam)))
+        (local.set $idx (call $tooltip_hit_test (local.get $sw)
+          (i32.load (local.get $src)) (i32.load offset=4 (local.get $src)) (i32.load offset=8 (local.get $src))))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+        (call $memcpy (i32.add (local.get $src) (i32.const 12))
+          (call $tooltip_item_ptr (local.get $sw) (local.get $idx)) (i32.const 48))
+        (return (i32.const 1))))
+
+    ;; TTM_RELAYEVENT. MSG: hwnd,msg,wParam,lParam,time,pt.x,pt.y.
+    (if (i32.eq (local.get $msg) (i32.const 0x0407))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $src (call $g2w (local.get $lParam)))
+        (local.set $x (i32.shr_s (i32.shl (i32.load offset=12 (local.get $src)) (i32.const 16)) (i32.const 16)))
+        (local.set $y (i32.shr_s (i32.load offset=12 (local.get $src)) (i32.const 16)))
+        (local.set $idx (call $tooltip_hit_test (local.get $sw)
+          (i32.load (local.get $src)) (local.get $x) (local.get $y)))
+        (i32.store offset=16 (local.get $sw) (local.get $idx))
+        (return (i32.const 0))))
+
+    ;; TTM_WINDOWFROMPOINT: return current matched hwnd if available.
+    (if (i32.eq (local.get $msg) (i32.const 0x0410))
+      (then
+        (local.set $idx (i32.load offset=16 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (return (i32.load offset=8 (call $tooltip_item_ptr (local.get $sw) (local.get $idx))))))
+
+    ;; TTM_TRACKACTIVATE / TTM_POP / TTM_UPDATE
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0411))
+                (i32.or (i32.eq (local.get $msg) (i32.const 0x041C))
+                        (i32.eq (local.get $msg) (i32.const 0x041D))))
+      (then (return (i32.const 1))))
+    ;; TTM_TRACKPOSITION
+    (if (i32.eq (local.get $msg) (i32.const 0x0412)) (then (return (i32.const 0))))
+
+    ;; Colors / max width / margin.
+    (if (i32.eq (local.get $msg) (i32.const 0x0413)) (then (i32.store offset=20 (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0414)) (then (i32.store offset=24 (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0416)) (then (return (i32.load offset=20 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0417)) (then (return (i32.load offset=24 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0418))
+      (then
+        (local.set $old (i32.load offset=28 (local.get $sw)))
+        (i32.store offset=28 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0419)) (then (return (i32.load offset=28 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x041A))
+      (then
+        (if (local.get $lParam) (then (call $memcpy (i32.add (local.get $sw) (i32.const 44)) (call $g2w (local.get $lParam)) (i32.const 16))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x041B))
+      (then
+        (if (local.get $lParam) (then (call $memcpy (call $g2w (local.get $lParam)) (i32.add (local.get $sw) (i32.const 44)) (i32.const 16))))
+        (return (i32.const 0))))
+
     (i32.const 0))
 
   ;; ---- TrackBar / Slider WndProc ----
@@ -6562,17 +6859,25 @@
   ;; invocation; defer that until a consumer actually needs the return.
   (func $wnd_send_message
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $wp i32) (local $slot i32)
+    (local $wp i32) (local $slot i32) (local $ctrl_class i32)
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
+    (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
+    ;; Keep the exported/test-driver path consistent with SendMessageA and
+    ;; DispatchMessageA: WAT-owned controls paint through the native control
+    ;; proc even if the app has subclassed the window.
+    (if (i32.and (local.get $ctrl_class)
+                 (i32.eq (local.get $msg) (i32.const 0x000F)))
+      (then (return (call $control_wndproc_dispatch
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; RichEdit-backed installer controls are painted by the WAT edit control
     ;; path once mapped to class=2, so route synchronous input/query messages
     ;; there too. Otherwise the DLL wndproc updates its own state while our
     ;; renderer keeps drawing the old WAT EditState.
-    (if (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 2))
+    (if (i32.eq (local.get $ctrl_class) (i32.const 2))
       (then (return (call $edit_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; WAT-native (>= 0xFFFF0000)
