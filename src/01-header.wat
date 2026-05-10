@@ -629,12 +629,13 @@
   (global $nc_tracking_hit (mut i32) (i32.const 0))
   ;; Scrollbar press state. While the user holds LMB on a scrollbar part
   ;; (1=top/left arrow, 2=bottom/right arrow, 3=top/left page, 4=bottom/
-  ;; right page), $sb_pressed_hwnd holds the scrollbar control's hwnd and
-  ;; $sb_pressed_part holds the part code. $scrollbar_ctrl_wndproc draws
-  ;; that part with EDGE_SUNKEN; clearing on WM_LBUTTONUP restores the
-  ;; raised look. Page/arrow regions also tint slightly when held.
+  ;; right page, 5=thumb), $sb_pressed_hwnd holds the scrollbar control's
+  ;; hwnd and $sb_pressed_part holds the part code. Thumb drags keep the
+  ;; starting mouse coordinate and scroll position in the anchor globals.
   (global $sb_pressed_hwnd (mut i32) (i32.const 0))
   (global $sb_pressed_part (mut i32) (i32.const 0))
+  (global $sb_drag_anchor_coord (mut i32) (i32.const 0))
+  (global $sb_drag_anchor_pos (mut i32) (i32.const 0))
   ;; TITLE_TABLE: parallel to WND_RECORDS, 8 bytes per slot = { wa_ptr:i32, len:i32 }
   ;; ptr is a WASM linear address of a heap-allocated ASCII title (no NUL).
   ;; Written by SetWindowTextA; read by $defwndproc_handle_ncpaint.
