@@ -26,6 +26,7 @@ const EXE    = path.join(__dirname, 'binaries', 'winamp.exe');
 const OUTDIR = path.join(__dirname, 'output');
 const PNG    = path.join(OUTDIR, 'winamp.png');
 const BACK   = path.join(OUTDIR, 'winamp_back_65537.png');
+const MAX_BATCHES = 500;
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  winamp.exe not found at', EXE);
@@ -39,8 +40,8 @@ for (const p of [PNG, BACK]) if (fs.existsSync(p)) fs.unlinkSync(p);
 const cmd = [
   `node "${RUN}"`,
   `--exe="${EXE}"`,
-  '--max-batches=200',
-  '--batch-size=5000',
+  `--max-batches=${MAX_BATCHES}`,
+  '--batch-size=100',
   '--buttons=1,1,1,1,1,1,1,1,1,1',
   '--no-close',
   '--stuck-after=5000',
@@ -78,19 +79,37 @@ async function backCanvasColors() {
   return s.size;
 }
 
+async function topCaptionBluePixels() {
+  if (!fs.existsSync(BACK)) return 0;
+  const img = await loadImage(BACK);
+  const c = createCanvas(img.width, img.height);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const h = Math.min(24, img.height);
+  const d = ctx.getImageData(0, 0, img.width, h).data;
+  let blue = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (r < 60 && g > 40 && b > 100) blue++;
+  }
+  return blue;
+}
+
 (async () => {
   const colors = await backCanvasColors();
+  const captionBlue = await topCaptionBluePixels();
 
   const checks = [
     { name: 'no UNIMPLEMENTED API crash',       pass: !/UNIMPLEMENTED API:/.test(out) },
     { name: 'no unreachable trap',              pass: !/RuntimeError:\s*unreachable/.test(out) },
-    { name: 'completed 200 batches',            pass: batches === 200 },
+    { name: `completed ${MAX_BATCHES} batches`, pass: batches === MAX_BATCHES },
     { name: 'API count > 5000',                 pass: apiCount > 5000 },
     { name: 'main hwnd 65537 reported',         pass: !!mainMatch },
     { name: 'main window is 275x116',           pass: mainW === 275 && mainH === 116 },
     { name: 'main title is "Winamp 2.91"',      pass: mainTitle === 'Winamp 2.91' },
     { name: 'main back-canvas PNG exists',      pass: fs.existsSync(BACK) },
     { name: 'main back-canvas has >100 colors', pass: colors > 100 },
+    { name: 'no standard blue titlebar over skin', pass: captionBlue === 0 },
   ];
 
   console.log('');

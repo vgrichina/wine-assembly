@@ -155,6 +155,44 @@
     (local.get $val)
   )
 
+  ;; Shared cross-instance posted-message queue.
+  ;; Worker threads run in separate WASM instances, so globals such as
+  ;; $post_queue_count are private. Win98 USER queues are shared by the window
+  ;; owner thread; use shared linear memory for messages posted by worker
+  ;; instances so the main UI pump can see them.
+  (func $shared_post_queue_enqueue (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
+    (local $cnt i32) (local $slot i32)
+    (local.set $cnt (i32.load (i32.const 0xB400)))
+    (if (i32.ge_u (local.get $cnt) (i32.const 64))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.add (i32.const 0xB410)
+      (i32.mul (local.get $cnt) (i32.const 16))))
+    (i32.store          (local.get $slot) (local.get $hwnd))
+    (i32.store offset=4 (local.get $slot) (local.get $msg))
+    (i32.store offset=8 (local.get $slot) (local.get $wparam))
+    (i32.store offset=12 (local.get $slot) (local.get $lparam))
+    (i32.store (i32.const 0xB400) (i32.add (local.get $cnt) (i32.const 1)))
+    (i32.const 1)
+  )
+
+  (func $shared_post_queue_read (param $msg_ptr i32) (param $remove i32) (result i32)
+    (local $cnt i32)
+    (local.set $cnt (i32.load (i32.const 0xB400)))
+    (if (i32.eqz (local.get $cnt))
+      (then (return (i32.const 0))))
+    (call $gs32 (local.get $msg_ptr) (i32.load (i32.const 0xB410)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.const 0xB414)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.const 0xB418)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.const 0xB41C)))
+    (if (local.get $remove)
+      (then
+        (i32.store (i32.const 0xB400) (i32.sub (local.get $cnt) (i32.const 1)))
+        (if (i32.gt_u (local.get $cnt) (i32.const 1))
+          (then (call $memcpy (i32.const 0xB410) (i32.const 0xB420)
+            (i32.mul (i32.sub (local.get $cnt) (i32.const 1)) (i32.const 16)))))))
+    (i32.const 1)
+  )
+
   ;; 0: ExitProcess
   (func $handle_ExitProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -541,7 +579,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (global.set $yield_flag (i32.const 1))
     (if (local.get $arg0)
-      (then (global.set $sleep_yielded (i32.const 1))))
+      (then
+        (global.set $sleep_yielded (i32.const 1))
+        (global.set $sleep_timeout (local.get $arg0))))
   )
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
@@ -577,6 +617,7 @@
       (then
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0))
+        (global.set $wait_timeout (local.get $arg1))
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
@@ -3634,6 +3675,13 @@
   ;; 297: PostMessageW — same as PostMessageA
   (func $handle_PostMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
+    (if (i32.ne (global.get $current_thread_id) (i32.const 1))
+      (then
+        (drop (call $shared_post_queue_enqueue
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
     (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
     (then
@@ -3654,9 +3702,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 299: GetCurrentThreadId — single-threaded, always return 1
+  ;; 299: GetCurrentThreadId — main thread is 1; worker threads get stable ids.
   (func $handle_GetCurrentThreadId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (global.get $current_thread_id))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -6521,6 +6569,7 @@
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0)) ;; nCount
         (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
+        (global.set $wait_timeout (local.get $arg3))
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
@@ -7141,7 +7190,9 @@
     (local $result i32)
     ;; Check if messages are pending first (post queue, paint, timers, host input)
     (if (i32.or
-          (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (i32.or
+            (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+            (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0)))
           (i32.or (global.get $paint_pending)
                   (i32.ne (call $host_check_input) (i32.const 0))))
       (then
@@ -7171,6 +7222,7 @@
         (return)))
     ;; Non-zero timeout: yield to JS event loop, will re-enter
     (global.set $yield_reason (i32.const 1))
+    (global.set $wait_timeout (local.get $arg3))
     (global.set $steps (i32.const 0)))
 
   ;; 608: GetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
@@ -7703,6 +7755,13 @@
         (return)
       )
     )
+    (if (call $shared_post_queue_read
+          (local.get $arg0)
+          (i32.and (local.get $arg4) (i32.const 1)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; Poll host for input events
     (local.set $packed (call $host_check_input))
     (if (i32.ne (local.get $packed) (i32.const 0))
@@ -7918,6 +7977,10 @@
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
     (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
     (i32.mul (global.get $post_queue_count) (i32.const 16)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
+    (then
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phase 0: send WM_ACTIVATE first

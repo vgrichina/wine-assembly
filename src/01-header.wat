@@ -881,6 +881,8 @@
   (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
+  ;; Win32-visible current thread id. Main thread is 1; worker tid N is N+1.
+  (global $current_thread_id (mut i32) (i32.const 1))
   ;; Current segment prefix during decoding (set before decode_modrm)
   (global $d_seg (mut i32) (i32.const 0))
 
@@ -922,6 +924,7 @@
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
   (global $sleep_yielded (mut i32) (i32.const 0))  ;; Set by Sleep handler; NOT cleared by run() — JS reads+clears
+  (global $sleep_timeout (mut i32) (i32.const 0))  ;; Last nonzero Sleep(ms), read by JS scheduler.
   (global $paint_pending (mut i32) (i32.const 0))    ;; Set by InvalidateRect, cleared when WM_PAINT sent
   (global $child_paint_hwnd (mut i32) (i32.const 0)) ;; Child window needing WM_PAINT (0=none)
   ;; Paint flags: 1 byte per WND slot (parallel to WND_RECORDS / NC_FLAGS).
@@ -976,6 +979,7 @@
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $wait_handle  (mut i32) (i32.const 0))
   (global $wait_handles_ptr (mut i32) (i32.const 0)) ;; if non-zero, wait_handle is nCount
+  (global $wait_timeout (mut i32) (i32.const 0xFFFFFFFF))
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
   (global $com_iid_ptr   (mut i32) (i32.const 0))   ;; guest addr of IID

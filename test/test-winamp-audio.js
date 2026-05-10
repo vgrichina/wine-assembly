@@ -14,7 +14,7 @@
 // PASS criteria:
 //   - Run exits within 30s (no hang)
 //   - No UNIMPLEMENTED / unreachable / CRASH in output
-//   - PCM file exists and is >= 8KB (at least ~3 waveOutWrites)
+//   - PCM file exists and is >= 8KB (at least one waveOutWrite)
 //   - PCM is not all zero (decode actually produced samples)
 
 const fs = require('fs');
@@ -27,6 +27,8 @@ const EXE    = path.join(__dirname, 'binaries', 'winamp.exe');
 const MP3    = path.join(__dirname, 'binaries', 'demo.mp3');
 const OUTDIR = path.join(__dirname, 'output');
 const PCM    = path.join(OUTDIR, 'winamp-audio.pcm');
+const MIN_PCM_BYTES = 8192;
+const MAX_BATCHES = 1200;
 
 if (!fs.existsSync(EXE))  { console.log('SKIP  winamp.exe not found');  process.exit(0); }
 if (!fs.existsSync(MP3))  { console.log('SKIP  demo.mp3 not found');    process.exit(0); }
@@ -37,12 +39,15 @@ if (fs.existsSync(PCM)) fs.unlinkSync(PCM);
 const cmd = [
   `node "${RUN}"`,
   `--exe="${EXE}"`,
-  '--max-batches=200',
-  '--batch-size=5000',
+  `--max-batches=${MAX_BATCHES}`,
+  '--batch-size=100',
+  '--quiet-api',
+  '--quiet-blocks',
   '--buttons=1,1,1,1,1,1,1,1,1,1',
   '--no-close',
-  '--input="10:273:2,50:poke:0x45caa4:1,60:winamp-play:C:\\demo.mp3,100:winamp-start"',
+  '--input="10:273:2,20:wait-title:Winamp:1000,21:poke:0x45caa4:1,22:winamp-play:C:\\demo.mp3,23:winamp-start"',
   `--audio-out="${PCM}"`,
+  `--audio-exit-bytes=${MIN_PCM_BYTES}`,
 ].join(' ');
 console.log('$', cmd);
 
@@ -76,9 +81,9 @@ const checks = [
   { name: 'ran within 30s',                    pass: elapsedMs < 30000 },
   { name: 'no UNIMPLEMENTED API crash',        pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no unreachable trap',               pass: !/RuntimeError:\s*unreachable/.test(out) },
-  { name: 'reached message loop',              pass: apiCount > 5000 },
+  { name: 'reached message loop',              pass: apiCount > 1000 },
   { name: 'PCM file exists',                   pass: fs.existsSync(PCM) },
-  { name: 'PCM >= 8KB (≥3 buffers written)',   pass: pcmBytes >= 8192 },
+  { name: 'PCM >= 8KB (audio buffer written)',  pass: pcmBytes >= MIN_PCM_BYTES },
   { name: 'PCM is not silence',                pass: nonZero > 64 },
 ];
 

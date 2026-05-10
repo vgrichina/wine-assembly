@@ -960,6 +960,10 @@
     (i32.mul (global.get $post_queue_count) (i32.const 16)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
+    (then
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver pending WM_SIZE after posted messages are drained
     (if (global.get $pending_wm_size)
     (then
@@ -1246,6 +1250,13 @@
         (return)
       )
     )
+    (if (call $shared_post_queue_read
+          (local.get $arg0)
+          (i32.and (local.get $arg4) (i32.const 1)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; WM_PAINT if pending (lowest priority). Selection and child propagation
     ;; live in WAT; the host only schedules repaint work.
     (if (i32.and (local.get $arg4) (i32.const 1))
@@ -1593,6 +1604,13 @@
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
+    (if (i32.ne (global.get $current_thread_id) (i32.const 1))
+      (then
+        (drop (call $shared_post_queue_enqueue
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
     (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
     (then

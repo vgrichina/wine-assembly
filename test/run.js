@@ -126,6 +126,7 @@ const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via nod
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
+const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 
 // NO_BUILD kept for compat but ignored — always compiles from WAT
@@ -299,6 +300,7 @@ async function main() {
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
+  //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
@@ -392,6 +394,8 @@ async function main() {
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
+      } else if (kind === 'sleep-ms') {
+        scheduledInput.push({ batch, action: 'sleep-ms', ms: parseInt(parts[2]) || 0 });
       } else if (kind === 'canvas-resize') {
         // B:canvas-resize:WIDTH:HEIGHT — emulate browser backing-canvas resize.
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
@@ -2357,6 +2361,9 @@ async function main() {
       } else if (ev.action === 'keyup' && renderer && renderer.handleKeyUp) {
         renderer.handleKeyUp(ev.code);
         logs.push(`[input] keyup vk=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'sleep-ms') {
+        if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
+        logs.push(`[input] sleep-ms ${ev.ms} at batch ${batch}`);
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();
@@ -2832,6 +2839,15 @@ async function main() {
         if (s < slices - 1 && !stopped) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
+      }
+    }
+    if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {
+      let audioBytes = 0;
+      try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
+      if (audioBytes >= AUDIO_EXIT_BYTES) {
+        console.log(`[audio] captured ${audioBytes} bytes; stopping at --audio-exit-bytes=${AUDIO_EXIT_BYTES}`);
+        stopped = true;
+        break;
       }
     }
     {
