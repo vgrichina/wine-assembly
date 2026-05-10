@@ -34,6 +34,8 @@ assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/demo\.mp3'/s.test(deployJs), 'deploy should include Winamp demo MP3');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Bricks\/bricks\.exe'/s.test(deployJs), 'deploy should include desktop Bricks binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmPipe\/EMPIPE\.EXE'/s.test(deployJs), 'deploy should include desktop EmPipe binary');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmPipe\/EMPIPE\.EXE\.manifest'/s.test(deployJs), 'deploy should include desktop EmPipe manifest');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmPipe\/EMPIPEE\.TXT'/s.test(deployJs), 'deploy should include desktop EmPipe text companion');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Funtris\.exe'/s.test(deployJs), 'deploy should include desktop Funtris binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Pyramid\.exe'/s.test(deployJs), 'deploy should include desktop Pyramid binary');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should allow large Winamp binary');
@@ -54,6 +56,26 @@ assert(/\[\s*'bricks'\s*,\s*'Bricks'/.test(indexHtml), 'default desktop whitelis
 assert(/bricks:\s*\{[^}]*files:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(indexHtml), 'Bricks should expose brk1.dll as a runtime VFS file');
 assert(!/bricks:\s*\{[^}]*dlls:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(indexHtml), 'Bricks should not preload brk1.dll as an import DLL');
 assert(/\[\s*'empipe'\s*,\s*'EmPipe'/.test(indexHtml), 'default desktop whitelist should include EmPipe');
+assert(/empipe:\s*\{[^}]*requiredFiles:\s*true/s.test(indexHtml), 'EmPipe web launch should fail fast if companion assets are missing');
+for (const rel of [
+  'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
+  'binaries/wep32-community/EmPipe/EMPIPEE.TXT',
+  'binaries/wep32-community/EmPipe/EMPIPE.EXE.manifest',
+  'binaries/wep32-community/EmPipe/EMPCLEAR.MID',
+  'binaries/wep32-community/EmPipe/EMPGMOV.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR1.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR2.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR3.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR4.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR5.MID',
+  'binaries/wep32-community/EmPipe/EMPSTART.MID',
+]) {
+  assert(indexHtml.includes(`'${rel}'`), `index.html EmPipe manifest should include ${rel}`);
+  assert(deployJs.includes(`'${rel}'`), `deploy should include ${rel}`);
+  const full = path.join(ROOT, rel);
+  assert(fs.existsSync(full), `${rel} should exist for web fetch/deploy`);
+  assert(fs.statSync(full).size > 0, `${rel} should not be empty`);
+}
 assert(/\[\s*'funtris'\s*,\s*'Funtris'/.test(indexHtml), 'default desktop whitelist should include Funtris');
 assert(/\[\s*'pyramid'\s*,\s*'Pyramid'/.test(indexHtml), 'default desktop whitelist should include Pyramid');
 assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelist should include Winamp');
@@ -61,9 +83,9 @@ assert(indexHtml.includes("'binaries/demo.mp3'"), 'Winamp web manifest should pr
 assert(indexHtml.includes("winampDemo: 'C:\\\\demo.mp3'"), 'Winamp web manifest should make demo.mp3 available');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=108'), 'web host should cache-bust host-imports after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=112'), 'web host should cache-bust host-imports after desktop changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("SOURCE_VERSION = '108'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '112'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');

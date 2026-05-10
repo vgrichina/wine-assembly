@@ -1939,7 +1939,7 @@
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
   ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cx i32) (local $cy i32) (local $dlg_rec i32)
+    (local $cx i32) (local $cy i32) (local $cs i32) (local $dlg_rec i32)
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
@@ -1948,17 +1948,23 @@
           (i32.ne (local.get $dlg_rec) (i32.const 0))
           (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
       (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))
-    ;; For non-main windows, record pending WM_SIZE for delivery by ShowWindow
-    (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
+    ;; If the main window is moved/resized before its first ShowWindow, refresh
+    ;; the pending WM_SIZE that was seeded during CreateWindowExA. EmPipe does
+    ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-      (local.set $cx (i32.sub (local.get $arg3) (i32.const 6)))
-      (if (i32.lt_s (local.get $cx) (i32.const 0)) (then (local.set $cx (i32.const 0))))
-      (local.set $cy (i32.sub (local.get $arg4) (global.get $main_nc_height)))
-      (if (i32.lt_s (local.get $cy) (i32.const 0)) (then (local.set $cy (i32.const 0))))
+      (global.set $main_win_cx (local.get $arg3))
+      (global.set $main_win_cy (local.get $arg4))
+      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+      (global.set $pending_wm_size (local.get $cs)))
+    (else
+      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+      (local.set $cx (i32.and (local.get $cs) (i32.const 0xFFFF)))
+      (local.set $cy (i32.shr_u (local.get $cs) (i32.const 16)))
       (global.set $movewindow_pending_hwnd (local.get $arg0))
       (global.set $movewindow_pending_size
         (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
-                (i32.shl (local.get $cy) (i32.const 16))))))
+                (i32.shl (local.get $cy) (i32.const 16)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)
   )
@@ -7615,10 +7621,13 @@
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 630: ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect) — STUB: unimplemented
+  ;; 630: ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect)
+  ;; For now the host scrolls the window back-canvas by the requested delta and
+  ;; fills exposed strips. lpRect/lpClipRect are ignored, which is enough for
+  ;; simple game board animation and avoids crashing on common repaint paths.
   (func $handle_ScrollWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_gdi_scroll_window (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 634: AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle) — 4 args stdcall
   ;; Same as AdjustWindowRect but with extended style (ignored for now)

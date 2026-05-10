@@ -577,21 +577,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=110"></script>
-  <script src="lib/dib.js?v=110"></script>
-  <script src="lib/resources-icon.js?v=110"></script>
-  <script src="lib/renderer-input.js?v=110"></script>
-  <script src="lib/renderer.js?v=110"></script>
-  <script src="lib/dll-loader.js?v=110"></script>
-  <script src="lib/storage.js?v=110"></script>
-  <script src="lib/filesystem.js?v=110"></script>
-  <script src="lib/hlp-parser.js?v=110"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=110"></script>
-  <script src="lib/host-imports.js?v=110"></script>
-  <script src="lib/compile-wat.js?v=110"></script>
-  <script src="lib/thread-manager.js?v=110"></script>
-  <script src="host.js?v=110"></script>
-  <script src="lib/recorder.js?v=110"></script>
+  <script src="lib/mem-utils.js?v=112"></script>
+  <script src="lib/dib.js?v=112"></script>
+  <script src="lib/resources-icon.js?v=112"></script>
+  <script src="lib/renderer-input.js?v=112"></script>
+  <script src="lib/renderer.js?v=112"></script>
+  <script src="lib/dll-loader.js?v=112"></script>
+  <script src="lib/storage.js?v=112"></script>
+  <script src="lib/filesystem.js?v=112"></script>
+  <script src="lib/hlp-parser.js?v=112"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=112"></script>
+  <script src="lib/host-imports.js?v=112"></script>
+  <script src="lib/compile-wat.js?v=112"></script>
+  <script src="lib/thread-manager.js?v=112"></script>
+  <script src="host.js?v=112"></script>
+  <script src="lib/recorder.js?v=112"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -894,8 +894,10 @@ Resource-aware Win98 emulator
           { url: 'binaries/wep32-community/TWorld/res/unslist.txt',    vfsPath: 'c:\\res\\unslist.txt' },
         ],
       },
-      empipe:     { exe: 'binaries/wep32-community/EmPipe/EMPIPE.EXE', files: [
+      empipe:     { exe: 'binaries/wep32-community/EmPipe/EMPIPE.EXE', requiredFiles: true, files: [
         'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
+        'binaries/wep32-community/EmPipe/EMPIPEE.TXT',
+        'binaries/wep32-community/EmPipe/EMPIPE.EXE.manifest',
         'binaries/wep32-community/EmPipe/EMPCLEAR.MID', 'binaries/wep32-community/EmPipe/EMPGMOV.MID',
         'binaries/wep32-community/EmPipe/EMPSCR1.MID', 'binaries/wep32-community/EmPipe/EMPSCR2.MID',
         'binaries/wep32-community/EmPipe/EMPSCR3.MID', 'binaries/wep32-community/EmPipe/EMPSCR4.MID',
@@ -1058,7 +1060,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=110');
+        const response = await fetch(url + '?v=112');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {

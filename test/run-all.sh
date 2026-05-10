@@ -60,6 +60,7 @@ E2E=(
   test/test-freecell-stats.js
   test/test-funtris-options.js
   test/test-funtris-new-game.js
+  test/test-empipe-start.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-spider-deal-menu.js
