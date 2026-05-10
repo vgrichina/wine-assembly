@@ -357,10 +357,12 @@
       (then (call $title_table_set (local.get $hwnd)
                 (call $g2w (local.get $arg2))
                 (call $guest_strlen (local.get $arg2)))))
-    ;; Queue an initial WM_NCPAINT (bit 0), WM_ERASEBKGND (bit 1), and
-    ;; WM_NCCALCSIZE (bit 2) so the first repaint delivers chrome, background
-    ;; fill, and client-rect computation via the message loop rather than JS.
-    (call $nc_flags_set (local.get $hwnd) (i32.const 7))
+    ;; Queue initial NC work. Hidden windows still need NCCALCSIZE for client
+    ;; geometry, but Win98 does not dispatch paint/erase for windows whose
+    ;; visible region is empty.
+    (call $nc_flags_set (local.get $hwnd)
+      (select (i32.const 7) (i32.const 4)
+        (call $wnd_is_effectively_visible (local.get $hwnd))))
     ;; Eagerly load the menu blob now that the WND_RECORDS slot exists —
     ;; otherwise a CheckMenuItem fired from WM_CREATE (e.g. FreeCell
     ;; initialising the Messages toggle) would see an empty blob and the
@@ -486,7 +488,8 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (call $paint_flag_set_inv (local.get $hwnd))
+    (if (call $wnd_is_effectively_visible (local.get $hwnd))
+      (then (call $paint_flag_set_inv (local.get $hwnd))))
     ;; Build CREATESTRUCT at image_base+0x100 for this child. Must run BEFORE
     ;; frame cleanup — needs [esp+24..esp+48]. MFC SDI passes a CCreateContext*
     ;; as lpParam (arg 12) so CView::OnCreate can call CDocument::AddView.
@@ -599,6 +602,17 @@
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Top-level dialogs created through MFC's modal path can arrive through
+    ;; CreateDialogIndirectParam without a later explicit ShowWindow call.
+    ;; A hidden top-level dialog then traps the app in an invisible modal loop.
+    ;; Child dialog pages remain hidden until their container shows them.
+    (if (i32.and
+          (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x40000000)))
+          (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+      (then
+        (drop (call $wnd_set_style (local.get $hwnd)
+          (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+        (drop (call $host_show_window (local.get $hwnd) (i32.const 5)))))
     ;; Populate WAT CLIENT_RECT from the same non-client metrics used for
     ;; painting. Coordinate conversion APIs depend on this for child pages
     ;; hosted inside dialog client areas.
@@ -606,21 +620,24 @@
     ;; Fill dialog client area with COLOR_BTNFACE (see DialogBoxParamA
     ;; for rationale — template DlgProcs rarely handle WM_PAINT).
     (call $dlg_fill_bkgnd (local.get $hwnd))
-    ;; Mark each child control dirty for the normal paint pump. Avoid sending
-    ;; WM_PAINT synchronously from CreateDialog: owner-draw controls can
-    ;; reenter the app dialog proc before creation is stable.
+    ;; Mark each child control dirty for the normal paint pump only if the
+    ;; dialog is visible at creation. Hidden modeless dialogs/pages are not
+    ;; painted by Win98 until ShowWindow makes the parent visible.
+    ;;
     ;; Walk children via parent linkage — combobox WM_CREATE may have added
     ;; auxiliary windows (inner listbox / WS_POPUP shell) that interleave
     ;; with dialog controls and break the dlg_hwnd+1+i contiguous assumption.
-    (local.set $i (i32.const 0))
-    (block $done (loop $push_loop
-      (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
-      (br_if $done (i32.eq (local.get $i) (i32.const -1)))
-      (local.set $ctrl_hwnd (call $wnd_slot_hwnd (local.get $i)))
-      (if (i32.and (call $wnd_get_style (local.get $ctrl_hwnd)) (i32.const 0x10000000))
-        (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $push_loop)))
+    (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
+      (then
+        (local.set $i (i32.const 0))
+        (block $done (loop $push_loop
+          (local.set $i (call $wnd_next_child_slot (local.get $hwnd) (local.get $i)))
+          (br_if $done (i32.eq (local.get $i) (i32.const -1)))
+          (local.set $ctrl_hwnd (call $wnd_slot_hwnd (local.get $i)))
+          (if (i32.and (call $wnd_get_style (local.get $ctrl_hwnd)) (i32.const 0x10000000))
+            (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $push_loop)))))
     ;; Do not synchronously paint children during CreateDialogParamA. Nested
     ;; wizard pages can be created before USER has finalized the parent/child
     ;; visible region, and painting them now leaves pixels that a later parent
