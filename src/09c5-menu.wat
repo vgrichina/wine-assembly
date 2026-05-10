@@ -1276,7 +1276,8 @@
 
   ;; Activate a top-level command item, if the bar slot is a command
   ;; instead of a popup. Returns 1 when a command was posted.
-  (func $menu_activate_bar_command (param $hwnd i32) (param $top_idx i32) (result i32)
+  (func $menu_activate_bar_command (export "menu_activate_bar_command")
+        (param $hwnd i32) (param $top_idx i32) (result i32)
     (local $id i32)
     (if (call $menu_child_count (local.get $hwnd) (local.get $top_idx))
       (then (return (i32.const 0))))
