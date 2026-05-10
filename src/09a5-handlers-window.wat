@@ -1060,10 +1060,12 @@
     (if (local.get $tmp)
     (then
     (call $nc_flags_clear (local.get $tmp) (i32.const 4))
+    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
     ;; WM_NCPAINT (0x85) — bit 0
@@ -1213,10 +1215,12 @@
     (then
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then (call $nc_flags_clear (local.get $tmp) (i32.const 4))))
+    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
     (call $gs32 (local.get $arg0) (local.get $tmp))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
     (if (global.get $nc_flags_count)
