@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '101';
+  static SOURCE_VERSION = '106';
 
   constructor() {
     this.instance = null;
@@ -551,14 +551,28 @@ class WineAssembly {
     if (!_loadDlls) return;
     // dllPaths can be strings (URLs) or {name, bytes} objects
     const configs = [];
+    const rememberDllBytes = (name, bytes) => {
+      if (!name || !bytes) return;
+      const key = String(name).toLowerCase();
+      this._loadedDllBytesByName = this._loadedDllBytesByName || {};
+      this._loadedDllBytesByName[key] = bytes;
+      const vfs = this._helpCtx && this._helpCtx.vfs;
+      if (vfs && vfs.files) {
+        vfs.files.set('c:\\' + key, { data: bytes, attrs: 0x20 });
+      }
+    };
     for (const item of dllPaths) {
       if (typeof item === 'string') {
         const resp = await fetch(item);
         if (!resp.ok) { console.error('Failed to fetch DLL:', item); continue; }
         const bytes = new Uint8Array(await resp.arrayBuffer());
         const name = item.split('/').pop();
+        rememberDllBytes(name, bytes);
         configs.push({ name, bytes });
       } else {
+        if (item && item.name && item.bytes) {
+          rememberDllBytes(item.name, item.bytes);
+        }
         configs.push(item);
       }
     }
@@ -731,9 +745,18 @@ class WineAssembly {
     const fileName = dllName.split('\\').pop().toLowerCase();
     const ctx = this._helpCtx;
     let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
+    if (!dllBytes && this._loadedDllBytesByName) {
+      dllBytes = this._loadedDllBytesByName[fileName] || null;
+    }
 
     if (!dllBytes) {
-      const paths = [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`];
+      const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+      const paths = [
+        exeDir ? exeDir + fileName : '',
+        `binaries/dlls/${fileName}`,
+        `binaries/plugins/${fileName}`,
+        `dlls/${fileName}`,
+      ].filter(Boolean);
       for (const p of paths) {
         try {
           const resp = await fetch(p);
