@@ -716,6 +716,10 @@
         (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
         ;; Jump to dialog proc
         (global.set $eip (local.get $arg3))
+        ;; Match DialogBoxParamA's observable boundary before WM_INITDIALOG.
+        ;; Some modeless common-control dialogs do substantial setup here;
+        ;; yielding keeps large host slices from monopolizing the event loop.
+        (global.set $yield_flag (i32.const 1))
         (global.set $steps (i32.const 0))
         (return)))
     ;; No dlgProc — just return hwnd
@@ -1004,12 +1008,7 @@
     (if (local.get $tmp)
     (then
     (call $nc_flags_clear (local.get $tmp) (i32.const 4))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0083))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
+    (call $defwndproc_do_nccalcsize (local.get $tmp))))))
     ;; WM_NCPAINT (0x85) — bit 0
     (if (global.get $nc_flags_count)
     (then
@@ -1017,12 +1016,7 @@
     (if (local.get $tmp)
     (then
     (call $nc_flags_clear (local.get $tmp) (i32.const 1))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0085))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))   ;; hrgn=1 (entire window)
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
+    (call $defwndproc_do_ncpaint (local.get $tmp))))))
     ;; WM_ERASEBKGND (0x14) — bit 1
     (if (global.get $nc_flags_count)
     (then
@@ -1093,14 +1087,12 @@
           (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer due — return WM_NULL and yield to let browser process input events
+    ;; No message due. Real GetMessage blocks here; do not synthesize WM_NULL,
+    ;; or an app message pump can spin forever inside one host slice.
     (global.set $yield_flag (i32.const 1))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))  ;; WM_NULL
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (return)
   )
 
   ;; 74: PeekMessageA(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg)
@@ -1368,6 +1360,37 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; callback addr
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Non-callback WM_TIMER is a queued app notification. Dropping it avoids
+    ;; Winamp entering timer-driven startup work before input/playback is ready;
+    ;; callback timers still dispatch above.
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Synthetic WM_NCCALCSIZE messages from the NC flag scanner are USER
+    ;; bookkeeping, not app work. Some custom wndprocs (Winamp playlist) spin
+    ;; if they receive the posted form, so apply the default client rect here.
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0083))
+          (i32.and
+            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))))
+      (then
+        (call $defwndproc_do_nccalcsize (call $gl32 (local.get $arg0)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; ShowWindow already toggled the host-side visibility. The posted
+    ;; WM_SHOWWINDOW is only an approximation of USER's synchronous notify;
+    ;; custom Winamp wndprocs can spin when it is replayed later.
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0018))
+          (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Paint for WAT-owned controls is rendered by our native control path.
     ;; Match SendMessageA here: GetMessageA synthesizes WM_PAINT MSGs, and
     ;; DispatchMessageA must not route those controls into an app fallback

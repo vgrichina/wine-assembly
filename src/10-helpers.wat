@@ -2261,6 +2261,10 @@
             (then (local.set $class_enum (i32.const 17))))
           (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3141))
             (then (local.set $class_enum (i32.const 18))))
+          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3150))
+            (then (local.set $class_enum (i32.const 19))))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3158))
+            (then (local.set $class_enum (i32.const 19))))
           ;; "RichEdit", "RichEdit20A", etc. Compare the first four chars
           ;; case-insensitively: r i c h.
           (if (i32.and

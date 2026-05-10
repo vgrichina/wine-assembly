@@ -503,6 +503,8 @@
   (data (i32.const 0x3126) "ComboBox\00")
   (data (i32.const 0x312F) "msctls_progress32\00")
   (data (i32.const 0x3141) "SysListView32\00")
+  (data (i32.const 0x3150) "Slider1\00")
+  (data (i32.const 0x3158) "msctls_trackbar32\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -980,6 +982,7 @@
   (global $wait_handle  (mut i32) (i32.const 0))
   (global $wait_handles_ptr (mut i32) (i32.const 0)) ;; if non-zero, wait_handle is nCount
   (global $wait_timeout (mut i32) (i32.const 0xFFFFFFFF))
+  (global $wait_stack_bytes (mut i32) (i32.const 12))
   ;; COM yield state — saved when yielding for async DLL fetch
   (global $com_clsid_ptr (mut i32) (i32.const 0))   ;; guest addr of CLSID
   (global $com_iid_ptr   (mut i32) (i32.const 0))   ;; guest addr of IID

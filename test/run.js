@@ -7,6 +7,8 @@ const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
+let PNG;
+try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
 try {
   const sk = require('skia-canvas');
@@ -85,9 +87,11 @@ const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileS
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
+const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
 const TRACE_THREAD = hasFlag('trace-thread'); // --trace-thread: log per-thread state transitions
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
+const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timing: log run/repaint wall time per batch
 const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--audio-stats=')); // --audio-stats[=N]: heartbeat every N waveOutWrites
 const AUDIO_STATS = !!AUDIO_STATS_RAW;
 const AUDIO_STATS_STRIDE = (AUDIO_STATS_RAW && AUDIO_STATS_RAW.includes('=')) ? parseInt(AUDIO_STATS_RAW.split('=')[1]) || 50 : 50;
@@ -351,12 +355,45 @@ async function main() {
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
       } else if (kind === 'dlg-dump') {
         scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
+      } else if (kind === 'dlg-paint') {
+        scheduledInput.push({ batch, action: 'dlg-paint' });
+      } else if (kind === 'dlg-png') {
+        scheduledInput.push({ batch, action: 'dlg-png', path: parts.slice(2).join(':') });
       } else if (kind === 'wait-title') {
         scheduledInput.push({
           batch,
           action: 'wait-title',
           title: (parts[2] || '').replace(/_/g, ' '),
           limit: parseInt(parts[3]) || 2000,
+          dumpStop: parts[4] === 'dump-stop',
+          label: parts[5] || '',
+          path: parts.slice(6).join(':'),
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-title-snapshot') {
+        // B:wait-title-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
+        // Wait for a window title, then dump the top dialog, write a raw
+        // canvas PNG, and stop before the next guest batch runs.
+        scheduledInput.push({
+          batch,
+          action: 'wait-title-snapshot',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          label: parts[4] || '',
+          path: parts.slice(5).join(':'),
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-title-dump-stop') {
+        // B:wait-title-dump-stop:TITLE:LIMIT:LABEL
+        // Wait for a window title, then dump the top dialog and stop before
+        // another guest batch can run.
+        scheduledInput.push({
+          batch,
+          action: 'wait-title',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          label: parts[4] || '',
+          dumpStop: true,
           startBatch: batch,
         });
       } else if (kind === 'wait-dlg-control') {
@@ -394,6 +431,15 @@ async function main() {
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
+      } else if (kind === 'png-raw') {
+        // B:png-raw:PATH — write the already-composited canvas without forcing repaint.
+        scheduledInput.push({ batch, action: 'png-raw', path: parts.slice(2).join(':') });
+      } else if (kind === 'png-pixels') {
+        // B:png-pixels:PATH — encode getImageData pixels through pngjs.
+        scheduledInput.push({ batch, action: 'png-pixels', path: parts.slice(2).join(':') });
+      } else if (kind === 'stop') {
+        // B:stop — end the harness after earlier same-batch actions complete.
+        scheduledInput.push({ batch, action: 'stop' });
       } else if (kind === 'sleep-ms') {
         scheduledInput.push({ batch, action: 'sleep-ms', ms: parseInt(parts[2]) || 0 });
       } else if (kind === 'canvas-resize') {
@@ -613,6 +659,25 @@ async function main() {
   const base = createHostImports(ctx);
   const { readStr } = base;
   const h = base.host;
+  const profileHostNames = PROFILE_HOST ? PROFILE_HOST.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const profileHostStats = new Map();
+  const wrapProfileHost = (hostObj, name) => {
+    if (!hostObj || typeof hostObj[name] !== 'function') return;
+    const orig = hostObj[name];
+    hostObj[name] = (...fnArgs) => {
+      const t0 = process.hrtime.bigint();
+      try {
+        return orig(...fnArgs);
+      } finally {
+        const dt = process.hrtime.bigint() - t0;
+        const s = profileHostStats.get(name) || { count: 0, ns: 0n };
+        s.count++;
+        s.ns += dt;
+        profileHostStats.set(name, s);
+      }
+    };
+  };
+  for (const name of profileHostNames) wrapProfileHost(h, name);
 
   // --- Override logging ---
   h.log = (ptr, len) => {
@@ -1165,6 +1230,7 @@ async function main() {
     wh.wait_multiple = h.wait_multiple;
     wh.create_semaphore = h.create_semaphore;
     wh.release_semaphore = h.release_semaphore;
+    for (const name of profileHostNames) wrapProfileHost(wh, name);
     // Worker logging
     wh.log = (ptr, len) => {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
@@ -2241,6 +2307,12 @@ async function main() {
               const wa = g2w(buf);
               const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
               text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+            } else if (cls === 3 && we.static_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.static_get_text(ch, buf, 256);
+              const wa = g2w(buf);
+              const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+              text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
             }
             let checked = '';
             if (cls === 1 && we.send_message) {
@@ -2264,12 +2336,145 @@ async function main() {
           const modal = we.modal_dialog_hwnd ? (we.modal_dialog_hwnd() >>> 0) : 0;
           logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} modal=${modal ? '0x' + modal.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
         }
+      } else if (ev.action === 'dlg-paint') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        let painted = 0;
+        if (dlg && we.send_message) {
+          we.send_message(dlg, 0x000F, 0, 0);
+          painted++;
+          if (we.wnd_next_child_slot && we.wnd_slot_hwnd) {
+            let s = 0;
+            while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+              const ch = we.wnd_slot_hwnd(s);
+              we.send_message(ch, 0x000F, 0, 0);
+              painted++;
+              s++;
+            }
+          }
+        }
+        if (renderer && renderer.flushRepaint) renderer.flushRepaint(true);
+        logs.push(`[input] dlg-paint painted=${painted} dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} at batch ${batch}`);
+      } else if (ev.action === 'dlg-png' && renderer) {
+        try {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          const dlgWin = wins[0] || null;
+          const canvas = dlgWin && dlgWin._backCanvas;
+          if (!canvas) throw new Error('no dialog back-canvas');
+          const buf = typeof canvas.toBufferSync === 'function'
+            ? canvas.toBufferSync('png')
+            : canvas.toBuffer('image/png');
+          fs.writeFileSync(ev.path, buf);
+          logs.push(`[input] dlg-png ${ev.path} (${buf.length} bytes) hwnd=0x${(dlgWin.hwnd | 0).toString(16)} at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] dlg-png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
       } else if (ev.action === 'wait-title') {
         const title = ev.title || '';
         const wins = renderer ? Object.values(renderer.windows || {}) : [];
         const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
         if (found) {
           logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+          if (ev.dumpStop) {
+            scheduledInput.unshift({ batch, action: 'stop' });
+            if (ev.path) scheduledInput.unshift({ batch, action: 'dlg-png', path: ev.path });
+            scheduledInput.unshift({ batch, action: 'dlg-paint' });
+            scheduledInput.unshift({ batch, action: 'dlg-dump', label: ev.label || '' });
+          }
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          ev.batch = batch + 1;
+          for (const pending of scheduledInput) pending.batch++;
+          scheduledInput.push(ev);
+          scheduledInput.sort((a, b) => a.batch - b.batch);
+        } else {
+          logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-title-snapshot' || ev.action === 'wait-title-dump-stop') {
+        const title = ev.title || '';
+        const wins = renderer ? Object.values(renderer.windows || {}) : [];
+        const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
+        if (found) {
+          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+
+          const we = instance.exports;
+          let dlg = 0;
+          if (renderer) {
+            const dialogs = Object.values(renderer.windows || {})
+              .filter(w => w && w.visible && w.isDialog)
+              .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            if (dialogs.length) dlg = dialogs[0].hwnd | 0;
+          }
+          if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+            for (let s = 255; s >= 0; s--) {
+              const hwnd = we.wnd_slot_hwnd(s);
+              if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+            }
+          }
+
+          const controls = [];
+          if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd) {
+            let s = 0;
+            while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+              const ch = we.wnd_slot_hwnd(s);
+              const cls = we.ctrl_get_class ? we.ctrl_get_class(ch) : -1;
+              const id = we.ctrl_get_id ? we.ctrl_get_id(ch) : -1;
+              const xy = we.ctrl_get_xy ? we.ctrl_get_xy(ch) : 0;
+              const wh = we.ctrl_get_wh ? we.ctrl_get_wh(ch) : 0;
+              const style = we.wnd_get_style_export ? we.wnd_get_style_export(ch) >>> 0 : 0;
+              const sx = we.wnd_window_screen_x ? we.wnd_window_screen_x(ch) | 0 : 0;
+              const sy = we.wnd_window_screen_y ? we.wnd_window_screen_y(ch) | 0 : 0;
+              let text = '';
+              if (cls === 1 && we.button_get_text && we.guest_alloc) {
+                const buf = we.guest_alloc(256);
+                const len = we.button_get_text(ch, buf, 256);
+                const wa = g2w(buf);
+                const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+                text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+              } else if (cls === 3 && we.static_get_text && we.guest_alloc) {
+                const buf = we.guest_alloc(256);
+                const len = we.static_get_text(ch, buf, 256);
+                const wa = g2w(buf);
+                const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+                text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+              }
+              let checked = '';
+              if (cls === 1 && we.send_message) {
+                checked = ` checked=${we.send_message(ch, 0x00F0, 0, 0) | 0}`;
+              }
+              controls.push(`hwnd=0x${ch.toString(16)} id=${id} cls=${cls} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff},${wh >>> 16} screen=${sx},${sy}${text}${checked}`);
+              s++;
+            }
+          }
+          const modal = we.modal_dialog_hwnd ? (we.modal_dialog_hwnd() >>> 0) : 0;
+          logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} modal=${modal ? '0x' + modal.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
+
+          if (ev.action === 'wait-title-snapshot' && renderer && renderer.canvas && PNG && ev.path) {
+            try {
+              const w = renderer.canvas.width | 0;
+              const h = renderer.canvas.height | 0;
+              const data = renderer.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+              const png = new PNG({ width: w, height: h });
+              png.data.set(data);
+              const buf = PNG.sync.write(png);
+              fs.writeFileSync(ev.path, buf);
+              logs.push(`[input] png-pixels ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+            } catch (e) {
+              logs.push(`[input] png-pixels FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+            }
+          } else if (ev.action === 'wait-title-snapshot') {
+            logs.push(`[input] png-pixels FAILED ${ev.path || ''}: unavailable at batch ${batch}`);
+          }
+
+          stopped = true;
+          logs.push(`[input] stop at batch ${batch}`);
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
           ev.batch = batch + 1;
           for (const pending of scheduledInput) pending.batch++;
@@ -2384,6 +2589,30 @@ async function main() {
         } catch (e) {
           logs.push(`[input] png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'png-raw' && renderer && renderer.canvas) {
+        try {
+          const buf = renderer.canvas.toBuffer('image/png');
+          fs.writeFileSync(ev.path, buf);
+          logs.push(`[input] png-raw ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] png-raw FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'png-pixels' && renderer && renderer.canvas && PNG) {
+        try {
+          const w = renderer.canvas.width | 0;
+          const h = renderer.canvas.height | 0;
+          const data = renderer.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+          const png = new PNG({ width: w, height: h });
+          png.data.set(data);
+          const buf = PNG.sync.write(png);
+          fs.writeFileSync(ev.path, buf);
+          logs.push(`[input] png-pixels ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] png-pixels FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'stop') {
+        stopped = true;
+        logs.push(`[input] stop at batch ${batch}`);
       } else if (ev.action === 'canvas-resize' && renderer && renderer.canvas) {
         const oldW = renderer.canvas.width | 0;
         const oldH = renderer.canvas.height | 0;
@@ -2503,6 +2732,10 @@ async function main() {
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       }
     }
+    if (stopped) {
+      while (logs.length) console.log(logs.shift());
+      break;
+    }
 
     const eipBefore = instance.exports.get_eip();
 
@@ -2596,6 +2829,7 @@ async function main() {
       }
     }
 
+    const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     try {
       instance.exports.run(BATCH_SIZE);
     } catch (e) {
@@ -2626,12 +2860,17 @@ async function main() {
       }
     }
 
+    const afterRunMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     if ((batch & 0x7f) === 0 && base.gdi && base.gdi.presentBestDxOffscreen) {
       base.gdi.presentBestDxOffscreen();
     }
 
     // Flush deferred repaint so back canvas composites after all GDI writes
     if (renderer && renderer.flushRepaint) renderer.flushRepaint();
+    if (TRACE_BATCH_TIMING) {
+      const afterPaintMs = Date.now();
+      console.log(`[batch-timing] batch=${batch} run=${afterRunMs - batchStartMs}ms paint=${afterPaintMs - afterRunMs}ms eip=${hex(instance.exports.get_eip())}`);
+    }
 
     // WASM-level breakpoint check (after run returns)
     {
@@ -3004,6 +3243,14 @@ if (VERBOSE) {
     const pad = String(shown[0]?.[1] ?? 0).length;
     for (const [name, n] of shown) console.log(`  ${String(n).padStart(pad)}  ${name}`);
     if (rest) console.log(`  ${String(rest).padStart(pad)}  (${sorted.length - API_COUNTS_TOP} others)`);
+  }
+  if (profileHostStats.size) {
+    console.log('\nHost import profile:');
+    for (const [name, s] of profileHostStats) {
+      const ms = Number(s.ns) / 1e6;
+      const avgUs = s.count ? (ms * 1000 / s.count) : 0;
+      console.log(`  ${name}: count=${s.count} total=${ms.toFixed(3)}ms avg=${avgUs.toFixed(3)}us`);
+    }
   }
 
   if (countAddrs.length && instance.exports.get_count) {

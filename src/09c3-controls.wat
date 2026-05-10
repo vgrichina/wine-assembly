@@ -327,6 +327,9 @@
     ;; Class 18 = ListView (SysListView32)
     (if (i32.eq (local.get $class) (i32.const 18))
       (then (return (call $listview_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 19 = TrackBar/Slider (Slider1, msctls_trackbar32)
+    (if (i32.eq (local.get $class) (i32.const 19))
+      (then (return (call $trackbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -2942,6 +2945,170 @@
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (i32.const 0x0A) (i32.const 0x0F)))))))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; ---- TrackBar / Slider WndProc ----
+  ;;
+  ;; Minimal common-control trackbar for Funpack dialogs. State:
+  ;; +0 min, +4 max, +8 pos, +12 line, +16 page, +20 thumb length.
+  (func $trackbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $min i32) (local $max i32) (local $pos i32)
+    (local $old i32) (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $style i32) (local $vert i32) (local $range i32) (local $track_len i32)
+    (local $thumb_len i32) (local $thumb_pos i32) (local $cx i32) (local $cy i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (local.set $state (call $heap_alloc (i32.const 24)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store        (local.get $sw) (i32.const 0))
+        (i32.store offset=4  (local.get $sw) (i32.const 100))
+        (i32.store offset=8  (local.get $sw) (i32.const 0))
+        (i32.store offset=12 (local.get $sw) (i32.const 1))
+        (i32.store offset=16 (local.get $sw) (i32.const 10))
+        (i32.store offset=20 (local.get $sw) (i32.const 16))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    ;; WM_CREATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then (return (i32.const 0))))
+    ;; WM_DESTROY
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (call $heap_free (local.get $state))
+        (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))
+        (return (i32.const 0))))
+
+    ;; TBM_GETPOS / TBM_GETRANGEMIN / TBM_GETRANGEMAX
+    (if (i32.eq (local.get $msg) (i32.const 0x0400))
+      (then (return (i32.load offset=8 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0401))
+      (then (return (i32.load (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0402))
+      (then (return (i32.load offset=4 (local.get $sw)))))
+    ;; TBM_SETPOS(fRedraw, pos)
+    (if (i32.eq (local.get $msg) (i32.const 0x0405))
+      (then
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $pos (local.get $lParam))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
+        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+    ;; TBM_SETRANGE(fRedraw, MAKELONG(min,max))
+    (if (i32.eq (local.get $msg) (i32.const 0x0406))
+      (then
+        (local.set $min (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $max (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (if (i32.le_s (local.get $max) (local.get $min))
+          (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
+        (i32.store        (local.get $sw) (local.get $min))
+        (i32.store offset=4  (local.get $sw) (local.get $max))
+        (local.set $pos (i32.load offset=8 (local.get $sw)))
+        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
+        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
+        (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+    ;; TBM_SETRANGEMIN / TBM_SETRANGEMAX
+    (if (i32.eq (local.get $msg) (i32.const 0x0407))
+      (then
+        (i32.store (local.get $sw) (local.get $lParam))
+        (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0408))
+      (then
+        (i32.store offset=4 (local.get $sw) (local.get $lParam))
+        (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
+    ;; TBM_SETPAGESIZE / GETPAGESIZE / SETLINESIZE / GETLINESIZE
+    (if (i32.eq (local.get $msg) (i32.const 0x0415))
+      (then
+        (local.set $old (i32.load offset=16 (local.get $sw)))
+        (i32.store offset=16 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0416))
+      (then (return (i32.load offset=16 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0417))
+      (then
+        (local.set $old (i32.load offset=12 (local.get $sw)))
+        (i32.store offset=12 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0418))
+      (then (return (i32.load offset=12 (local.get $sw)))))
+    ;; TBM_SETTHUMBLENGTH / GETTHUMBLENGTH
+    (if (i32.eq (local.get $msg) (i32.const 0x041B))
+      (then
+        (i32.store offset=20 (local.get $sw) (local.get $wParam))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x041C))
+      (then (return (i32.load offset=20 (local.get $sw)))))
+
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        (local.set $vert (i32.and (local.get $style) (i32.const 0x0002)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x30011))) ;; LTGRAY_BRUSH / COLOR_BTNFACE.
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $pos (i32.load offset=8 (local.get $sw)))
+        (local.set $range (i32.sub (local.get $max) (local.get $min)))
+        (if (i32.le_s (local.get $range) (i32.const 0)) (then (local.set $range (i32.const 1))))
+        (local.set $thumb_len (i32.load offset=20 (local.get $sw)))
+        (if (i32.lt_s (local.get $thumb_len) (i32.const 8)) (then (local.set $thumb_len (i32.const 8))))
+        (if (local.get $vert)
+          (then
+            (local.set $track_len (i32.sub (local.get $h) (local.get $thumb_len)))
+            (if (i32.lt_s (local.get $track_len) (i32.const 1)) (then (local.set $track_len (i32.const 1))))
+            (local.set $thumb_pos
+              (i32.div_s
+                (i32.mul (i32.sub (local.get $pos) (local.get $min)) (local.get $track_len))
+                (local.get $range)))
+            (local.set $cx (i32.div_s (local.get $w) (i32.const 2)))
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.sub (local.get $cx) (i32.const 2)) (i32.const 4)
+                    (i32.add (local.get $cx) (i32.const 2)) (i32.sub (local.get $h) (i32.const 4))
+                    (i32.const 0x0A) (i32.const 0x0F)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.sub (local.get $cx) (i32.const 8)) (local.get $thumb_pos)
+                    (i32.add (local.get $cx) (i32.const 8)) (i32.add (local.get $thumb_pos) (local.get $thumb_len))
+                    (i32.const 0x30011)))
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.sub (local.get $cx) (i32.const 8)) (local.get $thumb_pos)
+                    (i32.add (local.get $cx) (i32.const 8)) (i32.add (local.get $thumb_pos) (local.get $thumb_len))
+                    (i32.const 0x05) (i32.const 0x0F))))
+          (else
+            (local.set $track_len (i32.sub (local.get $w) (local.get $thumb_len)))
+            (if (i32.lt_s (local.get $track_len) (i32.const 1)) (then (local.set $track_len (i32.const 1))))
+            (local.set $thumb_pos
+              (i32.div_s
+                (i32.mul (i32.sub (local.get $pos) (local.get $min)) (local.get $track_len))
+                (local.get $range)))
+            (local.set $cy (i32.div_s (local.get $h) (i32.const 2)))
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 4) (i32.sub (local.get $cy) (i32.const 2))
+                    (i32.sub (local.get $w) (i32.const 4)) (i32.add (local.get $cy) (i32.const 2))
+                    (i32.const 0x0A) (i32.const 0x0F)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (local.get $thumb_pos) (i32.sub (local.get $cy) (i32.const 8))
+                    (i32.add (local.get $thumb_pos) (local.get $thumb_len)) (i32.add (local.get $cy) (i32.const 8))
+                    (i32.const 0x30011)))
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (local.get $thumb_pos) (i32.sub (local.get $cy) (i32.const 8))
+                    (i32.add (local.get $thumb_pos) (local.get $thumb_len)) (i32.add (local.get $cy) (i32.const 8))
+                    (i32.const 0x05) (i32.const 0x0F)))))
         (return (i32.const 0))))
     (i32.const 0))
 

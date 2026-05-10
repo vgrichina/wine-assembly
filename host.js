@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '106';
+  static SOURCE_VERSION = '108';
 
   constructor() {
     this.instance = null;
@@ -53,6 +53,7 @@ class WineAssembly {
       get exports() { return opts.exports || (self.instance ? self.instance.exports : null); },
       vfs: opts.vfs || null,
       sharedGdi: opts.sharedGdi || null,
+      sharedAudio: opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {}),
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
@@ -393,6 +394,7 @@ class WineAssembly {
         exports: self.instance.exports,
         vfs: mainCtx.vfs,
         sharedGdi: mainCtx.sharedGdi,
+        sharedAudio: mainCtx.sharedAudio,
       });
       wi.host.memory = self.memory;
       wi.host.log = () => {};
@@ -400,7 +402,9 @@ class WineAssembly {
       wi.host.exit = () => {};
       return wi;
     };
-    this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports);
+    this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports, {
+      hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
+    });
 
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
@@ -821,7 +825,7 @@ class WineAssembly {
     const step = async () => {
       if (!self.running) return;
       try {
-        const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
         // Check if main thread is waiting
         if (self.threadManager && self.threadManager.checkMainYield()) {
           // Main still waiting — just run worker threads
@@ -831,10 +835,11 @@ class WineAssembly {
             self.renderer.wasmMemory = self.memory;
           }
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
-          self.instance.exports.run(activeStepsPerSlice);
+          const maxChunk = 1;
+          self.instance.exports.run(maxChunk);
           if (runStart && self.renderer && self.renderer._profileMark) {
             self.renderer._profileMark('wasm-run-slice', {
-              steps: activeStepsPerSlice,
+              steps: maxChunk,
               ms: self.renderer._profileNow() - runStart,
             });
           }

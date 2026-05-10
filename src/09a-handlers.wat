@@ -107,6 +107,13 @@
                 ;; Timer is due — only update last_tick if consuming
                 (if (local.get $consume)
                   (then (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))))
+                ;; Window timers without callbacks are app UI notifications.
+                ;; Consuming them internally prevents Winamp from entering
+                ;; timer-driven startup work before the UI is responsive.
+                (if (i32.and (local.get $consume) (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 16)))))
+                  (then
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $loop)))
                 (call $gs32 (local.get $msg_ptr) (i32.load (local.get $addr)))                          ;; hwnd
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
@@ -618,6 +625,7 @@
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0))
         (global.set $wait_timeout (local.get $arg1))
+        (global.set $wait_stack_bytes (i32.const 12))
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
@@ -1589,6 +1597,14 @@
         (if (i32.and (i32.eqz (global.get $eax))
                      (i32.eq (local.get $arg0) (global.get $main_hwnd)))
           (then (global.set $eax (global.get $wndproc_addr))))
+        ;; WAT-native trackbars already implement the common-control messages
+        ;; Funtris uses. Letting the app replace their wndproc routes every
+        ;; initialization SendMessage through an x86 subclass chain that never
+        ;; reaches browser-idle again, so keep the native wndproc installed.
+        (if (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 19))
+          (then
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
         (call $wnd_table_set (local.get $arg0) (local.get $arg2)) ;; set new wndproc
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
@@ -6570,6 +6586,7 @@
         (global.set $wait_handle (local.get $arg0)) ;; nCount
         (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
         (global.set $wait_timeout (local.get $arg3))
+        (global.set $wait_stack_bytes (i32.const 20))
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
@@ -7223,6 +7240,7 @@
     ;; Non-zero timeout: yield to JS event loop, will re-enter
     (global.set $yield_reason (i32.const 1))
     (global.set $wait_timeout (local.get $arg3))
+    (global.set $wait_stack_bytes (i32.const 24))
     (global.set $steps (i32.const 0)))
 
   ;; 608: GetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
@@ -7663,6 +7681,37 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Non-callback WM_TIMER is a queued app notification. Dropping it avoids
+    ;; Winamp entering timer-driven startup work before input/playback is ready;
+    ;; callback timers still dispatch above.
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Synthetic WM_NCCALCSIZE messages from the NC flag scanner are USER
+    ;; bookkeeping, not app work. Some custom wndprocs (Winamp playlist) spin
+    ;; if they receive the posted form, so apply the default client rect here.
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0083))
+          (i32.and
+            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))))
+      (then
+        (call $defwndproc_do_nccalcsize (call $gl32 (local.get $arg0)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; ShowWindow already toggled the host-side visibility. The posted
+    ;; WM_SHOWWINDOW is only an approximation of USER's synchronous notify;
+    ;; custom Winamp wndprocs can spin when it is replayed later.
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0018))
+          (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Paint for WAT-owned controls is rendered by our native control path.
     ;; Keep this in sync with DispatchMessageA: GetMessageW can synthesize
     ;; WM_PAINT MSGs for child controls, and those must validate through WAT.
@@ -8056,14 +8105,12 @@
     (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer due — return WM_NULL and yield to let browser process input events
+    ;; No message due. Real GetMessage blocks here; do not synthesize WM_NULL,
+    ;; or an app message pump can spin forever inside one host slice.
     (global.set $yield_flag (i32.const 1))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (return)
   )
 
   ;; 648: DefFrameProcW — STUB: unimplemented

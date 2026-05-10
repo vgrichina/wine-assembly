@@ -36,6 +36,7 @@ UNIT=(
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js
   test/test-canvas-keydown-preventdefault.js
+  test/test-renderer-mouse-drag-mask.js
 )
 
 E2E=(
@@ -56,6 +57,7 @@ E2E=(
   test/test-freecell-move.js
   test/test-freecell-dblclick.js
   test/test-freecell-stats.js
+  test/test-funtris-options.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-spider-deal-menu.js
