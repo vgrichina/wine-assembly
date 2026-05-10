@@ -303,6 +303,7 @@ async function main() {
   //   B:dlg-send:CTRL_ID:MSG:WPARAM:LPARAM — send a message to a dialog control by id
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
+  //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   const scheduledInput = [];
@@ -355,6 +356,8 @@ async function main() {
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
       } else if (kind === 'dlg-dump') {
         scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
+      } else if (kind === 'menu-dump') {
+        scheduledInput.push({ batch, action: 'menu-dump', label: parts[2] || '' });
       } else if (kind === 'dlg-paint') {
         scheduledInput.push({ batch, action: 'dlg-paint' });
       } else if (kind === 'dlg-png') {
@@ -2340,6 +2343,28 @@ async function main() {
           const modal = we.modal_dialog_hwnd ? (we.modal_dialog_hwnd() >>> 0) : 0;
           logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} modal=${modal ? '0x' + modal.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
         }
+      } else if (ev.action === 'menu-dump') {
+        const we = instance.exports;
+        const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;
+        const top = we.menu_open_top ? (we.menu_open_top() | 0) : -1;
+        const hover = we.menu_open_hover ? (we.menu_open_hover() | 0) : -1;
+        const x = we.menu_open_x ? (we.menu_open_x() | 0) : -1;
+        const y = we.menu_open_y ? (we.menu_open_y() | 0) : -1;
+        const count = hwnd && we.menu_child_count ? (we.menu_child_count(hwnd, top) | 0) : 0;
+        const items = [];
+        for (let i = 0; i < count; i++) {
+          const id = we.menu_child_id ? (we.menu_child_id(hwnd, top, i) | 0) : 0;
+          const flags = we.menu_child_flags ? (we.menu_child_flags(hwnd, top, i) | 0) : 0;
+          const ptr = we.menu_child_label_ptr ? (we.menu_child_label_ptr(hwnd, top, i) >>> 0) : 0;
+          const len = we.menu_child_label_len ? (we.menu_child_label_len(hwnd, top, i) | 0) : 0;
+          let label = '';
+          if (ptr && len > 0) {
+            const bytes = new Uint8Array(memory.buffer, ptr, len);
+            label = Buffer.from(bytes).toString('latin1');
+          }
+          items.push(`#${i} id=${id} flags=0x${flags.toString(16)} "${label}"`);
+        }
+        logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} xy=${x},${y} count=${count} ${items.join(' | ') || '(no items)'}`);
       } else if (ev.action === 'dlg-paint') {
         const we = instance.exports;
         let dlg = 0;

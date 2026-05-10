@@ -1570,6 +1570,26 @@
     ;; owned windows and closing them must not terminate the app.
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
+      ;; A DialogBoxParamA dialog closed through default WM_CLOSE must end
+      ;; the modal pump; destroying the HWND alone leaves the guest waiting
+      ;; forever in the CACA0004 loop.
+      (if (i32.and
+            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
+            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+        (then
+          (global.set $dlg_ended (i32.const 1))
+          (global.set $dlg_result (i32.const 2)) ;; IDCANCEL
+          (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+          (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 2))
+          (if (call $wnd_table_get (local.get $arg0))
+            (then
+              (call $wnd_destroy_children (local.get $arg0))
+              (call $wnd_table_remove (local.get $arg0))))
+          (call $host_destroy_window (local.get $arg0))
+          (global.set $yield_flag (i32.const 1))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+          (return)))
       (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
         (then (global.set $quit_flag (i32.const 1))))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))

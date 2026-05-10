@@ -1531,12 +1531,10 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    ;; Look up real HWND from control table
+    ;; Look up real HWND from the control table. Returning a fabricated HWND
+    ;; makes later APIs like SetWindowTextA report success against a non-window,
+    ;; which hides missing-template/control bugs from the app.
     (local.set $result (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
-    ;; Fallback to synthetic HWND if not found (pre-control-table dialogs)
-    (if (i32.eqz (local.get $result))
-      (then (local.set $result (i32.or (i32.const 0x20000)
-        (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -1617,6 +1615,11 @@
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $wa (call $g2w (local.get $arg1)))
     (local.set $len (call $guest_strlen (local.get $arg1)))
     ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
@@ -3622,6 +3625,26 @@
     ;; owned windows and closing them must not terminate the app.
     (if (i32.eq (local.get $arg1) (i32.const 0x0010))
     (then
+      ;; A DialogBoxParamA dialog closed through default WM_CLOSE must end
+      ;; the modal pump; destroying the HWND alone leaves the guest waiting
+      ;; forever in the CACA0004 loop.
+      (if (i32.and
+            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
+            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+        (then
+          (global.set $dlg_ended (i32.const 1))
+          (global.set $dlg_result (i32.const 2)) ;; IDCANCEL
+          (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+          (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 2))
+          (if (call $wnd_table_get (local.get $arg0))
+            (then
+              (call $wnd_destroy_children (local.get $arg0))
+              (call $wnd_table_remove (local.get $arg0))))
+          (call $host_destroy_window (local.get $arg0))
+          (global.set $yield_flag (i32.const 1))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+          (return)))
       (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
         (then (global.set $quit_flag (i32.const 1))))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))

@@ -102,7 +102,7 @@ async function main() {
     '--trace-api=EndDialog',
     '--trace-host=destroy_window',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:281:186,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,760:menu-dump:eqmenu,780:click:281:196,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
   ].join(' ');
   console.log('');
   console.log('$', dialogCmd);
@@ -118,14 +118,88 @@ async function main() {
   }
 
   const dialogChecks = [
-    { name: 'preset dialog run completed without timeout', pass: !dialogTimedOut },
-    { name: 'preset dialog opened', pass: /dlg-dump:eqdlg: dlg=0x[0-9a-f]+/.test(dialogOut) },
-    { name: 'preset dialog click calls EndDialog', pass: /EndDialog\(0x0001000a,/.test(dialogOut) },
-    { name: 'preset dialog frame destroyed', pass: /\[host\] destroy_window\(0x1000a\)/.test(dialogOut) },
+    { name: 'auto-load preset dialog run completed without timeout', pass: !dialogTimedOut },
+    { name: 'EQ preset popup exposes load commands', pass: /#0 id=40172[\s\S]*#1 id=40173/.test(dialogOut) },
+    { name: 'auto-load preset dialog opened', pass: /dlg-dump:eqdlg: dlg=0x[0-9a-f]+/.test(dialogOut) },
+    { name: 'auto-load preset dialog click calls EndDialog', pass: /EndDialog\(0x0001000a,/.test(dialogOut) },
+    { name: 'auto-load preset dialog frame destroyed', pass: /\[host\] destroy_window\(0x1000a\)/.test(dialogOut) },
   ];
 
   console.log('');
   for (const c of dialogChecks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
+  const reopenCmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=1200',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--no-close',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,520:menu-dump:first,620:click:40:400,720:menu-dump:hidden,820:click:263:164,920:menu-dump:second,1020:stop"',
+  ].join(' ');
+  console.log('');
+  console.log('$', reopenCmd);
+
+  let reopenOut = '';
+  let reopenTimedOut = false;
+  try {
+    reopenOut = execSync(reopenCmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    reopenOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    reopenTimedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(reopenTimedOut ? '(reopen run timed out - output captured)' : '(reopen run exited non-zero - output captured)');
+  }
+
+  const secondMenu = (reopenOut.match(/menu-dump:second:[^\n]*/) || [''])[0];
+  const reopenChecks = [
+    { name: 'EQ preset second-open run completed without timeout', pass: !reopenTimedOut },
+    { name: 'EQ preset menu hides after outside click', pass: /menu-dump:hidden: hwnd=none/.test(reopenOut) },
+    { name: 'EQ preset second open uses popup coordinates', pass: /menu-dump:second:[^\n]*xy=244,164/.test(reopenOut) },
+    { name: 'EQ preset second open is not Winamp main menu', pass: !/Main|Context menus|Video options|File info/.test(secondMenu) },
+    { name: 'EQ preset second open keeps preset commands', pass: /menu-dump:second:[^\n]*#0 id=40172[\s\S]*#1 id=40173/.test(reopenOut) },
+  ];
+
+  console.log('');
+  for (const c of reopenChecks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
+  const closeCmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=1100',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--no-close',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,460:click:282:196,650:dlg-dump:opened,670:click:253:15,860:dlg-dump:after-close,890:stop"',
+  ].join(' ');
+  console.log('');
+  console.log('$', closeCmd);
+
+  let closeOut = '';
+  let closeTimedOut = false;
+  try {
+    closeOut = execSync(closeCmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    closeOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    closeTimedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(closeTimedOut ? '(close run timed out - output captured)' : '(close run exited non-zero - output captured)');
+  }
+
+  const closeChecks = [
+    { name: 'auto-load preset title-bar close completed without timeout', pass: !closeTimedOut },
+    { name: 'auto-load preset dialog existed before close', pass: /dlg-dump:opened: dlg=0x[0-9a-f]+/.test(closeOut) },
+    { name: 'auto-load preset title-bar close removed dialog', pass: /dlg-dump:after-close: dlg=none/.test(closeOut) },
+  ];
+
+  console.log('');
+  for (const c of closeChecks) {
     console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
     if (!c.pass) failed++;
   }
@@ -169,7 +243,7 @@ async function main() {
   }
 
   console.log('');
-  const total = checks.length + dialogChecks.length + eqfChecks.length;
+  const total = checks.length + dialogChecks.length + reopenChecks.length + closeChecks.length + eqfChecks.length;
   console.log(`${total - failed}/${total} checks passed`);
   process.exit(failed > 0 ? 1 : 0);
 }
