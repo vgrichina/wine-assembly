@@ -107,13 +107,6 @@
                 ;; Timer is due — only update last_tick if consuming
                 (if (local.get $consume)
                   (then (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))))
-                ;; Window timers without callbacks are app UI notifications.
-                ;; Consuming them internally prevents Winamp from entering
-                ;; timer-driven startup work before the UI is responsive.
-                (if (i32.and (local.get $consume) (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 16)))))
-                  (then
-                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                    (br $loop)))
                 (call $gs32 (local.get $msg_ptr) (i32.load (local.get $addr)))                          ;; hwnd
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
@@ -4264,7 +4257,7 @@
   (func $handle_GetUpdateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $rv i32)
     (local.set $rv (call $update_get_rect (local.get $arg0) (global.get $PAINT_SCRATCH)))
-    (if (i32.and (local.get $rv) (local.get $arg1))
+    (if (i32.and (i32.ne (local.get $rv) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
       (then
         (drop (call $host_gdi_set_rect_rgn
           (local.get $arg1)
@@ -7681,42 +7674,11 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
     (global.set $steps (i32.const 0))
     (return)))
-    ;; Non-callback WM_TIMER is a queued app notification. Dropping it avoids
-    ;; Winamp entering timer-driven startup work before input/playback is ready;
-    ;; callback timers still dispatch above.
-    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Synthetic WM_NCCALCSIZE messages from the NC flag scanner are USER
-    ;; bookkeeping, not app work. Some custom wndprocs (Winamp playlist) spin
-    ;; if they receive the posted form, so apply the default client rect here.
-    (if (i32.and
-          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0083))
-          (i32.and
-            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
-            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))))
-      (then
-        (call $defwndproc_do_nccalcsize (call $gl32 (local.get $arg0)))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; ShowWindow already toggled the host-side visibility. The posted
-    ;; WM_SHOWWINDOW is only an approximation of USER's synchronous notify;
-    ;; custom Winamp wndprocs can spin when it is replayed later.
-    (if (i32.and
-          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0018))
-          (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
     ;; Paint for WAT-owned controls is rendered by our native control path.
     ;; Keep this in sync with DispatchMessageA: GetMessageW can synthesize
     ;; WM_PAINT MSGs for child controls, and those must validate through WAT.
     (local.set $ctrl_class (call $ctrl_table_get_class (call $gl32 (local.get $arg0))))
-    (if (i32.and (local.get $ctrl_class)
+    (if (i32.and (i32.ne (local.get $ctrl_class) (i32.const 0))
                  (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F)))
       (then
         ;; WAT-native controls paint without BeginPaint/EndPaint. Validate at
@@ -8105,12 +8067,16 @@
     (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No message due. Real GetMessage blocks here; do not synthesize WM_NULL,
-    ;; or an app message pump can spin forever inside one host slice.
+    ;; No timer due — return WM_NULL and yield to let browser process input events
     (global.set $yield_flag (i32.const 1))
-    (global.set $handler_set_eip (i32.const 1))
-    (global.set $steps (i32.const 0))
-    (return)
+    (if (local.get $msg_ptr)
+      (then
+        (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
   ;; 648: DefFrameProcW — STUB: unimplemented

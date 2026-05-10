@@ -96,6 +96,8 @@ const extra = [
   { name: 'wcscmp', nargs: 2 },
   { name: 'wcsncpy', nargs: 3 },
   { name: 'wcslen', nargs: 1 },
+  { name: 'mbstowcs', nargs: 3, convention: 'cdecl' },
+  { name: 'wcstombs', nargs: 3, convention: 'cdecl' },
   { name: 'memset', nargs: 3 },
   { name: 'memcpy', nargs: 3 },
   { name: '_XcptFilter', nargs: 2 },
@@ -441,7 +443,7 @@ const extra = [
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
-    existing.push({ id: existing.length, name: api.name, nargs: api.nargs, convention: 'stdcall', hash: 0 });
+    existing.push({ id: existing.length, name: api.name, nargs: api.nargs, convention: api.convention || 'stdcall', hash: 0 });
     seen.add(api.name);
   }
 }

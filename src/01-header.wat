@@ -1026,6 +1026,7 @@
   ;; code needs to know that was intentional — otherwise it pops [esp] as a
   ;; new EIP, stalling the dialog loop with EIP=0.
   (global $handler_set_eip (mut i32) (i32.const 0))
+  (global $current_thunk_eip (mut i32) (i32.const 0))
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
   ;; ---- Modal dialog (Open/Save/Color/Font/...) state ----

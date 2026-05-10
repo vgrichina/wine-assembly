@@ -23,14 +23,16 @@
 
   ;; ---- Per-class state struct layouts ----
   ;;
-  ;; ButtonState (16 bytes, allocated in WM_CREATE — actually 64 bytes
-  ;; because BS_OWNERDRAW embeds DRAWITEMSTRUCT at +16)
+  ;; ButtonState (72 bytes, allocated in WM_CREATE)
   ;;   +0   text_buf_ptr   guest ptr from $heap_alloc (0 = no text)
   ;;   +4   text_len       chars, no NUL
   ;;   +8   flags          bit0=pressed   bit1=checked
   ;;                       bit2=default   (current paint default — flips on focus)
   ;;                       bit3=focused
   ;;   +12  ctrl_id
+  ;;   +16..+63  legacy embedded DRAWITEMSTRUCT scratch
+  ;;   +64  image_type     IMAGE_BITMAP=0
+  ;;   +68  image_handle   HBITMAP from BM_SETIMAGE
   ;;
   ;; StaticState (16 bytes)
   ;;   +0   text_buf_ptr
@@ -2008,6 +2010,7 @@
     (local $edge_flags i32) (local $text_w i32) (local $text_len i32)
     (local $brush i32) (local $name_ptr i32) (local $hmenu i32)
     (local $kind i32) (local $box_y i32) (local $tw i32)
+    (local $img i32) (local $img_w i32) (local $img_h i32) (local $img_x i32) (local $img_y i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2021,7 +2024,7 @@
         (local.set $hmenu    (i32.load offset=8  (local.get $cs_w)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         ;; Allocate ButtonState
-        (local.set $state (call $heap_alloc (i32.const 64)))
+        (local.set $state (call $heap_alloc (i32.const 72)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store        (local.get $state_w) (i32.const 0)) ;; text_buf_ptr
         (i32.store offset=4  (local.get $state_w) (i32.const 0)) ;; text_len
@@ -2033,6 +2036,8 @@
                   (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
                           (i32.const 1))))
         (i32.store offset=12 (local.get $state_w) (local.get $hmenu)) ;; ctrl_id
+        (i32.store offset=64 (local.get $state_w) (i32.const 0)) ;; image_type = IMAGE_BITMAP
+        (i32.store offset=68 (local.get $state_w) (i32.const 0)) ;; image_handle
         ;; Copy initial text from CREATESTRUCT.lpszName
         (if (local.get $name_ptr)
           (then
@@ -2268,6 +2273,51 @@
           (then
             (local.set $text_w (call $g2w (i32.load (local.get $state_w))))
             (local.set $text_len (i32.load offset=4 (local.get $state_w)))))
+
+        ;; ---- Bitmap button (BS_BITMAP 0x80) ----
+        ;; Funtris uses BM_SETIMAGE on BS_BITMAP|BS_AUTOCHECKBOX controls for
+        ;; the nine brick previews. Draw the stored HBITMAP centered in the
+        ;; control before considering the low-nibble button kind.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0080))
+          (then
+            (local.set $img (i32.load offset=68 (local.get $state_w)))
+            (if (local.get $img)
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x30011)))
+                (local.set $img_w (call $host_gdi_get_object_w (local.get $img)))
+                (local.set $img_h (call $host_gdi_get_object_h (local.get $img)))
+                (if (i32.gt_s (local.get $img_w) (i32.const 0))
+                  (then
+                    (if (i32.gt_s (local.get $img_h) (i32.const 0))
+                      (then
+                        (local.set $img_x
+                          (i32.div_s (i32.sub (local.get $w) (local.get $img_w)) (i32.const 2)))
+                        (local.set $img_y
+                          (i32.div_s (i32.sub (local.get $h) (local.get $img_h)) (i32.const 2)))
+                        (if (i32.lt_s (local.get $img_x) (i32.const 0))
+                          (then (local.set $img_x (i32.const 0))))
+                        (if (i32.lt_s (local.get $img_y) (i32.const 0))
+                          (then (local.set $img_y (i32.const 0))))
+                        (local.set $brush (call $host_gdi_create_compat_dc (local.get $hdc)))
+                        (drop (call $host_gdi_select_object (local.get $brush) (local.get $img)))
+                        (drop (call $host_gdi_bitblt
+                                (local.get $hdc)
+                                (local.get $img_x) (local.get $img_y)
+                                (local.get $img_w) (local.get $img_h)
+                                (local.get $brush)
+                                (i32.const 0) (i32.const 0)
+                                (i32.const 0x00CC0020))) ;; SRCCOPY
+                        (drop (call $host_gdi_delete_dc (local.get $brush)))))))
+                (if (i32.and (local.get $flags) (i32.const 0x08))
+                  (then
+                    (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                            (i32.const 2) (i32.const 2)
+                            (i32.sub (local.get $w) (i32.const 2))
+                            (i32.sub (local.get $h) (i32.const 2))))))
+                (return (i32.const 0))))))
 
         ;; ---- Push button (kinds 0, 1) ----
         (if (i32.lt_u (local.get $kind) (i32.const 2))
@@ -2556,6 +2606,32 @@
               (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
             (return (i32.const 0))))
         (call $ctrl_set_check_state (local.get $hwnd) (local.get $wParam))
+        (return (i32.const 0))))
+
+    ;; ---------- BM_SETIMAGE (0x00F7) ----------
+    ;; wParam=image type (IMAGE_BITMAP=0), lParam=image handle. Return previous.
+    (if (i32.eq (local.get $msg) (i32.const 0x00F7))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (local.set $img (i32.load offset=68 (local.get $state_w)))
+            (if (i32.eq (local.get $wParam) (i32.const 0))
+              (then
+                (i32.store offset=64 (local.get $state_w) (local.get $wParam))
+                (i32.store offset=68 (local.get $state_w) (local.get $lParam))
+                (call $invalidate_hwnd (local.get $hwnd))))
+            (return (local.get $img))))
+        (return (i32.const 0))))
+
+    ;; ---------- BM_GETIMAGE (0x00F6) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x00F6))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (if (i32.eq (local.get $wParam) (i32.load offset=64 (local.get $state_w)))
+              (then (return (i32.load offset=68 (local.get $state_w)))))))
         (return (i32.const 0))))
 
     ;; Default: return 0

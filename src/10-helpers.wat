@@ -1472,7 +1472,7 @@
       (br_if $done (i32.eqz (local.get $cur)))
       (br_if $done (i32.ge_u (local.get $guard) (i32.const 32)))
       (local.set $rec (call $dlg_record_for_hwnd (local.get $cur)))
-      (if (i32.and (local.get $rec) (i32.load offset=28 (local.get $rec)))
+      (if (i32.and (i32.ne (local.get $rec) (i32.const 0)) (i32.ne (i32.load offset=28 (local.get $rec)) (i32.const 0)))
         (then (return (local.get $cur))))
       (local.set $cur (call $wnd_get_parent (local.get $cur)))
       (local.set $guard (i32.add (local.get $guard) (i32.const 1)))

@@ -151,6 +151,50 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; mbstowcs(dst, src, count) — cdecl, single-byte codepage approximation.
+  ;; Returns converted WCHAR count excluding the terminating NUL.
+  (func $handle_mbstowcs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $src i32) (local $i i32) (local $ch i32)
+    (local.set $src (call $g2w (local.get $arg1)))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (call $strlen (local.get $src)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1))) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (local.get $i))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; wcstombs(dst, src, count) — cdecl, maps low byte of each WCHAR.
+  ;; Returns converted byte count excluding the terminating NUL.
+  (func $handle_wcstombs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $src i32) (local $i i32) (local $ch i32)
+    (local.set $src (call $g2w (local.get $arg1)))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (call $strlen_w (local.get $src)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (i32.store8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (local.get $i))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 725: strrchr(str, ch) — cdecl
   (func $handle_strrchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $last i32) (local $ch i32)
@@ -187,16 +231,19 @@
 
   ;; 727: strcpy(dest, src) — cdecl
   (func $handle_strcpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32) (local $ch i32)
+    (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
     (local.set $dst (call $g2w (local.get $arg0)))
     (local.set $src (call $g2w (local.get $arg1)))
     (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.const 65536)))
       (local.set $ch (i32.load8_u (local.get $src)))
       (i32.store8 (local.get $dst) (local.get $ch))
       (br_if $d (i32.eqz (local.get $ch)))
       (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
       (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l)))
+    (i32.store8 (local.get $dst) (i32.const 0))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -223,21 +270,28 @@
 
   ;; 729: strcat(dest, src) — cdecl
   (func $handle_strcat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32) (local $ch i32)
+    (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
     (local.set $dst (call $g2w (local.get $arg0)))
     ;; find end of dest
     (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.const 65536)))
       (br_if $d (i32.eqz (i32.load8_u (local.get $dst))))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 1))) (br $l)))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
     ;; copy src
     (local.set $src (call $g2w (local.get $arg1)))
+    (local.set $i (i32.const 0))
     (block $d2 (loop $l2
+      (br_if $d2 (i32.ge_u (local.get $i) (i32.const 65536)))
       (local.set $ch (i32.load8_u (local.get $src)))
       (i32.store8 (local.get $dst) (local.get $ch))
       (br_if $d2 (i32.eqz (local.get $ch)))
       (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
       (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2)))
+    (i32.store8 (local.get $dst) (i32.const 0))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )

@@ -23,12 +23,21 @@ for (const rel of [
 }
 
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mid'/s.test(deployJs), 'deploy should include .mid binary assets');
+assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mp3'/s.test(deployJs), 'deploy should include .mp3 binary assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.inf'/s.test(deployJs), 'deploy should include .inf companion config assets');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/tictac\.exe'/s.test(deployJs), 'deploy should include desktop TicTactics binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/winmine\.exe'/s.test(deployJs), 'deploy should include desktop Minesweeper binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.EXE'/s.test(deployJs), 'deploy should include desktop Spider binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.CHM'/s.test(deployJs), 'deploy should include Spider help file');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should include desktop Winamp binary');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/demo\.mp3'/s.test(deployJs), 'deploy should include Winamp demo MP3');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Bricks\/bricks\.exe'/s.test(deployJs), 'deploy should include desktop Bricks binary');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmPipe\/EMPIPE\.EXE'/s.test(deployJs), 'deploy should include desktop EmPipe binary');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Funtris\.exe'/s.test(deployJs), 'deploy should include desktop Funtris binary');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Pyramid\.exe'/s.test(deployJs), 'deploy should include desktop Pyramid binary');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should allow large Winamp binary');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/FunPack\.dll'/s.test(deployJs), 'deploy should allow large FunPack DLL');
 assert(/DESKTOP_BINARY_PREFIXES\s*=\s*\[[^\]]*'binaries\/pinball\/'/s.test(deployJs), 'deploy should include desktop Pinball asset directory');
 assert(/function apiMultipart/.test(deployJs), 'deploy should support multipart uploads');
 assert(/new FormData\(\)/.test(deployJs), 'deploy should use FormData for multipart uploads');
@@ -41,10 +50,20 @@ assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 assert(/\[\s*'spider'\s*,\s*'Spider'/.test(indexHtml), 'default desktop whitelist should include Spider');
+assert(/\[\s*'bricks'\s*,\s*'Bricks'/.test(indexHtml), 'default desktop whitelist should include Bricks');
+assert(/bricks:\s*\{[^}]*files:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(indexHtml), 'Bricks should expose brk1.dll as a runtime VFS file');
+assert(!/bricks:\s*\{[^}]*dlls:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(indexHtml), 'Bricks should not preload brk1.dll as an import DLL');
+assert(/\[\s*'empipe'\s*,\s*'EmPipe'/.test(indexHtml), 'default desktop whitelist should include EmPipe');
+assert(/\[\s*'funtris'\s*,\s*'Funtris'/.test(indexHtml), 'default desktop whitelist should include Funtris');
+assert(/\[\s*'pyramid'\s*,\s*'Pyramid'/.test(indexHtml), 'default desktop whitelist should include Pyramid');
+assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelist should include Winamp');
+assert(indexHtml.includes("'binaries/demo.mp3'"), 'Winamp web manifest should preload demo.mp3');
+assert(indexHtml.includes("winampDemo: 'C:\\\\demo.mp3'"), 'Winamp web manifest should make demo.mp3 available');
+assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=101'), 'web host should cache-bust host-imports after GDI changes');
+assert(indexHtml.includes('lib/host-imports.js?v=108'), 'web host should cache-bust host-imports after desktop changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("SOURCE_VERSION = '101'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '108'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
@@ -54,6 +73,7 @@ assert(indexHtml.includes('Starting run slice=${runSlice}'), 'web launcher shoul
 assert(!/function selectedRunSlice\(appKey\)\s*\{\s*return 100000;\s*\}/.test(indexHtml), 'slice dropdown should not be ignored');
 assert(indexHtml.includes("document.getElementById('slice-size-select')"), 'slice picker should drive the run-loop slice size');
 assert(/case 'spider':[\s\S]*?return 25000;/.test(indexHtml), 'auto slice should use smaller slices for Spider/card games');
+assert(!/case 'winamp':\s*return 1;/.test(indexHtml), 'Winamp auto slice should not rely on slice=1 startup masking');
 assert(hostJs.includes('ecx=0x${hex32(ecx)}'), 'web runner should report runtime register heartbeat progress');
 for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');
@@ -67,6 +87,7 @@ console.log('PASS  debug mode exposes direct MIDI playback');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');
 console.log('PASS  default desktop whitelist includes Spider');
+console.log('PASS  default desktop whitelist includes added games and Winamp');
 console.log('PASS  web host cache-buster is current');
 console.log('PASS  web card games explicitly load cards.dll');
 console.log('PASS  deploy limits default binaries to desktop apps');

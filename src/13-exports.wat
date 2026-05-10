@@ -66,6 +66,7 @@
         (then
           (local.set $prev_eip (global.get $eip))
           (local.set $prev_esp (global.get $esp))
+          (global.set $current_thunk_eip (global.get $eip))
           (global.set $handler_set_eip (i32.const 0))
           (call $win32_dispatch (i32.div_u
             (i32.sub (global.get $eip) (global.get $thunk_guest_base)) (i32.const 8)))
@@ -302,10 +303,12 @@
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
   (func (export "get_wait_handles_ptr") (result i32) (global.get $wait_handles_ptr))
   (func (export "get_wait_timeout") (result i32) (global.get $wait_timeout))
+  (func (export "get_wait_stack_bytes") (result i32) (global.get $wait_stack_bytes))
   (func (export "clear_yield")
     (global.set $yield_reason (i32.const 0))
     (global.set $wait_handles_ptr (i32.const 0))
-    (global.set $wait_timeout (i32.const 0xFFFFFFFF)))
+    (global.set $wait_timeout (i32.const 0xFFFFFFFF))
+    (global.set $wait_stack_bytes (i32.const 12)))
   (func (export "get_sync_table") (result i32) (global.get $SYNC_TABLE))
   (func (export "get_yield_flag") (result i32) (global.get $yield_flag))
   (func (export "get_sleep_yielded") (result i32)

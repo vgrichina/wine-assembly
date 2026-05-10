@@ -45,6 +45,8 @@ const MAX_BINARY_SIZE = 500 * 1024;
 const LARGE_OK = new Set(['cards.dll', 'comctl32.dll']);
 const LARGE_OK_PATHS = new Set([
   'binaries/pinball/PINBALL.DAT',
+  'binaries/winamp.exe',
+  'binaries/wep32-community/Funpack/FunPack.dll',
 ]);
 
 const DESKTOP_BINARY_FILES = new Set([
@@ -67,6 +69,25 @@ const DESKTOP_BINARY_FILES = new Set([
   'binaries/plus98/SPIDER.EXE',
   'binaries/plus98/SPIDER.CHM',
   'binaries/plus98/SPIDER.HLP',
+  'binaries/winamp.exe',
+  'binaries/plugins/in_mp3.dll',
+  'binaries/plugins/out_wave.dll',
+  'binaries/demo.mp3',
+  'binaries/wep32-community/Bricks/bricks.exe',
+  'binaries/wep32-community/Bricks/brk1.dll',
+  'binaries/wep32-community/EmPipe/EMPIPE.EXE',
+  'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
+  'binaries/wep32-community/EmPipe/EMPCLEAR.MID',
+  'binaries/wep32-community/EmPipe/EMPGMOV.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR1.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR2.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR3.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR4.MID',
+  'binaries/wep32-community/EmPipe/EMPSCR5.MID',
+  'binaries/wep32-community/EmPipe/EMPSTART.MID',
+  'binaries/wep32-community/Funpack/FunPack.dll',
+  'binaries/wep32-community/Funpack/Funtris.exe',
+  'binaries/wep32-community/Funpack/Pyramid.exe',
 ]);
 
 const DESKTOP_BINARY_PREFIXES = [
@@ -74,7 +95,7 @@ const DESKTOP_BINARY_PREFIXES = [
 ];
 
 // Binary extensions to include
-const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mid', '.dat', '.inf', '.png']);
+const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.dat', '.inf', '.png']);
 
 function walk(dir, base, filter) {
   const results = [];

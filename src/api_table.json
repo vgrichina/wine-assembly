@@ -11482,5 +11482,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3500785251
+  },
+  {
+    "id": 1521,
+    "name": "mbstowcs",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 3222761413
+  },
+  {
+    "id": 1522,
+    "name": "wcstombs",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2385846207
   }
 ]

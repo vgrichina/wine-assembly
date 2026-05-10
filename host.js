@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '108';
+  static SOURCE_VERSION = '109';
 
   constructor() {
     this.instance = null;
@@ -825,7 +825,7 @@ class WineAssembly {
     const step = async () => {
       if (!self.running) return;
       try {
-        const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
+        const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         // Check if main thread is waiting
         if (self.threadManager && self.threadManager.checkMainYield()) {
           // Main still waiting — just run worker threads
@@ -835,11 +835,10 @@ class WineAssembly {
             self.renderer.wasmMemory = self.memory;
           }
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
-          const maxChunk = 1;
-          self.instance.exports.run(maxChunk);
+          self.instance.exports.run(activeStepsPerSlice);
           if (runStart && self.renderer && self.renderer._profileMark) {
             self.renderer._profileMark('wasm-run-slice', {
-              steps: maxChunk,
+              steps: activeStepsPerSlice,
               ms: self.renderer._profileNow() - runStart,
             });
           }
