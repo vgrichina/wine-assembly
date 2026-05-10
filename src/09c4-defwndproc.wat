@@ -380,7 +380,7 @@
   ;; ============================================================
   (func $defwndproc_do_ncpaint (param $hwnd i32)
     (local $rect i32) (local $w i32) (local $h i32)
-    (local $style i32) (local $flags i32)
+    (local $style i32) (local $flags i32) (local $is_child i32) (local $has_caption i32)
     (local $title_wa i32) (local $title_len i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
@@ -399,12 +399,17 @@
     (local.set $flags (i32.const 1))                                ;; active (TODO: focus-aware)
     (if (call $get_flash_state_slot (local.get $hwnd))
       (then (local.set $flags (i32.xor (local.get $flags) (i32.const 1)))))
-    ;; WS_CAPTION is WS_BORDER|WS_DLGFRAME. A plain WS_BORDER child
-    ;; control (for example Solitaire's status strip) must not get a
-    ;; caption/titlebar; Win98 only treats the exact bit combination as
-    ;; caption chrome.
-    (if (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $has_caption
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
                 (i32.const 0x00C00000))                            ;; WS_CAPTION
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0)) ;; WS_BORDER
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0)))))) ;; WS_SYSMENU
+    (if (local.get $has_caption)
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 8)))))
     ;; Dialog style (WS_DLGFRAME 0x00400000 without WS_THICKFRAME 0x00040000
     ;; and without WS_MINIMIZEBOX/MAXIMIZEBOX 0x00010000/0x00020000).
@@ -444,12 +449,18 @@
                 (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
     (local.set $has_cap
-      (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
-              (i32.const 0x00C00000)))
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))))
     (local.set $has_border (i32.or (local.get $has_cap)
                                     (i32.and (local.get $style) (i32.const 0x00800000))))
-    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
     (local.set $simple_child_border
       (i32.and
         (i32.and
@@ -489,7 +500,7 @@
         (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
     (local $rect i32) (local $wx i32) (local $wy i32)
     (local $w i32) (local $h i32) (local $lx i32) (local $ly i32)
-    (local $style i32) (local $has_cap i32) (local $is_dialog i32)
+    (local $style i32) (local $has_cap i32) (local $is_dialog i32) (local $is_child i32)
     (local $has_thick i32) (local $has_min i32) (local $has_max i32)
     (local $corner i32) (local $border i32)
     (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
@@ -512,9 +523,16 @@
                          (i32.ge_s (local.get $ly) (local.get $h))))
       (then (return (i32.const 0))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
     (local.set $has_cap
-      (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
-              (i32.const 0x00C00000)))
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))))
     (local.set $has_thick (i32.and (local.get $style) (i32.const 0x00040000)))
     ;; Maximized windows are pinned to the work area — Win98 disables
     ;; edge/corner resize until the user restores. Suppress the HT* resize
