@@ -60,6 +60,7 @@ E2E=(
   test/test-freecell-dblclick.js
   test/test-freecell-stats.js
   test/test-funtris-hall-of-fame-ok.js
+  test/test-funtris-gameover-hall-name.js
   test/test-funtris-options.js
   test/test-funtris-new-game.js
   test/test-empipe-start.js

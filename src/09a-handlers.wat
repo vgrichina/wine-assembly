@@ -1470,6 +1470,17 @@
 
   ;; 92: GetWindowTextA(hwnd, lpString, nMaxCount) → int
   (func $handle_GetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Child controls own their text in their WAT-side wndproc state. Route
+    ;; GetWindowTextA for controls through WM_GETTEXT so edit/button/static
+    ;; text stays consistent with GetDlgItemTextA and SetWindowTextA.
+    (if (call $ctrl_table_get_class (local.get $arg0))
+      (then
+        (global.set $eax
+          (call $control_wndproc_dispatch
+            (local.get $arg0) (i32.const 0x000D)
+            (local.get $arg2) (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (global.set $eax (call $host_get_window_text
       (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -9702,6 +9713,14 @@
 
   ;; GetWindowTextLengthA(hwnd) → length in chars (no NUL).
   (func $handle_GetWindowTextLengthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $ctrl_table_get_class (local.get $arg0))
+      (then
+        (global.set $eax
+          (call $control_wndproc_dispatch
+            (local.get $arg0) (i32.const 0x000E)
+            (i32.const 0) (i32.const 0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $eax (call $host_get_window_text_length (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; ret + 1 arg
   )
