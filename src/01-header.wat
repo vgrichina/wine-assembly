@@ -77,8 +77,6 @@
   (import "host" "menu_destroy" (func $host_menu_destroy (param i32) (result i32)))
   (import "host" "menu_append" (func $host_menu_append (param i32 i32 i32 i32 i32) (result i32)))
   ;; menu_append(hMenu, flags, idOrSubmenu, text_wa, isWide) -> bool
-  (import "host" "menu_track_popup" (func $host_menu_track_popup (param i32 i32 i32 i32 i32) (result i32)))
-  ;; menu_track_popup(hMenu, flags, x, y, hwnd) -> bool/command for TPM_RETURNCMD
   (import "host" "shell_about" (func $host_shell_about (param i32 i32 i32) (result i32)))
   ;; shell_about(dlg_hwnd, owner_hwnd, szApp_ptr) → result
   ;; Bare logging hook only — the actual dialog is built entirely in WAT
@@ -498,6 +496,20 @@
   (data (i32.const 0x11021) "No\00")
   (data (i32.const 0x11024) "Try Again\00")
   (data (i32.const 0x1102E) "Continue\00")
+
+  ;; Open/Save common-dialog strings also live in the stable reserved page.
+  ;; The legacy low-page copies above are scratch-adjacent and can be
+  ;; disturbed by long-running apps before they invoke GetOpenFileNameA.
+  (data (i32.const 0x11037) "Open\00")
+  (data (i32.const 0x1103C) "Save As\00")
+  (data (i32.const 0x11044) "Save\00")
+  (data (i32.const 0x11049) "File name:\00")
+  (data (i32.const 0x11054) "Look in:\00")
+  (data (i32.const 0x1105D) "C:\\*\00")
+  (data (i32.const 0x11062) "C:\\\00")
+  (data (i32.const 0x11066) "..\00")
+  (data (i32.const 0x11069) "Upload...\00")
+  (data (i32.const 0x11073) "Download\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
@@ -1184,6 +1196,8 @@
   (global $menu_open_hwnd  (mut i32) (i32.const 0))
   (global $menu_open_top   (mut i32) (i32.const -1))
   (global $menu_open_hover (mut i32) (i32.const -1))
+  (global $menu_open_x     (mut i32) (i32.const -1))
+  (global $menu_open_y     (mut i32) (i32.const -1))
 
   ;; Currently-dropped combobox hwnd (the COMBO, not the popup). 0 = none open.
   ;; Set by $combobox_open_dropdown / cleared by $combobox_close_dropdown.

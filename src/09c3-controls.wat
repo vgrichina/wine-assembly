@@ -1398,7 +1398,7 @@
     (if (i32.gt_u (call $strlen (call $g2w (global.get $opendlg_current_dir))) (i32.const 3))
       (then
         (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
-                (call $wat_str_to_heap (i32.const 0x217) (i32.const 2))))))
+                (call $wat_str_to_heap (i32.const 0x11066) (i32.const 2))))))
     ;; FIND_DATA buffer + tmp string buffer in heap.
     (local.set $fd_g (call $heap_alloc (i32.const 320)))
     (local.set $fd_w (call $g2w (local.get $fd_g)))
@@ -1518,7 +1518,7 @@
     ;; (exported below) to repopulate.
     (if (i32.eq (local.get $cmd) (i32.const 0x443))
       (then
-        (call $host_pick_file_upload (local.get $hwnd) (i32.const 0x213))   ;; "C:\"
+        (call $host_pick_file_upload (local.get $hwnd) (global.get $opendlg_current_dir))
         (return (i32.const 0))))
 
     ;; ---- Download (id 0x444) ----
@@ -1727,11 +1727,11 @@
     ;; CREATESTRUCT.lpszName for $button_wndproc to read in WM_CREATE.
     (if (i32.eq (local.get $kind) (i32.const 1))
       (then
-        (local.set $title_wa (i32.const 0x1ED))                                 ;; "Save As"
-        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x1F5) (i32.const 4))))  ;; "Save"
+        (local.set $title_wa (i32.const 0x1103C))                                    ;; "Save As"
+        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x11044) (i32.const 4))))  ;; "Save"
       (else
-        (local.set $title_wa (i32.const 0x1E8))                                 ;; "Open"
-        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x1E8) (i32.const 4))))) ;; "Open"
+        (local.set $title_wa (i32.const 0x11037))                                    ;; "Open"
+        (local.set $btn_g   (call $wat_str_to_heap (i32.const 0x11037) (i32.const 4))))) ;; "Open"
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (local.get $title_wa)
@@ -1758,12 +1758,12 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 10) (i32.const 60) (i32.const 16)
             (i32.const 0x50000000)
-            (call $wat_str_to_heap (i32.const 0x205) (i32.const 8))))
+            (call $wat_str_to_heap (i32.const 0x11054) (i32.const 8))))
     ;; Current directory display (read-only-ish edit at id 0x440)
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x440)
             (i32.const 76) (i32.const 8) (i32.const 200) (i32.const 18)
             (i32.const 0x50810000)
-            (call $wat_str_to_heap (i32.const 0x213) (i32.const 3))))  ;; "C:\"
+            (call $wat_str_to_heap (i32.const 0x11062) (i32.const 3))))  ;; "C:\"
     ;; File listbox (id 0x441) — WS_VSCROLL so the scrollbar strip renders.
     (local.set $lb (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x441)
                      (i32.const 12) (i32.const 32) (i32.const 264) (i32.const 130)
@@ -1772,7 +1772,7 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 168) (i32.const 60) (i32.const 16)
             (i32.const 0x50000000)
-            (call $wat_str_to_heap (i32.const 0x1FA) (i32.const 10))))
+            (call $wat_str_to_heap (i32.const 0x11049) (i32.const 10))))
     ;; Filename edit (id 0x442)
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x442)
             (i32.const 76) (i32.const 166) (i32.const 200) (i32.const 18)
@@ -1786,7 +1786,7 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 286) (i32.const 36) (i32.const 64) (i32.const 22)
             (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))   ;; "Cancel"
+            (call $wat_str_to_heap (i32.const 0x11003) (i32.const 6))))   ;; "Cancel"
     ;; Upload (Open) / Download (Save As) button — only in browser mode.
     ;; Open  → "Upload..." (id 0x443) which triggers a <input type="file">
     ;;         picker, writes the chosen bytes into VFS, refreshes the listbox.
@@ -1799,19 +1799,19 @@
             (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x444)
                     (i32.const 286) (i32.const 80) (i32.const 64) (i32.const 22)
                     (i32.const 0x50010000)
-                    (call $wat_str_to_heap (i32.const 0x224) (i32.const 8)))))   ;; "Download"
+                    (call $wat_str_to_heap (i32.const 0x11073) (i32.const 8)))))   ;; "Download"
           (else
             (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x443)
                     (i32.const 286) (i32.const 80) (i32.const 64) (i32.const 22)
                     (i32.const 0x50010000)
-                    (call $wat_str_to_heap (i32.const 0x21A) (i32.const 9))))))))   ;; "Upload..."
+                    (call $wat_str_to_heap (i32.const 0x11069) (i32.const 9))))))))   ;; "Upload..."
 
     ;; Initialize current dir to "C:\\" and populate the listbox via
     ;; $opendlg_set_dir which builds the pattern + path edit too.
     (call $heap_free (global.get $opendlg_current_dir))
-    (global.set $opendlg_current_dir (call $wat_str_to_heap (i32.const 0x213) (i32.const 3)))
+    (global.set $opendlg_current_dir (call $wat_str_to_heap (i32.const 0x11062) (i32.const 3)))
     (call $opendlg_populate_listbox (local.get $lb)
-      (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))
+      (call $wat_str_to_heap (i32.const 0x1105D) (i32.const 4))))
 
   ;; Internal helper for $findreplace_wndproc — reads ButtonState.flags
   ;; without the export-layer wrapping.
@@ -3549,6 +3549,8 @@
     (local $w i32) (local $h i32) (local $hdc i32) (local $sel i32)
     (local $top i32) (local $visible i32) (local $row_y i32) (local $row_h i32)
     (local $brush i32)
+    (local $find_handle i32) (local $fd_g i32) (local $fd_w i32) (local $attrs i32)
+    (local $last i32) (local $tmp_g i32) (local $tmp_w i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -3656,6 +3658,49 @@
         (i32.store offset=20 (local.get $sw) (i32.const 0))   ;; top_index
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
+
+    ;; ---------- LB_DIR (0x018D) ----------
+    ;; wParam = DDL_* attribute flags, lParam = wildcard path. Adds matching
+    ;; files to the listbox and, when DDL_DIRECTORY is set, matching
+    ;; directories too. Returns the last inserted index or LB_ERR(-1).
+    (if (i32.eq (local.get $msg) (i32.const 0x018D))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
+        (local.set $fd_g (call $heap_alloc (i32.const 320)))
+        (local.set $fd_w (call $g2w (local.get $fd_g)))
+        (local.set $tmp_g (call $heap_alloc (i32.const 280)))
+        (local.set $tmp_w (call $g2w (local.get $tmp_g)))
+        (local.set $last (i32.const -1))
+        (local.set $find_handle (call $host_fs_find_first_file
+          (call $g2w (local.get $lParam)) (local.get $fd_g) (i32.const 0)))
+        (if (i32.eq (local.get $find_handle) (i32.const -1))
+          (then
+            (call $heap_free (local.get $tmp_g))
+            (call $heap_free (local.get $fd_g))
+            (return (i32.const -1))))
+        (block $lbdir_done (loop $lbdir_loop
+          (local.set $attrs (i32.load (local.get $fd_w)))
+          (if (i32.or
+                (i32.eqz (i32.and (local.get $attrs) (i32.const 0x10)))
+                (i32.and (local.get $wParam) (i32.const 0x10)))
+            (then
+              (local.set $slen (call $strlen (i32.add (local.get $fd_w) (i32.const 44))))
+              (call $memcpy (local.get $tmp_w)
+                            (i32.add (local.get $fd_w) (i32.const 44))
+                            (local.get $slen))
+              (i32.store8 (i32.add (local.get $tmp_w) (local.get $slen)) (i32.const 0))
+              (local.set $last (call $listbox_wndproc (local.get $hwnd)
+                (i32.const 0x0180) (i32.const 0)
+                (local.get $tmp_g)))))
+          (br_if $lbdir_done (i32.eqz (call $host_fs_find_next_file
+                                        (local.get $find_handle)
+                                        (local.get $fd_g)
+                                        (i32.const 0))))
+          (br $lbdir_loop)))
+        (drop (call $host_fs_find_close (local.get $find_handle)))
+        (call $heap_free (local.get $tmp_g))
+        (call $heap_free (local.get $fd_g))
+        (return (local.get $last))))
 
     ;; ---------- LB_GETCOUNT (0x018B) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x018B))

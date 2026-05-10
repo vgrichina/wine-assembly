@@ -33,8 +33,13 @@ async function main() {
     renderer: null,
     resourceJson: { menus: {}, dialogs: {}, strings: {}, bitmaps: {} },
     onExit: () => {},
+    _debugFindFile: !!process.env.DEBUG_FINDFILE,
   };
   const base = createHostImports(ctx);
+  ctx.vfs.files.set('c:\\presets\\rock.eqf', { data: new Uint8Array([1]), attrs: 0x20 });
+  ctx.vfs.files.set('c:\\presets\\pop.eqf', { data: new Uint8Array([2]), attrs: 0x20 });
+  ctx.vfs.files.set('c:\\presets\\notes.txt', { data: new Uint8Array([3]), attrs: 0x20 });
+  ctx.vfs.dirs.add('c:\\presets');
   base.host.memory = memory;
   // Stub the threading + COM imports the WAT module references but the
   // listbox path never invokes.
@@ -48,6 +53,7 @@ async function main() {
   base.host.com_create_instance = () => 0x80004002;
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
+  ctx.exports = instance.exports;
   const e = instance.exports;
 
   const checks = [];
@@ -141,6 +147,22 @@ async function main() {
   // After reset, ADDSTRING starts at 0 again
   const idx0 = e.send_message(lb, 0x0180, 0, writeStr('alpha'));
   check('LB_ADDSTRING after reset returns 0', idx0 === 0);
+
+  // LB_DIR populates from VFS wildcard matches. Winamp's EQ preset dialog
+  // uses this path for *.EQF lists.
+  e.send_message(lb, 0x0184, 0, 0);
+  const dirLast = e.send_message(lb, 0x018D, 0, writeStr('C:\\presets\\*.eqf'));
+  const dirCount = e.send_message(lb, 0x018B, 0, 0);
+  check('LB_DIR returns last inserted index', dirLast === 1, `got ${dirLast} expected 1`);
+  check('LB_DIR adds wildcard file matches only', dirCount === 2, `got ${dirCount} expected 2`);
+  const dirA = e.guest_alloc(64);
+  const dirB = e.guest_alloc(64);
+  e.send_message(lb, 0x0189, 0, dirA);
+  e.send_message(lb, 0x0189, 1, dirB);
+  const dirItems = [readStr(dirA), readStr(dirB)].sort();
+  check('LB_DIR listbox text matches VFS files',
+    dirItems[0] === 'pop.eqf' && dirItems[1] === 'rock.eqf',
+    `got ${dirItems.join(',')}`);
 
   // Tear down via $wnd_destroy_tree on the parent — the helper allocated
   // parent before lb so parent = lb - 1. wnd_destroy_tree posts WM_DESTROY

@@ -1200,6 +1200,19 @@
   (func (export "menu_open_hwnd")  (result i32) (global.get $menu_open_hwnd))
   (func (export "menu_open_top")   (result i32) (global.get $menu_open_top))
   (func (export "menu_open_hover") (result i32) (global.get $menu_open_hover))
+  (func (export "menu_open_x")     (result i32) (global.get $menu_open_x))
+  (func (export "menu_open_y")     (result i32) (global.get $menu_open_y))
+
+  (func $menu_dropdown_x (param $hwnd i32) (param $top i32) (result i32)
+    (if (i32.ge_s (global.get $menu_open_x) (i32.const 0))
+      (then (return (global.get $menu_open_x))))
+    (i32.add (call $menu_bar_screen_x (local.get $hwnd))
+             (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
+
+  (func $menu_dropdown_y (param $hwnd i32) (result i32)
+    (if (i32.ge_s (global.get $menu_open_y) (i32.const 0))
+      (then (return (global.get $menu_open_y))))
+    (i32.add (call $menu_bar_screen_y (local.get $hwnd)) (call $menu_bar_screen_h)))
 
   ;; Number of items currently being tracked (0 if no menu open).
   (func $menu_track_child_count (result i32)
@@ -1226,12 +1239,37 @@
   (func $menu_open (export "menu_open") (param $hwnd i32) (param $top_idx i32)
     (global.set $menu_open_hwnd  (local.get $hwnd))
     (global.set $menu_open_top   (local.get $top_idx))
-    (global.set $menu_open_hover (i32.const -1)))
+    (global.set $menu_open_hover (i32.const -1))
+    (global.set $menu_open_x     (i32.const -1))
+    (global.set $menu_open_y     (i32.const -1)))
+
+  (func $menu_track_popup_open (export "menu_track_popup_open")
+        (param $hmenu i32) (param $flags i32) (param $x i32) (param $y i32) (param $hwnd i32)
+        (result i32)
+    (local $menu_id i32) (local $top_idx i32)
+    ;; TPM_RETURNCMD asks USER32 to return the selected command synchronously.
+    ;; We do not run a nested modal menu loop yet, so report no selection.
+    (if (i32.and (local.get $flags) (i32.const 0x0100)) (then (return (i32.const 0))))
+    (local.set $menu_id (i32.and (local.get $hmenu) (i32.const 0xFFFF)))
+    (local.set $top_idx (i32.sub (i32.and (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 0xFFFF)) (i32.const 1)))
+    (if (i32.or (i32.eqz (local.get $menu_id)) (i32.lt_s (local.get $top_idx) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (call $menu_load (local.get $hwnd) (local.get $menu_id))
+    (if (i32.eqz (call $menu_child_count (local.get $hwnd) (local.get $top_idx)))
+      (then (return (i32.const 0))))
+    (global.set $menu_open_hwnd  (local.get $hwnd))
+    (global.set $menu_open_top   (local.get $top_idx))
+    (global.set $menu_open_hover (i32.const -1))
+    (global.set $menu_open_x     (local.get $x))
+    (global.set $menu_open_y     (local.get $y))
+    (i32.const 1))
 
   (func $menu_close (export "menu_close")
     (global.set $menu_open_hwnd  (i32.const 0))
     (global.set $menu_open_top   (i32.const -1))
-    (global.set $menu_open_hover (i32.const -1)))
+    (global.set $menu_open_hover (i32.const -1))
+    (global.set $menu_open_x     (i32.const -1))
+    (global.set $menu_open_y     (i32.const -1)))
 
   (func (export "menu_set_hover") (param $cidx i32)
     (global.set $menu_open_hover (local.get $cidx)))
@@ -1264,10 +1302,8 @@
     (local.set $bar_x (call $menu_bar_screen_x (local.get $hwnd)))
     (local.set $bar_y (call $menu_bar_screen_y (local.get $hwnd)))
     (local.set $bar_h (call $menu_bar_screen_h))
-    (local.set $dx (i32.add
-      (local.get $bar_x)
-      (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
-    (local.set $dy (i32.add (local.get $bar_y) (local.get $bar_h)))
+    (local.set $dx (call $menu_dropdown_x (local.get $hwnd) (local.get $top)))
+    (local.set $dy (call $menu_dropdown_y (local.get $hwnd)))
 
     (local.set $idx (call $menu_hittest_dropdown
       (local.get $hwnd) (local.get $top)
@@ -1305,10 +1341,8 @@
     (local.set $bar_x (call $menu_bar_screen_x (local.get $hwnd)))
     (local.set $bar_y (call $menu_bar_screen_y (local.get $hwnd)))
     (local.set $bar_h (call $menu_bar_screen_h))
-    (local.set $dx (i32.add
-      (local.get $bar_x)
-      (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
-    (local.set $dy (i32.add (local.get $bar_y) (local.get $bar_h)))
+    (local.set $dx (call $menu_dropdown_x (local.get $hwnd) (local.get $top)))
+    (local.set $dy (call $menu_dropdown_y (local.get $hwnd)))
     (local.set $idx (call $menu_hittest_dropdown
       (local.get $hwnd) (local.get $top)
       (local.get $dx) (local.get $dy)
@@ -1372,7 +1406,9 @@
     (if (i32.ge_s (local.get $i) (local.get $n))
       (then (local.set $i (i32.const 0))))
     (global.set $menu_open_top (local.get $i))
-    (global.set $menu_open_hover (i32.const -1)))
+    (global.set $menu_open_hover (i32.const -1))
+    (global.set $menu_open_x     (i32.const -1))
+    (global.set $menu_open_y     (i32.const -1)))
 
   ;; Keyboard routing for an already-open dropdown. Returns 1 when the key was
   ;; consumed by USER menu tracking.

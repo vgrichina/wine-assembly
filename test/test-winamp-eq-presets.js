@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -23,54 +24,157 @@ if (!fs.existsSync(EXE)) {
 fs.mkdirSync(OUTDIR, { recursive: true });
 if (fs.existsSync(PNG)) fs.unlinkSync(PNG);
 
-const cmd = [
-  `node "${RUN}"`,
-  `--exe="${EXE}"`,
-  '--max-batches=900',
-  '--batch-size=100',
-  '--quiet-api',
-  '--quiet-blocks',
-  '--buttons=1,1,1,1,1,1,1,1,1,1',
-  '--no-close',
-  '--stuck-after=5000',
-  '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,650:stop"',
-  '--trace-host=menu_track_popup',
-  `--png="${PNG}"`,
-].join(' ');
-console.log('$', cmd);
-
-let out = '';
-let timedOut = false;
-try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
-} catch (e) {
-  out = (e.stdout || '').toString() + (e.stderr || '').toString();
-  timedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
-  console.log(timedOut ? '(run.js timed out - output captured)' : '(run.js exited non-zero - output captured)');
+async function popupPixels() {
+  if (!fs.existsSync(PNG)) return { gray: 0, black: 0, nonTeal: 0 };
+  const img = await loadImage(PNG);
+  const c = createCanvas(img.width, img.height);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const x = 244, y = 164, w = 180, h = 120;
+  const d = ctx.getImageData(x, y, Math.min(w, img.width - x), Math.min(h, img.height - y)).data;
+  let gray = 0, black = 0, nonTeal = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (Math.abs(r - 192) <= 3 && Math.abs(g - 192) <= 3 && Math.abs(b - 192) <= 3) gray++;
+    if (r < 16 && g < 16 && b < 16) black++;
+    if (!(r < 4 && g >= 120 && g <= 135 && b >= 120 && b <= 135)) nonTeal++;
+  }
+  return { gray, black, nonTeal };
 }
 
-const apiMatch = out.match(/Stats:\s+(\d+)\s+API calls,\s+(\d+)\s+batches/);
-const apiCount = apiMatch ? parseInt(apiMatch[1], 10) : 0;
-const batches = apiMatch ? parseInt(apiMatch[2], 10) : 0;
+async function main() {
+  const cmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=900',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--buttons=1,1,1,1,1,1,1,1,1,1',
+    '--no-close',
+    '--stuck-after=5000',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,650:stop"',
+    `--png="${PNG}"`,
+  ].join(' ');
+  console.log('$', cmd);
 
-const checks = [
-  { name: 'run completed without timeout', pass: !timedOut },
-  { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
-  { name: 'no unreachable trap', pass: !/RuntimeError:\s*unreachable|Unreachable code should not be executed/.test(out) },
-  { name: 'TrackPopupMenu host path was called', pass: /\[host\] menu_track_popup\(/.test(out) },
-  { name: 'EQ preset click was injected', pass: /\[input\].*click.*263,164/.test(out) },
-  { name: 'reached message loop', pass: apiCount > 1000 && batches > 100 },
-  { name: 'wrote screenshot', pass: fs.existsSync(PNG) },
-];
+  let out = '';
+  let timedOut = false;
+  try {
+    out = execSync(cmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    out = (e.stdout || '').toString() + (e.stderr || '').toString();
+    timedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(timedOut ? '(run.js timed out - output captured)' : '(run.js exited non-zero - output captured)');
+  }
 
-console.log('');
-console.log(`  apiCount=${apiCount} batches=${batches}`);
-console.log('');
-let failed = 0;
-for (const c of checks) {
-  console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
-  if (!c.pass) failed++;
+  const apiMatch = out.match(/Stats:\s+(\d+)\s+API calls,\s+(\d+)\s+batches/);
+  const apiCount = apiMatch ? parseInt(apiMatch[1], 10) : 0;
+  const batches = apiMatch ? parseInt(apiMatch[2], 10) : 0;
+  const pixels = await popupPixels();
+
+  const checks = [
+    { name: 'run completed without timeout', pass: !timedOut },
+    { name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) },
+    { name: 'no unreachable trap', pass: !/RuntimeError:\s*unreachable|Unreachable code should not be executed/.test(out) },
+    { name: 'EQ preset click was injected', pass: /\[input\].*click.*263,164/.test(out) },
+    { name: 'reached message loop', pass: apiCount > 1000 && batches > 100 },
+    { name: 'wrote screenshot', pass: fs.existsSync(PNG) },
+    { name: 'popup painted into canvas', pass: pixels.gray > 1000 && pixels.black > 20 },
+  ];
+
+  console.log('');
+  console.log(`  apiCount=${apiCount} batches=${batches} popupGray=${pixels.gray} popupBlack=${pixels.black}`);
+  console.log('');
+  let failed = 0;
+  for (const c of checks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
+  const dialogCmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=1300',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--trace-api=EndDialog',
+    '--trace-host=destroy_window',
+    '--no-close',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:281:186,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
+  ].join(' ');
+  console.log('');
+  console.log('$', dialogCmd);
+
+  let dialogOut = '';
+  let dialogTimedOut = false;
+  try {
+    dialogOut = execSync(dialogCmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    dialogOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    dialogTimedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(dialogTimedOut ? '(dialog run timed out - output captured)' : '(dialog run exited non-zero - output captured)');
+  }
+
+  const dialogChecks = [
+    { name: 'preset dialog run completed without timeout', pass: !dialogTimedOut },
+    { name: 'preset dialog opened', pass: /dlg-dump:eqdlg: dlg=0x[0-9a-f]+/.test(dialogOut) },
+    { name: 'preset dialog click calls EndDialog', pass: /EndDialog\(0x0001000a,/.test(dialogOut) },
+    { name: 'preset dialog frame destroyed', pass: /\[host\] destroy_window\(0x1000a\)/.test(dialogOut) },
+  ];
+
+  console.log('');
+  for (const c of dialogChecks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
+  const eqfCmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=1150',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--trace-api=GetOpenFileNameA',
+    '--no-close',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:281:256,1000:dlg-dump:eqfopen,1060:stop"',
+  ].join(' ');
+  console.log('');
+  console.log('$', eqfCmd);
+
+  let eqfOut = '';
+  let eqfTimedOut = false;
+  try {
+    eqfOut = execSync(eqfCmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    eqfOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    eqfTimedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(eqfTimedOut ? '(EQF run timed out - output captured)' : '(EQF run exited non-zero - output captured)');
+  }
+
+  const eqfChecks = [
+    { name: 'EQF dialog run completed without timeout', pass: !eqfTimedOut },
+    { name: 'EQF path calls GetOpenFileNameA', pass: /GetOpenFileNameA\(0x[0-9a-f]+\)/.test(eqfOut) },
+    { name: 'EQF dialog keeps Look in label intact', pass: /text="Look in:"/.test(eqfOut) },
+    { name: 'EQF dialog keeps File name label intact', pass: /text="File name:"/.test(eqfOut) },
+    { name: 'EQF dialog keeps Open and Cancel buttons intact', pass: /text="Open"[\s\S]*text="Cancel"/.test(eqfOut) },
+  ];
+
+  console.log('');
+  for (const c of eqfChecks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
+  console.log('');
+  const total = checks.length + dialogChecks.length + eqfChecks.length;
+  console.log(`${total - failed}/${total} checks passed`);
+  process.exit(failed > 0 ? 1 : 0);
 }
-console.log('');
-console.log(`${checks.length - failed}/${checks.length} checks passed`);
-process.exit(failed > 0 ? 1 : 0);
+
+main().catch(err => {
+  console.error(err && err.stack || err);
+  process.exit(1);
+});

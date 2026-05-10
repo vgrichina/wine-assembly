@@ -885,11 +885,17 @@
   ;; JS calls this from the <input type="file"> change handler once the
   ;; new file has been written into the VFS, so the listbox shows it.
   (func (export "opendlg_refresh_listbox") (param $dlg i32)
-    (local $lb i32)
-    (local.set $lb (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x441)))
-    (if (local.get $lb)
-      (then (call $opendlg_populate_listbox (local.get $lb)
-              (call $wat_str_to_heap (i32.const 0x20E) (i32.const 4))))))
+    (local $dir_g i32) (local $dir_w i32) (local $len i32) (local $copy_g i32) (local $copy_w i32)
+    (local.set $dir_g (global.get $opendlg_current_dir))
+    (if (i32.eqz (local.get $dir_g)) (then (return)))
+    (local.set $dir_w (call $g2w (local.get $dir_g)))
+    (local.set $len (call $strlen (local.get $dir_w)))
+    (local.set $copy_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $copy_w (call $g2w (local.get $copy_g)))
+    (call $memcpy (local.get $copy_w) (local.get $dir_w) (local.get $len))
+    (i32.store8 (i32.add (local.get $copy_w) (local.get $len)) (i32.const 0))
+    (call $opendlg_set_dir (local.get $dlg) (local.get $copy_g))
+    (call $heap_free (local.get $copy_g)))
 
   ;; Lookup the Nth basic color in the ChooseColor swatch grid. Used by
   ;; the renderer's class-6 draw branch so the grid can be painted

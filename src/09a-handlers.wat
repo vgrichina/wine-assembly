@@ -1843,22 +1843,30 @@
 
   ;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $dlg_ended (i32.const 1))
-    (global.set $dlg_result (local.get $arg1))
-    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
-    (i32.store (global.get $SHARED_DLG_RESULT) (local.get $arg1))
-    ;; DialogBoxParamA's modal pump owns teardown for its active dialog.
-    ;; Modeless dialogs created by CreateDialogParamA have no such pump, so
-    ;; EndDialog must remove the frame here. Match the modal cleanup path:
-    ;; destroy WAT-managed children, remove the dialog table slot, and drop
-    ;; the host window without sending WM_DESTROY to the app's dialog proc.
-    (if (i32.ne (local.get $arg0) (global.get $dlg_pump_hwnd))
+    ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
+    ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
+    ;; global modal-completion flags unless this hwnd is the active modal.
+    (if (i32.and
+          (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
+          (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+      (then
+        (global.set $dlg_ended (i32.const 1))
+        (global.set $dlg_result (local.get $arg1))
+        (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+        (i32.store (global.get $SHARED_DLG_RESULT) (local.get $arg1))))
+    ;; Remove the visible frame here, even for DialogBoxParamA. Renderer-side
+    ;; WAT dialog routing can call EndDialog synchronously while the guest is
+    ;; between modal-pump turns; waiting for the pump leaves the dialog stuck
+    ;; on screen. The pump cleanup path below is guarded for already-removed
+    ;; dialogs.
+    (if (call $wnd_table_get (local.get $arg0))
       (then
         (call $wnd_destroy_children (local.get $arg0))
-        (call $wnd_table_remove (local.get $arg0))
-        (call $host_destroy_window (local.get $arg0))))
+        (call $wnd_table_remove (local.get $arg0))))
+    (call $host_destroy_window (local.get $arg0))
     ;; Don't set quit_flag — that kills the main message loop.
     ;; CACA0004 checks dlg_ended to exit the modal loop.
+    (global.set $yield_flag (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -2253,9 +2261,8 @@
 
   ;; 138: TrackPopupMenuEx(hMenu, uFlags, x, y, hWnd, lptpm)
   (func $handle_TrackPopupMenuEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_track_popup
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
-      (local.get $arg4)))
+    (global.set $eax (call $menu_track_popup_open
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -7470,9 +7477,8 @@
     (local $wa_esp i32) (local $hwnd i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
     (local.set $hwnd (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_menu_track_popup
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
-      (local.get $hwnd)))
+    (global.set $eax (call $menu_track_popup_open
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $hwnd)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
