@@ -918,7 +918,13 @@ Resource-aware Win98 emulator
       ] },
       winamp:     {
         exe: 'binaries/winamp.exe',
-        files: ['binaries/plugins/in_mp3.dll', 'binaries/plugins/out_wave.dll', 'binaries/demo.mp3', 'binaries/winamp.ini', 'binaries/winamp.m3u'],
+        files: [
+          { url: 'binaries/plugins/in_mp3.dll', vfsPath: 'c:\\plugins\\in_mp3.dll' },
+          { url: 'binaries/plugins/out_wave.dll', vfsPath: 'c:\\plugins\\out_wave.dll' },
+          'binaries/demo.mp3',
+          'binaries/winamp.ini',
+          'binaries/winamp.m3u',
+        ],
         winampDemo: 'C:\\demo.mp3',
       },
       winamp291_inst: { exe: 'binaries/installers/winamp291.exe' },

@@ -25,6 +25,7 @@ for (const rel of [
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mid'/s.test(deployJs), 'deploy should include .mid binary assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mp3'/s.test(deployJs), 'deploy should include .mp3 binary assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.inf'/s.test(deployJs), 'deploy should include .inf companion config assets');
+assert(/TEXT_EXTS\s*=\s*new Set\([^)]*'\.ini'/s.test(deployJs), 'deploy should include Winamp INI text assets');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/tictac\.exe'/s.test(deployJs), 'deploy should include desktop TicTactics binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/winmine\.exe'/s.test(deployJs), 'deploy should include desktop Minesweeper binary');
@@ -81,6 +82,10 @@ assert(/\[\s*'pyramid'\s*,\s*'Pyramid'/.test(indexHtml), 'default desktop whitel
 assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelist should include Winamp');
 assert(indexHtml.includes("'binaries/demo.mp3'"), 'Winamp web manifest should preload demo.mp3');
 assert(indexHtml.includes("winampDemo: 'C:\\\\demo.mp3'"), 'Winamp web manifest should make demo.mp3 available');
+assert(indexHtml.includes("vfsPath: 'c:\\\\plugins\\\\in_mp3.dll'"), 'Winamp web manifest should mount in_mp3.dll under C:\\Plugins');
+assert(indexHtml.includes("vfsPath: 'c:\\\\plugins\\\\out_wave.dll'"), 'Winamp web manifest should mount out_wave.dll under C:\\Plugins');
+assert(/winamp:\s*\{[\s\S]*'binaries\/winamp\.ini'/s.test(indexHtml), 'Winamp web manifest should preload winamp.ini to keep the minibrowser closed');
+assert(/\[WinampReg\][\s\S]*?NeedReg=0/.test(fs.readFileSync(path.join(ROOT, 'binaries', 'winamp.ini'), 'utf8')), 'Winamp web INI should suppress first-run setup so playback controls are reachable');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(indexHtml.includes('lib/host-imports.js?v=112'), 'web host should cache-bust host-imports after desktop changes');

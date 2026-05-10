@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Winamp 2.91 audio playback regression.
 //
-// Drives Winamp through survey-dismiss → IPC_PLAYFILE → IPC_STARTPLAY and
+// Drives Winamp through survey-dismiss, clicks the real Play button, and
 // captures the raw PCM that out_wave.dll hands to waveOutWrite via
 // --audio-out. If the pipeline (decode thread T3 + buffer thread T4 +
 // deferred WHDR_DONE) is intact, in_mp3 decodes demo.mp3 and we get a few
@@ -45,7 +45,8 @@ const cmd = [
   '--quiet-blocks',
   '--buttons=1,1,1,1,1,1,1,1,1,1',
   '--no-close',
-  '--input="10:273:2,20:wait-title:Winamp:1000,21:poke:0x45caa4:1,22:winamp-play:C:\\demo.mp3,23:winamp-start"',
+  '--stuck-after=5000',
+  '--input="10:273:2,20:wait-title:Winamp:1000,300:click:66:129"',
   `--audio-out="${PCM}"`,
   `--audio-exit-bytes=${MIN_PCM_BYTES}`,
 ].join(' ');
