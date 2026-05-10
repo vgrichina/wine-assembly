@@ -439,6 +439,44 @@
           (br $copy2)))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
     (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0)))
+
+  (func $store_fake_wcmdline
+    (local $ptr i32) (local $i i32) (local $len i32) (local $extra i32)
+    (local.set $ptr (call $heap_alloc (i32.const 1024)))
+    (global.set $msvcrt_wcmdln_ptr (local.get $ptr))
+    ;; Write L"C:\<exe_name>" and mirror set_extra_cmdline as UTF-16.
+    (call $gs16 (local.get $ptr) (i32.const 0x43))  ;; 'C'
+    (call $gs16 (i32.add (local.get $ptr) (i32.const 2)) (i32.const 0x3A))  ;; ':'
+    (call $gs16 (i32.add (local.get $ptr) (i32.const 4)) (i32.const 0x5C))  ;; '\'
+    (local.set $len (global.get $exe_name_len))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (call $gs16
+        (i32.add (local.get $ptr) (i32.shl (i32.add (local.get $i) (i32.const 3)) (i32.const 1)))
+        (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.set $len (i32.add (local.get $len) (i32.const 3)))
+    (local.set $extra (global.get $extra_cmdline_len))
+    (if (i32.gt_u (local.get $extra) (i32.const 0))
+      (then
+        (call $gs16 (i32.add (local.get $ptr) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0x20))
+        (local.set $len (i32.add (local.get $len) (i32.const 1)))
+        (local.set $i (i32.const 0))
+        (block $done2 (loop $copy2
+          (br_if $done2 (i32.ge_u (local.get $i) (local.get $extra)))
+          (call $gs16
+            (i32.add (local.get $ptr) (i32.shl (i32.add (local.get $len) (local.get $i)) (i32.const 1)))
+            (i32.load8_u (i32.add (i32.const 0x300) (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy2)))
+        (local.set $len (i32.add (local.get $len) (local.get $extra)))))
+    (call $gs16 (i32.add (local.get $ptr) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0))
+    ;; Scratch records used by __p__wcmdln and __wgetmainargs.
+    (call $gs32 (i32.add (local.get $ptr) (i32.const 768)) (local.get $ptr))
+    (call $gs32 (i32.add (local.get $ptr) (i32.const 776)) (local.get $ptr))
+    (call $gs32 (i32.add (local.get $ptr) (i32.const 780)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $ptr) (i32.const 784)) (i32.const 0)))
   (func $guest_strlen (param $gp i32) (result i32)
     (local $len i32)
     (block $d (loop $l
@@ -537,6 +575,26 @@
           (local.set $exp_name_rva (i32.load (i32.add (call $g2w (i32.add (local.get $la) (local.get $exp_rva))) (i32.const 12))))
           (local.set $exp_name_wa (call $g2w (i32.add (local.get $la) (local.get $exp_name_rva))))
           (if (call $dll_name_match (local.get $name_wa) (local.get $exp_name_wa))
+            (then (return (local.get $la))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $search)))
+    (i32.const 0))
+
+  ;; Find DLL by UTF-16 name (WASM ptr), return guest load_addr or 0.
+  (func $find_dll_by_wname (param $name_wa i32) (result i32)
+    (local $i i32) (local $tbl_ptr i32) (local $la i32) (local $exp_rva i32)
+    (local $exp_name_rva i32) (local $exp_name_wa i32)
+    (local.set $i (i32.const 0))
+    (block $notfound (loop $search
+      (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $la (i32.load (local.get $tbl_ptr)))
+      (local.set $exp_rva (i32.load (i32.add (local.get $tbl_ptr) (i32.const 8))))
+      (if (i32.ne (local.get $exp_rva) (i32.const 0))
+        (then
+          (local.set $exp_name_rva (i32.load (i32.add (call $g2w (i32.add (local.get $la) (local.get $exp_rva))) (i32.const 12))))
+          (local.set $exp_name_wa (call $g2w (i32.add (local.get $la) (local.get $exp_name_rva))))
+          (if (call $wide_ascii_eq (local.get $name_wa) (local.get $exp_name_wa))
             (then (return (local.get $la))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $search)))
@@ -1994,6 +2052,41 @@
       (local.set $j (i32.add (local.get $j) (i32.const 1)))
       (br $copy_loop)))
     (i32.store8 (i32.add (local.get $buf_wa) (local.get $copy)) (i32.const 0))
+    (local.get $copy))
+
+  (func $string_load_w (param $id i32) (param $buf_wa i32) (param $buf_len i32) (result i32)
+    (local $bundle_id i32) (local $idx i32) (local $data_entry i32)
+    (local $rva i32) (local $wa i32) (local $i i32) (local $entry_len i32)
+    (local $copy i32) (local $j i32)
+    (if (i32.le_s (local.get $buf_len) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $bundle_id (i32.add (i32.shr_u (local.get $id) (i32.const 4)) (i32.const 1)))
+    (local.set $idx (i32.and (local.get $id) (i32.const 0xF)))
+    (local.set $data_entry (call $find_resource (i32.const 6) (local.get $bundle_id)))
+    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const 0))))
+    (local.set $rva (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))
+    (local.set $wa (call $g2w (i32.add (call $r_base) (local.get $rva))))
+    (block $at_entry (loop $skip
+      (br_if $at_entry (i32.ge_u (local.get $i) (local.get $idx)))
+      (local.set $entry_len (i32.load16_u (local.get $wa)))
+      (local.set $wa (i32.add (local.get $wa)
+        (i32.add (i32.const 2) (i32.shl (local.get $entry_len) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $skip)))
+    (local.set $entry_len (i32.load16_u (local.get $wa)))
+    (local.set $wa (i32.add (local.get $wa) (i32.const 2)))
+    (if (i32.eqz (local.get $entry_len)) (then (return (i32.const 0))))
+    (local.set $copy (local.get $entry_len))
+    (if (i32.ge_u (local.get $copy) (local.get $buf_len))
+      (then (local.set $copy (i32.sub (local.get $buf_len) (i32.const 1)))))
+    (local.set $j (i32.const 0))
+    (block $done (loop $copy_loop
+      (br_if $done (i32.ge_u (local.get $j) (local.get $copy)))
+      (i32.store16
+        (i32.add (local.get $buf_wa) (i32.shl (local.get $j) (i32.const 1)))
+        (i32.load16_u (i32.add (local.get $wa) (i32.shl (local.get $j) (i32.const 1)))))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $copy_loop)))
+    (i32.store16 (i32.add (local.get $buf_wa) (i32.shl (local.get $copy) (i32.const 1))) (i32.const 0))
     (local.get $copy))
 
   ;; Skip a UTF-16LE null-terminated string. Returns WASM address past null.

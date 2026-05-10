@@ -3225,22 +3225,9 @@
     ;; arg0=&argc, arg1=&argv, arg2=&envp (wide versions)
     (call $gs32 (local.get $arg0) (i32.const 1))     ;; argc = 1
     (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
-    (then
-      (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
-      ;; Write L"PAINT\0" at wcmdln_ptr (UTF-16LE)
-      (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0x50))        ;; P
-      (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 2)) (i32.const 0x41))  ;; A
-      (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 4)) (i32.const 0x49))  ;; I
-      (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 6)) (i32.const 0x4E))  ;; N
-      (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 8)) (i32.const 0x54))  ;; T
-      (call $gs16 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 10)) (i32.const 0))    ;; NUL
-      ;; argv array at +16: [ptr_to_string, 0]
-      (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 16)) (global.get $msvcrt_wcmdln_ptr))
-      (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 20)) (i32.const 0))
-      ;; envp at +24: [0]
-      (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 24)) (i32.const 0))))
-    (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 16)))
-    (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 24)))
+      (then (call $store_fake_wcmdline)))
+    (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 776)))
+    (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 784)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
@@ -3248,12 +3235,9 @@
   ;; 258: __p__wcmdln
   (func $handle___p__wcmdln (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
-    (then
-      (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
-      (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))))
-    ;; Always ensure ptr-to-ptr at +32 (may have been set by __wgetmainargs without this)
-    (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)) (global.get $msvcrt_wcmdln_ptr))
-    (global.set $eax (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 32)))
+      (then (call $store_fake_wcmdline)))
+    (call $gs32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 768)) (global.get $msvcrt_wcmdln_ptr))
+    (global.set $eax (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 768)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
@@ -3441,11 +3425,13 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 283: GetModuleHandleW(lpModuleName) — NULL→image_base (W version, DLL lookup TODO)
+  ;; 283: GetModuleHandleW(lpModuleName) — NULL→image_base, else search DLL table
   (func $handle_GetModuleHandleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
     (if (i32.eqz (local.get $arg0))
-      (then (global.set $eax (global.get $image_base)))
-      (else (global.set $eax (i32.const 0))))
+      (then (local.set $result (global.get $image_base)))
+      (else (local.set $result (call $find_dll_by_wname (call $g2w (local.get $arg0))))))
+    (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3473,11 +3459,8 @@
 
   ;; 285: GetCommandLineW
   (func $handle_GetCommandLineW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return pointer to wide command line string
     (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
-    (then
-      (global.set $msvcrt_wcmdln_ptr (call $heap_alloc (i32.const 64)))
-      (call $gs16 (global.get $msvcrt_wcmdln_ptr) (i32.const 0))))
+      (then (call $store_fake_wcmdline)))
     (global.set $eax (global.get $msvcrt_wcmdln_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
@@ -8636,10 +8619,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 695: LoadStringW — load string resource (writes ASCII into buffer for now)
+  ;; 695: LoadStringW — load UTF-16 string resource
   (func $handle_LoadStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $push_rsrc_ctx (local.get $arg0))
-    (global.set $eax (call $string_load_a
+    (global.set $eax (call $string_load_w
       (local.get $arg1)                ;; string ID
       (call $g2w (local.get $arg2))    ;; buffer (WASM ptr)
       (local.get $arg3)))              ;; max chars
