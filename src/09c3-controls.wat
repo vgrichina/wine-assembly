@@ -1997,6 +1997,28 @@
             (local.get $dis)))
     (call $heap_free (local.get $dis)))
 
+  (func $dialog_default_idok_close (param $parent i32)
+    (local $dlg_rec i32)
+    ;; Plain x86 template dialogs can rely on USER's default IDOK behavior.
+    ;; WAT-native dialogs (FindReplace/About/etc.) have their own class
+    ;; handlers, so leave those alone.
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (if (i32.eqz (call $wnd_table_get (local.get $parent))) (then (return)))
+    (if (call $ctrl_table_get_class (local.get $parent)) (then (return)))
+    (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $parent)))
+    (if (i32.eqz (local.get $dlg_rec)) (then (return)))
+    (if (i32.eqz (i32.load (local.get $dlg_rec))) (then (return)))
+    (if (i32.and
+          (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
+          (i32.eq (global.get $dlg_pump_hwnd) (local.get $parent)))
+      (then
+        (global.set $dlg_ended (i32.const 1))
+        (global.set $dlg_result (i32.const 1))
+        (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+        (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 1))))
+    (call $wnd_destroy_tree (local.get $parent))
+    (call $host_destroy_window (local.get $parent)))
+
   ;; ---- Button WndProc ----
   ;;
   ;; Test path NOT YET WIRED: dialog buttons today receive only BM_GETCHECK
@@ -2014,6 +2036,7 @@
     (local $brush i32) (local $name_ptr i32) (local $hmenu i32)
     (local $kind i32) (local $box_y i32) (local $tw i32)
     (local $img i32) (local $img_w i32) (local $img_h i32) (local $img_x i32) (local $img_y i32)
+    (local $parent i32) (local $cmd_id i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2227,12 +2250,16 @@
             ;; returns. Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
+                (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                (local.set $cmd_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
                 (drop (call $wnd_send_message
-                  (call $wnd_get_parent (local.get $hwnd))
+                  (local.get $parent)
                   (i32.const 0x0111)  ;; WM_COMMAND
                   ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
-                  (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
-                  (local.get $hwnd))))) ;; lParam = button hwnd
+                  (local.get $cmd_id)
+                  (local.get $hwnd))) ;; lParam = button hwnd
+                (if (i32.eq (local.get $cmd_id) (i32.const 1))
+                  (then (call $dialog_default_idok_close (local.get $parent))))))
             ))
         (return (i32.const 0))))
 

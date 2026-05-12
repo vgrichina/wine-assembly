@@ -78,7 +78,24 @@ function statusTextPixels(pngPath) {
   return count;
 }
 
+function diffPixels(aPath, bPath) {
+  if (!fs.existsSync(aPath) || !fs.existsSync(bPath)) return 0;
+  const a = PNG.sync.read(fs.readFileSync(aPath));
+  const b = PNG.sync.read(fs.readFileSync(bPath));
+  if (a.width !== b.width || a.height !== b.height) return 0;
+  let diff = 0;
+  for (let i = 0; i < a.data.length; i += 4) {
+    if (a.data[i] !== b.data[i] ||
+        a.data[i + 1] !== b.data[i + 1] ||
+        a.data[i + 2] !== b.data[i + 2]) {
+      diff++;
+    }
+  }
+  return diff;
+}
+
 const statusPixels = statusTextPixels(endPng);
+const midDragDiff = diffPixels(basePng, midPng);
 
 function countColorInRect(pngPath, x1, y1, x2, y2, rgb) {
   if (!fs.existsSync(pngPath)) return 0;
@@ -107,6 +124,7 @@ const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
   { name: 'baseline PNG written', pass: baseSize > 20000 },
   { name: 'mid-drag PNG written', pass: midSize > 20000 },
+  { name: 'mid-drag PNG shows a dragged card', pass: midDragDiff > 5000 },
   { name: 'post-release PNG keeps full tableau', pass: endSize > 20000 },
   { name: 'post-release PNG keeps Spider status text', pass: statusPixels > 500 },
   { name: 'Spider status suit icons use main EXE bitmaps', pass: badSuitColors === 0 && redSuitPixels > 20 && blackSuitPixels > 20 },
@@ -119,6 +137,6 @@ for (const c of checks) {
   console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
   if (!c.pass) failed++;
 }
-console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize} statusTextPixels=${statusPixels} badSuitColors=${badSuitColors} redSuitPixels=${redSuitPixels} blackSuitPixels=${blackSuitPixels}`);
+console.log(`sizes: base=${baseSize} mid=${midSize} end=${endSize} midDragDiff=${midDragDiff} statusTextPixels=${statusPixels} badSuitColors=${badSuitColors} redSuitPixels=${redSuitPixels} blackSuitPixels=${blackSuitPixels}`);
 console.log(`${checks.length - failed}/${checks.length} checks passed`);
 process.exit(failed ? 1 : 0);

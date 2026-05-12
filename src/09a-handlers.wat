@@ -7214,14 +7214,29 @@
   ;; 607: MsgWaitForMultipleObjects(nCount, pHandles, fWaitAll, dwMilliseconds, dwWakeMask) → DWORD
   ;; 5 args stdcall = 24 bytes. Returns WAIT_OBJECT_0+i for signaled handle, or nCount for messages.
   (func $handle_MsgWaitForMultipleObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result i32)
-    ;; Check if messages are pending first (post queue, paint, timers, host input)
+    (local $result i32) (local $packed i32)
+    ;; Check if messages are pending first (post queue, paint, timers, host input).
+    ;; host_check_input is destructive, so cache the event for the next
+    ;; GetMessage/PeekMessage call instead of using it as a throwaway probe.
+    (if (i32.eqz (global.get $pending_input_packed))
+      (then
+        (local.set $packed (call $host_check_input))
+        (if (i32.ne (local.get $packed) (i32.const 0))
+          (then
+            (global.set $pending_input_packed (local.get $packed))
+            (global.set $pending_input_hwnd (call $host_check_input_hwnd))
+            (global.set $pending_input_lparam (call $host_check_input_lparam)))))))
     (if (i32.or
           (i32.or
-            (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-            (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0)))
-          (i32.or (global.get $paint_pending)
-                  (i32.ne (call $host_check_input) (i32.const 0))))
+            (i32.or (global.get $quit_flag)
+                    (i32.gt_u (global.get $post_queue_count) (i32.const 0)))
+            (i32.or (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+                    (global.get $pending_input_packed)))
+          (i32.or
+            (i32.or (global.get $paint_pending)
+                    (global.get $nc_flags_count))
+            (i32.or (call $paint_flag_any)
+                    (call $timer_check_due (global.get $PAINT_SCRATCH) (i32.const 0)))))
       (then
         ;; Message available: return WAIT_OBJECT_0 + nCount
         (global.set $eax (local.get $arg0))
@@ -7945,6 +7960,11 @@
   (func $handle_GetMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
     (local.set $msg_ptr (local.get $arg0))
+    (if (i32.eqz (local.get $msg_ptr))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; If quit flag set, return 0 (WM_QUIT)
     (if (global.get $quit_flag)
     (then

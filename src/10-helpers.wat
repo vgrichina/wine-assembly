@@ -2462,4 +2462,4 @@
       (br $ctrl_loop)))
     (call $heap_free (local.get $cs))
     (call $dlg_seed_focus (local.get $dlg_hwnd))
-    (local.get $ctrl_count))
+    (return (local.get $ctrl_count)))

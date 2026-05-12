@@ -996,6 +996,7 @@
   (global $last_msg_time  (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
+  (global $message_wait_msg_ptr (mut i32) (i32.const 0))
   (global $wait_handle  (mut i32) (i32.const 0))
   (global $wait_handles_ptr (mut i32) (i32.const 0)) ;; if non-zero, wait_handle is nCount
   (global $wait_timeout (mut i32) (i32.const 0xFFFFFFFF))

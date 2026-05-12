@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '120';
+  static SOURCE_VERSION = '123';
 
   constructor() {
     this.instance = null;
@@ -869,7 +869,8 @@ class WineAssembly {
       try {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         // Check if main thread is waiting
-        if (self.threadManager && self.threadManager.checkMainYield()) {
+        const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
+        if (mainThreadWaiting) {
           // Main still waiting — just run worker threads
         } else {
           if (self.renderer) {
@@ -942,13 +943,20 @@ class WineAssembly {
           }
           if (self.threadManager.hasActiveThreads()) {
             const windowCount = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
+            const now = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now();
+            const recentInputWake = self.renderer && self.renderer._recentMessageWakeAt &&
+              (now - self.renderer._recentMessageWakeAt) < 120;
             // Visible-window apps can still have compute-heavy UI worker threads.
             // Winamp's About/Credits animation is one of them: clamping workers to
             // 3k ops starves the credits renderer behind the message/present loop.
             // Keep a cap for browser responsiveness, but give active workers a
             // meaningful slice so switching tabs does not appear hung.
-            const threadBudget = windowCount ? 25000 : 100000;
-            self.threadManager.runSlice(Math.min(activeStepsPerSlice, threadBudget));
+            const threadBudget = windowCount
+              ? (recentInputWake ? 0 : (mainThreadWaiting ? activeStepsPerSlice : Math.min(activeStepsPerSlice, 10000)))
+              : activeStepsPerSlice;
+            if (threadBudget > 0) {
+              self.threadManager.runSlice(threadBudget);
+            }
             self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
             if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
               self.hostCtx.sharedGdi.presentBestDxOffscreen();

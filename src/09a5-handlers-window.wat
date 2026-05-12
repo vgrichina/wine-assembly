@@ -941,6 +941,14 @@
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
     (local.set $msg_ptr (local.get $arg0))
+    ;; Some Win9x-era MFC startup paths probe through GetMessageA with a
+    ;; NULL MSG pointer before their main frame exists. Real USER would reject
+    ;; this, but blocking here parks the app before it can create its window.
+    (if (i32.eqz (local.get $msg_ptr))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; If quit flag set, return 0 (WM_QUIT)
     (if (global.get $quit_flag)
     (then
@@ -1150,6 +1158,7 @@
     ;; No message ready. Real GetMessage blocks here; keep the API call live
     ;; and let JS wake/re-enter this handler when input/post/paint/timer work
     ;; becomes available.
+    (global.set $message_wait_msg_ptr (local.get $msg_ptr))
     (global.set $yield_reason (i32.const 7))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0))
