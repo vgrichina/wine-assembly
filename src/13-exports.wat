@@ -504,8 +504,10 @@
             (local.set $hc_i (i32.add (local.get $hc_i) (i32.const 1)))
             (br $hc_loop))))
         )
-      ;; Exit if WaitForSingleObject yielded (yield_reason=1)
-      (br_if $halt (i32.eq (global.get $yield_reason) (i32.const 1)))
+      ;; Exit if a blocking API yielded. JS owns resuming these waits.
+      (br_if $halt (i32.or
+        (i32.eq (global.get $yield_reason) (i32.const 1))
+        (i32.eq (global.get $yield_reason) (i32.const 7))))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
@@ -820,6 +822,19 @@
     (global.set $sleep_yielded (i32.const 0))
     (local.get $v))
   (func (export "get_sleep_timeout") (result i32) (global.get $sleep_timeout))
+  (func (export "has_pending_message") (result i32)
+    (if (global.get $pending_child_create) (then (return (i32.const 1))))
+    (if (global.get $pending_child_size) (then (return (i32.const 1))))
+    (if (global.get $pending_input_packed) (then (return (i32.const 1))))
+    (if (global.get $post_queue_count) (then (return (i32.const 1))))
+    (if (call $shared_post_queue_read (global.get $PAINT_SCRATCH) (i32.const 0))
+      (then (return (i32.const 1))))
+    (if (global.get $pending_wm_size) (then (return (i32.const 1))))
+    (if (global.get $nc_flags_count) (then (return (i32.const 1))))
+    (if (call $paint_flag_any) (then (return (i32.const 1))))
+    (if (call $timer_check_due (global.get $PAINT_SCRATCH) (i32.const 0))
+      (then (return (i32.const 1))))
+    (i32.const 0))
   (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
   (func (export "get_loadlib_name") (result i32) (global.get $loadlib_name_ptr))
 

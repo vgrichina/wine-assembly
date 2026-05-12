@@ -1268,6 +1268,12 @@ async function main() {
     traceCallstack: TRACE_CALLSTACK,
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
+    hasMessage: () => !!(
+      inputEvent ||
+      (crossThreadMsgs && crossThreadMsgs.length) ||
+      (inputQueue && inputQueue.length) ||
+      (renderer && renderer.inputQueue && renderer.inputQueue.length)
+    ),
   });
 
   const mem = new Uint8Array(memory.buffer);

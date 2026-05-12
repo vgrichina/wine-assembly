@@ -1147,16 +1147,13 @@
           (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No timer due — return WM_NULL and yield to let browser process input events.
+    ;; No message ready. Real GetMessage blocks here; keep the API call live
+    ;; and let JS wake/re-enter this handler when input/post/paint/timer work
+    ;; becomes available.
+    (global.set $yield_reason (i32.const 7))
     (global.set $yield_flag (i32.const 1))
-    (if (local.get $msg_ptr)
-      (then
-        (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0))  ;; WM_NULL
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (global.set $steps (i32.const 0))
+    (return)
   )
 
   ;; 74: PeekMessageA(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg)
