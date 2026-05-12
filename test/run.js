@@ -362,6 +362,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dlg-paint' });
       } else if (kind === 'dlg-png') {
         scheduledInput.push({ batch, action: 'dlg-png', path: parts.slice(2).join(':') });
+      } else if (kind === 'hwnd-png-pixels') {
+        scheduledInput.push({ batch, action: 'hwnd-png-pixels', hwnd: parseInt(parts[2]), path: parts.slice(3).join(':') });
       } else if (kind === 'wait-title') {
         scheduledInput.push({
           batch,
@@ -1249,6 +1251,11 @@ async function main() {
     wh.log_i32 = (val) => {
       if (TRACE_API) logs.push(`  => ${hex(val)}`);
     };
+    if (traceEipOn) {
+      wh.log_eip = (eip) => {
+        logs.push(`[EIP T${tid}] ${hex(eip >>> 0)}`);
+      };
+    }
     wh.exit = () => {};
     wh.has_dll_file = h.has_dll_file;
     return { host: wh };
@@ -1260,6 +1267,7 @@ async function main() {
     breakThreadFilter: breakThreadFilter,
     traceCallstack: TRACE_CALLSTACK,
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
+    traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
   });
 
   const mem = new Uint8Array(memory.buffer);
@@ -2405,6 +2413,22 @@ async function main() {
           logs.push(`[input] dlg-png ${ev.path} (${buf.length} bytes) hwnd=0x${(dlgWin.hwnd | 0).toString(16)} at batch ${batch}`);
         } catch (e) {
           logs.push(`[input] dlg-png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
+        try {
+          const win = renderer.windows && renderer.windows[ev.hwnd];
+          const canvas = win && win._backCanvas;
+          if (!canvas) throw new Error(`no back-canvas for hwnd=0x${(ev.hwnd | 0).toString(16)}`);
+          const w = canvas.width | 0;
+          const h = canvas.height | 0;
+          const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+          const png = new PNG({ width: w, height: h });
+          png.data.set(data);
+          const buf = PNG.sync.write(png);
+          fs.writeFileSync(ev.path, buf);
+          logs.push(`[input] hwnd-png-pixels ${ev.path} (${buf.length} bytes) hwnd=0x${(ev.hwnd | 0).toString(16)} at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] hwnd-png-pixels FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
       } else if (ev.action === 'wait-title') {
         const title = ev.title || '';

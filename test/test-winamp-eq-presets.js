@@ -169,6 +169,42 @@ async function main() {
     if (!c.pass) failed++;
   }
 
+  const outsidePopupCmd = [
+    `node "${RUN}"`,
+    `--exe="${EXE}"`,
+    '--max-batches=1000',
+    '--batch-size=100',
+    '--quiet-api',
+    '--quiet-blocks',
+    '--no-close',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,520:menu-dump:first,620:click:240:164,720:menu-dump:left-open,820:stop"',
+  ].join(' ');
+  console.log('');
+  console.log('$', outsidePopupCmd);
+
+  let outsidePopupOut = '';
+  let outsidePopupTimedOut = false;
+  try {
+    outsidePopupOut = execSync(outsidePopupCmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    outsidePopupOut = (e.stdout || '').toString() + (e.stderr || '').toString();
+    outsidePopupTimedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    console.log(outsidePopupTimedOut ? '(outside-popup run timed out - output captured)' : '(outside-popup run exited non-zero - output captured)');
+  }
+
+  const outsidePopupMenu = (outsidePopupOut.match(/menu-dump:left-open:[^\n]*/) || [''])[0];
+  const outsidePopupChecks = [
+    { name: 'EQ preset outside-popup click completed without timeout', pass: !outsidePopupTimedOut },
+    { name: 'EQ preset outside-popup click closes menu', pass: /menu-dump:left-open: hwnd=none/.test(outsidePopupOut) },
+    { name: 'EQ preset outside-popup click does not switch to main menu', pass: !/Main|Context menus|Video options|File info/.test(outsidePopupMenu) },
+  ];
+
+  console.log('');
+  for (const c of outsidePopupChecks) {
+    console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
+    if (!c.pass) failed++;
+  }
+
   const closeCmd = [
     `node "${RUN}"`,
     `--exe="${EXE}"`,
@@ -243,7 +279,7 @@ async function main() {
   }
 
   console.log('');
-  const total = checks.length + dialogChecks.length + reopenChecks.length + closeChecks.length + eqfChecks.length;
+  const total = checks.length + dialogChecks.length + reopenChecks.length + outsidePopupChecks.length + closeChecks.length + eqfChecks.length;
   console.log(`${total - failed}/${total} checks passed`);
   process.exit(failed > 0 ? 1 : 0);
 }

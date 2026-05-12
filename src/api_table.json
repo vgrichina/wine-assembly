@@ -11496,5 +11496,40 @@
     "nargs": 3,
     "convention": "cdecl",
     "hash": 2385846207
+  },
+  {
+    "id": 1523,
+    "name": "ceil",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1659167240
+  },
+  {
+    "id": 1524,
+    "name": "sqrt",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2112764879
+  },
+  {
+    "id": 1525,
+    "name": "sin",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3761252941
+  },
+  {
+    "id": 1526,
+    "name": "pow",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1479764693
+  },
+  {
+    "id": 1527,
+    "name": "_CIpow",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 51420124
   }
 ]

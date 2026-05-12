@@ -317,6 +317,7 @@
   (import "host" "math_tan" (func $host_math_tan (param f64) (result f64)))
   (import "host" "math_atan2" (func $host_math_atan2 (param f64 f64) (result f64)))
   (import "host" "math_log2" (func $host_math_log2 (param f64) (result f64)))
+  (import "host" "math_pow" (func $host_math_pow (param f64 f64) (result f64)))
   (import "host" "math_pow2" (func $host_math_pow2 (param f64) (result f64)))
 
   ;; Filesystem host imports — backed by virtual FS
@@ -469,11 +470,8 @@
   ;; FPU unimplemented opcode message — passed to $crash_unimplemented when an
   ;; x87 escape opcode is decoded but the (group, reg, rm) tuple has no handler.
   (data (i32.const 0x2F0) "FPU_UNIMPL\00")
-  ;; Default ShellAbout szOtherStuff — used when the caller passes an empty
-  ;; string (Win98 notepad does this, relying on real shell32 to synthesize
-  ;; version/copyright lines). 52 bytes including NUL.
-  (data (i32.const 0x300) "Version 4.10\nCopyright (C) 1985-1998 Microsoft Corp.\00")
-
+  ;; CRT exports that should stay host-dispatched even when msvcrt.dll is loaded.
+  (data (i32.const 0x300) "ceil\00sqrt\00sin\00pow\00_CIpow\00")
   ;; MessageBox button labels — referenced by $create_msgbox_dialog.
   (data (i32.const 0x340) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
   (data (i32.const 0x346) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL

@@ -236,6 +236,19 @@
       (br $l)))
     (i32.const 0))
 
+  (func $crt_host_export_api_id (param $name_wa i32) (result i32)
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x300))
+      (then (return (call $lookup_api_id (i32.const 0x300)))))
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x305))
+      (then (return (call $lookup_api_id (i32.const 0x305)))))
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x30A))
+      (then (return (call $lookup_api_id (i32.const 0x30A)))))
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x30E))
+      (then (return (call $lookup_api_id (i32.const 0x30E)))))
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x312))
+      (then (return (call $lookup_api_id (i32.const 0x312)))))
+    (i32.const -1))
+
   ;; Process a loaded DLL's imports — create thunks for system DLLs,
   ;; resolve against other loaded DLLs if found.
   (func $process_dll_imports (param $load_addr i32) (param $import_rva i32)
@@ -335,7 +348,7 @@
     (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
     (local $dll_name_rva i32) (local $dll_name_ga i32)
     (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32)
-    (local $resolved i32)
+    (local $resolved i32) (local $name_wa i32) (local $api_id i32) (local $thunk_addr i32)
     (local.set $desc_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $caller_import_rva))))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
@@ -359,8 +372,26 @@
                   (i32.and (local.get $entry) (i32.const 0xFFFF)))))
               (else
                 ;; Name import
-                (local.set $resolved (call $resolve_name_export (local.get $dll_idx)
-                  (call $g2w (i32.add (local.get $caller_base) (i32.add (local.get $entry) (i32.const 2))))))))
+                (local.set $name_wa
+                  (call $g2w (i32.add (local.get $caller_base) (i32.add (local.get $entry) (i32.const 2)))))
+                (local.set $api_id (call $crt_host_export_api_id (local.get $name_wa)))
+                (if (i32.ne (local.get $api_id) (i32.const -1))
+                  (then
+                    (local.set $thunk_addr (i32.add
+                      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                               (global.get $GUEST_BASE))
+                      (global.get $image_base)))
+                    (i32.store (local.get $iat_ptr) (local.get $thunk_addr))
+                    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.sub (i32.add (local.get $caller_base) (local.get $entry)) (global.get $image_base)))
+                    (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
+                      (local.get $api_id))
+                    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+                    (call $update_thunk_end)
+                    (local.set $resolved (i32.const 0)))
+                  (else
+                    (local.set $resolved
+                      (call $resolve_name_export (local.get $dll_idx) (local.get $name_wa)))))))
             (if (local.get $resolved)
               (then (i32.store (local.get $iat_ptr) (local.get $resolved))))
             (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))

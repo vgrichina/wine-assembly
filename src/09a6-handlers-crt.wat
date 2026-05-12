@@ -323,6 +323,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; MSVCRT double math returns through x87 ST(0). These are cdecl, so the
+  ;; callee only pops the return address; the caller removes stack arguments.
+  (func $handle_ceil (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (f64.ceil (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_sqrt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (f64.sqrt (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_sin (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (call $host_math_sin (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_pow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (call $host_math_pow
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 12))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; _CIpow is MSVC's x87-stack helper: ST(1)=base, ST(0)=exponent.
+  (func $handle__CIpow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $exponent f64) (local $base f64)
+    (local.set $exponent (call $fpu_pop))
+    (local.set $base (call $fpu_pop))
+    (call $fpu_push (call $host_math_pow (local.get $base) (local.get $exponent)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 731: _ftol — cdecl, convert float on FPU stack to i32 (special: no stack args, reads ST(0))
   (func $handle__ftol (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Pop ST(0) and truncate to i32

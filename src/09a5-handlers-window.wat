@@ -768,10 +768,6 @@
         (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
         ;; Jump to dialog proc
         (global.set $eip (local.get $arg3))
-        ;; Match DialogBoxParamA's observable boundary before WM_INITDIALOG.
-        ;; Some modeless common-control dialogs do substantial setup here;
-        ;; yielding keeps large host slices from monopolizing the event loop.
-        (global.set $yield_flag (i32.const 1))
         (global.set $steps (i32.const 0))
         (return)))
     ;; No dlgProc — just return hwnd

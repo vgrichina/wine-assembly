@@ -558,7 +558,7 @@
   ;; allocating the dlg hwnd. All strings come from the original guest
   ;; ShellAbout call:
   ;;   $app_g   = arg1, "Notepad" or whatever the app passed for szApp
-  ;;   $other_g = arg2, free-form line(s) like "Version 4.10\nCopyright"
+  ;;   $other_g = arg2, free-form line(s) supplied by the guest
   ;;              (may be 0)
   ;; The title shown in the caption is "About <appname>", built in WAT
   ;; via memcpy. Lines are: app, then up to two newline-split chunks of
@@ -2270,6 +2270,7 @@
         ;; bk mode so text glyphs don't get an opaque white background box.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
 
         ;; Resolve text pointer/length once (used by every kind that has a label).
         (if (i32.load (local.get $state_w))

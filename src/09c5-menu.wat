@@ -1316,15 +1316,20 @@
         (drop (call $menu_activate))
         (return (i32.const 1))))
 
-    (local.set $idx (call $menu_hittest_bar
-      (local.get $hwnd) (local.get $bar_x) (local.get $bar_y)
-      (local.get $sx) (local.get $sy)))
-    (if (i32.ge_s (local.get $idx) (i32.const 0))
+    ;; TrackPopupMenu popups have an explicit screen anchor. They are not a
+    ;; menubar tracking session, so an outside click must dismiss them instead
+    ;; of switching to another top-level menu item in the same resource.
+    (if (i32.lt_s (global.get $menu_open_x) (i32.const 0))
       (then
-        (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
-          (then (return (i32.const 1))))
-        (call $menu_open (local.get $hwnd) (local.get $idx))
-        (return (i32.const 1))))
+        (local.set $idx (call $menu_hittest_bar
+          (local.get $hwnd) (local.get $bar_x) (local.get $bar_y)
+          (local.get $sx) (local.get $sy)))
+        (if (i32.ge_s (local.get $idx) (i32.const 0))
+          (then
+            (if (call $menu_activate_bar_command (local.get $hwnd) (local.get $idx))
+              (then (return (i32.const 1))))
+            (call $menu_open (local.get $hwnd) (local.get $idx))
+            (return (i32.const 1))))))
 
     (call $menu_close)
     (i32.const 1))
@@ -1423,9 +1428,15 @@
     (if (i32.eq (local.get $vk) (i32.const 38))
       (then (call $menu_advance (i32.const -1)) (return (i32.const 1)))) ;; Up
     (if (i32.eq (local.get $vk) (i32.const 39))
-      (then (call $menu_switch_top (i32.const 1)) (return (i32.const 1))))  ;; Right
+      (then
+        (if (i32.lt_s (global.get $menu_open_x) (i32.const 0))
+          (then (call $menu_switch_top (i32.const 1))))
+        (return (i32.const 1))))  ;; Right
     (if (i32.eq (local.get $vk) (i32.const 37))
-      (then (call $menu_switch_top (i32.const -1)) (return (i32.const 1)))) ;; Left
+      (then
+        (if (i32.lt_s (global.get $menu_open_x) (i32.const 0))
+          (then (call $menu_switch_top (i32.const -1))))
+        (return (i32.const 1)))) ;; Left
     (if (i32.eq (local.get $vk) (i32.const 13))
       (then (drop (call $menu_activate)) (return (i32.const 1)))) ;; Enter
     (if (i32.and
