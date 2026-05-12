@@ -508,6 +508,7 @@
   (data (i32.const 0x11066) "..\00")
   (data (i32.const 0x11069) "Upload...\00")
   (data (i32.const 0x11073) "Download\00")
+  (data (i32.const 0x110C6) "Microsoft Windows\0AWindows 98\0ACopyright (C) 1981-1998 Microsoft Corp.\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.

@@ -568,6 +568,7 @@
     (param $app_g i32) (param $other_g i32)
     (local $w i32) (local $h i32)
     (local $title_w i32) (local $title_buf_w i32) (local $app_len i32)
+    (local $body_g i32) (local $body_w i32) (local $app_h i32)
     (local $line1_w i32) (local $line2_w i32) (local $line3_w i32)
     (local $other_w i32) (local $i i32) (local $nl i32)
     (local.set $w (i32.const 260))
@@ -609,13 +610,35 @@
     ;; no-op when the slot doesn't exist yet.
     (call $nc_flags_set (local.get $dlg) (i32.const 3))  ;; bits 0+1
     (call $dlg_fill_bkgnd (local.get $dlg))
+    (local.set $app_h (i32.const 18))
+    (if (i32.eqz (local.get $other_g))
+      (then
+        (local.set $body_g (call $heap_alloc (i32.add (local.get $app_len) (i32.const 71))))
+        (local.set $body_w (call $g2w (local.get $body_g)))
+        (call $memcpy (local.get $body_w) (call $g2w (local.get $app_g)) (local.get $app_len))
+        (i32.store8 (i32.add (local.get $body_w) (local.get $app_len)) (i32.const 10))
+        (call $memcpy
+          (i32.add (local.get $body_w) (i32.add (local.get $app_len) (i32.const 1)))
+          (i32.const 0x110C6) (i32.const 68))
+        (i32.store8
+          (i32.add (local.get $body_w) (i32.add (local.get $app_len) (i32.const 69)))
+          (i32.const 0))
+        (local.set $app_g (local.get $body_g))
+        (local.set $app_h (i32.const 74))))
     ;; Line 1: appname static
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-            (i32.const 12) (i32.const 10) (i32.const 236) (i32.const 18)
+            (i32.const 12) (i32.const 10) (i32.const 236) (local.get $app_h)
             (i32.const 0x50000000) (local.get $app_g)))
-    ;; Lines 2 + 3: split other_g on the first '\n'. Real ShellAbout
-    ;; would also linewrap further; for now we cap at two lines because
-    ;; the dialog is only 160px tall.
+    ;; OK button — id=IDOK=1, BS_DEFPUSHBUTTON style. Centered horizontally,
+    ;; near the bottom of the 160px dialog.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 90) (i32.sub (local.get $h) (i32.const 56))
+            (i32.const 80) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+    ;; Lines 2 + 3: split other_g on the first '\n'. If the app passes
+    ;; NULL, ShellAbout still fills the dialog with the standard Windows
+    ;; version/copyright block.
     (if (local.get $other_g)
       (then
         (local.set $other_w (call $g2w (local.get $other_g)))
@@ -649,13 +672,7 @@
             (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
                     (i32.const 12) (i32.const 50) (i32.const 236) (i32.const 18)
                     (i32.const 0x50000000) (local.get $line3_w)))))))
-    ;; OK button — id=IDOK=1, BS_DEFPUSHBUTTON style. Centered horizontally,
-    ;; near the bottom of the 160px dialog.
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 90) (i32.sub (local.get $h) (i32.const 56))
-            (i32.const 80) (i32.const 24)
-            (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+      ))
     ;; ShellAbout is a modal shell-owned dialog on Win98: by the time the
     ;; caller observes it, USER has already exposed/erased the dialog and
     ;; delivered paint to built-in child controls. Our ShellAbout handler is
@@ -663,7 +680,8 @@
     ;; that initial exposure pass here to keep child STATIC/BUTTON controls
     ;; visible without JS special-casing control drawing.
     (call $nc_flags_clear (local.get $dlg) (i32.const 2))
-    (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))
+    (if (local.get $other_g)
+      (then (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))))
     (drop (call $paint_flush_visible_native_children (local.get $dlg))))
 
   ;; ============================================================
@@ -2007,7 +2025,7 @@
     (if (call $ctrl_table_get_class (local.get $parent)) (then (return)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $parent)))
     (if (i32.eqz (local.get $dlg_rec)) (then (return)))
-    (if (i32.eqz (i32.load (local.get $dlg_rec))) (then (return)))
+    (if (i32.eqz (i32.load offset=4 (local.get $dlg_rec))) (then (return)))
     (if (i32.and
           (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
           (i32.eq (global.get $dlg_pump_hwnd) (local.get $parent)))
