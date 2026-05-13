@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Web manifest/deploy coverage for Pinball music assets.
+// Web manifest/deploy coverage for desktop companion media assets.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -9,24 +9,31 @@ const ROOT = path.join(__dirname, '..');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const hostJs = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const deployJs = fs.readFileSync(path.join(ROOT, 'tools', 'deploy-berrry.js'), 'utf8');
+const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 
-for (const rel of [
-  'binaries/pinball/PINBALL.MID',
-  'binaries/pinball/PINBALL2.MID',
-  'binaries/pinball/PINBALL.DAT',
-  'binaries/pinball/wavemix.inf',
-]) {
-  assert(indexHtml.includes(`'${rel}'`), `index.html pinball manifest should include ${rel}`);
+function assertBundled(rel) {
+  assert(indexHtml.includes(`'${rel}'`), `index.html app manifest should include ${rel}`);
   const full = path.join(ROOT, rel);
   assert(fs.existsSync(full), `${rel} should exist for web fetch/deploy`);
   assert(fs.statSync(full).size > 0, `${rel} should not be empty`);
 }
 
+for (const dir of ['binaries/pinball', 'binaries/pinball-plus95']) {
+  const fullDir = path.join(ROOT, dir);
+  const files = fs.readdirSync(fullDir)
+    .filter(name => /\.(dat|mid|inf|bmp|wav)$/i.test(name))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  assert(files.some(name => /^SOUND.*\.WAV$/i.test(name)), `${dir} should contain WAV sidecar files`);
+  for (const name of files) assertBundled(`${dir}/${name}`);
+}
+
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mid'/s.test(deployJs), 'deploy should include .mid binary assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mp3'/s.test(deployJs), 'deploy should include .mp3 binary assets');
+assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.wav'/s.test(deployJs), 'deploy should include .wav sidecar audio assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.inf'/s.test(deployJs), 'deploy should include .inf companion config assets');
 assert(/TEXT_EXTS\s*=\s*new Set\([^)]*'\.ini'/s.test(deployJs), 'deploy should include Winamp INI text assets');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large Plus! 95 pinball DAT');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/tictac\.exe'/s.test(deployJs), 'deploy should include desktop TicTactics binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/winmine\.exe'/s.test(deployJs), 'deploy should include desktop Minesweeper binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.EXE'/s.test(deployJs), 'deploy should include desktop Spider binary');
@@ -42,11 +49,15 @@ assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Fun
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should allow large Winamp binary');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/FunPack\.dll'/s.test(deployJs), 'deploy should allow large FunPack DLL');
 assert(/DESKTOP_BINARY_PREFIXES\s*=\s*\[[^\]]*'binaries\/pinball\/'/s.test(deployJs), 'deploy should include desktop Pinball asset directory');
+assert(/DESKTOP_BINARY_PREFIXES\s*=\s*\[[^\]]*'binaries\/pinball-plus95\/'/s.test(deployJs), 'deploy should include desktop Plus! 95 Pinball asset directory');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/pinball\.exe'/s.test(deployJs), 'deploy should include desktop Plus! 95 Pinball binary');
 assert(/function apiMultipart/.test(deployJs), 'deploy should support multipart uploads');
 assert(/new FormData\(\)/.test(deployJs), 'deploy should use FormData for multipart uploads');
 assert(/form\.append\('file',\s*new Blob\(\[raw\]\),\s*f\.name\)/s.test(deployJs), 'deploy multipart upload should preserve repo-relative filenames');
 assert(!/SKIP_BIN_DIRS\s*=\s*new Set\([^)]*'pinball'/s.test(deployJs), 'deploy should not skip binaries/pinball');
 assert(!/RCT_PATH_PREFIX/.test(deployJs), 'default deploy should not include debug-only RCT shareware assets');
+assert(!/Pinball sound fallback/.test(exportsWat), 'run loop should not contain Pinball-specific sound fallback');
+assert(!/0x01009895/.test(exportsWat), 'run loop should not trap Pinball sound-request EIP');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
@@ -88,9 +99,9 @@ assert(/winamp:\s*\{[\s\S]*'binaries\/winamp\.ini'/s.test(indexHtml), 'Winamp we
 assert(/\[WinampReg\][\s\S]*?NeedReg=0/.test(fs.readFileSync(path.join(ROOT, 'binaries', 'winamp.ini'), 'utf8')), 'Winamp web INI should suppress first-run setup so playback controls are reachable');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=123'), 'web host should cache-bust host-imports after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=124'), 'web host should cache-bust host-imports after desktop changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("SOURCE_VERSION = '123'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '124'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(hostJs.includes('mainThreadWaiting ? activeStepsPerSlice : Math.min(activeStepsPerSlice, 10000)'), 'web host should catch up worker rendering only while the UI thread blocks in GetMessage');
@@ -109,8 +120,9 @@ for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
   assert(re.test(indexHtml), `${app} web manifest should explicitly load cards.dll`);
 }
 
-console.log('PASS  web Pinball manifest includes MIDI assets');
-console.log('PASS  deploy filters include .mid/.inf/DAT and do not skip pinball assets');
+console.log('PASS  web Pinball manifests include sidecar media assets');
+console.log('PASS  deploy filters include .mid/.wav/.inf/DAT and Pinball asset directories');
+console.log('PASS  Pinball sound uses bundled assets instead of a run-loop EIP hack');
 console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
 console.log('PASS  web host loads TinySynth MIDI backend');

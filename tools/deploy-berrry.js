@@ -45,6 +45,7 @@ const MAX_BINARY_SIZE = 500 * 1024;
 const LARGE_OK = new Set(['cards.dll', 'comctl32.dll']);
 const LARGE_OK_PATHS = new Set([
   'binaries/pinball/PINBALL.DAT',
+  'binaries/pinball-plus95/PINBALL.DAT',
   'binaries/winamp.exe',
   'binaries/wep32-community/Funpack/FunPack.dll',
 ]);
@@ -66,6 +67,7 @@ const DESKTOP_BINARY_FILES = new Set([
   'binaries/entertainment-pack/winmine.exe',
   'binaries/entertainment-pack/ski32.exe',
   'binaries/pinball/pinball.exe',
+  'binaries/pinball-plus95/pinball.exe',
   'binaries/plus98/SPIDER.EXE',
   'binaries/plus98/SPIDER.CHM',
   'binaries/plus98/SPIDER.HLP',
@@ -94,6 +96,7 @@ const DESKTOP_BINARY_FILES = new Set([
 
 const DESKTOP_BINARY_PREFIXES = [
   'binaries/pinball/',
+  'binaries/pinball-plus95/',
 ];
 
 // Binary extensions to include
