@@ -1981,6 +1981,7 @@
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
     (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (local.set $state_bits
       (i32.or
         (i32.or
@@ -6954,6 +6955,7 @@
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_yield_reason i32) (local $old_yield_flag i32)
     (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
@@ -6994,6 +6996,8 @@
     (local.set $old_ebp (global.get $ebp))
     (local.set $old_handler_set_eip (global.get $handler_set_eip))
     (local.set $old_steps (global.get $steps))
+    (local.set $old_yield_reason (global.get $yield_reason))
+    (local.set $old_yield_flag (global.get $yield_flag))
     ;; Push args + return thunk on guest stack. Wndproc is stdcall ret 0x10
     ;; so it pops these on return; ESP returns to its current value.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
@@ -7005,6 +7009,8 @@
     (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
     (global.set $eip (local.get $wp))
     (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
     (call $run (i32.const 1000000))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (global.get $eax))
@@ -7019,6 +7025,8 @@
     (global.set $ebp (local.get $old_ebp))
     (global.set $handler_set_eip (local.get $old_handler_set_eip))
     (global.set $steps (local.get $old_steps))
+    (global.set $yield_reason (local.get $old_yield_reason))
+    (global.set $yield_flag (local.get $old_yield_flag))
     (local.get $result)
   )
 
