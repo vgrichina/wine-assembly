@@ -102,7 +102,10 @@
       (br $scan)))
   )
 
-  ;; Recursively remove window and all its children from the table.
+  ;; Recursively destroy a window and all its children. Real DestroyWindow
+  ;; notifies the wndproc before the HWND finally disappears; MFC relies on
+  ;; WM_NCDESTROY to run PostNcDestroy / auto-delete frame objects, which may
+  ;; flush profile or registry state.
   (func $wnd_destroy_recursive (param $hwnd i32)
     (local $i i32) (local $ptr i32) (local $other i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
@@ -117,6 +120,13 @@
         (then (call $wnd_destroy_recursive (local.get $other))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; Notify the app/control proc before removing the record.
+    (drop (call $wnd_send_message (local.get $hwnd)
+      (i32.const 0x0002)  ;; WM_DESTROY
+      (i32.const 0) (i32.const 0)))
+    (drop (call $wnd_send_message (local.get $hwnd)
+      (i32.const 0x0082)  ;; WM_NCDESTROY
+      (i32.const 0) (i32.const 0)))
     ;; Notify host to remove from its table (for each child too)
     (call $host_destroy_window (local.get $hwnd))
     ;; Finally, remove the window itself from guest table

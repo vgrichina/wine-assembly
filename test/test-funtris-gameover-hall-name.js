@@ -38,7 +38,8 @@ input.push(
   '10741:dlg-dump:hall-after-gameover',
   `10742:dlg-png:${PNG}`,
   '10760:dlg-click:1',
-  '10850:0x2:0:0',
+  '10850:0x111:57665',
+  '11000:stop',
 );
 
 const runnerArgs = [
@@ -97,8 +98,8 @@ const checks = [
   { name: 'ranking name-entry edit appeared after game over', pass: /wait-dlg-control: matched id=1025/.test(out) },
   { name: 'typed name appears in Hall of Fame', pass: /text="TEST"/.test(hallDump) },
   { name: 'game-over score appears in Hall of Fame', pass: /text="[1-9][0-9]*"/.test(hallDump) },
-  { name: 'high-score name written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Name[0-9]+ = TEST/.test(out) },
-  { name: 'high-score level written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Level[0-9]+ = [1-9][0-9]*/.test(out) },
+  { name: 'high-score name written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Name[0-9]+ \(type=1\) = "?TEST"?/.test(out) },
+  { name: 'high-score level written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Level[0-9]+ \(type=4\) = [1-9][0-9]*/.test(out) },
   { name: 'Hall of Fame PNG written', pass: fs.existsSync(PNG) && fs.statSync(PNG).size > 1000 },
   { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
 ];

@@ -277,6 +277,7 @@ class WineAssembly {
     // Wire thread/event imports to ThreadManager
     h.create_thread = (s, p, sz) => self.threadManager ? self.threadManager.createThread(s, p, sz) : 0;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
+    h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.create_event = (m, i) => self.threadManager ? self.threadManager.createEvent(m, i) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;

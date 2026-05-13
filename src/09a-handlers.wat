@@ -7264,6 +7264,9 @@
         (return)))
     ;; Non-zero timeout: yield to JS event loop, will re-enter
     (global.set $yield_reason (i32.const 1))
+    (global.set $wait_handle (local.get $arg0)) ;; nCount
+    (global.set $wait_handles_ptr
+      (select (call $g2w (local.get $arg1)) (i32.const 0) (i32.gt_u (local.get $arg0) (i32.const 0))))
     (global.set $wait_timeout (local.get $arg3))
     (global.set $wait_stack_bytes (i32.const 24))
     (global.set $steps (i32.const 0)))
