@@ -2370,6 +2370,7 @@ async function main() {
         for (let i = 0; i < count; i++) {
           const id = we.menu_child_id ? (we.menu_child_id(hwnd, top, i) | 0) : 0;
           const flags = we.menu_child_flags ? (we.menu_child_flags(hwnd, top, i) | 0) : 0;
+          const subCount = we.menu_child_sub_count ? (we.menu_child_sub_count(hwnd, top, i) | 0) : 0;
           const ptr = we.menu_child_label_ptr ? (we.menu_child_label_ptr(hwnd, top, i) >>> 0) : 0;
           const len = we.menu_child_label_len ? (we.menu_child_label_len(hwnd, top, i) | 0) : 0;
           let label = '';
@@ -2377,7 +2378,23 @@ async function main() {
             const bytes = new Uint8Array(memory.buffer, ptr, len);
             label = Buffer.from(bytes).toString('latin1');
           }
-          items.push(`#${i} id=${id} flags=0x${flags.toString(16)} "${label}"`);
+          let sub = '';
+          if (subCount > 0 && we.menu_subchild_id && we.menu_subchild_label_ptr && we.menu_subchild_label_len) {
+            const subItems = [];
+            for (let j = 0; j < subCount; j++) {
+              const sid = we.menu_subchild_id(hwnd, top, i, j) | 0;
+              const sptr = we.menu_subchild_label_ptr(hwnd, top, i, j) >>> 0;
+              const slen = we.menu_subchild_label_len(hwnd, top, i, j) | 0;
+              let slabel = '';
+              if (sptr && slen > 0) {
+                const bytes = new Uint8Array(memory.buffer, sptr, slen);
+                slabel = Buffer.from(bytes).toString('latin1');
+              }
+              subItems.push(`${j}:${sid}:"${slabel}"`);
+            }
+            sub = ` sub=[${subItems.join(',')}]`;
+          }
+          items.push(`#${i} id=${id} flags=0x${flags.toString(16)} "${label}"${sub}`);
         }
         logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} xy=${x},${y} count=${count} ${items.join(' | ') || '(no items)'}`);
       } else if (ev.action === 'dlg-paint') {

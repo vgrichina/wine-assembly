@@ -698,13 +698,14 @@
   ;;              +12 i32  id (0 for popup bar items; command id otherwise)
   ;;   header per child group:
   ;;     +0  i32  child_count
-  ;;     +4  child_items[child_count] × 24 bytes:
+  ;;     +4  child_items[child_count] × 28 bytes:
   ;;              +0  i32 label_offset
   ;;              +4  i32 label_len
   ;;              +8  i32 shortcut_offset
   ;;              +12 i32 shortcut_len
-  ;;              +16 i32 flags  (bit0=separator, bit1=grayed)
+  ;;              +16 i32 flags  (bit0=separator, bit1=grayed, bit2=checked, bit3=popup)
   ;;              +20 i32 id
+  ;;              +24 i32 child_offset (nested popup header, 0 if none)
   ;;   string bytes appended at the tail
   (global $MENU_DATA_TABLE i32 (i32.const 0x0000AD60))
   ;; WND_DLG_RECORDS — per-window dialog state, parallel to WND_RECORDS slots.
@@ -1198,6 +1199,7 @@
   (global $menu_open_hwnd  (mut i32) (i32.const 0))
   (global $menu_open_top   (mut i32) (i32.const -1))
   (global $menu_open_hover (mut i32) (i32.const -1))
+  (global $menu_open_sub_hover (mut i32) (i32.const -1))
   (global $menu_open_x     (mut i32) (i32.const -1))
   (global $menu_open_y     (mut i32) (i32.const -1))
 

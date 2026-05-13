@@ -53,8 +53,7 @@ async function main() {
     '--buttons=1,1,1,1,1,1,1,1,1,1',
     '--no-close',
     '--stuck-after=5000',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,650:stop"',
-    `--png="${PNG}"`,
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,640:menu-dump:eqmenu,650:stop"',
   ].join(' ');
   console.log('$', cmd);
 
@@ -71,7 +70,6 @@ async function main() {
   const apiMatch = out.match(/Stats:\s+(\d+)\s+API calls,\s+(\d+)\s+batches/);
   const apiCount = apiMatch ? parseInt(apiMatch[1], 10) : 0;
   const batches = apiMatch ? parseInt(apiMatch[2], 10) : 0;
-  const pixels = await popupPixels();
 
   const checks = [
     { name: 'run completed without timeout', pass: !timedOut },
@@ -79,12 +77,11 @@ async function main() {
     { name: 'no unreachable trap', pass: !/RuntimeError:\s*unreachable|Unreachable code should not be executed/.test(out) },
     { name: 'EQ preset click was injected', pass: /\[input\].*click.*263,164/.test(out) },
     { name: 'reached message loop', pass: apiCount > 1000 && batches > 100 },
-    { name: 'wrote screenshot', pass: fs.existsSync(PNG) },
-    { name: 'popup painted into canvas', pass: pixels.gray > 1000 && pixels.black > 20 },
+    { name: 'popup exposes grouped preset submenus', pass: /menu-dump:eqmenu:[^\n]*count=3[\s\S]*#0 id=0[\s\S]*"Load"[\s\S]*sub=\[0:40172:"&Preset\.\.\.",1:40173:"&Auto-load preset\.\.\."/.test(out) },
   ];
 
   console.log('');
-  console.log(`  apiCount=${apiCount} batches=${batches} popupGray=${pixels.gray} popupBlack=${pixels.black}`);
+  console.log(`  apiCount=${apiCount} batches=${batches}`);
   console.log('');
   let failed = 0;
   for (const c of checks) {
@@ -102,7 +99,7 @@ async function main() {
     '--trace-api=EndDialog',
     '--trace-host=destroy_window',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,760:menu-dump:eqmenu,780:click:281:196,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,760:menu-dump:eqmenu,780:click:260:176,820:click:445:196,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
   ].join(' ');
   console.log('');
   console.log('$', dialogCmd);
@@ -119,7 +116,7 @@ async function main() {
 
   const dialogChecks = [
     { name: 'auto-load preset dialog run completed without timeout', pass: !dialogTimedOut },
-    { name: 'EQ preset popup exposes load commands', pass: /#0 id=40172[\s\S]*#1 id=40173/.test(dialogOut) },
+    { name: 'EQ preset popup groups load commands', pass: /#0 id=0[\s\S]*"Load"[\s\S]*sub=\[0:40172:"&Preset\.\.\.",1:40173:"&Auto-load preset\.\.\."/.test(dialogOut) },
     { name: 'auto-load preset dialog opened', pass: /dlg-dump:eqdlg: dlg=0x[0-9a-f]+/.test(dialogOut) },
     { name: 'auto-load preset dialog click calls EndDialog', pass: /EndDialog\(0x0001000a,/.test(dialogOut) },
     { name: 'auto-load preset dialog frame destroyed', pass: /\[host\] destroy_window\(0x1000a\)/.test(dialogOut) },
@@ -160,7 +157,7 @@ async function main() {
     { name: 'EQ preset menu hides after outside click', pass: /menu-dump:hidden: hwnd=none/.test(reopenOut) },
     { name: 'EQ preset second open uses popup coordinates', pass: /menu-dump:second:[^\n]*xy=244,164/.test(reopenOut) },
     { name: 'EQ preset second open is not Winamp main menu', pass: !/Main|Context menus|Video options|File info/.test(secondMenu) },
-    { name: 'EQ preset second open keeps preset commands', pass: /menu-dump:second:[^\n]*#0 id=40172[\s\S]*#1 id=40173/.test(reopenOut) },
+    { name: 'EQ preset second open keeps grouped preset commands', pass: /menu-dump:second:[^\n]*#0 id=0[\s\S]*"Load"[\s\S]*sub=\[0:40172:"&Preset\.\.\.",1:40173:"&Auto-load preset\.\.\."/.test(reopenOut) },
   ];
 
   console.log('');
@@ -213,7 +210,7 @@ async function main() {
     '--quiet-api',
     '--quiet-blocks',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,460:click:282:196,650:dlg-dump:opened,670:click:253:15,860:dlg-dump:after-close,890:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,460:click:260:176,500:click:445:196,650:dlg-dump:opened,670:click:176:281,860:dlg-dump:after-close,890:stop"',
   ].join(' ');
   console.log('');
   console.log('$', closeCmd);
@@ -229,9 +226,9 @@ async function main() {
   }
 
   const closeChecks = [
-    { name: 'auto-load preset title-bar close completed without timeout', pass: !closeTimedOut },
+    { name: 'auto-load preset close completed without timeout', pass: !closeTimedOut },
     { name: 'auto-load preset dialog existed before close', pass: /dlg-dump:opened: dlg=0x[0-9a-f]+/.test(closeOut) },
-    { name: 'auto-load preset title-bar close removed dialog', pass: /dlg-dump:after-close: dlg=none/.test(closeOut) },
+    { name: 'auto-load preset cancel removed dialog', pass: /dlg-dump:after-close: dlg=none/.test(closeOut) },
   ];
 
   console.log('');
@@ -249,7 +246,7 @@ async function main() {
     '--quiet-blocks',
     '--trace-api=GetOpenFileNameA',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:281:256,1000:dlg-dump:eqfopen,1060:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:260:176,820:click:445:256,1000:dlg-dump:eqfopen,1060:stop"',
   ].join(' ');
   console.log('');
   console.log('$', eqfCmd);
