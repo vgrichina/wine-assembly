@@ -39,6 +39,7 @@ const inputSpec = [
   '160:click:150:200',                    // real mouse click on OK
   `280:png:${afterPng}`,
   '300:slot-count:after',
+  '320:stop',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=420 --quiet-api`;

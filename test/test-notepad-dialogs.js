@@ -75,9 +75,9 @@ async function runCase({ name, cmd, title, minColors, minClientInk = 0 }) {
   const args = [
     RUN_JS,
     '--exe=' + NOTEPAD,
-    '--max-batches=3600',
+    '--max-batches=3050',
     '--quiet-api',
-    `--input=3000:post-cmd:${cmd}`,
+    `--input=3000:post-cmd:${cmd},3020:stop`,
     '--png=' + pngBase,
   ];
   let stdout;

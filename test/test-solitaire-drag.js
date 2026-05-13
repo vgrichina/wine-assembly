@@ -41,20 +41,19 @@ const dismiss = (start, count, step) =>
 const mv = (batch, x, y) => `${batch}:mousemove:${x}:${y}`;
 
 const inputSpec = [
-  ...dismiss(50, 20, 40),                         // 50..810: dismiss asserts
-  `900:png:${basePng}`,                           // baseline PNG
-  `1000:mousedown:${PICK_X}:${PICK_Y}`,           // grab card
-  mv(1020, PICK_X + 40,  PICK_Y),
-  mv(1040, PICK_X + 120, PICK_Y + 20),
-  mv(1060, PICK_X + 220, PICK_Y + 40),
-  mv(1080, PICK_X + 320, PICK_Y + 60),
-  mv(1100, PICK_X + 420, PICK_Y + 80),
-  `1120:png:${midPng}`,                           // mid-drag PNG
-  `1200:mouseup:${PICK_X + 420}:${PICK_Y + 80}`,  // release (invalid target → snap back)
-  `1201:png:${endPng}`,                           // final PNG after the release batch
+  ...dismiss(50, 4, 40),                          // dismiss initial assertion dialogs
+  `210:png-raw:${basePng}`,                       // baseline PNG
+  `220:mousedown:${PICK_X}:${PICK_Y}`,            // grab card
+  mv(225, PICK_X + 120, PICK_Y + 20),
+  mv(230, PICK_X + 260, PICK_Y + 50),
+  mv(235, PICK_X + 420, PICK_Y + 80),
+  `240:png-raw:${midPng}`,                        // mid-drag PNG
+  `245:mouseup:${PICK_X + 420}:${PICK_Y + 80}`,   // release (invalid target → snap back)
+  `255:hwnd-png-pixels:65537:${endPng}`,          // main-window PNG after release
+  `256:stop`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=1400`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=270 --quiet-api --quiet-blocks`;
 console.log('$', cmd.replace(ROOT, '.'));
 
 let out = '';

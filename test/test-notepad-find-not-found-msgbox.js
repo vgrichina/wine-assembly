@@ -27,6 +27,7 @@ const input = [
   '155:dlg-dump:message',
   '160:click:206:212',
   '210:slot-count:after-click',
+  '220:stop',
 ].join(',');
 
 const args = [
