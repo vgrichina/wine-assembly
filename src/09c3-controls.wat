@@ -5082,7 +5082,7 @@
                 ;; without dismissing the dropdown. CBS_SIMPLE (variant=1)
                 ;; has no dropdown to close.
                 (if (i32.and
-                      (i32.load offset=32 (local.get $state_w))
+                      (i32.ne (i32.load offset=32 (local.get $state_w)) (i32.const 0))
                       (i32.eqz (global.get $combo_kbd_nav_active)))
                   (then
                     (if (i32.ne (local.get $variant) (i32.const 1))
@@ -6961,7 +6961,7 @@
     ;; Keep the exported/test-driver path consistent with SendMessageA and
     ;; DispatchMessageA: WAT-owned controls paint through the native control
     ;; proc even if the app has subclassed the window.
-    (if (i32.and (local.get $ctrl_class)
+    (if (i32.and (i32.ne (local.get $ctrl_class) (i32.const 0))
                  (i32.eq (local.get $msg) (i32.const 0x000F)))
       (then (return (call $control_wndproc_dispatch
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -7083,7 +7083,8 @@
         (i32.and (i32.ge_s (local.get $py) (local.get $cy))
                  (i32.lt_s (local.get $py) (i32.add (local.get $cy) (local.get $chh))))))
       ;; Button group-box (kind=7) is non-interactive; ignore hits on it.
-      (if (i32.and (local.get $hit) (i32.eq (local.get $cls) (i32.const 1)))
+        (if (i32.and (i32.ne (local.get $hit) (i32.const 0))
+                     (i32.eq (local.get $cls) (i32.const 1)))
         (then
           (if (i32.eq (i32.and (local.get $style) (i32.const 0x0F)) (i32.const 7))
             (then (local.set $hit (i32.const 0))))))

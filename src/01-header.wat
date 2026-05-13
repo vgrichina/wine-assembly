@@ -1159,6 +1159,7 @@
   (global $console_cursor_visible (mut i32) (i32.const 1))
   (global $console_cursor_size (mut i32) (i32.const 25))  ;; percentage
   (global $console_handle (mut i32) (i32.const 0x00030001))  ;; active screen buffer handle
+  (global $ansi_code_page (mut i32) (i32.const 1252))  ;; process ANSI code page
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
 

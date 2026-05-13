@@ -715,9 +715,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 40: GetACP — STUB: unimplemented
+  ;; 40: GetACP — process ANSI code page
   (func $handle_GetACP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1252))
+    (global.set $eax (global.get $ansi_code_page))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -735,9 +735,40 @@
 
   ;; 42: GetCPInfo
   (func $handle_GetCPInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cp i32) (local $info i32)
     ;; CPINFO struct: MaxCharSize(4), DefaultChar[2](2), LeadByte[12](12)
-    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 18))
-    (call $gs32 (local.get $arg1) (i32.const 1)) ;; MaxCharSize = 1 (single-byte)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $cp (call $resolve_code_page (local.get $arg0)))
+    (local.set $info (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $info) (i32.const 18))
+    (i32.store8 offset=4 (local.get $info) (i32.const 0x3F)) ;; DefaultChar = "?"
+    (if (call $is_dbcs_code_page (local.get $cp))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 2)) ;; MaxCharSize = 2
+        (if (i32.eq (local.get $cp) (i32.const 932))
+          (then
+            (i32.store8 offset=6 (local.get $info) (i32.const 0x81))
+            (i32.store8 offset=7 (local.get $info) (i32.const 0x9F))
+            (i32.store8 offset=8 (local.get $info) (i32.const 0xE0))
+            (i32.store8 offset=9 (local.get $info) (i32.const 0xFC)))
+          (else
+            (if (i32.eq (local.get $cp) (i32.const 1361))
+              (then
+                (i32.store8 offset=6 (local.get $info) (i32.const 0x84))
+                (i32.store8 offset=7 (local.get $info) (i32.const 0xD3))
+                (i32.store8 offset=8 (local.get $info) (i32.const 0xD8))
+                (i32.store8 offset=9 (local.get $info) (i32.const 0xDE))
+                (i32.store8 offset=10 (local.get $info) (i32.const 0xE0))
+                (i32.store8 offset=11 (local.get $info) (i32.const 0xF9)))
+              (else
+                (i32.store8 offset=6 (local.get $info) (i32.const 0x81))
+                (i32.store8 offset=7 (local.get $info) (i32.const 0xFE)))))))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 1)))) ;; MaxCharSize = 1
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -1226,7 +1257,7 @@
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
     ;; On real Windows, destroying the focused window gives focus to the next foreground window.
     ;; Only if main_hwnd is valid and different from the destroyed window (may have been promoted).
-    (if (i32.and (local.get $focus_lost)
+    (if (i32.and (i32.ne (local.get $focus_lost) (i32.const 0))
                  (i32.and (i32.ne (global.get $main_hwnd) (i32.const 0))
                           (i32.ne (global.get $main_hwnd) (local.get $arg0))))
       (then
@@ -1676,7 +1707,8 @@
       (then
         (local.set $val (local.get $arg2))
         (local.set $neg (i32.const 0))
-        (if (i32.and (local.get $arg3) (i32.shr_s (local.get $val) (i32.const 31)))
+        (if (i32.and (i32.ne (local.get $arg3) (i32.const 0))
+                     (i32.lt_s (local.get $val) (i32.const 0)))
           (then
             (local.set $neg (i32.const 1))
             (local.set $val (i32.sub (i32.const 0) (local.get $val)))))
@@ -3019,7 +3051,14 @@
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-      (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 32))))))
+      (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 32)))))
+    (else
+      (if (i32.and
+            (i32.and (i32.eqz (global.get $wndproc_addr2))
+                     (i32.ne (local.get $tmp) (global.get $wndproc_addr)))
+            (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+                     (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+        (then (global.set $wndproc_addr2 (local.get $tmp))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -3046,7 +3085,14 @@
     (then
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (local.get $arg0)))
-      (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 28))))))
+      (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 28)))))
+    (else
+      (if (i32.and
+            (i32.and (i32.eqz (global.get $wndproc_addr2))
+                     (i32.ne (local.get $tmp) (global.get $wndproc_addr)))
+            (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+                     (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+        (then (global.set $wndproc_addr2 (local.get $tmp))))))
     (global.set $eax (i32.const 0xC001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -3468,7 +3514,9 @@
     (local $tmp i32) (local $v i32) (local $i i32)
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
-    (if (i32.eqz (global.get $wndproc_addr))
+    (if (i32.and
+          (i32.eqz (global.get $wndproc_addr))
+          (i32.lt_s (call $class_find_slot (call $class_wide_name_key (local.get $arg1))) (i32.const 0)))
     (then
     (local.set $i (global.get $GUEST_BASE))
     (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
@@ -3495,7 +3543,10 @@
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $scan)))))
     ;; Set second wndproc for subsequent windows
-    (if (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0)) (i32.eqz (global.get $wndproc_addr2)))
+    (if (i32.and
+          (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0))
+                   (i32.eqz (global.get $wndproc_addr2)))
+          (i32.lt_s (call $class_find_slot (call $class_wide_name_key (local.get $arg1))) (i32.const 0)))
     (then
     (if (global.get $main_hwnd)  ;; not the first window
     (then
@@ -3540,10 +3591,14 @@
     ))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
-    ;; Register hwnd→wndproc in window table (look up from class table by className)
-    ;; className is wide string for W version, but class_table_lookup_w handles it
-    (if (global.get $wndproc_addr)
-      (then (call $wnd_table_set (global.get $next_hwnd) (global.get $wndproc_addr))))
+    ;; Register hwnd→wndproc in window table, preferring the class table over
+    ;; legacy global WndProc guesses.
+    (local.set $tmp (call $class_table_lookup (call $class_wide_name_key (local.get $arg1))))
+    (if (local.get $tmp)
+      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
+      (else
+        (if (global.get $wndproc_addr)
+          (then (call $wnd_table_set (global.get $next_hwnd) (global.get $wndproc_addr))))))
     ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
     (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
     (then
@@ -3574,11 +3629,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
   )
 
-  ;; 287: RegisterClassW — STUB: unimplemented, return 1
+  ;; 287: RegisterClassW
   (func $handle_RegisterClassW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; RegisterClassW — same layout as RegisterClassA, just Unicode strings
-    (local $tmp i32)
+    (local $tmp i32) (local $class_name_wa i32) (local $slot i32) (local $dst i32)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (local.set $class_name_wa (call $class_wide_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
+    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
+    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
+        (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
@@ -3586,17 +3648,45 @@
       (global.set $wndproc_addr (local.get $tmp))
       (global.set $wndclass_style (call $gl32 (local.get $arg0)))
       (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 28)))))
-    (else (if (i32.and (i32.eqz (global.get $wndproc_addr2))
+    (else (if (i32.and
+      (i32.and (i32.eqz (global.get $wndproc_addr2))
+               (i32.ne (local.get $tmp) (global.get $wndproc_addr)))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
     (then (global.set $wndproc_addr2 (local.get $tmp))))))
-    (global.set $eax (i32.const 0xC001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 288: RegisterClassExW — STUB: unimplemented, return 1
+  ;; 288: RegisterClassExW
   (func $handle_RegisterClassExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32) (local $class_name_wa i32) (local $slot i32) (local $dst i32) (local $src i32)
+    ;; WNDCLASSEXW: cbSize(+0) style(+4) lpfnWndProc(+8) ... lpszClassName(+40)
+    (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (local.set $class_name_wa (call $class_wide_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 40)))))
+    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
+    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
+        (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
+        (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
+        (i32.store (i32.add (local.get $dst) (i32.const 36))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))))
+    (if (i32.and (i32.eqz (global.get $wndproc_addr))
+      (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+               (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+    (then
+      (global.set $wndproc_addr (local.get $tmp))
+      (global.set $wndclass_style (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+      (global.set $wndclass_bg_brush (call $gl32 (i32.add (local.get $arg0) (i32.const 32)))))
+    (else
+      (if (i32.and
+            (i32.and (i32.eqz (global.get $wndproc_addr2))
+                     (i32.ne (local.get $tmp) (global.get $wndproc_addr)))
+            (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
+                     (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
+        (then (global.set $wndproc_addr2 (local.get $tmp))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 289: DefWindowProcW — same as DefWindowProcA
@@ -3894,8 +3984,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 306: GetClassInfoW(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
+  ;; 306: GetClassInfoW(hInstance, lpClassName, lpWndClass)
   (func $handle_GetClassInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $src i32)
+    (local.set $slot (call $class_find_slot (call $class_wide_name_key (local.get $arg1))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $src (call $class_wndclass_addr (local.get $slot)))
+        (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -4174,9 +4273,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 338: IsValidCodePage(CodePage) — emulator uses one code page; report all valid.
+  ;; 338: IsValidCodePage(CodePage)
   (func $handle_IsValidCodePage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $is_supported_code_page (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -4330,9 +4429,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 352: IsDBCSLeadByte(ch) — return FALSE (no DBCS in Western locale)
+  ;; 352: IsDBCSLeadByte(ch)
   (func $handle_IsDBCSLeadByte (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $is_dbcs_lead_byte (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -4691,7 +4790,8 @@
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
     (local.set $empty (call $update_validate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b)))
-    (if (i32.and (local.get $empty) (i32.eq (local.get $arg0) (global.get $main_hwnd)))
+    (if (i32.and (i32.ne (local.get $empty) (i32.const 0))
+                 (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then (global.set $paint_pending (i32.const 0))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -6832,6 +6932,32 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; 782: GetVolumeInformationA — 8 args stdcall, return TRUE with fake data
+  (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa_esp i32)
+    ;; lpVolumeNameBuffer = arg1, nVolumeNameSize = arg2
+    ;; If lpVolumeNameBuffer non-null, write empty string
+    (if (local.get $arg1)
+      (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
+    ;; lpVolumeSerialNumber = arg3 — write fake serial
+    (if (local.get $arg3)
+      (then (call $gs32 (local.get $arg3) (i32.const 0x12345678))))
+    ;; lpMaximumComponentLength = arg4 — write 255
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 255))))
+    ;; lpFileSystemFlags = [esp+24]
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 24)))
+      (then (call $gs32 (i32.load (i32.add (local.get $wa_esp) (i32.const 24))) (i32.const 0x00000003)))) ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
+    ;; lpFileSystemNameBuffer = [esp+28], nFileSystemNameSize = [esp+32]
+    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))
+      (then
+        ;; Write "FAT" as filesystem name
+        (i32.store (call $g2w (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))) (i32.const 0x00544146))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; stdcall 8 args
+  )
+
   ;; 547: OutputDebugStringW — STUB: unimplemented
   (func $handle_OutputDebugStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
@@ -7364,7 +7490,7 @@
     (if (i32.eq (local.get $arg0) (global.get $WNDPROC_BUILTIN))
       (then
         (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg1)))
-        (if (i32.and (local.get $ctrl_class)
+        (if (i32.and (i32.ne (local.get $ctrl_class) (i32.const 0))
                      (i32.ne (local.get $arg2) (i32.const 0x000F)))
           (then
             (global.set $eax (call $control_wndproc_dispatch

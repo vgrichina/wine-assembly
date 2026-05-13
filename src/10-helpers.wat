@@ -606,6 +606,88 @@
       (then (i32.add (local.get $c) (i32.const 0x20)))
       (else (local.get $c))))
 
+  ;; Code page helpers. Default ANSI is CP1252, but tests/hosts can switch to
+  ;; common DBCS pages so MBCS navigation skips trail bytes correctly.
+  (func $resolve_code_page (param $cp i32) (result i32)
+    ;; CP_ACP=0 and CP_THREAD_ACP=3 track the process ANSI page here.
+    (if (i32.or (i32.eqz (local.get $cp)) (i32.eq (local.get $cp) (i32.const 3)))
+      (then (return (global.get $ansi_code_page))))
+    ;; CP_OEMCP=1 follows the console output page in this emulator.
+    (if (i32.eq (local.get $cp) (i32.const 1))
+      (then (return (global.get $console_output_cp))))
+    (local.get $cp))
+
+  (func $is_supported_code_page (param $cp i32) (result i32)
+    (local.set $cp (call $resolve_code_page (local.get $cp)))
+    (if (i32.eq (local.get $cp) (i32.const 1252)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 437)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 932)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 936)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 949)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 950)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 1361)) (then (return (i32.const 1))))
+    (i32.const 0))
+
+  (func $is_dbcs_code_page (param $cp i32) (result i32)
+    (local.set $cp (call $resolve_code_page (local.get $cp)))
+    (if (i32.eq (local.get $cp) (i32.const 932)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 936)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 949)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 950)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $cp) (i32.const 1361)) (then (return (i32.const 1))))
+    (i32.const 0))
+
+  (func $is_dbcs_lead_byte_for_cp (param $cp i32) (param $ch i32) (result i32)
+    (local.set $cp (call $resolve_code_page (local.get $cp)))
+    (local.set $ch (i32.and (local.get $ch) (i32.const 0xFF)))
+    ;; CP932 (Shift-JIS): 0x81-0x9F, 0xE0-0xFC.
+    (if (i32.eq (local.get $cp) (i32.const 932))
+      (then
+        (return
+          (i32.or
+            (i32.and (i32.ge_u (local.get $ch) (i32.const 0x81))
+                     (i32.le_u (local.get $ch) (i32.const 0x9F)))
+            (i32.and (i32.ge_u (local.get $ch) (i32.const 0xE0))
+                     (i32.le_u (local.get $ch) (i32.const 0xFC)))))))
+    ;; CP936/949/950: 0x81-0xFE.
+    (if (i32.or
+          (i32.or (i32.eq (local.get $cp) (i32.const 936))
+                  (i32.eq (local.get $cp) (i32.const 949)))
+          (i32.eq (local.get $cp) (i32.const 950)))
+      (then
+        (return
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 0x81))
+                   (i32.le_u (local.get $ch) (i32.const 0xFE))))))
+    ;; CP1361 (Johab): documented lead ranges used by Windows.
+    (if (i32.eq (local.get $cp) (i32.const 1361))
+      (then
+        (return
+          (i32.or
+            (i32.or
+              (i32.and (i32.ge_u (local.get $ch) (i32.const 0x84))
+                       (i32.le_u (local.get $ch) (i32.const 0xD3)))
+              (i32.and (i32.ge_u (local.get $ch) (i32.const 0xD8))
+                       (i32.le_u (local.get $ch) (i32.const 0xDE))))
+            (i32.and (i32.ge_u (local.get $ch) (i32.const 0xE0))
+                     (i32.le_u (local.get $ch) (i32.const 0xF9)))))))
+    (i32.const 0))
+
+  (func $is_dbcs_lead_byte (param $ch i32) (result i32)
+    (call $is_dbcs_lead_byte_for_cp (global.get $ansi_code_page) (local.get $ch)))
+
+  (func $mbsinc_ptr (param $gp i32) (result i32)
+    (local $wa i32) (local $ch i32)
+    (if (i32.eqz (local.get $gp)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $gp)))
+    (local.set $ch (i32.load8_u (local.get $wa)))
+    (i32.add (local.get $gp)
+      (select
+        (i32.const 2)
+        (i32.const 1)
+        (i32.and
+          (call $is_dbcs_lead_byte (local.get $ch))
+          (i32.ne (i32.load8_u (i32.add (local.get $wa) (i32.const 1))) (i32.const 0))))))
+
   ;; Wide case-insensitive compare
   (func $guest_wcsicmp (param $s1 i32) (param $s2 i32) (result i32)
     (local $i i32) (local $a i32) (local $b i32)
@@ -937,7 +1019,9 @@
     ;; Main-window invalidation historically used $paint_pending while child
     ;; windows used PAINT_FLAGS. The region-driven selector is the single
     ;; paint source now, so mirror main pending into the same flag table.
-    (if (i32.and (global.get $paint_pending) (global.get $main_hwnd))
+    (if (i32.and
+          (i32.ne (global.get $paint_pending) (i32.const 0))
+          (i32.ne (global.get $main_hwnd) (i32.const 0)))
       (then (call $paint_flag_set (global.get $main_hwnd))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
@@ -1381,7 +1465,7 @@
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.and
-          (local.get $parent)
+          (i32.ne (local.get $parent) (i32.const 0))
           (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
       (then
         (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
@@ -1397,7 +1481,7 @@
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.and
-          (local.get $parent)
+          (i32.ne (local.get $parent) (i32.const 0))
           (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
       (then
         (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
@@ -1544,9 +1628,9 @@
       (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
       (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
       (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
-      (if (i32.and
-            (call $wnd_is_effectively_visible (local.get $ch))
-            (i32.eq (call $ctrl_table_get_class (local.get $ch)) (i32.const 1)))
+        (if (i32.and
+              (i32.ne (call $wnd_is_effectively_visible (local.get $ch)) (i32.const 0))
+              (i32.eq (call $ctrl_table_get_class (local.get $ch)) (i32.const 1)))
         (then
           (local.set $st (call $wnd_get_state_ptr (local.get $ch)))
           (if (local.get $st)
@@ -1571,7 +1655,7 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (i32.and
             (i32.and
-              (call $wnd_is_effectively_visible (local.get $ch))
+              (i32.ne (call $wnd_is_effectively_visible (local.get $ch)) (i32.const 0))
               (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000)))) ;; !WS_DISABLED
             (i32.ne (i32.and (local.get $style) (i32.const 0x00010000)) (i32.const 0))) ;; WS_TABSTOP
         (then
@@ -1629,7 +1713,7 @@
     (if (i32.eq (local.get $vk) (i32.const 32))
       (then
         (if (i32.and
-              (local.get $focus)
+              (i32.ne (local.get $focus) (i32.const 0))
               (i32.eq (call $ctrl_table_get_class (local.get $focus)) (i32.const 1)))
           (then
             (local.set $id (call $ctrl_table_get_id (local.get $focus)))
@@ -1645,9 +1729,9 @@
       (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
       (if (i32.and
             (i32.and
-              (local.get $hwnd)
+              (i32.ne (local.get $hwnd) (i32.const 0))
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (local.get $cls)))
-            (call $wnd_is_effectively_visible (local.get $hwnd)))
+            (i32.ne (call $wnd_is_effectively_visible (local.get $hwnd)) (i32.const 0)))
         (then (return (local.get $hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -1656,7 +1740,7 @@
   (func $edit_command_target (result i32)
     (local $target i32)
     (if (i32.and
-          (global.get $focus_hwnd)
+          (i32.ne (global.get $focus_hwnd) (i32.const 0))
           (i32.eq (call $ctrl_table_get_class (global.get $focus_hwnd)) (i32.const 2)))
       (then (return (global.get $focus_hwnd))))
     (local.set $target (call $wnd_first_visible_control_class (i32.const 2)))

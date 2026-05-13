@@ -25,6 +25,8 @@ UNIT=(
   test/test-mat4.js
   test/test-vfs.js
   test/test-storage-registry.js
+  test/test-codepage-dbcs.js
+  test/test-wide-api.js
   test/test-midi-mci.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js

@@ -2,35 +2,51 @@
   ;; C RUNTIME / STRING FUNCTION HANDLERS
   ;; ============================================================
 
-  ;; _mbschr(str, ch) — cdecl, find first occurrence of byte in string
+  ;; _mbschr(str, ch) — cdecl, find first occurrence of byte in MBCS string
   (func $handle__mbschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $ch i32)
+    (local $wa i32) (local $ch i32) (local $cur i32)
     (local.set $wa (call $g2w (local.get $arg0)))
     (local.set $ch (i32.and (local.get $arg1) (i32.const 0xFF)))
     (block $d (loop $l
-      (if (i32.eq (i32.load8_u (local.get $wa)) (local.get $ch))
+      (local.set $cur (i32.load8_u (local.get $wa)))
+      (if (i32.eq (local.get $cur) (local.get $ch))
         (then
           (global.set $eax (i32.add (i32.sub (local.get $wa) (i32.const 0x12000)) (global.get $image_base)))
           (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
           (return)))
-      (br_if $d (i32.eqz (i32.load8_u (local.get $wa))))
-      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br_if $d (i32.eqz (local.get $cur)))
+      (local.set $wa
+        (i32.add (local.get $wa)
+          (select
+            (i32.const 2)
+            (i32.const 1)
+            (i32.and
+              (call $is_dbcs_lead_byte (local.get $cur))
+              (i32.ne (i32.load8_u (i32.add (local.get $wa) (i32.const 1))) (i32.const 0))))))
       (br $l)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 720: _mbsrchr(str, ch) — cdecl, find last occurrence of byte in string
+  ;; 720: _mbsrchr(str, ch) — cdecl, find last occurrence of byte in MBCS string
   (func $handle__mbsrchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $last i32) (local $ch i32)
+    (local $wa i32) (local $last i32) (local $ch i32) (local $cur i32)
     (local.set $wa (call $g2w (local.get $arg0)))
     (local.set $last (i32.const 0))
     (local.set $ch (i32.and (local.get $arg1) (i32.const 0xFF)))
     (block $d (loop $l
-      (if (i32.eq (i32.load8_u (local.get $wa)) (local.get $ch))
+      (local.set $cur (i32.load8_u (local.get $wa)))
+      (if (i32.eq (local.get $cur) (local.get $ch))
         (then (local.set $last (local.get $wa))))
-      (br_if $d (i32.eqz (i32.load8_u (local.get $wa))))
-      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br_if $d (i32.eqz (local.get $cur)))
+      (local.set $wa
+        (i32.add (local.get $wa)
+          (select
+            (i32.const 2)
+            (i32.const 1)
+            (i32.and
+              (call $is_dbcs_lead_byte (local.get $cur))
+              (i32.ne (i32.load8_u (i32.add (local.get $wa) (i32.const 1))) (i32.const 0))))))
       (br $l)))
     ;; Convert WASM addr back to guest addr, or 0 if not found
     (if (local.get $last)
@@ -62,32 +78,6 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 782: GetVolumeInformationA — 8 args stdcall, return TRUE with fake data
-  (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32)
-    ;; lpVolumeNameBuffer = arg1, nVolumeNameSize = arg2
-    ;; If lpVolumeNameBuffer non-null, write empty string
-    (if (local.get $arg1)
-      (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
-    ;; lpVolumeSerialNumber = arg3 — write fake serial
-    (if (local.get $arg3)
-      (then (call $gs32 (local.get $arg3) (i32.const 0x12345678))))
-    ;; lpMaximumComponentLength = arg4 — write 255
-    (if (local.get $arg4)
-      (then (call $gs32 (local.get $arg4) (i32.const 255))))
-    ;; lpFileSystemFlags = [esp+24]
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 24)))
-      (then (call $gs32 (i32.load (i32.add (local.get $wa_esp) (i32.const 24))) (i32.const 0x00000003)))) ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
-    ;; lpFileSystemNameBuffer = [esp+28], nFileSystemNameSize = [esp+32]
-    (if (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))
-      (then
-        ;; Write "FAT" as filesystem name
-        (i32.store (call $g2w (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))) (i32.const 0x00544146))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; stdcall 8 args
-  )
-
   ;; 783: SHGetFileInfoA(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — 5 args stdcall
   ;; Return 0 (failure) — no shell file info available
   (func $handle_SHGetFileInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -95,11 +85,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 721: _mbsinc(ptr) — cdecl, advance to next MBCS character (ASCII: ptr+1)
+  ;; 721: _mbsinc(ptr) — cdecl, advance to next MBCS character
   (func $handle__mbsinc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; For single-byte code pages (CP 1252), just return ptr+1
-    ;; TODO: handle lead bytes for DBCS code pages
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 1)))
+    (global.set $eax (call $mbsinc_ptr (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

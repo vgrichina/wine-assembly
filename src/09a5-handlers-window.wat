@@ -15,7 +15,9 @@
     (local.set $parent_hwnd (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
-    (if (i32.eqz (global.get $wndproc_addr))
+    (if (i32.and
+          (i32.eqz (global.get $wndproc_addr))
+          (i32.lt_s (call $class_find_slot (call $class_name_key (local.get $arg1))) (i32.const 0)))
     (then
     (local.set $i (global.get $GUEST_BASE))
     (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
@@ -42,7 +44,10 @@
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $scan)))))
     ;; Set second wndproc for subsequent windows
-    (if (i32.and (global.get $wndproc_addr) (i32.eqz (global.get $wndproc_addr2)))
+    (if (i32.and
+          (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0))
+                   (i32.eqz (global.get $wndproc_addr2)))
+          (i32.lt_s (call $class_find_slot (call $class_name_key (local.get $arg1))) (i32.const 0)))
     (then
     (if (global.get $main_hwnd)  ;; not the first window
     (then

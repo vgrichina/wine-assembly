@@ -403,6 +403,26 @@
       (then (return (local.get $guest))))
     (call $g2w (local.get $guest)))
 
+  ;; Convert a UTF-16 class-name guest pointer to the byte-string key used by
+  ;; the class table. Most Win32 class names are ASCII; keeping one canonical
+  ;; hash lets RegisterClassW/CreateWindowExW use the same table as A calls.
+  (func $class_wide_name_key (param $guest i32) (result i32)
+    (local $src i32) (local $i i32) (local $ch i32)
+    (if (i32.lt_u (local.get $guest) (i32.const 0x10000))
+      (then (return (local.get $guest))))
+    (local.set $src (call $g2w (local.get $guest)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 255)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src)
+        (i32.shl (local.get $i) (i32.const 1)))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (i32.store8 (i32.add (global.get $TEXT_SCRATCH) (local.get $i))
+        (i32.and (local.get $ch) (i32.const 0xFF)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (global.get $TEXT_SCRATCH) (local.get $i)) (i32.const 0))
+    (global.get $TEXT_SCRATCH))
+
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
     (local $h i32) (local $ch i32)
