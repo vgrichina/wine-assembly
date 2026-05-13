@@ -6953,6 +6953,7 @@
     (local $wp i32) (local $slot i32) (local $ctrl_class i32)
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $result i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
@@ -6991,6 +6992,8 @@
     (local.set $old_esi (global.get $esi))
     (local.set $old_edi (global.get $edi))
     (local.set $old_ebp (global.get $ebp))
+    (local.set $old_handler_set_eip (global.get $handler_set_eip))
+    (local.set $old_steps (global.get $steps))
     ;; Push args + return thunk on guest stack. Wndproc is stdcall ret 0x10
     ;; so it pops these on return; ESP returns to its current value.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
@@ -7014,7 +7017,8 @@
     (global.set $esi (local.get $old_esi))
     (global.set $edi (local.get $old_edi))
     (global.set $ebp (local.get $old_ebp))
-    (global.set $steps (i32.const 0))
+    (global.set $handler_set_eip (local.get $old_handler_set_eip))
+    (global.set $steps (local.get $old_steps))
     (local.get $result)
   )
 
