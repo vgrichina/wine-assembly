@@ -1585,7 +1585,13 @@
           (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
           (return)))
       (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-        (then (global.set $quit_flag (i32.const 1))))
+        (then
+          ;; Real DestroyWindow sends WM_DESTROY before the top-level goes
+          ;; away. MFC apps commonly flush profile/registry state from this
+          ;; teardown path; removing the slot directly skips that cleanup.
+          (drop (call $wnd_send_message (local.get $arg0)
+                  (i32.const 0x0002) (i32.const 0) (i32.const 0)))
+          (global.set $quit_flag (i32.const 1))))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
         (then (global.set $focus_hwnd (i32.const 0))))
       (call $wnd_destroy_recursive (local.get $arg0))

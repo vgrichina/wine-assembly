@@ -1268,6 +1268,7 @@ async function main() {
     traceCallstack: TRACE_CALLSTACK,
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
+    now: () => tickState.batch * 200,
     hasMessage: () => !!(
       inputEvent ||
       (crossThreadMsgs && crossThreadMsgs.length) ||
