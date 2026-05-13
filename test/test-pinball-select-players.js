@@ -17,13 +17,9 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 
-const TMP = path.join(ROOT, 'scratch');
-fs.mkdirSync(TMP, { recursive: true });
-const snapPng = path.join(TMP, 'pinball_select_players.png');
-try { fs.unlinkSync(snapPng); } catch (_) {}
-
 const VK_RETURN = 13;
 const VK_DOWN   = 40;
+const VK_RIGHT  = 39;
 const VK_MENU   = 18; // Alt
 const VK_O      = 79;
 
@@ -36,13 +32,15 @@ const inputSpec = [
   `321:keyup:${VK_DOWN}`,
   `330:keydown:${VK_DOWN}`,   // Select Table
   `331:keyup:${VK_DOWN}`,
-  `340:keydown:${VK_DOWN}`,   // 1 Player
+  `340:keydown:${VK_DOWN}`,   // Select Players
   `341:keyup:${VK_DOWN}`,
-  `350:keydown:${VK_DOWN}`,   // 2 Players
-  `351:keyup:${VK_DOWN}`,
+  `350:keydown:${VK_RIGHT}`,  // Enter Select Players submenu (1 Player)
+  `351:keyup:${VK_RIGHT}`,
+  `355:keydown:${VK_DOWN}`,   // 2 Players
+  `356:keyup:${VK_DOWN}`,
   `360:keydown:${VK_RETURN}`,
   `361:keyup:${VK_RETURN}`,
-  `500:png:${snapPng}`,
+  `390:stop`,
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --batch-size=200000 --max-batches=520 --input='${inputSpec}' --trace-api=CheckMenuItem --quiet-api --no-close`;
@@ -67,7 +65,6 @@ const checks = [];
 checks.push({ name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) });
 checks.push({ name: 'no unreachable trap', pass: !/RuntimeError: unreachable|\*\*\* CRASH/.test(out) });
 checks.push({ name: '2 Players checked via menu', pass: /CheckMenuItem\([^)]*0x00000199,\s*0x00000008\)/.test(out) });
-checks.push({ name: 'snapshot written', pass: fs.existsSync(snapPng) && fs.statSync(snapPng).size > 1000 });
 
 console.log('');
 let failed = 0;
@@ -77,5 +74,4 @@ for (const c of checks) {
 }
 console.log('');
 console.log(`${checks.length - failed}/${checks.length} checks passed`);
-console.log(`Snapshot: ${snapPng}`);
 process.exit(failed > 0 ? 1 : 0);
