@@ -10,6 +10,7 @@ const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const hostJs = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const deployJs = fs.readFileSync(path.join(ROOT, 'tools', 'deploy-berrry.js'), 'utf8');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
+const windowHandlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a5-handlers-window.wat'), 'utf8');
 
 function assertBundled(rel) {
   assert(indexHtml.includes(`'${rel}'`), `index.html app manifest should include ${rel}`);
@@ -58,6 +59,8 @@ assert(!/SKIP_BIN_DIRS\s*=\s*new Set\([^)]*'pinball'/s.test(deployJs), 'deploy s
 assert(!/RCT_PATH_PREFIX/.test(deployJs), 'default deploy should not include debug-only RCT shareware assets');
 assert(!/Pinball sound fallback/.test(exportsWat), 'run loop should not contain Pinball-specific sound fallback');
 assert(!/0x01009895/.test(exportsWat), 'run loop should not trap Pinball sound-request EIP');
+assert(!/Pinball flag poke/.test(windowHandlersWat), 'window handlers should not contain Pinball-specific gameplay flag pokes');
+assert(!/0x1024fe0|0x1024ff8|0x01007264/.test(windowHandlersWat), 'window handlers should not poke Pinball-specific guest addresses');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
