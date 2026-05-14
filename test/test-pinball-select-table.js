@@ -19,12 +19,13 @@ if (!fs.existsSync(EXE)) {
 
 const TMP = path.join(ROOT, 'scratch');
 fs.mkdirSync(TMP, { recursive: true });
+const PINBALL_HWND = 0x10002;
 const snapPng = path.join(TMP, 'pinball_select_table.png');
 try { fs.unlinkSync(snapPng); } catch (_) {}
 
 const inputSpec = [
   `300:post-cmd:405`,  // Options > Select Table
-  `500:png:${snapPng}`,
+  `500:hwnd-png-pixels:${PINBALL_HWND}:${snapPng}`,
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --batch-size=200000 --max-batches=520 --input='${inputSpec}' --no-close`;

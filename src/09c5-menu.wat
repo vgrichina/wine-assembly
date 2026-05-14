@@ -475,6 +475,50 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=12 (local.get $it)))
 
+  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every item in
+  ;; one child header, recursing into cascading submenus. Returns the first
+  ;; matched item's previous state (MF_CHECKED=8 or MF_UNCHECKED=0), or -1
+  ;; if nothing matched.
+  (func $menu_group_set_check
+        (param $blob_w i32) (param $hdr i32) (param $id i32) (param $check i32)
+        (result i32)
+    (local $cc i32) (local $i i32) (local $it i32) (local $flags i32)
+    (local $child_off i32) (local $r i32) (local $prev i32)
+    (local.set $prev (i32.const -1))
+    (local.set $cc (i32.load (local.get $hdr)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cc)))
+      (local.set $it (i32.add (local.get $hdr)
+                       (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 28)))))
+      (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
+        (then
+          (local.set $flags (i32.load offset=16 (local.get $it)))
+          (if (i32.eq (local.get $prev) (i32.const -1))
+            (then
+              (local.set $prev
+                (select (i32.const 8) (i32.const 0)
+                  (i32.ne (i32.and (local.get $flags) (i32.const 0x04)) (i32.const 0))))))
+          (if (local.get $check)
+            (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
+            (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
+          (i32.store offset=16 (local.get $it) (local.get $flags))))
+      (local.set $child_off (i32.load offset=24 (local.get $it)))
+      (if (local.get $child_off)
+        (then
+          (local.set $r
+            (call $menu_group_set_check
+              (local.get $blob_w)
+              (i32.add (local.get $blob_w) (local.get $child_off))
+              (local.get $id)
+              (local.get $check)))
+          (if (i32.and
+                (i32.eq (local.get $prev) (i32.const -1))
+                (i32.ne (local.get $r) (i32.const -1)))
+            (then (local.set $prev (local.get $r))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $prev))
+
   ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every child
   ;; item in this blob whose command id matches $id. Returns the item's
   ;; previous checked state (MF_CHECKED=8 or MF_UNCHECKED=0) for the
@@ -482,10 +526,8 @@
   (func $menu_blob_set_check
         (param $blob_w i32) (param $id i32) (param $check i32) (result i32)
     (local $bar_count i32) (local $i i32) (local $bar_item i32)
-    (local $hdr_off i32) (local $hdr i32) (local $cc i32) (local $j i32)
-    (local $it i32) (local $flags i32) (local $found i32) (local $prev i32)
-    (local.set $found (i32.const 0))
-    (local.set $prev  (i32.const 0))
+    (local $hdr_off i32) (local $r i32) (local $prev i32)
+    (local.set $prev (i32.const -1))
     (local.set $bar_count (i32.load (local.get $blob_w)))
     (local.set $i (i32.const 0))
     (block $done (loop $bar
@@ -495,32 +537,19 @@
       (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
       (if (local.get $hdr_off)
         (then
-          (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
-          (local.set $cc (i32.load (local.get $hdr)))
-          (local.set $j (i32.const 0))
-          (block $cdone (loop $c
-            (br_if $cdone (i32.ge_u (local.get $j) (local.get $cc)))
-            (local.set $it (i32.add (local.get $hdr)
-                             (i32.add (i32.const 4) (i32.mul (local.get $j) (i32.const 28)))))
-            (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
-              (then
-                (local.set $flags (i32.load offset=16 (local.get $it)))
-                (if (i32.eqz (local.get $found))
-                  (then
-                    (if (i32.and (local.get $flags) (i32.const 0x04))
-                      (then (local.set $prev (i32.const 8))))
-                    (local.set $found (i32.const 1))))
-                (if (local.get $check)
-                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
-                  (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
-                (i32.store offset=16 (local.get $it) (local.get $flags))))
-            (local.set $j (i32.add (local.get $j) (i32.const 1)))
-            (br $c)))))
+          (local.set $r
+            (call $menu_group_set_check
+              (local.get $blob_w)
+              (i32.add (local.get $blob_w) (local.get $hdr_off))
+              (local.get $id)
+              (local.get $check)))
+          (if (i32.and
+                (i32.eq (local.get $prev) (i32.const -1))
+                (i32.ne (local.get $r) (i32.const -1)))
+            (then (local.set $prev (local.get $r))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $bar)))
-    (if (local.get $found)
-      (then (return (local.get $prev))))
-    (i32.const -1))
+    (local.get $prev))
 
   ;; CheckMenuRadioItem by submenu position. Fake submenu handles encode
   ;; GetSubMenu(hMenu,nPos) as low-word | ((nPos+1)<<16), so $tidx is
@@ -561,13 +590,44 @@
       (br $scan)))
     (i32.const 1))
 
+  (func $menu_group_check_radio_cmd
+        (param $blob_w i32) (param $hdr i32)
+        (param $lo i32) (param $hi i32) (param $check i32) (result i32)
+    (local $cc i32) (local $i i32) (local $it i32) (local $flags i32)
+    (local $id i32) (local $child_off i32) (local $changed i32)
+    (local.set $cc (i32.load (local.get $hdr)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cc)))
+      (local.set $it (i32.add (local.get $hdr)
+                       (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 28)))))
+      (local.set $id (i32.load offset=20 (local.get $it)))
+      (if (i32.and (i32.ge_u (local.get $id) (local.get $lo))
+                   (i32.le_u (local.get $id) (local.get $hi)))
+        (then
+          (local.set $flags (i32.load offset=16 (local.get $it)))
+          (if (i32.eq (local.get $id) (local.get $check))
+            (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
+            (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
+          (i32.store offset=16 (local.get $it) (local.get $flags))
+          (local.set $changed (i32.const 1))))
+      (local.set $child_off (i32.load offset=24 (local.get $it)))
+      (if (local.get $child_off)
+        (then
+          (if (call $menu_group_check_radio_cmd
+                (local.get $blob_w)
+                (i32.add (local.get $blob_w) (local.get $child_off))
+                (local.get $lo) (local.get $hi) (local.get $check))
+            (then (local.set $changed (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $changed))
+
   ;; CheckMenuRadioItem by command id. Clears every command id in the
-  ;; requested range and checks idCheck.
+  ;; requested range and checks idCheck, including nested cascading submenus.
   (func $menu_blob_check_radio_cmd
         (param $blob_w i32) (param $first i32) (param $last i32) (param $check i32) (result i32)
     (local $bar_count i32) (local $i i32) (local $bar_item i32)
-    (local $hdr_off i32) (local $hdr i32) (local $cc i32) (local $j i32)
-    (local $it i32) (local $flags i32) (local $id i32) (local $lo i32) (local $hi i32)
+    (local $hdr_off i32) (local $lo i32) (local $hi i32)
     (local $changed i32)
     (local.set $lo
       (select (local.get $first) (local.get $last)
@@ -584,25 +644,11 @@
       (local.set $hdr_off (i32.load offset=8 (local.get $bar_item)))
       (if (local.get $hdr_off)
         (then
-          (local.set $hdr (i32.add (local.get $blob_w) (local.get $hdr_off)))
-          (local.set $cc (i32.load (local.get $hdr)))
-          (local.set $j (i32.const 0))
-          (block $cdone (loop $child
-            (br_if $cdone (i32.ge_u (local.get $j) (local.get $cc)))
-            (local.set $it (i32.add (local.get $hdr)
-                             (i32.add (i32.const 4) (i32.mul (local.get $j) (i32.const 28)))))
-            (local.set $id (i32.load offset=20 (local.get $it)))
-            (if (i32.and (i32.ge_u (local.get $id) (local.get $lo))
-                         (i32.le_u (local.get $id) (local.get $hi)))
-              (then
-                (local.set $flags (i32.load offset=16 (local.get $it)))
-                (if (i32.eq (local.get $id) (local.get $check))
-                  (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
-                  (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
-                (i32.store offset=16 (local.get $it) (local.get $flags))
-                (local.set $changed (i32.const 1))))
-            (local.set $j (i32.add (local.get $j) (i32.const 1)))
-            (br $child)))))
+          (if (call $menu_group_check_radio_cmd
+                (local.get $blob_w)
+                (i32.add (local.get $blob_w) (local.get $hdr_off))
+                (local.get $lo) (local.get $hi) (local.get $check))
+            (then (local.set $changed (i32.const 1))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $bar)))
     (local.get $changed))
@@ -748,6 +794,32 @@
             (global.get $PAINT_SCRATCH)
             (i32.const 0x25) (i32.const 0))))
 
+  (func $menu_draw_check_glyph (param $hdc i32) (param $dx i32)
+                               (param $iy i32) (param $hover i32)
+    (drop (call $host_gdi_select_object (local.get $hdc)
+            (if (result i32) (local.get $hover)
+              (then (i32.const 0x30016))   ;; WHITE_PEN on hover
+              (else (i32.const 0x30017))))) ;; BLACK_PEN otherwise
+    (drop (call $host_gdi_move_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 5))
+            (i32.add (local.get $iy) (i32.const 10))))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 8))
+            (i32.add (local.get $iy) (i32.const 14))))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 14))
+            (i32.add (local.get $iy) (i32.const 6))))
+    (drop (call $host_gdi_move_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 5))
+            (i32.add (local.get $iy) (i32.const 11))))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 8))
+            (i32.add (local.get $iy) (i32.const 15))))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 14))
+            (i32.add (local.get $iy) (i32.const 7))))
+    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021))))
+
   ;; ============================================================
   ;; $menu_paint_dropdown — draw the dropdown for top-level item
   ;; $tidx at (dx, dy). Width is fixed at 180, height = count*20+4.
@@ -815,6 +887,11 @@
                 (else (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
           (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
           (local.set $label_len (i32.load offset=4 (local.get $it)))
+          (if (i32.and (local.get $flags) (i32.const 0x04))
+            (then
+              (call $menu_draw_check_glyph
+                (local.get $hdc) (local.get $dx) (local.get $iy)
+                (i32.eq (local.get $i) (local.get $hover_sidx)))))
           (i32.store           (global.get $PAINT_SCRATCH)
                                (i32.add (local.get $dx) (i32.const 20)))
           (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $iy))
@@ -1617,7 +1694,7 @@
     (local $hwnd i32) (local $top i32)
     (local $bar_x i32) (local $bar_y i32) (local $bar_h i32)
     (local $dx i32) (local $dy i32) (local $idx i32)
-    (local $sdx i32) (local $sdy i32)
+    (local $sdx i32) (local $sdy i32) (local $subn i32)
     (local.set $hwnd (global.get $menu_open_hwnd))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $top (global.get $menu_open_top))
@@ -1626,6 +1703,40 @@
     (local.set $bar_h (call $menu_bar_screen_h))
     (local.set $dx (call $menu_dropdown_x (local.get $hwnd) (local.get $top)))
     (local.set $dy (call $menu_dropdown_y (local.get $hwnd)))
+    ;; When a cascading submenu is open, prefer the submenu tracking region
+    ;; over lower parent rows on the right side of the dropdown. Otherwise a
+    ;; diagonal move toward "2 Players" can briefly hit "&Sounds" and close
+    ;; the cascade before the cursor reaches the child menu.
+    (if (i32.ge_s (global.get $menu_open_hover) (i32.const 0))
+      (then
+        (local.set $subn (call $menu_child_sub_count
+          (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)))
+        (if (i32.gt_s (local.get $subn) (i32.const 0))
+          (then
+            (local.set $sdx (i32.add (local.get $dx) (i32.const 180)))
+            (local.set $sdy
+              (i32.add (i32.add (local.get $dy) (i32.const 2))
+                       (i32.mul (global.get $menu_open_hover) (i32.const 20))))
+            (local.set $idx
+              (i32.and
+                (i32.and
+                  (i32.ge_s (local.get $sx) (i32.add (local.get $dx) (i32.const 120)))
+                  (i32.lt_s (local.get $sx) (i32.add (local.get $sdx) (i32.const 178))))
+                (i32.and
+                  (i32.ge_s (local.get $sy) (local.get $sdy))
+                  (i32.lt_s (local.get $sy)
+                    (i32.add (local.get $sdy)
+                      (i32.add (i32.mul (local.get $subn) (i32.const 20))
+                               (i32.const 4)))))))
+            (if (local.get $idx)
+              (then
+                (local.set $idx (call $menu_hittest_submenu
+                  (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)
+                  (local.get $sdx) (local.get $sdy)
+                  (local.get $sx) (local.get $sy)))
+                (if (i32.ge_s (local.get $idx) (i32.const 0))
+                  (then (global.set $menu_open_sub_hover (local.get $idx))))
+                (return (global.get $menu_open_hover))))))))
     (local.set $idx (call $menu_hittest_dropdown
       (local.get $hwnd) (local.get $top)
       (local.get $dx) (local.get $dy)
@@ -1648,7 +1759,26 @@
         (if (i32.ge_s (local.get $idx) (i32.const 0))
           (then
             (global.set $menu_open_sub_hover (local.get $idx))
-            (return (global.get $menu_open_hover))))))
+            (return (global.get $menu_open_hover))))
+        ;; Keep the parent submenu open while the pointer crosses the small
+        ;; non-client gap between the parent item and its cascading submenu.
+        (local.set $subn (call $menu_child_sub_count
+          (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)))
+        (local.set $idx
+          (i32.and
+            (i32.gt_s (local.get $subn) (i32.const 0))
+            (i32.and
+              (i32.and
+                (i32.ge_s (local.get $sx) (i32.add (local.get $dx) (i32.const 178)))
+                (i32.lt_s (local.get $sx) (i32.add (local.get $sdx) (i32.const 178))))
+              (i32.and
+                (i32.ge_s (local.get $sy) (local.get $sdy))
+                (i32.lt_s (local.get $sy)
+                  (i32.add (local.get $sdy)
+                    (i32.add (i32.mul (local.get $subn) (i32.const 20))
+                             (i32.const 4))))))))
+        (if (local.get $idx)
+          (then (return (global.get $menu_open_hover))))))
     (global.set $menu_open_hover (i32.const -1))
     (global.set $menu_open_sub_hover (i32.const -1))
     (i32.const -1))

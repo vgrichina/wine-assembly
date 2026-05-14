@@ -2365,6 +2365,7 @@ async function main() {
         const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;
         const top = we.menu_open_top ? (we.menu_open_top() | 0) : -1;
         const hover = we.menu_open_hover ? (we.menu_open_hover() | 0) : -1;
+        const subHover = we.menu_open_sub_hover ? (we.menu_open_sub_hover() | 0) : -1;
         const x = we.menu_open_x ? (we.menu_open_x() | 0) : -1;
         const y = we.menu_open_y ? (we.menu_open_y() | 0) : -1;
         const count = hwnd && we.menu_child_count ? (we.menu_child_count(hwnd, top) | 0) : 0;
@@ -2385,6 +2386,7 @@ async function main() {
             const subItems = [];
             for (let j = 0; j < subCount; j++) {
               const sid = we.menu_subchild_id(hwnd, top, i, j) | 0;
+              const sflags = we.menu_subchild_flags ? (we.menu_subchild_flags(hwnd, top, i, j) | 0) : 0;
               const sptr = we.menu_subchild_label_ptr(hwnd, top, i, j) >>> 0;
               const slen = we.menu_subchild_label_len(hwnd, top, i, j) | 0;
               let slabel = '';
@@ -2392,13 +2394,13 @@ async function main() {
                 const bytes = new Uint8Array(memory.buffer, sptr, slen);
                 slabel = Buffer.from(bytes).toString('latin1');
               }
-              subItems.push(`${j}:${sid}:"${slabel}"`);
+              subItems.push(`${j}:${sid}:"${slabel}"${sflags ? `:flags=0x${sflags.toString(16)}` : ''}`);
             }
             sub = ` sub=[${subItems.join(',')}]`;
           }
           items.push(`#${i} id=${id} flags=0x${flags.toString(16)} "${label}"${sub}`);
         }
-        logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} xy=${x},${y} count=${count} ${items.join(' | ') || '(no items)'}`);
+        logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} subhover=${subHover} xy=${x},${y} count=${count} ${items.join(' | ') || '(no items)'}`);
       } else if (ev.action === 'dlg-paint') {
         const we = instance.exports;
         let dlg = 0;
@@ -2801,6 +2803,7 @@ async function main() {
         renderer.handleMouseUp(ev.x, ev.y, 1);
         logs.push(`[input] mouseup ${ev.x},${ev.y} at batch ${batch}`);
       } else if (ev.action === 'mousemove' && renderer && renderer.handleMouseMove) {
+        if (renderer.handleMenuHover) renderer.handleMenuHover(ev.x, ev.y);
         renderer.handleMouseMove(ev.x, ev.y);
         logs.push(`[input] mousemove ${ev.x},${ev.y} at batch ${batch}`);
       } else if (renderer) {

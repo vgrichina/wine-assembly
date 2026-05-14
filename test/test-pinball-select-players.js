@@ -2,7 +2,9 @@
 // Pinball Options > Select Players regression.
 //
 // Select Players is a cascading submenu under Options. The menu loader
-// must expose its player-count commands to the keyboard menu path.
+// must expose its player-count commands to the keyboard menu path, and
+// the mouse path must keep the cascade open long enough to click a
+// nested player-count command.
 
 const fs = require('fs');
 const path = require('path');
@@ -17,9 +19,6 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 
-const VK_RETURN = 13;
-const VK_DOWN   = 40;
-const VK_RIGHT  = 39;
 const VK_MENU   = 18; // Alt
 const VK_O      = 79;
 
@@ -28,22 +27,23 @@ const inputSpec = [
   `301:keydown:${VK_O}`,      // Alt+O opens Options.
   `302:keyup:${VK_O}`,
   `303:keyup:${VK_MENU}`,
-  `320:keydown:${VK_DOWN}`,   // Full Screen
-  `321:keyup:${VK_DOWN}`,
-  `330:keydown:${VK_DOWN}`,   // Select Table
-  `331:keyup:${VK_DOWN}`,
-  `340:keydown:${VK_DOWN}`,   // Select Players
-  `341:keyup:${VK_DOWN}`,
-  `350:keydown:${VK_RIGHT}`,  // Enter Select Players submenu (1 Player)
-  `351:keyup:${VK_RIGHT}`,
-  `355:keydown:${VK_DOWN}`,   // 2 Players
-  `356:keyup:${VK_DOWN}`,
-  `360:keydown:${VK_RETURN}`,
-  `361:keyup:${VK_RETURN}`,
-  `390:stop`,
+  `315:menu-dump:open`,
+  `320:mousemove:90:92`,      // Hover Select Players.
+  `321:menu-dump:hover-parent`,
+  `330:mousemove:228:114`,    // Cross the small gap into the cascade.
+  `331:menu-dump:hover-gap`,
+  `340:mousemove:250:114`,    // Hover 2 Players.
+  `341:menu-dump:hover-sub`,
+  `350:click:250:114`,
+  `380:keydown:${VK_MENU}`,
+  `381:keydown:${VK_O}`,      // Reopen Options to inspect check state.
+  `382:keyup:${VK_O}`,
+  `383:keyup:${VK_MENU}`,
+  `390:menu-dump:after-select`,
+  `410:stop`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --batch-size=200000 --max-batches=520 --input='${inputSpec}' --trace-api=CheckMenuItem --quiet-api --no-close`;
+const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --batch-size=200000 --max-batches=520 --input='${inputSpec}' --quiet-api --quiet-blocks --no-close`;
 console.log('$', cmd);
 
 let out = '';
@@ -64,7 +64,10 @@ for (const l of out.split('\n')) {
 const checks = [];
 checks.push({ name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) });
 checks.push({ name: 'no unreachable trap', pass: !/RuntimeError: unreachable|\*\*\* CRASH/.test(out) });
-checks.push({ name: '2 Players checked via menu', pass: /CheckMenuItem\([^)]*0x00000199,\s*0x00000008\)/.test(out) });
+checks.push({ name: 'Select Players parent hovered', pass: /menu-dump:hover-parent:[^\n]*hover=2/.test(out) });
+checks.push({ name: 'Select Players hover survives cascade gap', pass: /menu-dump:hover-gap:[^\n]*hover=2/.test(out) });
+checks.push({ name: '2 Players submenu item hovered', pass: /menu-dump:hover-sub:[^\n]*hover=2 subhover=1/.test(out) });
+checks.push({ name: '2 Players checked in cascaded menu state', pass: /menu-dump:after-select:[^\n]*1:409:"&2 Players":flags=0x4/.test(out) });
 
 console.log('');
 let failed = 0;
