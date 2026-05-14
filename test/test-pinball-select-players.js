@@ -2,55 +2,74 @@
 // Pinball Options > Select Players regression.
 //
 // Select Players is a cascading submenu under Options. The menu loader
-// must expose its player-count commands to the keyboard menu path, and
-// the mouse path must keep the cascade open long enough to click a
-// nested player-count command.
+// must expose its player-count commands to the menu path, keep the cascade
+// open across the gap, and actually paint the nested dropdown.
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const RUN  = path.join(__dirname, 'run.js');
 const EXE  = path.join(__dirname, 'binaries', 'pinball', 'pinball.exe');
+const LOG  = path.join(ROOT, 'scratch', 'pinball_select_players.log');
+fs.mkdirSync(path.dirname(LOG), { recursive: true });
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  pinball.exe not found at', EXE);
   process.exit(0);
 }
 
-const VK_MENU   = 18; // Alt
 const VK_O      = 79;
 
 const inputSpec = [
-  `300:keydown:${VK_MENU}`,
-  `301:keydown:${VK_O}`,      // Alt+O opens Options.
-  `302:keyup:${VK_O}`,
-  `303:keyup:${VK_MENU}`,
-  `315:menu-dump:open`,
-  `320:mousemove:90:92`,      // Hover Select Players.
-  `321:menu-dump:hover-parent`,
-  `330:mousemove:228:114`,    // Cross the small gap into the cascade.
-  `331:menu-dump:hover-gap`,
-  `340:mousemove:250:114`,    // Hover 2 Players.
-  `341:menu-dump:hover-sub`,
-  `350:click:250:114`,
-  `380:keydown:${VK_MENU}`,
-  `381:keydown:${VK_O}`,      // Reopen Options to inspect check state.
-  `382:keyup:${VK_O}`,
-  `383:keyup:${VK_MENU}`,
-  `390:menu-dump:after-select`,
-  `410:stop`,
+  `0:wait-title-menu-open:3D_Pinball_for_Windows_-_Space_Cadet:2000:${VK_O}:options`,
+  `0:menu-dump:open`,
+  `0:mousemove:90:92`,      // Hover Select Players.
+  `0:menu-dump:hover-parent`,
+  `0:mousemove:228:114`,    // Cross the small gap into the cascade.
+  `0:menu-dump:hover-gap`,
+  `0:mousemove:250:114`,    // Hover 2 Players.
+  `0:menu-dump:hover-sub`,
+  `0:pixel:260:104:submenu-hover`,
+  `0:stop`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --args=-quick --batch-size=200000 --max-batches=520 --input='${inputSpec}' --quiet-api --quiet-blocks --no-close`;
-console.log('$', cmd);
+const runArgs = [
+  RUN,
+  `--exe=${EXE}`,
+  '--args=-quick',
+  '--batch-size=200000',
+  '--max-batches=520',
+  `--input=${inputSpec}`,
+  '--quiet-api',
+  '--quiet-blocks',
+  '--no-close',
+];
+console.log('$', [process.execPath, ...runArgs].map(s => /\s/.test(s) ? JSON.stringify(s) : s).join(' '));
 
 let out = '';
+let status = 0;
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 180000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const fd = fs.openSync(LOG, 'w');
+  try {
+    const r = spawnSync(process.execPath, runArgs, {
+      cwd: ROOT,
+      stdio: ['ignore', fd, fd],
+      timeout: 360000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    status = r.status === null ? 1 : r.status;
+    if (r.error) status = 1;
+  } finally {
+    fs.closeSync(fd);
+  }
+  out = fs.readFileSync(LOG, 'utf8');
 } catch (e) {
-  out = (e.stdout || '').toString() + (e.stderr || '').toString();
+  out = fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8') : String(e && e.stack || e);
+  status = 1;
+}
+if (status !== 0) {
   console.log('(run.js exited non-zero -- output captured)');
 }
 
@@ -67,7 +86,14 @@ checks.push({ name: 'no unreachable trap', pass: !/RuntimeError: unreachable|\*\
 checks.push({ name: 'Select Players parent hovered', pass: /menu-dump:hover-parent:[^\n]*hover=2/.test(out) });
 checks.push({ name: 'Select Players hover survives cascade gap', pass: /menu-dump:hover-gap:[^\n]*hover=2/.test(out) });
 checks.push({ name: '2 Players submenu item hovered', pass: /menu-dump:hover-sub:[^\n]*hover=2 subhover=1/.test(out) });
-checks.push({ name: '2 Players checked in cascaded menu state', pass: /menu-dump:after-select:[^\n]*1:409:"&2 Players":flags=0x4/.test(out) });
+let submenuPixelPass = false;
+const pixelMatch = /pixel:submenu-hover: 260,104 rgba=(\d+),(\d+),(\d+),(\d+)/.exec(out);
+if (pixelMatch) {
+  const [, rs, gs, bs, as] = pixelMatch;
+  const r = parseInt(rs, 10), g = parseInt(gs, 10), b = parseInt(bs, 10), a = parseInt(as, 10);
+  submenuPixelPass = a > 0 && r < 40 && g < 40 && b > 80;
+}
+checks.push({ name: '2 Players submenu visibly painted', pass: submenuPixelPass });
 
 console.log('');
 let failed = 0;

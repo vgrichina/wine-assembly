@@ -375,6 +375,19 @@ async function main() {
           path: parts.slice(6).join(':'),
           startBatch: batch,
         });
+      } else if (kind === 'wait-title-menu-open') {
+        // B:wait-title-menu-open:TITLE:LIMIT:VK[:LABEL]
+        // Wait for a visible window title, then synchronously open a menubar
+        // dropdown via Alt+VK before later same-batch menu actions run.
+        scheduledInput.push({
+          batch,
+          action: 'wait-title-menu-open',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          vk: parseInt(parts[4]) || 0,
+          label: parts[5] || '',
+          startBatch: batch,
+        });
       } else if (kind === 'wait-title-snapshot') {
         // B:wait-title-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
         // Wait for a window title, then dump the top dialog, write a raw
@@ -436,6 +449,10 @@ async function main() {
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
+      } else if (kind === 'pixel') {
+        // B:pixel:X:Y[:LABEL] — repaint and log one canvas pixel.
+        scheduledInput.push({ batch, action: 'pixel',
+          x: parseInt(parts[2]), y: parseInt(parts[3]), label: parts[4] || '' });
       } else if (kind === 'png-raw') {
         // B:png-raw:PATH — write the already-composited canvas without forcing repaint.
         scheduledInput.push({ batch, action: 'png-raw', path: parts.slice(2).join(':') });
@@ -2458,6 +2475,30 @@ async function main() {
         } catch (e) {
           logs.push(`[input] hwnd-png-pixels FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'wait-title-menu-open') {
+        const title = ev.title || '';
+        const wins = renderer ? Object.values(renderer.windows || {}) : [];
+        const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
+        if (found) {
+          logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+          if (renderer && renderer.handleKeyDown && ev.vk) {
+            renderer.wasm = found.wasm || renderer.wasm;
+            renderer.wasmMemory = found.wasmMemory || renderer.wasmMemory;
+            if (typeof renderer._ensureWatMenu === 'function') renderer._ensureWatMenu(found);
+            renderer.handleKeyDown(18);
+            renderer.handleKeyDown(ev.vk);
+            logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: Alt+${ev.vk} at batch ${batch}`);
+          } else {
+            logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: unable to open menu at batch ${batch}`);
+          }
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          ev.batch = batch + 1;
+          for (const pending of scheduledInput) pending.batch++;
+          scheduledInput.push(ev);
+          scheduledInput.sort((a, b) => (a.batch - b.batch) || (a === ev ? -1 : (b === ev ? 1 : 0)));
+        } else {
+          logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: TIMEOUT "${title}" at batch ${batch}`);
+        }
       } else if (ev.action === 'wait-title') {
         const title = ev.title || '';
         const wins = renderer ? Object.values(renderer.windows || {}) : [];
@@ -2677,6 +2718,14 @@ async function main() {
           logs.push(`[input] png-raw ${ev.path} (${buf.length} bytes) at batch ${batch}`);
         } catch (e) {
           logs.push(`[input] png-raw FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'pixel' && renderer && renderer.canvas) {
+        try {
+          if (typeof renderer.repaint === 'function') renderer.repaint();
+          const data = renderer.canvas.getContext('2d').getImageData(ev.x, ev.y, 1, 1).data;
+          logs.push(`[input] pixel${ev.label ? ':' + ev.label : ''}: ${ev.x},${ev.y} rgba=${data[0]},${data[1]},${data[2]},${data[3]} at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] pixel FAILED ${ev.x},${ev.y}: ${e.message} at batch ${batch}`);
         }
       } else if (ev.action === 'png-pixels' && renderer && renderer.canvas && PNG) {
         try {

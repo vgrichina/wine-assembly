@@ -1058,7 +1058,7 @@
                 (i32.eq (local.get $i) (local.get $hover_cidx)))))))
       (local.set $iy (i32.add (local.get $iy) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan))))
+      (br $scan)))
     (if (i32.and (i32.ge_s (local.get $hover_cidx) (i32.const 0))
                  (i32.lt_s (local.get $hover_cidx) (local.get $count)))
       (then
