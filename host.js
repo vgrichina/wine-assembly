@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '130';
+  static SOURCE_VERSION = '131';
 
   constructor() {
     this.instance = null;
@@ -29,6 +29,7 @@ class WineAssembly {
     const AC = (typeof AudioContext !== 'undefined') ? AudioContext :
                (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
     if (!AC) return null;
+    if (this._audioCtx && this._audioCtx.state === 'closed') this._audioCtx = null;
     if (!this._audioCtx) {
       try { this._audioCtx = new AC({ sampleRate: 44100 }); }
       catch (_) {

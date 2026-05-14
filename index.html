@@ -577,21 +577,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=130"></script>
-  <script src="lib/dib.js?v=130"></script>
-  <script src="lib/resources-icon.js?v=130"></script>
-  <script src="lib/renderer-input.js?v=130"></script>
-  <script src="lib/renderer.js?v=130"></script>
-  <script src="lib/dll-loader.js?v=130"></script>
-  <script src="lib/storage.js?v=130"></script>
-  <script src="lib/filesystem.js?v=130"></script>
-  <script src="lib/hlp-parser.js?v=130"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=130"></script>
-  <script src="lib/host-imports.js?v=130"></script>
-  <script src="lib/compile-wat.js?v=130"></script>
-  <script src="lib/thread-manager.js?v=130"></script>
-  <script src="host.js?v=130"></script>
-  <script src="lib/recorder.js?v=130"></script>
+  <script src="lib/mem-utils.js?v=131"></script>
+  <script src="lib/dib.js?v=131"></script>
+  <script src="lib/resources-icon.js?v=131"></script>
+  <script src="lib/renderer-input.js?v=131"></script>
+  <script src="lib/renderer.js?v=131"></script>
+  <script src="lib/dll-loader.js?v=131"></script>
+  <script src="lib/storage.js?v=131"></script>
+  <script src="lib/filesystem.js?v=131"></script>
+  <script src="lib/hlp-parser.js?v=131"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=131"></script>
+  <script src="lib/host-imports.js?v=131"></script>
+  <script src="lib/compile-wat.js?v=131"></script>
+  <script src="lib/thread-manager.js?v=131"></script>
+  <script src="host.js?v=131"></script>
+  <script src="lib/recorder.js?v=131"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1180,7 +1180,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=130');
+        const response = await fetch(url + '?v=131');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1260,6 +1260,25 @@ Resource-aware Win98 emulator
             const p = target.requestFullscreen();
             if (p && p.then) p.then(resizeCanvas).catch(() => {});
           } catch (_) {}
+        }
+      }
+      function unlockRunningAudio() {
+        if (!runningApps || !runningApps.length) return;
+        for (const app of runningApps) {
+          const wineHost = app && app.wine;
+          if (!wineHost) continue;
+          try {
+            if (wineHost.primeAudio) wineHost.primeAudio();
+          } catch (_) {}
+          const contexts = [];
+          if (wineHost._audioCtx) contexts.push(wineHost._audioCtx);
+          const voices = wineHost._sharedAudio && wineHost._sharedAudio.voices;
+          if (voices && voices._ac && voices._ac !== wineHost._audioCtx) contexts.push(voices._ac);
+          for (const ac of contexts) {
+            if (ac && ac.state === 'suspended') {
+              try { ac.resume(); } catch (_) {}
+            }
+          }
         }
       }
       function windowAtCanvas(cx, cy) {
@@ -1353,6 +1372,7 @@ Resource-aware Win98 emulator
       canvas.onmousedown = e => {
         e.preventDefault();
         canvas.focus();
+        unlockRunningAudio();
         if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPoint(e);
         if (forwardEmptyDesktopClick(e.clientX, e.clientY, cx, cy)) return;
@@ -1379,6 +1399,7 @@ Resource-aware Win98 emulator
         if (!t) return;
         e.preventDefault();
         canvas.focus();
+        unlockRunningAudio();
         if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPointFromClient(t.clientX, t.clientY);
         if (forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)) return;
@@ -1485,6 +1506,7 @@ Resource-aware Win98 emulator
       const handleKeyDown = (e) => {
         if (shouldIgnorePageKey(e)) return;
         const vk = e.keyCode;
+        unlockRunningAudio();
         if (renderer._exclusiveFullscreen || (vk === 115 && !e.altKey && !e.ctrlKey && !e.metaKey)) {
           requestBrowserFullscreen();
         }

@@ -102,10 +102,11 @@ assert(/winamp:\s*\{[\s\S]*'binaries\/winamp\.ini'/s.test(indexHtml), 'Winamp we
 assert(/\[WinampReg\][\s\S]*?NeedReg=0/.test(fs.readFileSync(path.join(ROOT, 'binaries', 'winamp.ini'), 'utf8')), 'Winamp web INI should suppress first-run setup so playback controls are reachable');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/host-imports.js?v=130'), 'web host should cache-bust host-imports after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=131'), 'web host should cache-bust host-imports after desktop changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("SOURCE_VERSION = '130'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '131'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
+assert(hostJs.includes("this._audioCtx.state === 'closed'"), 'web host should not reuse a closed browser AudioContext');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(hostJs.includes('runBudgeted({'), 'web host should use wall-budgeted worker scheduling for visible-window workers');
 assert(hostJs.includes('const quantumSteps = 10000'), 'web host should keep worker quanta large enough for Winamp Credits progress');
@@ -119,6 +120,9 @@ assert(!/function selectedRunSlice\(appKey\)\s*\{\s*return 100000;\s*\}/.test(in
 assert(indexHtml.includes("document.getElementById('slice-size-select')"), 'slice picker should drive the run-loop slice size');
 assert(/case 'spider':[\s\S]*?return 25000;/.test(indexHtml), 'auto slice should use smaller slices for Spider/card games');
 assert(!/case 'winamp':\s*return 1;/.test(indexHtml), 'Winamp auto slice should not rely on slice=1 startup masking');
+assert(indexHtml.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
+assert(indexHtml.includes('unlockRunningAudio();\n        if (renderer._exclusiveFullscreen)'), 'mouse/touch input should resume audio before guest dispatch');
+assert(indexHtml.includes('unlockRunningAudio();\n        if (renderer._exclusiveFullscreen ||'), 'keyboard input should resume audio before guest dispatch');
 assert(hostJs.includes('ecx=0x${hex32(ecx)}'), 'web runner should report runtime register heartbeat progress');
 for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');

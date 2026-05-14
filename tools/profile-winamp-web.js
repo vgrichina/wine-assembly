@@ -123,6 +123,7 @@ function wsConnect(wsUrl) {
 
 async function main() {
   const headless = process.env.HEADLESS !== '0';
+  const mode = process.env.MODE || (process.argv.includes('--audio') ? 'audio' : 'credits');
   const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -164,15 +165,58 @@ async function main() {
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
 
-  async function evalExpr(expression, timeout = 5000) {
+  async function evalExpr(expression, timeout = 5000, userGesture = false) {
     const r = await cdp.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
       timeout,
+      userGesture,
     });
     if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
     return r.result && r.result.value;
+  }
+
+  async function clickClient(x, y) {
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
+
+  async function clickElement(selector) {
+    const p = await evalExpr(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!p) throw new Error('element not found: ' + selector);
+    await clickClient(p.x, p.y);
+  }
+
+  async function clickCanvasPoint(x, y) {
+    const p = await evalExpr(`(() => {
+      const c = document.getElementById('screen');
+      const r = c.getBoundingClientRect();
+      return {
+        x: r.left + (${x} / Math.max(1, c.width)) * r.width,
+        y: r.top + (${y} / Math.max(1, c.height)) * r.height,
+      };
+    })()`);
+    await clickClient(p.x, p.y);
   }
 
   await evalExpr(`new Promise(r => {
@@ -228,7 +272,59 @@ async function main() {
     wrap(ThreadManager.prototype, 'runSlice', 'thread.runSlice');
   })()`);
 
-  await evalExpr(`document.getElementById('app-select').value = 'winamp'; launchApp()`, 15000);
+  await evalExpr(`(() => {
+    window.__waAudioProbe = { starts: 0, startTimes: [], peaks: [], resumes: 0, resumeStates: [] };
+    const srcProto = window.AudioBufferSourceNode && window.AudioBufferSourceNode.prototype;
+    if (srcProto && srcProto.start && !srcProto.start.__waProfiled) {
+      const orig = srcProto.start;
+      srcProto.start = function(...args) {
+        window.__waAudioProbe.starts++;
+        window.__waAudioProbe.startTimes.push(args[0] == null ? null : +args[0]);
+        try {
+          const buf = this.buffer;
+          const data = buf && buf.numberOfChannels ? buf.getChannelData(0) : null;
+          let peak = 0;
+          if (data) {
+            const stride = Math.max(1, Math.floor(data.length / 512));
+            for (let i = 0; i < data.length; i += stride) {
+              const v = Math.abs(data[i]);
+              if (v > peak) peak = v;
+            }
+          }
+          window.__waAudioProbe.peaks.push(+peak.toFixed(5));
+        } catch (_) {
+          window.__waAudioProbe.peaks.push(null);
+        }
+        return orig.apply(this, args);
+      };
+      srcProto.start.__waProfiled = true;
+    }
+    const acProto = window.AudioContext && window.AudioContext.prototype;
+    if (acProto && acProto.resume && !acProto.resume.__waProfiled) {
+      const orig = acProto.resume;
+      acProto.resume = function(...args) {
+        window.__waAudioProbe.resumes++;
+        window.__waAudioProbe.resumeStates.push(this.state);
+        return orig.apply(this, args);
+      };
+      acProto.resume.__waProfiled = true;
+    }
+    return 1;
+  })()`);
+
+  await evalExpr(`(() => {
+    document.getElementById('app-select').value = 'winamp';
+    return launchApp();
+  })()`, 20000, true);
+  await evalExpr(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const tick = () => {
+      if (runningApps[0] && runningApps[0].wine && runningApps[0].wine.instance) resolve(1);
+      else if (performance.now() - started > 15000) reject(new Error('Winamp did not launch'));
+      else setTimeout(tick, 50);
+    };
+    tick();
+  })`, 16000);
   await wait(1800);
   await evalExpr(`(() => {
     const app = runningApps[0];
@@ -236,6 +332,50 @@ async function main() {
     return 1;
   })()`);
   await wait(900);
+
+  if (mode === 'audio') {
+    await clickCanvasPoint(66, 129);
+    await wait(2500);
+    const result = await evalExpr(`(() => {
+      const app = runningApps[0];
+      const wine = app && app.wine;
+      const shared = wine && wine._sharedAudio;
+      const voices = shared && shared.voices;
+      const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+      const voiceMap = voices && voices._map ? Object.values(voices._map).map(v => ({
+        id: v.id,
+        mode: v.mode,
+        bytesWritten: v.bytesWritten,
+        sources: v.sources ? v.sources.size : 0,
+        timers: v.timers ? v.timers.size : 0,
+        nextTime: Number.isFinite(v.nextTime) ? +v.nextTime.toFixed(3) : null,
+        streamStartTime: Number.isFinite(v.streamStartTime) ? +v.streamStartTime.toFixed(3) : null,
+      })) : [];
+      return {
+        audioProbe: window.__waAudioProbe,
+        audioContext: ac ? {
+          state: ac.state,
+          currentTime: +ac.currentTime.toFixed(3),
+          sampleRate: ac.sampleRate,
+        } : null,
+        sharedAudio: shared ? {
+          hotUntilMs: shared.waveOutHotUntilMs || 0,
+          pendingWaveDoneCount: shared.pendingWaveDoneCount || 0,
+          openHandles: shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+          scheduledHeaders: shared.waveScheduledHeaders && shared.waveScheduledHeaders.size,
+        } : null,
+        voices: voiceMap,
+        windows: Object.values((window.sharedRenderer || wine.renderer).windows)
+          .filter(w => w && w.visible)
+          .map(w => ({ hwnd: w.hwnd, title: w.title || '', x: w.x, y: w.y, w: w.w, h: w.h })),
+      };
+    })()`);
+    console.log(JSON.stringify(result, null, 2));
+    cdp.close();
+    cleanup();
+    return;
+  }
+
   await evalExpr(`(() => {
     const app = runningApps[0];
     app.wine.instance.exports.post_message_q(app.wine.instance.exports.get_main_hwnd(), 0x0111, 40041, 0);

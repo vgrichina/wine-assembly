@@ -482,6 +482,19 @@ try {
   assert.strictEqual(primedHost.host.midi_out_close(primedHandle), 0);
   assert.strictEqual(primedCtx.started.length, 1, 'host should reuse pre-unlocked browser AudioContext');
 
+  const closedCtx = new FakeAudioContext();
+  closedCtx.close();
+  const reopenCtx = {
+    getMemory: () => mem.buffer,
+    _audioCtx: closedCtx,
+  };
+  const reopenImports = createHostImports(reopenCtx);
+  const reopenHandle = reopenImports.host.voice_open(44100, 1, 8);
+  assert(reopenCtx._voices._ac, 'voice_open should recreate audio after a closed browser AudioContext');
+  assert.notStrictEqual(reopenCtx._voices._ac, closedCtx, 'voice_open should not reuse a closed browser AudioContext');
+  assert.strictEqual(reopenCtx._voices._ac.state, 'running');
+  reopenImports.host.voice_close(reopenHandle);
+
   const cleanupCtx = {
     getMemory: () => mem.buffer,
     _audioCtx: new FakeAudioContext(),
@@ -510,6 +523,7 @@ try {
   console.log('PASS  mciSendStringA sequencer commands use the same MIDI backend');
   console.log('PASS  browser audio unlock creates the shared AudioContext on user input');
   console.log('PASS  host reuses a launch-primed browser AudioContext');
+  console.log('PASS  host recreates closed browser AudioContexts');
   console.log('PASS  host audio cleanup stops MCI and midiOut playback');
   console.log('PASS  empty sequencer open does not invent default MIDI playback');
 } finally {
