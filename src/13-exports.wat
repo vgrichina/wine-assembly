@@ -1,6 +1,15 @@
   ;; ============================================================
   ;; MAIN RUN LOOP
   ;; ============================================================
+  (func $is_winamp_295_exe (result i32)
+    (i32.and
+      (i32.eq (global.get $image_base) (i32.const 0x00400000))
+      (i32.and
+        (i32.eq (global.get $entry_point) (i32.const 0x00444fc8))
+        (i32.and
+          (i32.eq (global.get $code_start) (i32.const 0x00401000))
+          (i32.eq (global.get $code_end) (i32.const 0x00445212))))))
+
   (func $winamp_about_fast_sqrt
     (local $v i32)
     (local.set $v (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
@@ -537,55 +546,55 @@
           (call $host_log_i32 (global.get $eax))
           (call $host_log_i32 (call $gl32 (i32.add (global.get $edi) (i32.const 8))))))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x0040503d)))
         (then
           (call $winamp_credits_span_step)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x00402c47)))
         (then
           (call $winamp_credits_image_init)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x00406740)))
         (then
           (call $winamp_credits_quantize_init)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x00403b9b)))
         (then
           (call $winamp_credits_palette_search)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x0040418a)))
         (then
           (call $winamp_credits_merge_scan_step)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x004040ff)))
         (then
           (call $winamp_credits_scan_step)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x00403f50)))
         (then
           (call $winamp_credits_rgb_distance)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x004073f0)))
         (then
           (call $winamp_about_pixel_step)
           (br $main)))
       (if (i32.and
-            (i32.eq (global.get $image_base) (i32.const 0x00400000))
+            (call $is_winamp_295_exe)
             (i32.eq (global.get $eip) (i32.const 0x00407573)))
         (then
           (call $winamp_about_fast_sqrt)
