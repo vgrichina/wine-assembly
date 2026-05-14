@@ -103,15 +103,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 798: waveOutUnprepareHeader — return MMSYSERR_NOERROR, clear WHDR_PREPARED
+  ;; 798: waveOutUnprepareHeader — return MMSYSERR_NOERROR, clear WHDR_PREPARED/INQUEUE and mark DONE
   (func $handle_waveOutUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg1)))
     (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.and (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 0xFFFFFFFD)))
-    ;; Set WHDR_DONE flag
-    (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.or (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 1)))
+      (i32.and
+        (i32.or
+          (i32.and (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 0xFFFFFFFD))
+          (i32.const 1))
+        (i32.const 0xFFFFFFEF)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -120,31 +121,12 @@
   ;; WAVEHDR: +0 lpData(4), +4 dwBufferLength(4), +8 dwBytesRecorded(4),
   ;;   +12 dwUser(4), +16 dwFlags(4), +20 dwLoops(4), +24 lpNext(4), +28 reserved(4)
   ;;
-  ;; Deferred WHDR_DONE: real Windows marks WHDR_DONE only after the buffer
-  ;; finishes playing (async). We defer: each waveOutWrite marks the PREVIOUS
-  ;; buffer as done, keeping ≥1 buffer outstanding. Lets out_wave.dll's
-  ;; threshold logic use the small-write path instead of waiting for 11KB chunks.
-  ;; Previous WAVEHDR guest address stored at shared memory 0xAD98.
+  ;; Async WHDR_DONE: real Windows marks WHDR_DONE only after the buffer
+  ;; finishes playing. The host schedules that completion against the audio
+  ;; clock; 0xAD98 keeps the last WAVEHDR available for Reset/Close flushes.
   (func $handle_waveOutWrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $data_ga i32) (local $data_len i32) (local $prev_ga i32) (local $prev_wa i32)
+    (local $wa i32) (local $data_ga i32) (local $data_len i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    ;; Complete the PREVIOUS buffer first (deferred WHDR_DONE)
-    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
-    (if (local.get $prev_ga)
-      (then
-        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
-        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
-          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
-        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
-          (then
-            ;; CALLBACK_WINDOW: MM_WOM_DONE(hwnd, hwo, lpWaveHdr)
-            (drop (call $post_queue_push
-              (i32.load (i32.const 0xD164))
-              (i32.const 0x03BD)
-              (local.get $arg0)
-              (local.get $prev_ga)))))
-        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
-          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))))
     ;; Read lpData and dwBufferLength from WAVEHDR
     (local.set $data_ga (i32.load (local.get $wa)))
     (local.set $data_len (i32.load (i32.add (local.get $wa) (i32.const 4))))
@@ -154,11 +136,22 @@
     (if (i32.and (i32.ne (local.get $data_ga) (i32.const 0))
                  (i32.ne (local.get $data_len) (i32.const 0)))
       (then
+        ;; Submitted buffers are no longer DONE and remain INQUEUE until the
+        ;; scheduled audio-clock completion fires.
+        (i32.store (i32.add (local.get $wa) (i32.const 16))
+          (i32.or
+            (i32.and (i32.load (i32.add (local.get $wa) (i32.const 16))) (i32.const 0xFFFFFFFE))
+            (i32.const 0x10)))
         (drop (call $host_wave_out_write
           (local.get $arg0)
           (call $g2w (local.get $data_ga))
+          (local.get $data_len)))
+        (drop (call $host_wave_out_schedule_done
+          (local.get $arg0)
+          (local.get $wa)
+          (local.get $arg1)
           (local.get $data_len)))))
-    ;; Save this buffer's guest address as pending (deferred done)
+    ;; Save this buffer's guest address so Reset/Close can flush if needed.
     (i32.store (i32.const 0xAD98) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -172,7 +165,9 @@
       (then
         (local.set $prev_wa (call $g2w (local.get $prev_ga)))
         (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
-          (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1)))
+          (i32.and
+            (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1))
+            (i32.const 0xFFFFFFEF)))
         (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
           (then
             ;; CALLBACK_WINDOW: MM_WOM_DONE(hwnd, hwo, lpWaveHdr)

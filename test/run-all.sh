@@ -28,6 +28,8 @@ UNIT=(
   test/test-codepage-dbcs.js
   test/test-wide-api.js
   test/test-midi-mci.js
+  test/test-thread-manager.js
+  test/test-waveout-audio.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
   test/test-web-pwa-metadata.js

@@ -386,6 +386,8 @@
   ;; wave_out_open(sampleRate, channels, bitsPerSample, callbackType) → handle
   (import "host" "wave_out_write" (func $host_wave_out_write (param i32 i32 i32) (result i32)))
   ;; wave_out_write(handle, pcmDataWA, byteLength) → 0=ok
+  (import "host" "wave_out_schedule_done" (func $host_wave_out_schedule_done (param i32 i32 i32 i32) (result i32)))
+  ;; wave_out_schedule_done(handle, waveHdrWA, waveHdrGA, byteLength) → schedules WHDR_DONE/WOM_DONE
   (import "host" "wave_out_close" (func $host_wave_out_close (param i32) (result i32)))
   ;; wave_out_close(handle) → 0=ok
   (import "host" "wave_out_get_pos" (func $host_wave_out_get_pos (param i32) (result i32)))

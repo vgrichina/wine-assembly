@@ -646,7 +646,7 @@ async function main() {
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
-    _sharedAudio: {},  // shared waveOut state across threads
+    sharedAudio: {},  // shared waveOut state across threads
     readFile: (name) => {
       // Try to find file relative to exe directory
       const exeDir = path.dirname(EXE_PATH);
@@ -1093,6 +1093,7 @@ async function main() {
   // when they differ). Batch transitions add a larger jump (~200ms) to keep
   // the overall simulated pace realistic.
   const tickState = { batch: 0, callsInBatch: 0 };
+  ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
   h.get_ticks = () => (((tickState.batch * 200 + tickState.callsInBatch++) & 0x7FFFFFFF));
 
   // --- Override input for test injection ---
@@ -1219,7 +1220,7 @@ async function main() {
       vfs: ctx.vfs,  // share filesystem with main thread
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
-      _sharedAudio: ctx._sharedAudio,  // share waveOut state across threads
+      sharedAudio: ctx.sharedAudio,  // share waveOut state across threads
       _waveStats: ctx._waveStats,  // share audio-stats counters so T4 writes show in main-thread summary
       audioStatsStride: ctx.audioStatsStride,
       _debugReadFile: TRACE_API,
@@ -1853,6 +1854,7 @@ async function main() {
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     tickState.batch = batch;
     tickState.callsInBatch = 0;
+    if (ctx.pumpAudioCompletions) ctx.pumpAudioCompletions();
     let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {

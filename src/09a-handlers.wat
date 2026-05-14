@@ -15,6 +15,7 @@
     (local $i i32)
     (local $addr i32)
     (local $free_slot i32)
+    (global.set $tick_count (call $host_get_ticks))
     (local.set $free_slot (i32.const -1))
     (local.set $i (i32.const 0))
     (block $break
