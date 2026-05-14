@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '127';
+  static SOURCE_VERSION = '129';
 
   constructor() {
     this.instance = null;
@@ -861,6 +861,18 @@ class WineAssembly {
     }
   }
 
+  _audioSchedulerNow() {
+    if (typeof performance !== 'undefined' && performance.now) return performance.now();
+    return Date.now();
+  }
+
+  _isAudioHot() {
+    const shared = this._sharedAudio || (this.hostCtx && this.hostCtx.sharedAudio);
+    if (!shared) return false;
+    const hotUntil = Number(shared.waveOutHotUntilMs) || 0;
+    return hotUntil > this._audioSchedulerNow();
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     this.running = true;
@@ -948,15 +960,27 @@ class WineAssembly {
             const recentInputWake = self.renderer && self.renderer._recentMessageWakeAt &&
               (now - self.renderer._recentMessageWakeAt) < 120;
             // Visible-window apps can still have compute-heavy UI worker threads.
-            // Winamp's About/Credits animation is one of them: clamping workers to
-            // 3k ops starves the credits renderer behind the message/present loop.
+            // Winamp's About/Credits animation is one of them: too-small worker
+            // quanta starve the credits renderer behind the message/present loop.
             // Keep a cap for browser responsiveness, but give active workers a
             // meaningful slice so switching tabs does not appear hung.
+            const audioHot = self._isAudioHot();
             const threadBudget = windowCount
               ? (recentInputWake ? 0 : (mainThreadWaiting ? activeStepsPerSlice : Math.min(activeStepsPerSlice, 10000)))
               : activeStepsPerSlice;
             if (threadBudget > 0) {
-              self.threadManager.runSlice(threadBudget);
+              if (windowCount && self.threadManager.runBudgeted) {
+                const quantumSteps = 10000;
+                const maxWallMs = audioHot ? (mainThreadWaiting ? 4 : 3) : (mainThreadWaiting ? 8 : 6);
+                self.threadManager.runBudgeted({
+                  maxTotalSteps: threadBudget,
+                  quantumSteps,
+                  maxWallMs,
+                  stopIfMessagePending: true,
+                });
+              } else {
+                self.threadManager.runSlice(threadBudget);
+              }
             }
             self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
             if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {

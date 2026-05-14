@@ -253,6 +253,54 @@ try {
   assert.strictEqual(windowDv.getUint32(waveHdrWA2 + 16, true), WHDR_PREPARED | WHDR_DONE, 'CALLBACK_WINDOW completion should clear WHDR_INQUEUE');
   windowImports.host.wave_out_close(windowHandle);
   console.log('PASS  browser waveOut CALLBACK_WINDOW posts MM_WOM_DONE at buffer end');
+
+  const resetMem = new ArrayBuffer(512 * 1024);
+  const resetBytes = new Uint8Array(resetMem);
+  for (let i = 0; i < oneSecond * 2; i++) resetBytes[pcmPtr + i] = i & 0xff;
+  const resetPosted = [];
+  const resetCtx = {
+    getMemory: () => resetMem,
+    exports: {
+      post_message_q(hwnd, msg, wParam, lParam) {
+        resetPosted.push([hwnd >>> 0, msg >>> 0, wParam >>> 0, lParam >>> 0]);
+        return 1;
+      },
+    },
+  };
+  const resetImports = createHostImports(resetCtx);
+  const resetHandle = resetImports.host.wave_out_open(rate, channels, bits, 1);
+  const resetAc = resetCtx._voices._ac;
+  const resetDv = new DataView(resetMem);
+  const resetHwnd = 0x10003;
+  const resetHdrWA1 = 0x23000;
+  const resetHdrWA2 = 0x23100;
+  const resetHdrGA1 = 0x403000;
+  const resetHdrGA2 = 0x404000;
+  resetDv.setUint32(0xD164, resetHwnd, true);
+  resetDv.setUint32(0xD16C, 1, true);
+  resetDv.setUint32(resetHdrWA1 + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
+  resetDv.setUint32(resetHdrWA2 + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
+  resetImports.host.wave_out_write(resetHandle, pcmPtr, oneSecond);
+  resetImports.host.wave_out_schedule_done(resetHandle, resetHdrWA1, resetHdrGA1, oneSecond);
+  resetImports.host.wave_out_write(resetHandle, pcmPtr + oneSecond, oneSecond);
+  resetImports.host.wave_out_schedule_done(resetHandle, resetHdrWA2, resetHdrGA2, oneSecond);
+  assert.strictEqual(resetCtx._voices._map[resetHandle].sources.size, 2, 'reset setup should queue two Web Audio sources');
+  assert.strictEqual(resetCtx._voices._map[resetHandle].timers.size, 2, 'reset setup should arm two completion timers');
+  resetImports.host.wave_out_reset(resetHandle);
+  assert.deepStrictEqual(resetPosted, [
+    [resetHwnd, MM_WOM_DONE, resetHandle, resetHdrGA1],
+    [resetHwnd, MM_WOM_DONE, resetHandle, resetHdrGA2],
+  ], 'waveOutReset should flush every queued CALLBACK_WINDOW header');
+  assert.strictEqual(resetDv.getUint32(resetHdrWA1 + 16, true), WHDR_PREPARED | WHDR_DONE, 'waveOutReset should mark first header done');
+  assert.strictEqual(resetDv.getUint32(resetHdrWA2 + 16, true), WHDR_PREPARED | WHDR_DONE, 'waveOutReset should mark second header done');
+  assert.strictEqual(resetCtx._voices._map[resetHandle].sources.size, 0, 'waveOutReset should drop queued stream sources');
+  assert.strictEqual(resetCtx._voices._map[resetHandle].timers.size, 0, 'waveOutReset should clear completion timers');
+  assert(resetAc.started.slice(-2).every(src => src.stops.length > 0), 'waveOutReset should stop scheduled Web Audio sources');
+  assert.strictEqual(resetImports.host.wave_out_get_pos(resetHandle), 0, 'waveOutReset should reset the stream cursor');
+  resetImports.host.wave_out_write(resetHandle, pcmPtr, oneSecond);
+  assert.strictEqual(resetAc.started[resetAc.started.length - 1].starts[0], resetAc.currentTime, 'waveOutReset should let restarted playback schedule from current time');
+  resetImports.host.wave_out_close(resetHandle);
+  console.log('PASS  browser waveOutReset cancels queued audio and flushes all callbacks');
 } finally {
   if (oldAudioContext === undefined) delete globalThis.AudioContext;
   else globalThis.AudioContext = oldAudioContext;

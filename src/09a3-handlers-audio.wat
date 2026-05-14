@@ -157,28 +157,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 800: waveOutReset — flush deferred WHDR_DONE, return MMSYSERR_NOERROR
+  ;; 800: waveOutReset — cancel queued host playback, flush WHDR_DONE, return MMSYSERR_NOERROR
   (func $handle_waveOutReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $prev_ga i32) (local $prev_wa i32)
-    (local.set $prev_ga (i32.load (i32.const 0xAD98)))
-    (if (local.get $prev_ga)
-      (then
-        (local.set $prev_wa (call $g2w (local.get $prev_ga)))
-        (i32.store (i32.add (local.get $prev_wa) (i32.const 16))
-          (i32.and
-            (i32.or (i32.load (i32.add (local.get $prev_wa) (i32.const 16))) (i32.const 1))
-            (i32.const 0xFFFFFFEF)))
-        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
-          (then
-            ;; CALLBACK_WINDOW: MM_WOM_DONE(hwnd, hwo, lpWaveHdr)
-            (drop (call $post_queue_push
-              (i32.load (i32.const 0xD164))
-              (i32.const 0x03BD)
-              (local.get $arg0)
-              (local.get $prev_ga)))))
-        (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 5))
-          (then (drop (call $host_set_event (i32.load (i32.const 0xD164))))))
-        (i32.store (i32.const 0xAD98) (i32.const 0))))
+    (drop (call $host_wave_out_reset (local.get $arg0)))
+    (i32.store (i32.const 0xAD98) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

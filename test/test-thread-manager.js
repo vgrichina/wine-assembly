@@ -10,6 +10,8 @@ function makeThreadManagerWithMemory(memory) {
   const mainInstance = {
     exports: {
       get_sync_table: () => 0,
+      get_heap_ptr: () => 0,
+      set_heap_ptr: () => {},
     },
   };
   const tm = new ThreadManager({}, memory, mainInstance, () => ({ host: {} }), {});
@@ -52,4 +54,50 @@ cacheBytes.fill(0x7f);
 cacheTm._clearWorkerCacheSlot(1);
 assert(cacheBytes.every(byte => byte === 0), 'reused worker slot should clear its decoded-block index');
 
+function makeRunnableThread(tid, onRun) {
+  let heapPtr = 0;
+  return {
+    tid,
+    state: 'active',
+    sleepCount: 0,
+    sleepUntil: 0,
+    waitPolls: 0,
+    waitStartedAt: 0,
+    instance: {
+      exports: {
+        get_yield_reason: () => 0,
+        get_eip: () => 0x401000,
+        set_heap_ptr: v => { heapPtr = v >>> 0; },
+        get_heap_ptr: () => heapPtr,
+        run: onRun,
+        get_bp_addr: () => 0,
+        get_sleep_yielded: () => 0,
+      },
+    },
+  };
+}
+
+let now = 0;
+const budgetTm = makeThreadManager();
+budgetTm._now = () => now;
+let budgetRuns = 0;
+budgetTm.threads.set(0xe1000, makeRunnableThread(1, steps => {
+  assert.strictEqual(steps, 100, 'budgeted scheduler should run the configured quantum');
+  budgetRuns++;
+  now += 3;
+}));
+const budgetStats = budgetTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 1000, maxWallMs: 5 });
+assert.strictEqual(budgetRuns, 2, 'budgeted scheduler should stop after crossing the wall-clock budget');
+assert.strictEqual(budgetStats.hitDeadline, true, 'budgeted scheduler should report deadline stops');
+assert.strictEqual(budgetStats.steps, 200, 'budgeted scheduler should report approximate executed steps');
+
+const messageTm = makeThreadManager();
+messageTm._hasMessage = () => true;
+let messageRuns = 0;
+messageTm.threads.set(0xe1000, makeRunnableThread(1, () => { messageRuns++; }));
+const messageStats = messageTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 1000, maxWallMs: 5, stopIfMessagePending: true });
+assert.strictEqual(messageRuns, 0, 'budgeted scheduler should not run workers when main messages are pending');
+assert.strictEqual(messageStats.stoppedForMessage, true, 'budgeted scheduler should report message stops');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
+console.log('PASS  ThreadManager supports wall-budgeted worker slices');

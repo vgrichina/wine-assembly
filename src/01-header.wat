@@ -388,6 +388,8 @@
   ;; wave_out_write(handle, pcmDataWA, byteLength) → 0=ok
   (import "host" "wave_out_schedule_done" (func $host_wave_out_schedule_done (param i32 i32 i32 i32) (result i32)))
   ;; wave_out_schedule_done(handle, waveHdrWA, waveHdrGA, byteLength) → schedules WHDR_DONE/WOM_DONE
+  (import "host" "wave_out_reset" (func $host_wave_out_reset (param i32) (result i32)))
+  ;; wave_out_reset(handle) → cancels queued playback and flushes WHDR_DONE callbacks
   (import "host" "wave_out_close" (func $host_wave_out_close (param i32) (result i32)))
   ;; wave_out_close(handle) → 0=ok
   (import "host" "wave_out_get_pos" (func $host_wave_out_get_pos (param i32) (result i32)))

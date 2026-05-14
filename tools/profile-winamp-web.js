@@ -253,6 +253,36 @@ async function main() {
   await wait(1500);
   await evalExpr(`(() => {
     const r = window.sharedRenderer || runningApps[0].wine.renderer;
+    const sampleCanvas = (canvas) => {
+      if (!canvas || !canvas.getContext) return null;
+      const w = canvas.width | 0;
+      const h = canvas.height | 0;
+      if (!w || !h) return null;
+      const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+      const colors = new Set();
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        const a = data[i + 3];
+        if (!a) continue;
+        const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+        colors.add(rgb);
+        if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+      }
+      return { w, h, sampledColors: colors.size, sampledInk: ink };
+    };
+    window.__waProfile.creditsSnapshot = Object.values(r.windows)
+      .filter(w => w && w.visible)
+      .map(w => ({
+        hwnd: w.hwnd,
+        title: w.title || '',
+        x: w.x, y: w.y, w: w.w, h: w.h,
+        isDialog: !!w.isDialog,
+        back: sampleCanvas(w._backCanvas),
+      }));
+    return 1;
+  })()`);
+  await evalExpr(`(() => {
+    const r = window.sharedRenderer || runningApps[0].wine.renderer;
     window.__waProfile.marks.push({ name: 'click-winamp', t: performance.now() - window.__waProfile.t0 });
     r.handleMouseDown(60, 42, 1);
     r.handleMouseUp(60, 42, 1);
@@ -262,7 +292,25 @@ async function main() {
 
   const result = await evalExpr(`(() => {
     const p = window.__waProfile;
-    const out = { marks: p.marks, counters: {}, samples: p.samples };
+    const r = window.sharedRenderer || runningApps[0].wine.renderer;
+    const sampleCanvas = (canvas) => {
+      if (!canvas || !canvas.getContext) return null;
+      const w = canvas.width | 0;
+      const h = canvas.height | 0;
+      if (!w || !h) return null;
+      const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+      const colors = new Set();
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        const a = data[i + 3];
+        if (!a) continue;
+        const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+        colors.add(rgb);
+        if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+      }
+      return { w, h, sampledColors: colors.size, sampledInk: ink };
+    };
+    const out = { marks: p.marks, counters: {}, samples: p.samples, creditsSnapshot: p.creditsSnapshot || null };
     for (const [k, v] of Object.entries(p.counters)) {
       out.counters[k] = {
         count: v.count,
@@ -273,9 +321,17 @@ async function main() {
     }
     out.state = {
       apps: runningApps.length,
-      windows: Object.keys((window.sharedRenderer || runningApps[0].wine.renderer).windows).length,
-      inputQueue: (window.sharedRenderer || runningApps[0].wine.renderer).inputQueue.length,
+      windows: Object.keys(r.windows).length,
+      inputQueue: r.inputQueue.length,
       mainYield: runningApps[0].wine.instance.exports.get_yield_reason(),
+      visibleWindows: Object.values(r.windows).filter(w => w && w.visible).map(w => ({
+        hwnd: w.hwnd,
+        title: w.title || '',
+        x: w.x, y: w.y, w: w.w, h: w.h,
+        isDialog: !!w.isDialog,
+        isAboutDialog: !!w.isAboutDialog,
+        back: sampleCanvas(w._backCanvas),
+      })),
     };
     return out;
   })()`, 5000);
