@@ -8350,7 +8350,7 @@
   ;; RegisterDragDrop(hwnd, pDropTarget) — return S_OK.
   ;; No real drag/drop path: there is no host OS drop source to deliver IDataObjects
   ;; from, so tracking the IDropTarget would be pure bookkeeping. Return S_OK so
-  ;; callers (e.g. Winamp) proceed; any later drop events simply never arrive.
+  ;; callers proceed; any later drop events simply never arrive.
   (func $handle_RegisterDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))

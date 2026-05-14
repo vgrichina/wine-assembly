@@ -1088,7 +1088,7 @@
   ;;
   ;; Top-level items become bar items. Popup children are preserved as
   ;; dropdown items; cascading sub-popups keep a nested child_offset so
-  ;; TrackPopupMenu menus such as Winamp's EQ presets render as grouped
+  ;; TrackPopupMenu cascades render as grouped
   ;; submenus instead of one flattened command list.
   ;;
   ;; Two passes over the PE bytes:

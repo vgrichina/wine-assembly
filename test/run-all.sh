@@ -30,6 +30,7 @@ UNIT=(
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-waveout-audio.js
+  test/test-core-no-app-fast-paths.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
   test/test-web-pwa-metadata.js

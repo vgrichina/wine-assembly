@@ -602,12 +602,6 @@
     (local.set $tstart (global.get $thread_alloc))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
-    ;; DEBUG: log decode_block calls in the wall sub-loader range
-    (if (i32.and (i32.ge_u (local.get $start_eip) (i32.const 0x010095f0))
-                 (i32.le_u (local.get $start_eip) (i32.const 0x01009620)))
-      (then
-        (call $host_log_i32 (i32.const 0xDEC0B10C))
-        (call $host_log_i32 (local.get $start_eip))))
 
     (block $exit (loop $decode
       (br_if $exit (local.get $done))

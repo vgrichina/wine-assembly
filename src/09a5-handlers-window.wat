@@ -162,7 +162,7 @@
     (local.set $tmp (call $class_table_lookup (call $class_name_key (local.get $arg1))))
     ;; Prefer the WAT-native ListView for SysListView32 even if comctl32.dll has
     ;; registered its own class. The real Win98 listview code is large and can
-    ;; spend unbounded time rebuilding item arrays during Winamp startup; our
+    ;; spend unbounded time rebuilding item arrays during startup; our
     ;; native shell is enough for the optional details/list panes we support.
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
@@ -622,9 +622,8 @@
     ;; find its slot for WND_DLG_RECORDS. SendMessageA routing looks at
     ;; this slot.
     (call $wnd_table_set (local.get $hwnd) (local.get $dlg_wndproc))
-    ;; Record parent hwnd so GetParent returns the hosting window —
-    ;; winamp's setup wizard calls GetParent(child_dlg) then
-    ;; SetWindowText(parent, "Winamp Setup: ...") to set the outer title.
+    ;; Record parent hwnd so GetParent returns the hosting window before
+    ;; child dialogs update their outer title.
     (call $wnd_set_parent (local.get $hwnd) (local.get $arg2))
     ;; Parse RT_DIALOG template entirely in WAT: allocates child HWNDs,
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE to each
