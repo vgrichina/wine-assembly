@@ -53,6 +53,7 @@ if (!createCanvas || !loadImage) {
 
 const TMP = path.join(ROOT, 'scratch');
 fs.mkdirSync(TMP, { recursive: true });
+const PINBALL_HWND = 0x10002;
 const restPng    = path.join(TMP, 'pinball_play_rest.png');
 const rest2Png   = path.join(TMP, 'pinball_play_rest2.png');
 const leftPng    = path.join(TMP, 'pinball_play_left.png');
@@ -67,14 +68,14 @@ const inputSpec = [
   `5010:keyup:113`,
   `5500:keydown:32`,            // VK_SPACE — plunger
   `7500:keyup:32`,
-  `7700:png:${restPng}`,
-  `7800:png:${rest2Png}`,
+  `7700:hwnd-png-pixels:${PINBALL_HWND}:${restPng}`,
+  `7800:hwnd-png-pixels:${PINBALL_HWND}:${rest2Png}`,
   `7810:keydown:90`,            // 'Z' — left flipper
-  `8000:png:${leftPng}`,
+  `8000:hwnd-png-pixels:${PINBALL_HWND}:${leftPng}`,
   `8010:keyup:90`,
-  `8200:png:${settlePng}`,
+  `8200:hwnd-png-pixels:${PINBALL_HWND}:${settlePng}`,
   `8210:keydown:191`,           // VK_OEM_2 ('/') — right flipper
-  `8400:png:${rightPng}`,
+  `8400:hwnd-png-pixels:${PINBALL_HWND}:${rightPng}`,
   `8410:keyup:191`,
 ].join(',');
 
@@ -99,10 +100,10 @@ for (const l of out.split('\n')) {
 // Crop two images to a rect and count differing pixels.
 // Used to look ONLY at each flipper's bounding box, so scoreboard
 // text changes and right-panel light animation don't pollute the
-// signal. Flipper sprite rect was eyeballed from the rendered PNG:
-//   playfield ~ x∈[9,196], y∈[21,320]
-//   left flipper  ~ x∈[40,100],  y∈[270,310]
-//   right flipper ~ x∈[105,165], y∈[270,310]
+// signal. These rects are in the Pinball window back-buffer captured by
+// hwnd-png-pixels, not in the full desktop canvas:
+//   left flipper  ~ x∈[130,170], y∈[397,452]
+//   right flipper ~ x∈[201,244], y∈[397,452]
 async function diffRect(aPath, bPath, x0, y0, x1, y1) {
   const a = await loadImage(aPath);
   const b = await loadImage(bPath);
@@ -127,8 +128,8 @@ async function diffRect(aPath, bPath, x0, y0, x1, y1) {
   return { diff, w, h };
 }
 
-const LEFT_FLIPPER_RECT  = [40, 270, 100, 310];
-const RIGHT_FLIPPER_RECT = [105, 270, 165, 310];
+const LEFT_FLIPPER_RECT  = [124, 388, 178, 456];
+const RIGHT_FLIPPER_RECT = [194, 388, 250, 456];
 
 (async () => {
   const checks = [];
