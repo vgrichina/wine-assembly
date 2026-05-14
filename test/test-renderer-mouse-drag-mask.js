@@ -47,4 +47,56 @@ move = r.inputQueue.find(e => e.msg === 0x0200);
 assert(move, 'hover should enqueue WM_MOUSEMOVE');
 assert.strictEqual(move.wParam & 0x0001, 0, 'hover move after mouseup should not include MK_LBUTTON');
 
+const captionRenderer = new Win98Renderer(canvas);
+const captionWasm = {
+  exports: {
+    hittest_sync() { return 2; }, // HTCAPTION
+  },
+};
+captionRenderer.wasm = captionWasm;
+captionRenderer.windows[200] = {
+  hwnd: 200,
+  visible: true,
+  isChild: false,
+  x: 20,
+  y: 20,
+  w: 160,
+  h: 90,
+  hasCaption: true,
+  style: 0x00c00000,
+  zOrder: 1,
+  wasm: captionWasm,
+};
+captionRenderer.handleMouseDown(35, 28, 1);
+assert(captionRenderer._draggingWin, 'normal caption click should start renderer window drag');
+assert.strictEqual(captionRenderer.inputQueue.length, 0, 'normal caption drag should not leak app mouse down');
+
+const shapedRenderer = new Win98Renderer(canvas);
+const shapedWasm = {
+  exports: {
+    hittest_sync() { return 2; }, // would be HTCAPTION for normal windows
+  },
+};
+shapedRenderer.wasm = shapedWasm;
+shapedRenderer.windows[300] = {
+  hwnd: 300,
+  visible: true,
+  isChild: false,
+  x: 20,
+  y: 20,
+  w: 160,
+  h: 90,
+  region: { rects: [{ x: 0, y: 0, w: 160, h: 90 }] },
+  hasCaption: true,
+  style: 0x00c00000,
+  zOrder: 1,
+  wasm: shapedWasm,
+};
+shapedRenderer.handleMouseDown(35, 28, 1);
+assert(!shapedRenderer._draggingWin, 'app-drawn shaped caption should not start renderer window drag');
+const shapedDown = shapedRenderer.inputQueue.find(e => e.msg === 0x0201);
+assert(shapedDown, 'app-drawn shaped caption should receive WM_LBUTTONDOWN');
+assert.strictEqual(shapedDown.hwnd, 300);
+assert.strictEqual(shapedDown.lParam, ((8 & 0xFFFF) << 16) | (15 & 0xFFFF), 'shaped caption lParam should be window-relative');
+
 console.log('PASS  renderer mouse drag moves carry button state');

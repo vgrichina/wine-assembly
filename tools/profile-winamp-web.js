@@ -123,7 +123,9 @@ function wsConnect(wsUrl) {
 
 async function main() {
   const headless = process.env.HEADLESS !== '0';
-  const mode = process.env.MODE || (process.argv.includes('--audio') ? 'audio' : 'credits');
+  const mode = process.env.MODE ||
+    (process.argv.includes('--audio') ? 'audio' :
+     process.argv.includes('--about-menu') ? 'about-menu' : 'credits');
   const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -177,20 +179,21 @@ async function main() {
     return r.result && r.result.value;
   }
 
-  async function clickClient(x, y) {
+  async function clickClient(x, y, button = 'left') {
+    const buttons = button === 'right' ? 2 : 1;
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x,
       y,
-      button: 'left',
-      buttons: 1,
+      button,
+      buttons,
       clickCount: 1,
     });
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
       x,
       y,
-      button: 'left',
+      button,
       buttons: 0,
       clickCount: 1,
     });
@@ -207,7 +210,7 @@ async function main() {
     await clickClient(p.x, p.y);
   }
 
-  async function clickCanvasPoint(x, y) {
+  async function clickCanvasPoint(x, y, button = 'left') {
     const p = await evalExpr(`(() => {
       const c = document.getElementById('screen');
       const r = c.getBoundingClientRect();
@@ -216,7 +219,7 @@ async function main() {
         y: r.top + (${y} / Math.max(1, c.height)) * r.height,
       };
     })()`);
-    await clickClient(p.x, p.y);
+    await clickClient(p.x, p.y, button);
   }
 
   await evalExpr(`new Promise(r => {
@@ -368,6 +371,70 @@ async function main() {
         windows: Object.values((window.sharedRenderer || wine.renderer).windows)
           .filter(w => w && w.visible)
           .map(w => ({ hwnd: w.hwnd, title: w.title || '', x: w.x, y: w.y, w: w.w, h: w.h })),
+      };
+    })()`);
+    console.log(JSON.stringify(result, null, 2));
+    cdp.close();
+    cleanup();
+    return;
+  }
+
+  if (mode === 'about-menu') {
+    await clickCanvasPoint(35, 36, 'right');
+    await wait(600);
+    const menuState = await evalExpr(`(() => {
+      const app = runningApps[0];
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      const hwnd = e && e.menu_open_hwnd ? (e.menu_open_hwnd() >>> 0) : 0;
+      const top = e && e.menu_open_top ? (e.menu_open_top() | 0) : -1;
+      const count = hwnd && e.menu_child_count ? (e.menu_child_count(hwnd, top) | 0) : 0;
+      const labels = [];
+      for (let i = 0; i < Math.min(count, 6); i++) {
+        const ptr = e.menu_child_label_ptr ? (e.menu_child_label_ptr(hwnd, top, i) >>> 0) : 0;
+        const len = e.menu_child_label_len ? (e.menu_child_label_len(hwnd, top, i) | 0) : 0;
+        if (ptr && len > 0) {
+          const bytes = new Uint8Array(app.wine.memory.buffer, ptr, len);
+          labels.push(String.fromCharCode(...bytes));
+        } else {
+          labels.push('');
+        }
+      }
+      return { hwnd, top, count, labels };
+    })()`);
+    await clickCanvasPoint(50, 46);
+    await wait(1800);
+    const result = await evalExpr(`(() => {
+      const r = window.sharedRenderer || runningApps[0].wine.renderer;
+      const sampleCanvas = (canvas) => {
+        if (!canvas || !canvas.getContext) return null;
+        const w = canvas.width | 0;
+        const h = canvas.height | 0;
+        if (!w || !h) return null;
+        const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+        const colors = new Set();
+        let ink = 0;
+        for (let i = 0; i < data.length; i += 16) {
+          const a = data[i + 3];
+          if (!a) continue;
+          const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+          colors.add(rgb);
+          if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+        }
+        return { w, h, sampledColors: colors.size, sampledInk: ink };
+      };
+      const visibleWindows = Object.values(r.windows)
+        .filter(w => w && w.visible)
+        .map(w => ({
+          hwnd: w.hwnd,
+          title: w.title || '',
+          x: w.x, y: w.y, w: w.w, h: w.h,
+          isDialog: !!w.isDialog,
+          back: sampleCanvas(w._backCanvas),
+        }));
+      return {
+        menuState: ${JSON.stringify(menuState)},
+        aboutOpen: visibleWindows.some(w => w.title === 'About Winamp'),
+        visibleWindows,
       };
     })()`);
     console.log(JSON.stringify(result, null, 2));
