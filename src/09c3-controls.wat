@@ -2698,7 +2698,7 @@
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
-    (local $tx_r i32) (local $tx_b i32)
+    (local $tx_r i32) (local $tx_b i32) (local $brush i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2830,12 +2830,54 @@
             (local.set $tx_r (i32.sub (local.get $w) (i32.const 4)))
             (local.set $tx_b (i32.sub (local.get $h) (i32.const 1))))
           (else
+            ;; SS_BLACKRECT/SS_GRAYRECT/SS_WHITERECT paint their whole client
+            ;; rect and do not render label text.
+            (local.set $brush (i32.const 0))
+            (if (i32.eq (local.get $style) (i32.const 4))
+              (then (local.set $brush (i32.const 0x30014)))) ;; BLACK_BRUSH
+            (if (i32.eq (local.get $style) (i32.const 5))
+              (then (local.set $brush (i32.const 0x30012)))) ;; GRAY_BRUSH
+            (if (i32.eq (local.get $style) (i32.const 6))
+              (then (local.set $brush (i32.const 0x30010)))) ;; WHITE_BRUSH
+            (if (local.get $brush)
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (local.get $brush)))
+                (return (i32.const 0))))
+            ;; SS_BLACKFRAME/SS_GRAYFRAME/SS_WHITEFRAME paint a one-pixel
+            ;; rectangle frame and do not render label text.
+            (local.set $brush (i32.const 0))
+            (if (i32.eq (local.get $style) (i32.const 7))
+              (then (local.set $brush (i32.const 0x30014)))) ;; BLACK_BRUSH
+            (if (i32.eq (local.get $style) (i32.const 8))
+              (then (local.set $brush (i32.const 0x30012)))) ;; GRAY_BRUSH
+            (if (i32.eq (local.get $style) (i32.const 9))
+              (then (local.set $brush (i32.const 0x30010)))) ;; WHITE_BRUSH
+            (if (local.get $brush)
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (i32.const 1)
+                        (local.get $brush)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.sub (local.get $h) (i32.const 1))
+                        (local.get $w) (local.get $h)
+                        (local.get $brush)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (i32.const 1) (local.get $h)
+                        (local.get $brush)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.sub (local.get $w) (i32.const 1)) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (local.get $brush)))
+                (return (i32.const 0))))
             ;; Erase the static's rect for label types. Parent's WM_ERASEBKGND
             ;; ran once at create time, but subsequent SetWindowText invalidates
             ;; only the static — without this fill, new text composites on top of
             ;; the previous text (visible in calc's display as digit pile-up).
-            ;; SS_BLACKRECT(4)/SS_GRAYRECT(5)/SS_WHITERECT(6) and the matching
-            ;; FRAME variants own their fill color, so skip those.
             (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
                         (i32.gt_u (local.get $style) (i32.const 9)))
               (then

@@ -2,12 +2,17 @@
 const http = require('http');
 const net = require('net');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { spawn } = require('child_process');
 
 const ROOT = process.cwd();
 const PORT = 8765;
 const DEBUG_PORT = 9223;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const ABOUT_WAIT_MS = Math.max(0, parseInt(process.env.ABOUT_WAIT_MS || '1800', 10) || 0);
+const ABOUT_MANUAL_RUN_STEPS = Math.max(0, parseInt(process.env.ABOUT_MANUAL_RUN_STEPS || '0', 10) || 0);
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -129,23 +134,30 @@ async function main() {
   const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
-  const userData = '/private/tmp/wine-assembly-chrome-profile';
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-chrome-profile-'));
   const chromeArgs = [
     '--disable-gpu',
     '--no-sandbox',
     `--remote-debugging-port=${DEBUG_PORT}`,
     `--user-data-dir=${userData}`,
-    `http://127.0.0.1:${PORT}/index.html`,
+    `http://127.0.0.1:${PORT}/index.html?profile=${Date.now()}`,
   ];
   if (headless) chromeArgs.unshift('--headless=new');
   const chrome = spawn(CHROME, chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeErr = '';
   let serverErr = '';
+  let chromeExit = null;
+  let serverExit = null;
   chrome.stderr.on('data', d => { chromeErr += d.toString(); });
   server.stderr.on('data', d => { serverErr += d.toString(); });
+  chrome.on('error', e => { chromeErr += `\n[spawn error] ${e.message}`; });
+  server.on('error', e => { serverErr += `\n[spawn error] ${e.message}`; });
+  chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; });
+  server.on('exit', (code, signal) => { serverExit = { code, signal }; });
   const cleanup = () => {
     try { chrome.kill('SIGKILL'); } catch (_) {}
     try { server.kill('SIGKILL'); } catch (_) {}
+    try { fs.rmSync(userData, { recursive: true, force: true }); } catch (_) {}
   };
   process.on('exit', cleanup);
 
@@ -159,7 +171,12 @@ async function main() {
     await wait(100);
   }
   if (!page) {
-    throw new Error('Chrome page did not appear\nchrome stderr:\n' + chromeErr.slice(-4000) + '\nserver stderr:\n' + serverErr.slice(-1000));
+    throw new Error(
+      'Chrome page did not appear\n' +
+      'chrome exit: ' + JSON.stringify(chromeExit) + '\n' +
+      'server exit: ' + JSON.stringify(serverExit) + '\n' +
+      'chrome stderr:\n' + chromeErr.slice(-4000) + '\n' +
+      'server stderr:\n' + serverErr.slice(-1000));
   }
 
   const cdp = wsConnect(page.webSocketDebuggerUrl);
@@ -262,8 +279,13 @@ async function main() {
       if (!orig || orig.__profiled) return;
       proto[key] = function(...args) {
         const t = performance.now();
-        try { return orig.apply(this, args); }
-        finally { add(name, performance.now() - t, args[0]); }
+        let ret;
+        try {
+          ret = orig.apply(this, args);
+          return ret;
+        } finally {
+          add(name, performance.now() - t, { arg0: args[0], ret: ret || null });
+        }
       };
       proto[key].__profiled = true;
     };
@@ -402,7 +424,7 @@ async function main() {
       return { hwnd, top, count, labels };
     })()`);
     await clickCanvasPoint(50, 46);
-    await wait(1800);
+    await wait(ABOUT_WAIT_MS);
     const result = await evalExpr(`(() => {
       const r = window.sharedRenderer || runningApps[0].wine.renderer;
       const sampleCanvas = (canvas) => {
@@ -422,6 +444,27 @@ async function main() {
         }
         return { w, h, sampledColors: colors.size, sampledInk: ink };
       };
+      const sampleRect = (canvas, x, y, w, h) => {
+        if (!canvas || !canvas.getContext) return null;
+        x = Math.max(0, x | 0);
+        y = Math.max(0, y | 0);
+        w = Math.max(0, Math.min(w | 0, (canvas.width | 0) - x));
+        h = Math.max(0, Math.min(h | 0, (canvas.height | 0) - y));
+        if (!w || !h) return null;
+        const data = canvas.getContext('2d').getImageData(x, y, w, h).data;
+        const colors = new Set();
+        let nonBlack = 0, nonGray = 0, nonWhite = 0;
+        for (let i = 0; i < data.length; i += 16) {
+          const a = data[i + 3];
+          if (!a) continue;
+          const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+          colors.add(rgb);
+          if (rgb !== 0x000000) nonBlack++;
+          if (rgb !== 0xc0c0c0) nonGray++;
+          if (rgb !== 0xffffff) nonWhite++;
+        }
+        return { x, y, w, h, sampledColors: colors.size, nonBlack, nonGray, nonWhite };
+      };
       const visibleWindows = Object.values(r.windows)
         .filter(w => w && w.visible)
         .map(w => ({
@@ -430,11 +473,48 @@ async function main() {
           x: w.x, y: w.y, w: w.w, h: w.h,
           isDialog: !!w.isDialog,
           back: sampleCanvas(w._backCanvas),
+          aboutContent: w.title === 'About Winamp'
+            ? sampleRect(w._backCanvas, 10, 56, 451, 311)
+            : null,
         }));
+      const app = runningApps[0];
+      const tm = app && app.wine && app.wine.threadManager;
+      let manualRun = null;
+      if (${ABOUT_MANUAL_RUN_STEPS} && tm && tm.threads) {
+        const first = Array.from(tm.threads.values())[0];
+        const e = first && first.instance && first.instance.exports;
+        const before = e && e.get_eip ? (e.get_eip() >>> 0) : 0;
+        const stats = tm.runSlice(${ABOUT_MANUAL_RUN_STEPS}, { quantumSteps: ${ABOUT_MANUAL_RUN_STEPS} });
+        const after = e && e.get_eip ? (e.get_eip() >>> 0) : 0;
+        manualRun = { before, after, stats };
+      }
+      const threads = tm && tm.threads ? Array.from(tm.threads.entries()).map(([handle, t]) => {
+        const e = t.instance && t.instance.exports;
+        return {
+          handle: handle >>> 0,
+          tid: t.tid,
+          state: t.state,
+          eip: e && e.get_eip ? (e.get_eip() >>> 0) : 0,
+          yieldReason: e && e.get_yield_reason ? (e.get_yield_reason() >>> 0) : 0,
+          sleepCount: t.sleepCount || 0,
+        };
+      }) : [];
+      const counters = {};
+      for (const [k, v] of Object.entries(window.__waProfile.counters || {})) {
+        counters[k] = {
+          count: v.count,
+          total: +v.total.toFixed(3),
+          max: +v.max.toFixed(3),
+        };
+      }
       return {
         menuState: ${JSON.stringify(menuState)},
         aboutOpen: visibleWindows.some(w => w.title === 'About Winamp'),
         visibleWindows,
+        threads,
+        manualRun,
+        counters,
+        samples: window.__waProfile.samples || {},
       };
     })()`);
     console.log(JSON.stringify(result, null, 2));

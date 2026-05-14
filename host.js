@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '132';
+  static SOURCE_VERSION = '134';
 
   constructor() {
     this.instance = null;
@@ -963,21 +963,21 @@ class WineAssembly {
             // Visible-window apps can still have compute-heavy UI worker threads.
             // Winamp's About/Credits animation is one of them: too-small worker
             // quanta starve the credits renderer behind the message/present loop.
-            // Keep a cap for browser responsiveness, but give active workers a
-            // meaningful slice so switching tabs does not appear hung.
+            // Keep a wall-clock cap for browser responsiveness, but give
+            // active workers enough total steps to use that budget.
             const audioHot = self._isAudioHot();
             const threadBudget = windowCount
-              ? (recentInputWake ? 0 : (mainThreadWaiting ? activeStepsPerSlice : Math.min(activeStepsPerSlice, 10000)))
+              ? (recentInputWake ? 0 : activeStepsPerSlice)
               : activeStepsPerSlice;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {
-                const quantumSteps = 10000;
-                const maxWallMs = audioHot ? (mainThreadWaiting ? 4 : 3) : (mainThreadWaiting ? 8 : 6);
+                const quantumSteps = audioHot ? 10000 : 50000;
+                const maxWallMs = audioHot ? (mainThreadWaiting ? 4 : 3) : (mainThreadWaiting ? 16 : 12);
                 self.threadManager.runBudgeted({
                   maxTotalSteps: threadBudget,
                   quantumSteps,
                   maxWallMs,
-                  stopIfMessagePending: true,
+                  stopIfMessagePending: false,
                 });
               } else {
                 self.threadManager.runSlice(threadBudget);
