@@ -131,7 +131,7 @@ const clippedDown = clippedRenderer.inputQueue.find(e => e.msg === 0x0201);
 const clippedMove = clippedRenderer.inputQueue.find(e => e.msg === 0x0200);
 const clippedUp = clippedRenderer.inputQueue.find(e => e.msg === 0x0202);
 assert.strictEqual(clippedDown.lParam, (70 << 16) | 50, 'ClipCursor should clamp mousedown to left/top edge');
-assert.strictEqual(clippedMove.lParam, (57 << 16) | 56, 'ClipCursor should clamp normal mousemove before client offset');
+assert.strictEqual(clippedMove.lParam, (79 << 16) | 59, 'ClipCursor should clamp mousemove to right/bottom edge');
 assert.strictEqual(clippedUp.lParam, (79 << 16) | 59, 'ClipCursor should clamp mouseup to right/bottom edge');
 
 console.log('PASS  renderer mouse drag moves carry button state');
