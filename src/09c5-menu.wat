@@ -147,15 +147,25 @@
     (i32.add (call $wnd_window_screen_x (local.get $hwnd)) (i32.const 3)))
 
   (func $menu_bar_screen_y (export "menu_bar_screen_y") (param $hwnd i32) (result i32)
-    (local $style i32)
+    (local $style i32) (local $is_child i32) (local $has_caption i32)
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $is_child
+      (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $has_caption
+      (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+              (i32.const 0x00C00000)))
+    (if
+      (i32.and
+        (i32.eqz (local.get $is_child))
+        (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))
+      (then (local.set $has_caption (i32.const 1))))
     (i32.add
       (call $wnd_window_screen_y (local.get $hwnd))
       (i32.add
         (i32.const 3)
-        (select (i32.const 19) (i32.const 0)
-          (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
-                  (i32.const 0x00C00000))))))
+        (select (i32.const 19) (i32.const 0) (local.get $has_caption)))))
 
   (func $menu_bar_screen_h (export "menu_bar_screen_h") (result i32)
     (i32.const 18))
