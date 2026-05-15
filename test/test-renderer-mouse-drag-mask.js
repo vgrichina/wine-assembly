@@ -99,4 +99,39 @@ assert(shapedDown, 'app-drawn shaped caption should receive WM_LBUTTONDOWN');
 assert.strictEqual(shapedDown.hwnd, 300);
 assert.strictEqual(shapedDown.lParam, ((8 & 0xFFFF) << 16) | (15 & 0xFFFF), 'shaped caption lParam should be window-relative');
 
+const clippedRenderer = new Win98Renderer(canvas);
+const clippedWasm = {
+  exports: {
+    clip_cursor_active() { return 1; },
+    clip_cursor_left() { return 50; },
+    clip_cursor_top() { return 70; },
+    clip_cursor_right() { return 60; },
+    clip_cursor_bottom() { return 80; },
+    wnd_mouse_msg_origin_x() { return 0; },
+    wnd_mouse_msg_origin_y() { return 0; },
+  },
+};
+clippedRenderer.wasm = clippedWasm;
+clippedRenderer.windows[400] = {
+  hwnd: 400,
+  visible: true,
+  isChild: false,
+  x: 0,
+  y: 0,
+  w: 200,
+  h: 200,
+  style: 0,
+  zOrder: 1,
+  wasm: clippedWasm,
+};
+clippedRenderer.handleMouseDown(40, 60, 1);
+clippedRenderer.handleMouseMove(80, 90);
+clippedRenderer.handleMouseUp(80, 90, 1);
+const clippedDown = clippedRenderer.inputQueue.find(e => e.msg === 0x0201);
+const clippedMove = clippedRenderer.inputQueue.find(e => e.msg === 0x0200);
+const clippedUp = clippedRenderer.inputQueue.find(e => e.msg === 0x0202);
+assert.strictEqual(clippedDown.lParam, (70 << 16) | 50, 'ClipCursor should clamp mousedown to left/top edge');
+assert.strictEqual(clippedMove.lParam, (57 << 16) | 56, 'ClipCursor should clamp normal mousemove before client offset');
+assert.strictEqual(clippedUp.lParam, (79 << 16) | 59, 'ClipCursor should clamp mouseup to right/bottom edge');
+
 console.log('PASS  renderer mouse drag moves carry button state');

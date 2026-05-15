@@ -569,6 +569,11 @@
   (func (export "get_capture_hwnd")     (result i32) (global.get $capture_hwnd))
   (func (export "release_capture")
     (global.set $capture_hwnd (i32.const 0)))
+  (func (export "clip_cursor_active")   (result i32) (global.get $clip_cursor_active))
+  (func (export "clip_cursor_left")     (result i32) (global.get $clip_cursor_l))
+  (func (export "clip_cursor_top")      (result i32) (global.get $clip_cursor_t))
+  (func (export "clip_cursor_right")    (result i32) (global.get $clip_cursor_r))
+  (func (export "clip_cursor_bottom")   (result i32) (global.get $clip_cursor_b))
   (func (export "set_focus_hwnd")       (param i32)  (global.set $focus_hwnd (local.get 0)))
   ;; Set focus via the proper SETFOCUS/KILLFOCUS message round-trip so
   ;; per-class focus bits + default-button flip + invalidates fire.

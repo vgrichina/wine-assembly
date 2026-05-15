@@ -8723,8 +8723,26 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 692: ClipCursor(lprc) — we don't confine the cursor; accept and return TRUE.
+  ;; 692: ClipCursor(lprc) — store the screen-coordinate confinement rect.
+  ;; JS clamps subsequent mouse input to this rect so apps that watch for the
+  ;; cursor reaching a clipped edge (Bricks/Klotski) see Win32-like coords.
   (func $handle_ClipCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rc i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $clip_cursor_active (i32.const 0))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $rc (call $g2w (local.get $arg0)))
+    (global.set $clip_cursor_l (i32.load (local.get $rc)))
+    (global.set $clip_cursor_t (i32.load offset=4 (local.get $rc)))
+    (global.set $clip_cursor_r (i32.load offset=8 (local.get $rc)))
+    (global.set $clip_cursor_b (i32.load offset=12 (local.get $rc)))
+    (global.set $clip_cursor_active
+      (i32.and
+        (i32.lt_s (global.get $clip_cursor_l) (global.get $clip_cursor_r))
+        (i32.lt_s (global.get $clip_cursor_t) (global.get $clip_cursor_b))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

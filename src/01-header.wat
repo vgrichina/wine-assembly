@@ -1000,6 +1000,13 @@
   (global $last_msg_pos_x (mut i32) (i32.const 0))
   (global $last_msg_pos_y (mut i32) (i32.const 0))
   (global $last_msg_time  (mut i32) (i32.const 0))
+  ;; ClipCursor confinement rectangle, in screen coordinates. Real USER clips
+  ;; hardware cursor movement; JS reads this and clamps generated mouse input.
+  (global $clip_cursor_active (mut i32) (i32.const 0))
+  (global $clip_cursor_l (mut i32) (i32.const 0))
+  (global $clip_cursor_t (mut i32) (i32.const 0))
+  (global $clip_cursor_r (mut i32) (i32.const 0))
+  (global $clip_cursor_b (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $message_wait_msg_ptr (mut i32) (i32.const 0))
