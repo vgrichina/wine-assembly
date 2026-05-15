@@ -179,6 +179,24 @@
                   (i32.eq (i32.load8_u offset=12 (call $g2w (local.get $arg1))) (i32.const 0x32))
                   (i32.eqz (i32.load8_u offset=13 (call $g2w (local.get $arg1)))))))))
       (then (local.set $tmp (i32.const 0))))
+    ;; Prefer the WAT-native TreeView for SysTreeView32 as well. Winamp's
+    ;; preferences dialog uses this for the category list; if comctl32's
+    ;; registered class wins, the child is not classified and never paints.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x74737973)) ;; "syst"
+            (i32.and
+              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x76656572)) ;; "reev"
+              (i32.and
+                (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                        (i32.const 0x33776569)) ;; "iew3"
+                (i32.and
+                  (i32.eq (i32.load8_u offset=12 (call $g2w (local.get $arg1))) (i32.const 0x32))
+                  (i32.eqz (i32.load8_u offset=13 (call $g2w (local.get $arg1)))))))))
+      (then (local.set $tmp (i32.const 0))))
     ;; Same for tooltips_class32. Match the stable "tooltips" prefix because
     ;; some comctl32 callers use class aliases with the same prefix.
     (if (i32.and

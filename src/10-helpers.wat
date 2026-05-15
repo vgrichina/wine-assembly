@@ -2461,6 +2461,8 @@
             (then (local.set $class_enum (i32.const 5))))
           (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x312F))
             (then (local.set $class_enum (i32.const 17))))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x316B))
+            (then (local.set $class_enum (i32.const 8))))
           (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3141))
             (then (local.set $class_enum (i32.const 18))))
           (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3150))

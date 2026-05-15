@@ -36,6 +36,8 @@ const WINAMP_DOUBLE_SIZE = process.env.WINAMP_DOUBLE_SIZE === '1';
 const WINAMP_PLAYLIST_LARGE = process.env.WINAMP_PLAYLIST_LARGE === '1';
 const AUDIO_PLAYS = Math.max(1, parseInt(argValue('audio-plays') || process.env.AUDIO_PLAYS || '1', 10) || 1);
 const AUDIO_WAIT_MS = intArgOrEnv('audio-wait-ms', 'AUDIO_WAIT_MS', 2500);
+const POST_CMD = Math.max(0, parseInt(argValue('post-cmd') || process.env.POST_CMD || '0', 10) || 0);
+const POST_WAIT_MS = intArgOrEnv('post-wait-ms', 'POST_WAIT_MS', 1800);
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -163,7 +165,8 @@ async function main() {
   const headless = process.env.HEADLESS !== '0';
   const mode = process.env.MODE ||
     (process.argv.includes('--audio') ? 'audio' :
-     process.argv.includes('--about-menu') ? 'about-menu' : 'credits');
+     process.argv.includes('--about-menu') ? 'about-menu' :
+     POST_CMD ? 'post-cmd' : 'credits');
   const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -477,6 +480,119 @@ async function main() {
         windows: Object.values((window.sharedRenderer || wine.renderer).windows)
           .filter(w => w && w.visible)
           .map(w => ({ hwnd: w.hwnd, title: w.title || '', x: w.x, y: w.y, w: w.w, h: w.h })),
+      };
+    })()`);
+    console.log(JSON.stringify(result, null, 2));
+    await saveScreenshot();
+    cdp.close();
+    cleanup();
+    return;
+  }
+
+  if (mode === 'post-cmd') {
+    await evalExpr(`(() => {
+      const app = runningApps[0];
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      e.post_message_q(e.get_main_hwnd(), 0x0111, ${POST_CMD}, 0);
+      return 1;
+    })()`);
+    await wait(POST_WAIT_MS);
+    const result = await evalExpr(`(() => {
+      const app = runningApps[0];
+      const wine = app && app.wine;
+      const e = wine && wine.instance && wine.instance.exports;
+      const r = window.sharedRenderer || (wine && wine.renderer);
+      const sampleCanvas = (canvas) => {
+        if (!canvas || !canvas.getContext) return null;
+        const w = canvas.width | 0;
+        const h = canvas.height | 0;
+        if (!w || !h) return null;
+        const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+        const colors = new Set();
+        let ink = 0;
+        for (let i = 0; i < data.length; i += 16) {
+          const a = data[i + 3];
+          if (!a) continue;
+          const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+          colors.add(rgb);
+          if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+        }
+        return { w, h, sampledColors: colors.size, sampledInk: ink };
+      };
+      const childrenOf = (hwnd) => {
+        if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd) return [];
+        const dv = wine && wine.memory ? new DataView(wine.memory.buffer) : null;
+        const imageBase = e && e.get_image_base ? (e.get_image_base() >>> 0) : 0;
+        const guestBase = e && e.get_guest_base ? (e.get_guest_base() >>> 0) : 0x12000;
+        const g2w = (p) => ((p >>> 0) - imageBase + guestBase) >>> 0;
+        const readStr = (guestPtr, max = 80) => {
+          if (!dv || !guestPtr || guestPtr === 0xffffffff || !imageBase) return '';
+          const wa = g2w(guestPtr);
+          if (wa >= dv.byteLength) return '';
+          let s = '';
+          for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
+            const c = dv.getUint8(wa + i);
+            if (!c) break;
+            s += String.fromCharCode(c);
+          }
+          return s;
+        };
+        const treeItems = () => {
+          if (!dv) return [];
+          const out = [];
+          for (let i = 0; i < 32; i++) {
+            const base = 0x9000 + i * 32;
+            const handle = dv.getUint32(base, true) >>> 0;
+            if (!handle) continue;
+            const textPtr = dv.getUint32(base + 28, true) >>> 0;
+            out.push({
+              slot: i,
+              handle,
+              parent: dv.getUint32(base + 4, true) >>> 0,
+              firstChild: dv.getUint32(base + 8, true) >>> 0,
+              next: dv.getUint32(base + 12, true) >>> 0,
+              state: dv.getUint32(base + 20, true) >>> 0,
+              lParam: dv.getUint32(base + 24, true) >>> 0,
+              textPtr,
+              text: readStr(textPtr),
+            });
+          }
+          return out;
+        };
+        const out = [];
+        let s = 0;
+        while ((s = e.wnd_next_child_slot(hwnd, s)) !== -1) {
+          const ch = e.wnd_slot_hwnd(s) >>> 0;
+          const xy = e.ctrl_get_xy ? (e.ctrl_get_xy(ch) >>> 0) : 0;
+          const wh = e.ctrl_get_wh ? (e.ctrl_get_wh(ch) >>> 0) : 0;
+          const cls = e.ctrl_get_class ? (e.ctrl_get_class(ch) | 0) : -1;
+          out.push({
+            hwnd: ch,
+            id: e.ctrl_get_id ? (e.ctrl_get_id(ch) | 0) : -1,
+            cls,
+            style: e.wnd_get_style_export ? (e.wnd_get_style_export(ch) >>> 0) : 0,
+            x: xy & 0xffff,
+            y: xy >>> 16,
+            w: wh & 0xffff,
+            h: wh >>> 16,
+            treeItems: cls === 8 ? treeItems() : undefined,
+          });
+          s++;
+        }
+        return out;
+      };
+      return {
+        postCmd: ${POST_CMD},
+        visibleWindows: Object.values((r && r.windows) || {})
+          .filter(w => w && w.visible)
+          .map(w => ({
+            hwnd: w.hwnd >>> 0,
+            title: w.title || '',
+            x: w.x, y: w.y, w: w.w, h: w.h,
+            isDialog: !!w.isDialog,
+            back: sampleCanvas(w._backCanvas),
+            children: w.isDialog ? childrenOf(w.hwnd >>> 0) : [],
+          })),
       };
     })()`);
     console.log(JSON.stringify(result, null, 2));

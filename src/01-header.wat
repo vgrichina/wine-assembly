@@ -526,6 +526,7 @@
   (data (i32.const 0x3141) "SysListView32\00")
   (data (i32.const 0x3150) "Slider1\00")
   (data (i32.const 0x3158) "msctls_trackbar32\00")
+  (data (i32.const 0x316B) "SysTreeView32\00")
 
   ;; ============================================================
   ;; MEMORY MAP

@@ -14,6 +14,7 @@
 
   (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
+  (global $tv_selected_handle (mut i32) (i32.const 0))
 
   ;; Find slot index for a handle, return -1 if not found
   (func $tv_find_slot (param $handle i32) (result i32)
@@ -49,6 +50,7 @@
     (local $slot i32) (local $base i32) (local $handle i32)
     (local $hParent i32) (local $state i32) (local $mask i32)
     (local $parent_slot i32) (local $sib i32)
+    (local $text_g i32) (local $text_w i32) (local $text_len i32) (local $text_copy_g i32)
     ;; Allocate slot
     (local.set $slot (call $tv_alloc_slot))
     (if (i32.eq (local.get $slot) (i32.const -1))
@@ -63,6 +65,10 @@
     (i32.store (local.get $base) (local.get $handle))
     ;; Read parent from TV_INSERTSTRUCT
     (local.set $hParent (i32.load (local.get $lParam_wa)))
+    ;; TVI_ROOT/TVI_FIRST/TVI_LAST/TVI_SORT are 0xFFFF0000..3 sentinel
+    ;; values. Treat them as root-level insertion rather than as item handles.
+    (if (i32.ge_u (local.get $hParent) (i32.const 0xFFFF0000))
+      (then (local.set $hParent (i32.const 0))))
     (i32.store offset=4 (local.get $base) (local.get $hParent))
     ;; Init child/sibling pointers
     (i32.store offset=8 (local.get $base) (i32.const 0))   ;; firstChild
@@ -82,12 +88,26 @@
       (then
         (i32.store offset=24 (local.get $base)
           (i32.load (i32.add (local.get $lParam_wa) (i32.const 44))))))  ;; TVITEMA.lParam at +36 from TVITEMA = +44 from struct start
-    ;; pszText: if mask includes TVIF_TEXT (0x1), store guest pointer at +28
+    ;; pszText: if mask includes TVIF_TEXT (0x1), copy it now. Many apps
+    ;; reuse a stack buffer for successive TVM_INSERTITEM calls.
     (if (i32.and (local.get $mask) (i32.const 0x1))
       (then
-        (i32.store offset=28 (local.get $base)
-          (i32.load (i32.add (local.get $lParam_wa) (i32.const 24))))))
-    ;; Link into parent's child list
+        (local.set $text_g (i32.load (i32.add (local.get $lParam_wa) (i32.const 24))))
+        (if (i32.and
+              (i32.ne (local.get $text_g) (i32.const 0))
+              (i32.lt_u (local.get $text_g) (i32.const 0xFFFF0000)))
+          (then
+            (local.set $text_w (call $g2w (local.get $text_g)))
+            (local.set $text_len (call $strlen (local.get $text_w)))
+            (local.set $text_copy_g (call $heap_alloc (i32.add (local.get $text_len) (i32.const 1))))
+            (call $memcpy (call $g2w (local.get $text_copy_g))
+                          (local.get $text_w)
+                          (local.get $text_len))
+            (i32.store8 (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
+                        (i32.const 0))
+            (i32.store offset=28 (local.get $base) (local.get $text_copy_g))))
+        (drop (i32.const 0))))
+    ;; Link into parent's child list.
     (if (local.get $hParent)
       (then
         (local.set $parent_slot (call $tv_find_slot (local.get $hParent)))
@@ -185,6 +205,9 @@
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
             (br $loop)))
         (return (i32.const 0))))
+    ;; TVGN_CARET (9) — selected item.
+    (if (i32.eq (local.get $flag) (i32.const 9))
+      (then (return (global.get $tv_selected_handle))))
     ;; Need to find the item
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
@@ -202,24 +225,81 @@
     ;; TVGN_CHILD (4) — first child
     (if (i32.eq (local.get $flag) (i32.const 4))
       (then (return (i32.load offset=8 (local.get $base)))))
-    ;; TVGN_CARET (9) — selected item, just return the requested item
-    (if (i32.eq (local.get $flag) (i32.const 9))
-      (then (return (local.get $hItem))))
     (i32.const 0))
+
+  ;; Send the parent dialog a minimal NM_TREEVIEWA/TVN_SELCHANGEDA after the
+  ;; caret item changes. Winamp populates the preferences page from this
+  ;; notification; without it the tree paints but the page area remains blank.
+  (func $tv_notify_sel_changed (param $hwnd i32) (param $old_handle i32) (param $new_handle i32)
+    (local $parent i32) (local $notify_g i32) (local $notify_w i32)
+    (local $slot i32) (local $base i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $notify_g (call $heap_alloc (i32.const 104)))
+    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (call $zero_memory (local.get $notify_w) (i32.const 104))
+    ;; NMHDR: hwndFrom, idFrom, code(TVN_SELCHANGEDA = TVN_FIRST - 2).
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (i32.const -402))
+    ;; action = TVC_UNKNOWN for programmatic TVM_SELECTITEM.
+    (i32.store offset=12 (local.get $notify_w) (i32.const 0))
+
+    ;; itemOld at +16, itemNew at +56. Fill mask, hItem, selected state
+    ;; for itemNew, and lParam so Winamp can map the tree node to a page.
+    (if (local.get $old_handle)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $old_handle)))
+        (if (i32.ne (local.get $slot) (i32.const -1))
+          (then
+            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+            (i32.store offset=16 (local.get $notify_w) (i32.const 0x14))
+            (i32.store offset=20 (local.get $notify_w) (local.get $old_handle))
+            (i32.store offset=52 (local.get $notify_w) (i32.load offset=24 (local.get $base)))))))
+    (if (local.get $new_handle)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $new_handle)))
+        (if (i32.ne (local.get $slot) (i32.const -1))
+          (then
+            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+            (i32.store offset=56 (local.get $notify_w) (i32.const 0x1C))
+            (i32.store offset=60 (local.get $notify_w) (local.get $new_handle))
+            (i32.store offset=64 (local.get $notify_w) (i32.const 0x0002))
+            (i32.store offset=68 (local.get $notify_w) (i32.const 0x0002))
+            (i32.store offset=92 (local.get $notify_w) (i32.load offset=24 (local.get $base)))))))
+    (drop (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd))
+      (local.get $notify_g)))
+    (call $heap_free (local.get $notify_g)))
 
   ;; Main TreeView message dispatcher
   (func $treeview_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $ret i32) (local $old_sel i32)
     ;; TVM_INSERTITEMA (0x1100)
     (if (i32.eq (local.get $msg) (i32.const 0x1100))
-      (then (return (call $tv_insert (call $g2w (local.get $lParam))))))
+      (then
+        (local.set $ret (call $tv_insert (call $g2w (local.get $lParam))))
+        (call $treeview_paint_wat (local.get $hwnd))
+        (return (local.get $ret))))
     ;; TVM_DELETEITEM (0x1101) — simplified: just clear the slot
     (if (i32.eq (local.get $msg) (i32.const 0x1101))
       (then
         (if (i32.ne (call $tv_find_slot (local.get $lParam)) (i32.const -1))
           (then
+            (if (i32.eq (global.get $tv_selected_handle) (local.get $lParam))
+              (then (global.set $tv_selected_handle (i32.const 0))))
             (i32.store (i32.add (i32.const 0x9000)
               (i32.mul (call $tv_find_slot (local.get $lParam)) (i32.const 32))) (i32.const 0))
             (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
+        (return (i32.const 1))))
+    ;; TVM_EXPAND (0x1102) — accept programmatic expand/collapse. This
+    ;; minimal tree paints all inserted items, but callers expect nonzero.
+    (if (i32.eq (local.get $msg) (i32.const 0x1102))
+      (then
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (call $treeview_paint_wat (local.get $hwnd))
         (return (i32.const 1))))
     ;; TVM_GETCOUNT (0x1105)
     (if (i32.eq (local.get $msg) (i32.const 0x1105))
@@ -230,9 +310,23 @@
     ;; TVM_GETNEXTITEM (0x110a)
     (if (i32.eq (local.get $msg) (i32.const 0x110a))
       (then (return (call $tv_get_next (local.get $wParam) (local.get $lParam)))))
-    ;; TVM_SELECTITEM (0x110b) — no-op
+    ;; TVM_SELECTITEM (0x110b)
     (if (i32.eq (local.get $msg) (i32.const 0x110b))
-      (then (return (i32.const 1))))
+      (then
+        (if (i32.eq (local.get $wParam) (i32.const 9)) ;; TVGN_CARET
+          (then
+            (if (i32.and
+                  (local.get $lParam)
+                  (i32.eq (call $tv_find_slot (local.get $lParam)) (i32.const -1)))
+              (then (return (i32.const 0))))
+            (local.set $old_sel (global.get $tv_selected_handle))
+            (global.set $tv_selected_handle (local.get $lParam))
+            (if (i32.ne (local.get $old_sel) (local.get $lParam))
+              (then (call $tv_notify_sel_changed
+                (local.get $hwnd) (local.get $old_sel) (local.get $lParam))))
+            (call $paint_flag_set_inv (local.get $hwnd))
+            (call $treeview_paint_wat (local.get $hwnd))))
+        (return (i32.const 1))))
     ;; TVM_GETITEMA (0x110c)
     (if (i32.eq (local.get $msg) (i32.const 0x110c))
       (then (return (call $tv_get_item (call $g2w (local.get $lParam))))))
@@ -348,8 +442,8 @@
                     (then
                       (drop (call $host_gdi_text_out (local.get $hdc)
                         (local.get $x) (i32.add (local.get $y) (i32.const 1))
-                        (local.get $text_w) (local.get $text_len) (i32.const 0))))))))
-              (local.set $row (i32.add (local.get $row) (i32.const 1)))))))
+                        (local.get $text_w) (local.get $text_len) (i32.const 0)))))))
+              (local.set $row (i32.add (local.get $row) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $items))))
 
