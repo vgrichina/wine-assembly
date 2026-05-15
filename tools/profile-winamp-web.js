@@ -13,6 +13,11 @@ const DEBUG_PORT = 9223;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const ABOUT_WAIT_MS = Math.max(0, parseInt(process.env.ABOUT_WAIT_MS || '1800', 10) || 0);
 const ABOUT_MANUAL_RUN_STEPS = Math.max(0, parseInt(process.env.ABOUT_MANUAL_RUN_STEPS || '0', 10) || 0);
+const VIEWPORT_WIDTH = Math.max(0, parseInt(process.env.VIEWPORT_WIDTH || '0', 10) || 0);
+const VIEWPORT_HEIGHT = Math.max(0, parseInt(process.env.VIEWPORT_HEIGHT || '0', 10) || 0);
+const SCREENSHOT_PATH = process.env.SCREENSHOT_PATH || '';
+const WINAMP_DOUBLE_SIZE = process.env.WINAMP_DOUBLE_SIZE === '1';
+const WINAMP_PLAYLIST_LARGE = process.env.WINAMP_PLAYLIST_LARGE === '1';
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -142,6 +147,7 @@ async function main() {
     `--user-data-dir=${userData}`,
     `http://127.0.0.1:${PORT}/index.html?profile=${Date.now()}`,
   ];
+  if (VIEWPORT_WIDTH && VIEWPORT_HEIGHT) chromeArgs.splice(3, 0, `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`);
   if (headless) chromeArgs.unshift('--headless=new');
   const chrome = spawn(CHROME, chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeErr = '';
@@ -183,6 +189,20 @@ async function main() {
   await cdp.opened;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  if (VIEWPORT_WIDTH && VIEWPORT_HEIGHT) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: VIEWPORT_WIDTH,
+      height: VIEWPORT_HEIGHT,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+  }
+
+  async function saveScreenshot() {
+    if (!SCREENSHOT_PATH) return;
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+    if (shot && shot.data) fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
+  }
 
   async function evalExpr(expression, timeout = 5000, userGesture = false) {
     const r = await cdp.send('Runtime.evaluate', {
@@ -338,6 +358,26 @@ async function main() {
   })()`);
 
   await evalExpr(`(() => {
+    if (${WINAMP_DOUBLE_SIZE || WINAMP_PLAYLIST_LARGE ? 'true' : 'false'}) {
+      localStorage.setItem('ini:winamp.ini', JSON.stringify({
+        sections: {
+          Winamp: {
+            mb_open: '0',
+            check_ft_startup: '0',
+            newverchk: '0',
+            newverchk2: '0',
+            dsize: ${WINAMP_DOUBLE_SIZE ? "'1'" : "'0'"},
+            eqdsize: ${WINAMP_DOUBLE_SIZE ? "'1'" : "'0'"},
+            pe_width: ${WINAMP_PLAYLIST_LARGE ? "'550'" : "'275'"},
+            pe_height: ${WINAMP_PLAYLIST_LARGE ? "'468'" : "'232'"},
+          },
+          WinampReg: {
+            NeedReg: '0',
+            RegDataLen: '0',
+          },
+        },
+      }));
+    }
     document.getElementById('app-select').value = 'winamp';
     return launchApp();
   })()`, 20000, true);
@@ -396,6 +436,7 @@ async function main() {
       };
     })()`);
     console.log(JSON.stringify(result, null, 2));
+    await saveScreenshot();
     cdp.close();
     cleanup();
     return;
@@ -518,6 +559,7 @@ async function main() {
       };
     })()`);
     console.log(JSON.stringify(result, null, 2));
+    await saveScreenshot();
     cdp.close();
     cleanup();
     return;
@@ -624,6 +666,7 @@ async function main() {
   })()`, 5000);
 
   console.log(JSON.stringify(result, null, 2));
+  await saveScreenshot();
   cdp.close();
   cleanup();
 }

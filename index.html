@@ -577,21 +577,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=135"></script>
-  <script src="lib/dib.js?v=135"></script>
-  <script src="lib/resources-icon.js?v=135"></script>
-  <script src="lib/renderer-input.js?v=135"></script>
-  <script src="lib/renderer.js?v=135"></script>
-  <script src="lib/dll-loader.js?v=135"></script>
-  <script src="lib/storage.js?v=135"></script>
-  <script src="lib/filesystem.js?v=135"></script>
-  <script src="lib/hlp-parser.js?v=135"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=135"></script>
-  <script src="lib/host-imports.js?v=135"></script>
-  <script src="lib/compile-wat.js?v=135"></script>
-  <script src="lib/thread-manager.js?v=135"></script>
-  <script src="host.js?v=135"></script>
-  <script src="lib/recorder.js?v=135"></script>
+  <script src="lib/mem-utils.js?v=136"></script>
+  <script src="lib/dib.js?v=136"></script>
+  <script src="lib/resources-icon.js?v=136"></script>
+  <script src="lib/renderer-input.js?v=136"></script>
+  <script src="lib/renderer.js?v=136"></script>
+  <script src="lib/dll-loader.js?v=136"></script>
+  <script src="lib/storage.js?v=136"></script>
+  <script src="lib/filesystem.js?v=136"></script>
+  <script src="lib/hlp-parser.js?v=136"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=136"></script>
+  <script src="lib/host-imports.js?v=136"></script>
+  <script src="lib/compile-wat.js?v=136"></script>
+  <script src="lib/thread-manager.js?v=136"></script>
+  <script src="host.js?v=136"></script>
+  <script src="lib/recorder.js?v=136"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1040,6 +1040,7 @@ Resource-aware Win98 emulator
           'binaries/winamp.m3u',
         ],
         winampDemo: 'C:\\demo.mp3',
+        resetIniOnLaunch: ['winamp.ini'],
       },
       winamp291_inst: { exe: 'binaries/installers/winamp291.exe' },
       winamp295_inst: { exe: 'binaries/installers/winamp295.exe' },
@@ -1180,7 +1181,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=135');
+        const response = await fetch(url + '?v=136');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1695,6 +1696,11 @@ Resource-aware Win98 emulator
       const sel = document.getElementById('app-select').value;
       const app = apps[sel];
       if (!app) return;
+      if (app.resetIniOnLaunch && typeof localStorage !== 'undefined') {
+        for (const name of app.resetIniOnLaunch) {
+          localStorage.removeItem('ini:' + String(name).toLowerCase());
+        }
+      }
       const failLaunch = (e) => {
         const log = document.getElementById('log');
         const msg = 'ERROR launching ' + sel + ': ' + (e && e.message ? e.message : e);
