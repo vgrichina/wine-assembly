@@ -127,6 +127,7 @@
     (drop (call $wnd_send_message (local.get $hwnd)
       (i32.const 0x0082)  ;; WM_NCDESTROY
       (i32.const 0) (i32.const 0)))
+    (call $timer_kill_hwnd (local.get $hwnd))
     ;; Notify host to remove from its table (for each child too)
     (call $host_destroy_window (local.get $hwnd))
     ;; Finally, remove the window itself from guest table

@@ -7209,6 +7209,7 @@
     ;; All children gone — let the wndproc free per-window state, then drop the slot.
     (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0002)
             (i32.const 0) (i32.const 0)))
+    (call $timer_kill_hwnd (local.get $hwnd))
     (call $wnd_table_remove (local.get $hwnd)))
 
   ;; Destroy all children of a window (depth-first) but not the window itself.

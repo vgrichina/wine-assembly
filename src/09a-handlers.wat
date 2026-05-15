@@ -86,6 +86,27 @@
     (i32.const 0)
   )
 
+  ;; Real USER tears down HWND-owned timers when the window is destroyed.
+  ;; Without this, timer-driven child pages can keep sending WM_TIMER after
+  ;; their HWND has gone away and continue drawing through cached parent DCs.
+  (func $timer_kill_hwnd (param $hwnd i32)
+    (local $i i32)
+    (local $addr i32)
+    (local.set $i (i32.const 0))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
+        (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
+        (if (i32.and
+              (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+              (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
+          (then
+            (i32.store (local.get $addr) (i32.const 0))
+            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
+            (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop))))
+
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
   (func $timer_check_due (param $msg_ptr i32) (param $consume i32) (result i32)

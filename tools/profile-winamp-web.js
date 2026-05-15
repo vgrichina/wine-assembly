@@ -11,16 +11,34 @@ const ROOT = process.cwd();
 const PORT = 8765;
 const DEBUG_PORT = 9223;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const ABOUT_WAIT_MS = Math.max(0, parseInt(process.env.ABOUT_WAIT_MS || '1800', 10) || 0);
+
+function argValue(name) {
+  const flag = `--${name}`;
+  const withEquals = `${flag}=`;
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith(withEquals)) return arg.slice(withEquals.length);
+    if (arg === flag && i + 1 < process.argv.length) return process.argv[i + 1];
+  }
+  return '';
+}
+
+function intArgOrEnv(argName, envName, fallback) {
+  return Math.max(0, parseInt(argValue(argName) || process.env[envName] || String(fallback), 10) || 0);
+}
+
+const ABOUT_WAIT_MS = intArgOrEnv('about-wait-ms', 'ABOUT_WAIT_MS', 1800);
 const ABOUT_MANUAL_RUN_STEPS = Math.max(0, parseInt(process.env.ABOUT_MANUAL_RUN_STEPS || '0', 10) || 0);
 const VIEWPORT_WIDTH = Math.max(0, parseInt(process.env.VIEWPORT_WIDTH || '0', 10) || 0);
 const VIEWPORT_HEIGHT = Math.max(0, parseInt(process.env.VIEWPORT_HEIGHT || '0', 10) || 0);
-const SCREENSHOT_PATH = process.env.SCREENSHOT_PATH || '';
+const SCREENSHOT_PATH = argValue('screenshot') || process.env.SCREENSHOT_PATH || '';
 const WINAMP_DOUBLE_SIZE = process.env.WINAMP_DOUBLE_SIZE === '1';
 const WINAMP_PLAYLIST_LARGE = process.env.WINAMP_PLAYLIST_LARGE === '1';
-const AUDIO_PLAYS = Math.max(1, parseInt(process.env.AUDIO_PLAYS || '1', 10) || 1);
-const AUDIO_WAIT_MS = Math.max(0, parseInt(process.env.AUDIO_WAIT_MS || '2500', 10) || 0);
-const ABOUT_TAB = (process.env.ABOUT_TAB || '').toLowerCase();
+const AUDIO_PLAYS = Math.max(1, parseInt(argValue('audio-plays') || process.env.AUDIO_PLAYS || '1', 10) || 1);
+const AUDIO_WAIT_MS = intArgOrEnv('audio-wait-ms', 'AUDIO_WAIT_MS', 2500);
+const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
+const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
+const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
 const ABOUT_TAB_POINTS = {
   winamp: { x: 63, y: 40 },
   credits: { x: 178, y: 40 },
@@ -609,13 +627,11 @@ async function main() {
   await wait(1200);
 
   await evalExpr(`(() => {
-    const r = window.sharedRenderer || runningApps[0].wine.renderer;
     window.__waProfile.marks.push({ name: 'click-credits', t: performance.now() - window.__waProfile.t0 });
-    r.handleMouseDown(170, 42, 1);
-    r.handleMouseUp(170, 42, 1);
     return 1;
   })()`);
-  await wait(1500);
+  await clickCanvasPoint(170, 42);
+  await wait(CREDIT_TAB_WAIT_MS);
   await evalExpr(`(() => {
     const r = window.sharedRenderer || runningApps[0].wine.renderer;
     const sampleCanvas = (canvas) => {
@@ -647,13 +663,11 @@ async function main() {
     return 1;
   })()`);
   await evalExpr(`(() => {
-    const r = window.sharedRenderer || runningApps[0].wine.renderer;
     window.__waProfile.marks.push({ name: 'click-winamp', t: performance.now() - window.__waProfile.t0 });
-    r.handleMouseDown(60, 42, 1);
-    r.handleMouseUp(60, 42, 1);
     return 1;
   })()`);
-  await wait(1500);
+  await clickCanvasPoint(60, 42);
+  await wait(RETURN_TAB_WAIT_MS);
 
   const result = await evalExpr(`(() => {
     const p = window.__waProfile;
