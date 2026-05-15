@@ -18,6 +18,16 @@ const VIEWPORT_HEIGHT = Math.max(0, parseInt(process.env.VIEWPORT_HEIGHT || '0',
 const SCREENSHOT_PATH = process.env.SCREENSHOT_PATH || '';
 const WINAMP_DOUBLE_SIZE = process.env.WINAMP_DOUBLE_SIZE === '1';
 const WINAMP_PLAYLIST_LARGE = process.env.WINAMP_PLAYLIST_LARGE === '1';
+const AUDIO_PLAYS = Math.max(1, parseInt(process.env.AUDIO_PLAYS || '1', 10) || 1);
+const AUDIO_WAIT_MS = Math.max(0, parseInt(process.env.AUDIO_WAIT_MS || '2500', 10) || 0);
+const ABOUT_TAB = (process.env.ABOUT_TAB || '').toLowerCase();
+const ABOUT_TAB_POINTS = {
+  winamp: { x: 63, y: 40 },
+  credits: { x: 178, y: 40 },
+  shortcuts: { x: 293, y: 40 },
+  history: { x: 403, y: 40 },
+  'version-history': { x: 403, y: 40 },
+};
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -399,8 +409,23 @@ async function main() {
   await wait(900);
 
   if (mode === 'audio') {
-    await clickCanvasPoint(66, 129);
-    await wait(2500);
+    const playSnapshots = [];
+    for (let i = 0; i < AUDIO_PLAYS; i++) {
+      await clickCanvasPoint(66, 129);
+      await wait(AUDIO_WAIT_MS);
+      playSnapshots.push(await evalExpr(`(() => ({
+        play: ${i + 1},
+        starts: window.__waAudioProbe && window.__waAudioProbe.starts,
+        currentTime: (() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const shared = wine && wine._sharedAudio;
+          const voices = shared && shared.voices;
+          const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+          return ac ? +ac.currentTime.toFixed(3) : null;
+        })(),
+      }))()`));
+    }
     const result = await evalExpr(`(() => {
       const app = runningApps[0];
       const wine = app && app.wine;
@@ -429,6 +454,7 @@ async function main() {
           openHandles: shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
           scheduledHeaders: shared.waveScheduledHeaders && shared.waveScheduledHeaders.size,
         } : null,
+        playSnapshots: ${JSON.stringify(playSnapshots)},
         voices: voiceMap,
         windows: Object.values((window.sharedRenderer || wine.renderer).windows)
           .filter(w => w && w.visible)
@@ -465,7 +491,17 @@ async function main() {
       return { hwnd, top, count, labels };
     })()`);
     await clickCanvasPoint(50, 46);
-    await wait(ABOUT_WAIT_MS);
+    await wait(ABOUT_TAB && ABOUT_TAB !== 'winamp' ? 300 : ABOUT_WAIT_MS);
+    const tabPoint = ABOUT_TAB_POINTS[ABOUT_TAB];
+    if (tabPoint && ABOUT_TAB !== 'winamp') {
+      const about = await evalExpr(`(() => {
+        const r = window.sharedRenderer || runningApps[0].wine.renderer;
+        const w = Object.values(r.windows).find(w => w && w.visible && w.title === 'About Winamp');
+        return w ? { x: w.x | 0, y: w.y | 0 } : null;
+      })()`);
+      if (about) await clickCanvasPoint(about.x + tabPoint.x, about.y + tabPoint.y);
+      await wait(ABOUT_WAIT_MS);
+    }
     const result = await evalExpr(`(() => {
       const r = window.sharedRenderer || runningApps[0].wine.renderer;
       const sampleCanvas = (canvas) => {
