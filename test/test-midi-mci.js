@@ -279,9 +279,21 @@ try {
   assert(osc.stops[0] > osc.starts[0], 'note stop should be after note start');
 
   const statusPtr = 0x200;
-  new DataView(mem.buffer).setUint32(statusPtr + 8, 1, true); // MCI_STATUS_LENGTH
+  const statusView = new DataView(mem.buffer);
+  statusView.setUint32(statusPtr + 8, 1, true); // MCI_STATUS_LENGTH
   assert.strictEqual(imports.host.mci_command(id, 0x0814, 0, statusPtr), 0);
-  assert.strictEqual(new DataView(mem.buffer).getUint32(statusPtr + 4, true), 500);
+  assert.strictEqual(statusView.getUint32(statusPtr + 4, true), 500);
+
+  statusView.setUint32(statusPtr + 8, 2, true); // MCI_STATUS_POSITION
+  ctx._voices._ac.currentTime += 0.25;
+  assert.strictEqual(imports.host.mci_command(id, 0x0814, 0, statusPtr), 0);
+  const pos = statusView.getUint32(statusPtr + 4, true);
+  assert(pos >= 240 && pos <= 260, `MCI_STATUS_POSITION should advance, got ${pos}`);
+
+  statusView.setUint32(statusPtr + 8, 4, true); // MCI_STATUS_MODE
+  ctx._voices._ac.currentTime += 0.4;
+  assert.strictEqual(imports.host.mci_command(id, 0x0814, 0, statusPtr), 0);
+  assert.strictEqual(statusView.getUint32(statusPtr + 4, true), 525, 'MCI_STATUS_MODE should stop once playback duration elapses');
 
   assert.strictEqual(imports.host.mci_command(id, 0x0804, 0, 0), 0, 'MCI_CLOSE should succeed');
   assert(!ctx._mci.devices.has(id), 'MCI_CLOSE should release the device');
