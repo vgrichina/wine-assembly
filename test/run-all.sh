@@ -71,6 +71,7 @@ E2E=(
   test/test-pyramid-menu.js
   test/test-bricks-drag.js
   test/test-empipe-start.js
+  test/test-empipe-stage-transition.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-spider-deal-menu.js

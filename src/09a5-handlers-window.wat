@@ -385,6 +385,8 @@
     (if (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000)) (i32.const 0))
       (then
         (call $wnd_set_parent (local.get $hwnd)
+          (local.get $parent_hwnd))
+        (call $host_set_parent (local.get $hwnd)
           (local.get $parent_hwnd)))
       (else
         (call $wnd_set_owner (local.get $hwnd)

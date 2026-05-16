@@ -93,6 +93,7 @@ function countInRect(img, rect, pred) {
   const gameplaySize = fs.existsSync(gameplayPng) ? fs.statSync(gameplayPng).size : 0;
   let redPlayfield = 0;
   let grayButton = 0;
+  let buttonInk = 0;
 
   if (gameplaySize) {
     const img = await readPixels(gameplayPng);
@@ -100,6 +101,8 @@ function countInRect(img, rect, pred) {
       (r, g, b) => r > 90 && r < 170 && g < 30 && b < 30);
     grayButton = countInRect(img, { x0: 430, y0: 345, x1: 528, y1: 365 },
       (r, g, b) => r >= 0xb0 && r <= 0xd0 && g >= 0xb0 && g <= 0xd0 && b >= 0xb0 && b <= 0xd0);
+    buttonInk = countInRect(img, { x0: 430, y0: 345, x1: 528, y1: 365 },
+      (r, g, b) => r < 80 && g < 80 && b < 80);
   }
 
   const checks = [
@@ -111,7 +114,8 @@ function countInRect(img, rect, pred) {
     { name: 'gameplay PNG written', pass: gameplaySize > 6000 },
     { name: 'main window remains visible after gameplay input', pass: /png .*empipe_after_gameplay\.png[\s\S]*window hwnd=65537 .*visible=true/.test(out) },
     { name: 'playfield grid still rendered after gameplay input', pass: redPlayfield > 50000 },
-    { name: 'bottom action button remains visible after gameplay input', pass: grayButton > 1000 },
+    { name: 'bottom action button surface was painted', pass: /window hwnd=65543 .*visible=true .*hasBack=true/.test(out) },
+    { name: 'bottom action button remains visible after gameplay input', pass: grayButton > 1000 && buttonInk > 50 },
     { name: 'no destroy-window path after start', pass: !/DestroyWindow/.test(out) },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];
@@ -122,7 +126,7 @@ function countInRect(img, rect, pred) {
     if (!c.pass) failed++;
   }
   console.log(`started=${startedPng} size=${startedSize}`);
-  console.log(`gameplay=${gameplayPng} size=${gameplaySize} red=${redPlayfield} button=${grayButton}`);
+  console.log(`gameplay=${gameplayPng} size=${gameplaySize} red=${redPlayfield} button=${grayButton} ink=${buttonInk}`);
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
   process.exit(failed ? 1 : 0);
 })().catch(err => {

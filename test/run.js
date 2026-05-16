@@ -303,9 +303,12 @@ async function main() {
   //   B:dlg-send:CTRL_ID:MSG:WPARAM:LPARAM — send a message to a dialog control by id
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
+  //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
+  //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
+  //   B:read-dword:ADDR[:LABEL] — log a guest dword value
   const scheduledInput = [];
   if (INPUT_SPEC) {
     for (const spec of INPUT_SPEC.split(',')) {
@@ -356,6 +359,8 @@ async function main() {
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
       } else if (kind === 'dlg-dump') {
         scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
+      } else if (kind === 'dump-children') {
+        scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'menu-dump') {
         scheduledInput.push({ batch, action: 'menu-dump', label: parts[2] || '' });
       } else if (kind === 'dlg-paint') {
@@ -446,6 +451,12 @@ async function main() {
       } else if (kind === 'poke') {
         // B:poke:GUEST_ADDR:VALUE — write a dword to guest memory
         scheduledInput.push({ batch, action: 'poke', addr: parseInt(parts[2]), value: parseInt(parts[3]) });
+      } else if (kind === 'call-func') {
+        scheduledInput.push({ batch, action: 'call-func',
+          addr: parseInt(parts[2]),
+          args: [0, 1, 2, 3].map(i => parseInt(parts[3 + i]) || 0) });
+      } else if (kind === 'read-dword') {
+        scheduledInput.push({ batch, action: 'read-dword', addr: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
@@ -2377,6 +2388,27 @@ async function main() {
           const modal = we.modal_dialog_hwnd ? (we.modal_dialog_hwnd() >>> 0) : 0;
           logs.push(`[input] dlg-dump${ev.label ? ':' + ev.label : ''}: dlg=${dlg ? '0x' + dlg.toString(16) : 'none'} modal=${modal ? '0x' + modal.toString(16) : 'none'} ${controls.length ? controls.join(' | ') : '(no controls)'}`);
         }
+      } else if (ev.action === 'dump-children') {
+        const we = instance.exports;
+        const parent = ev.hwnd >>> 0;
+        const children = [];
+        if (we.wnd_next_child_slot && we.wnd_slot_hwnd) {
+          let slot = 0;
+          for (let guard = 0; guard < 256; guard++) {
+            slot = we.wnd_next_child_slot(parent, slot) | 0;
+            if (slot < 0) break;
+            const hwnd = we.wnd_slot_hwnd(slot) >>> 0;
+            const cls = we.ctrl_get_class ? (we.ctrl_get_class(hwnd) | 0) : 0;
+            const id = we.ctrl_get_id ? (we.ctrl_get_id(hwnd) | 0) : 0;
+            const par = we.wnd_get_parent ? (we.wnd_get_parent(hwnd) >>> 0) : 0;
+            const style = we.wnd_get_style_export ? (we.wnd_get_style_export(hwnd) >>> 0) : 0;
+            const xy = we.ctrl_get_xy ? (we.ctrl_get_xy(hwnd) >>> 0) : 0;
+            const wh = we.ctrl_get_wh ? (we.ctrl_get_wh(hwnd) >>> 0) : 0;
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16}`);
+            slot++;
+          }
+        }
+        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} ${children.length ? children.join(' | ') : '(none)'}`);
       } else if (ev.action === 'menu-dump') {
         const we = instance.exports;
         const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;
@@ -2828,6 +2860,20 @@ async function main() {
         const dv = new DataView(memory.buffer);
         dv.setUint32(wa, ev.value, true);
         logs.push(`[input] poke [0x${ev.addr.toString(16)}] = 0x${ev.value.toString(16)} at batch ${batch}`);
+      } else if (ev.action === 'call-func') {
+        const we = instance.exports;
+        if (we.call_func) {
+          const a = ev.args || [];
+          we.call_func(ev.addr >>> 0, a[0] >>> 0, a[1] >>> 0, a[2] >>> 0, a[3] >>> 0);
+          logs.push(`[input] call-func 0x${(ev.addr >>> 0).toString(16)}(${a.map(v => '0x' + (v >>> 0).toString(16)).join(',')}) at batch ${batch}`);
+        } else {
+          logs.push(`[input] call-func unavailable addr=0x${(ev.addr >>> 0).toString(16)} at batch ${batch}`);
+        }
+      } else if (ev.action === 'read-dword') {
+        const wa = g2w(ev.addr);
+        const dv = new DataView(memory.buffer);
+        const value = dv.getUint32(wa, true) >>> 0;
+        logs.push(`[input] read-dword${ev.label ? ':' + ev.label : ''} [0x${(ev.addr >>> 0).toString(16)}] = 0x${value.toString(16)} (${value}) at batch ${batch}`);
       } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
