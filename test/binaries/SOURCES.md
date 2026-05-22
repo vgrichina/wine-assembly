@@ -136,11 +136,15 @@ Matched 1996 exe + DAT pair. `PINBALL.DAT` is the same size (928,700 B) as the X
 
 ## Winamp plug-ins
 
-**`plugins/`** — Winamp plug-ins staged for the web Winamp fixture.
+**`plugins/`** — Winamp plug-ins kept in the local fixture pool.
 
 `in_mp3.dll` and `out_wave.dll` are the known-good playback path used with the
 Winamp 2.91 fixture. The additional input/output/general plug-ins below were
-copied from a local extraction of `installers/winamp295.exe`:
+copied from a local extraction of `installers/winamp295.exe`. All are
+recoverable from the commands below, but the web fixture currently mounts only
+`in_mp3.dll` and `out_wave.dll`: Winamp's Visualization preferences page
+enumerates `C:\Plugins\*.DLL`, and loading arbitrary non-visualizer plugins
+currently prevents the pane from completing its move/show initialization.
 
 | Binary | Notes |
 |--------|-------|
@@ -156,8 +160,8 @@ copied from a local extraction of `installers/winamp295.exe`:
 | out_wm.dll | Windows Media output |
 | read_file.dll | Winamp support library |
 
-Recover the active plug-in fixtures from the installers with the emulator's VFS
-dump path:
+Recover the local plug-in fixture pool from the installers with the emulator's
+VFS dump path:
 
 ```bash
 rm -rf /private/tmp/winamp291-vfs /private/tmp/winamp295-vfs
@@ -173,7 +177,7 @@ cp "/private/tmp/winamp295-vfs/program files/winamp/plugins/"{cddbcontrolwinamp.
 **`plugins/candidates/`** — unmounted visualization candidates. These are kept
 locally for compatibility work but are intentionally not listed in the web
 Winamp manifest yet, so they do not affect startup, playback, or plug-in
-enumeration while the Visualization preferences pane is still blank.
+enumeration until each candidate is validated.
 
 From `https://archive.org/details/winamp5666_full_en-us_redux`
 (`winamp5666_full_en-us_redux.exe`, SHA1
