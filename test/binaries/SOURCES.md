@@ -131,7 +131,85 @@ Matched 1996 exe + DAT pair. `PINBALL.DAT` is the same size (928,700 B) as the X
 | Binary | Source |
 |--------|--------|
 | winamp291.exe | `https://archive.org/details/winamp-291` — WinAmp 2.91 (NSIS installer) |
+| winamp295.exe | `https://archive.org/details/winamp295` — Winamp 2.95 (NSIS installer) |
 | mirc59.exe | `https://archive.org/details/mirc59` — mIRC 5.9 |
+
+## Winamp plug-ins
+
+**`plugins/`** — Winamp plug-ins staged for the web Winamp fixture.
+
+`in_mp3.dll` and `out_wave.dll` are the known-good playback path used with the
+Winamp 2.91 fixture. The additional input/output/general plug-ins below were
+copied from a local extraction of `installers/winamp295.exe`:
+
+| Binary | Notes |
+|--------|-------|
+| cddbcontrolwinamp.dll | CDDB support |
+| cddbuiwinamp.dll | CDDB UI support |
+| enc_vorbis.dll | Vorbis encoder |
+| gen_ml.dll | Media Library general plug-in |
+| in_cdda.dll | CD audio / line-in input |
+| in_midi.dll | MIDI input |
+| in_mod.dll | Module decoder |
+| in_vorbis.dll | Vorbis input |
+| in_wm.dll | Windows Media input |
+| out_wm.dll | Windows Media output |
+| read_file.dll | Winamp support library |
+
+Recover the active plug-in fixtures from the installers with the emulator's VFS
+dump path:
+
+```bash
+rm -rf /private/tmp/winamp291-vfs /private/tmp/winamp295-vfs
+node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=8000 --batch-size=5000 --save-vfs=/private/tmp/winamp291-vfs
+node test/run.js --exe=test/binaries/installers/winamp295.exe --args=/S --max-batches=8000 --batch-size=5000 --save-vfs=/private/tmp/winamp295-vfs
+
+mkdir -p test/binaries/plugins
+cp "/private/tmp/winamp291-vfs/program files/winamp/plugins/in_mp3.dll" test/binaries/plugins/
+cp "/private/tmp/winamp291-vfs/program files/winamp/plugins/out_wave.dll" test/binaries/plugins/
+cp "/private/tmp/winamp295-vfs/program files/winamp/plugins/"{cddbcontrolwinamp.dll,cddbuiwinamp.dll,enc_vorbis.dll,gen_ml.dll,in_cdda.dll,in_midi.dll,in_mod.dll,in_vorbis.dll,in_wm.dll,out_wm.dll,read_file.dll} test/binaries/plugins/
+```
+
+**`plugins/candidates/`** — unmounted visualization candidates. These are kept
+locally for compatibility work but are intentionally not listed in the web
+Winamp manifest yet, so they do not affect startup, playback, or plug-in
+enumeration while the Visualization preferences pane is still blank.
+
+From `https://archive.org/details/winamp5666_full_en-us_redux`
+(`winamp5666_full_en-us_redux.exe`, SHA1
+`06fe238861ee178ded0efcd323fd0affe009c327`):
+
+| Binary | Size | SHA1 | Compatibility note |
+|--------|------|------|--------------------|
+| vis_avs.dll | 462,902 | `8084b90489072a9b02c5cafdfc036bea7f1b706a` | Best near-term candidate. Static imports include DDRAW plus MSVFW32/AVIFIL32 for optional AVI features. |
+| vis_nsfs.dll | 33,792 | `a763ea519713eff86e909d5f6636acdf6cf2fa7f` | DirectDraw-based Nullsoft fullscreen visualizer; small, but imports MSVCR90. |
+| vis_milk2.dll | 425,472 | `1b81c81a578952ecccc0f53ddea5ec37acc975c1` | MilkDrop 2. Dynamically loads D3D9/D3DX9; not a minimal-change target. |
+
+From `https://archive.org/details/milk-drop-104e`
+(`MilkDrop104e.zip`, SHA1 `ab1d0ce1f3dc5d0728c5d5486902b775e5c905d0`):
+
+| Binary | Size | SHA1 | Compatibility note |
+|--------|------|------|--------------------|
+| vis_milk.dll | 430,592 | `099cefe04c8cb88f38f7f1f1a9b1923434259792` | MilkDrop 1.04e. Dynamically loads D3D8; not a minimal-change target. |
+
+Recover the unmounted visualization candidates:
+
+```bash
+rm -rf /private/tmp/winamp5666-vis /private/tmp/milkdrop104e-extract
+mkdir -p /private/tmp/winamp5666-vis test/binaries/plugins/candidates
+curl -L -o /private/tmp/winamp5666_full_en-us_redux.exe \
+  "https://archive.org/download/winamp5666_full_en-us_redux/winamp5666_full_en-us_redux.exe"
+7z e -y -o/private/tmp/winamp5666-vis /private/tmp/winamp5666_full_en-us_redux.exe \
+  "Plugins/vis_avs.dll" "Plugins/vis_nsfs.dll" "Plugins/vis_milk2.dll"
+cp /private/tmp/winamp5666-vis/{vis_avs.dll,vis_nsfs.dll,vis_milk2.dll} test/binaries/plugins/candidates/
+
+curl -L -o /private/tmp/MilkDrop104e.zip \
+  "https://archive.org/download/milk-drop-104e/MilkDrop104e.zip"
+unzip -q /private/tmp/MilkDrop104e.zip -d /private/tmp/milkdrop104e-extract
+cp /private/tmp/milkdrop104e-extract/vis_milk.dll test/binaries/plugins/candidates/
+
+shasum -a 1 test/binaries/plugins/candidates/vis_*.dll
+```
 
 ## Shareware (`shareware/`)
 

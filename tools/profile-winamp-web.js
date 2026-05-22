@@ -38,9 +38,20 @@ const AUDIO_PLAYS = Math.max(1, parseInt(argValue('audio-plays') || process.env.
 const AUDIO_WAIT_MS = intArgOrEnv('audio-wait-ms', 'AUDIO_WAIT_MS', 2500);
 const POST_CMD = Math.max(0, parseInt(argValue('post-cmd') || process.env.POST_CMD || '0', 10) || 0);
 const POST_WAIT_MS = intArgOrEnv('post-wait-ms', 'POST_WAIT_MS', 1800);
+const POST_CLICK_WAIT_MS = intArgOrEnv('post-click-wait-ms', 'POST_CLICK_WAIT_MS', 700);
+const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
+  .split(';')
+  .map(s => s.trim())
+  .filter(Boolean)
+  .map(s => {
+    const [x, y, button] = s.split(',').map(p => p.trim());
+    return { x: Number(x), y: Number(y), button: button || 'left' };
+  })
+  .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
+const TRACE_TREE_GDI = process.env.TRACE_TREE_GDI === '1' || process.argv.includes('--trace-tree-gdi');
 const ABOUT_TAB_POINTS = {
   winamp: { x: 63, y: 40 },
   credits: { x: 178, y: 40 },
@@ -231,20 +242,37 @@ async function main() {
 
   async function saveScreenshot() {
     if (!SCREENSHOT_PATH) return;
+    try {
+      await evalExpr(`(() => {
+        const app = runningApps && runningApps[0];
+        const wine = app && app.wine;
+        const r = window.sharedRenderer || (wine && wine.renderer);
+        if (r && r.repaint) r.repaint();
+        return 1;
+      })()`, 1000);
+      await wait(50);
+    } catch (_) {}
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
     if (shot && shot.data) fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
   }
 
   async function evalExpr(expression, timeout = 5000, userGesture = false) {
-    const r = await cdp.send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      timeout,
-      userGesture,
-    });
-    if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
-    return r.result && r.result.value;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await cdp.send('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+          timeout,
+          userGesture,
+        });
+        if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
+        return r.result && r.result.value;
+      } catch (e) {
+        if (!/Execution context was destroyed/.test(String(e && e.message)) || attempt === 2) throw e;
+        await wait(250);
+      }
+    }
   }
 
   async function clickClient(x, y, button = 'left') {
@@ -388,6 +416,59 @@ async function main() {
     return 1;
   })()`);
 
+  if (TRACE_TREE_GDI) {
+    await evalExpr(`(() => {
+      if (window.__waTraceHostImportsInstalled) return 1;
+      const origCreateHostImports = window.createHostImports;
+      window.__waTreeGdiCalls = [];
+      window.createHostImports = function(ctx) {
+        const base = origCreateHostImports(ctx);
+        const host = base && base.host;
+        const wrap = (name) => {
+          const orig = host && host[name];
+          if (!orig) return;
+          host[name] = function(...args) {
+            const hdc = args[0] >>> 0;
+            const hwnd = (hdc >= 0x50000 && hdc < 0x200000)
+              ? ((hdc >= 0xD0000 ? hdc - 0xC0000 : hdc - 0x40000) >>> 0)
+              : 0;
+            let parent = 0, top = 0, cx = 0, cy = 0, tx = 0, ty = 0;
+            const e = ctx && ctx.exports;
+            try { parent = e && e.wnd_get_parent ? (e.wnd_get_parent(hwnd) >>> 0) : 0; } catch (_) {}
+            try { top = e && e.wnd_top_level ? (e.wnd_top_level(hwnd) >>> 0) : 0; } catch (_) {}
+            try { cx = e && e.wnd_client_screen_x ? (e.wnd_client_screen_x(hwnd) | 0) : 0; } catch (_) {}
+            try { cy = e && e.wnd_client_screen_y ? (e.wnd_client_screen_y(hwnd) | 0) : 0; } catch (_) {}
+            try { tx = e && e.wnd_window_screen_x ? (e.wnd_window_screen_x(top) | 0) : 0; } catch (_) {}
+            try { ty = e && e.wnd_window_screen_y ? (e.wnd_window_screen_y(top) | 0) : 0; } catch (_) {}
+            const ret = orig.apply(this, args);
+            if (hwnd && (name === 'gdi_fill_rect' || name === 'gdi_text_out' || name === 'gdi_draw_edge')) {
+              window.__waTreeGdiCalls.push({
+                name,
+                hdc,
+                hwnd,
+                parent,
+                top,
+                ox: cx - tx,
+                oy: cy - ty,
+                args: args.slice(1, 6),
+                ret,
+                at: Math.round(performance.now()),
+              });
+              if (window.__waTreeGdiCalls.length > 4000) window.__waTreeGdiCalls.splice(0, 1000);
+            }
+            return ret;
+          };
+        };
+        wrap('gdi_fill_rect');
+        wrap('gdi_text_out');
+        wrap('gdi_draw_edge');
+        return base;
+      };
+      window.__waTraceHostImportsInstalled = true;
+      return 1;
+    })()`);
+  }
+
   await evalExpr(`(() => {
     if (${WINAMP_DOUBLE_SIZE || WINAMP_PLAYLIST_LARGE ? 'true' : 'false'}) {
       localStorage.setItem('ini:winamp.ini', JSON.stringify({
@@ -497,28 +578,32 @@ async function main() {
       return 1;
     })()`);
     await wait(POST_WAIT_MS);
+    for (const p of POST_CLICKS) {
+      await clickCanvasPoint(p.x, p.y, p.button);
+      await wait(POST_CLICK_WAIT_MS);
+    }
     const result = await evalExpr(`(() => {
       const app = runningApps[0];
       const wine = app && app.wine;
       const e = wine && wine.instance && wine.instance.exports;
-      const r = window.sharedRenderer || (wine && wine.renderer);
-      const sampleCanvas = (canvas) => {
-        if (!canvas || !canvas.getContext) return null;
-        const w = canvas.width | 0;
-        const h = canvas.height | 0;
-        if (!w || !h) return null;
-        const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
-        const colors = new Set();
-        let ink = 0;
-        for (let i = 0; i < data.length; i += 16) {
-          const a = data[i + 3];
-          if (!a) continue;
+	      const r = window.sharedRenderer || (wine && wine.renderer);
+	      const sampleCanvas = (canvas) => {
+	        if (!canvas || !canvas.getContext) return null;
+	        const w = canvas.width | 0;
+	        const h = canvas.height | 0;
+	        if (!w || !h) return null;
+	        const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+	        const colors = new Set();
+	        let ink = 0;
+	        for (let i = 0; i < data.length; i += 16) {
+	          const a = data[i + 3];
+	          if (!a) continue;
           const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
-          colors.add(rgb);
-          if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
-        }
-        return { w, h, sampledColors: colors.size, sampledInk: ink };
-      };
+	          colors.add(rgb);
+	          if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+	        }
+	        return { w, h, sampledColors: colors.size, sampledInk: ink };
+	      };
       const childrenOf = (hwnd) => {
         if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd) return [];
         const dv = wine && wine.memory ? new DataView(wine.memory.buffer) : null;
@@ -581,20 +666,22 @@ async function main() {
         }
         return out;
       };
-      return {
-        postCmd: ${POST_CMD},
-        visibleWindows: Object.values((r && r.windows) || {})
-          .filter(w => w && w.visible)
-          .map(w => ({
-            hwnd: w.hwnd >>> 0,
-            title: w.title || '',
-            x: w.x, y: w.y, w: w.w, h: w.h,
-            isDialog: !!w.isDialog,
+	      return {
+	        postCmd: ${POST_CMD},
+	        visibleWindows: Object.values((r && r.windows) || {})
+	          .filter(w => w && w.visible)
+	          .map(w => ({
+	            hwnd: w.hwnd >>> 0,
+	            title: w.title || '',
+	            x: w.x, y: w.y, w: w.w, h: w.h,
+	            isDialog: !!w.isDialog,
+            dlgKey: e && e.dlg_get_key && w.isDialog ? (e.dlg_get_key(w.hwnd >>> 0) >>> 0) : 0,
             back: sampleCanvas(w._backCanvas),
             children: w.isDialog ? childrenOf(w.hwnd >>> 0) : [],
           })),
-      };
-    })()`);
+          treeGdiCalls: (window.__waTreeGdiCalls || []).slice(-400),
+        };
+      })()`);
     console.log(JSON.stringify(result, null, 2));
     await saveScreenshot();
     cdp.close();

@@ -103,8 +103,27 @@ assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelis
 assert(indexHtml.includes("'binaries/demo.mp3'"), 'Winamp web manifest should preload demo.mp3');
 assert(indexHtml.includes("'binaries/whatsnew.txt'"), 'Winamp web manifest should preload version history text');
 assert(indexHtml.includes("winampDemo: 'C:\\\\demo.mp3'"), 'Winamp web manifest should make demo.mp3 available');
-assert(indexHtml.includes("vfsPath: 'c:\\\\plugins\\\\in_mp3.dll'"), 'Winamp web manifest should mount in_mp3.dll under C:\\Plugins');
-assert(indexHtml.includes("vfsPath: 'c:\\\\plugins\\\\out_wave.dll'"), 'Winamp web manifest should mount out_wave.dll under C:\\Plugins');
+for (const dll of [
+  'cddbcontrolwinamp.dll',
+  'cddbuiwinamp.dll',
+  'enc_vorbis.dll',
+  'gen_ml.dll',
+  'in_cdda.dll',
+  'in_midi.dll',
+  'in_mod.dll',
+  'in_mp3.dll',
+  'in_vorbis.dll',
+  'in_wm.dll',
+  'out_wave.dll',
+  'out_wm.dll',
+  'read_file.dll',
+]) {
+  assert(indexHtml.includes(`vfsPath: 'c:\\\\plugins\\\\${dll}'`), `Winamp web manifest should mount ${dll} under C:\\Plugins`);
+  assert(deployJs.includes(`'binaries/plugins/${dll}'`), `deploy should include ${dll}`);
+  const full = path.join(ROOT, 'binaries', 'plugins', dll);
+  assert(fs.existsSync(full), `${dll} should exist for web fetch/deploy`);
+  assert(fs.statSync(full).size > 0, `${dll} should not be empty`);
+}
 assert(/winamp:\s*\{[\s\S]*'binaries\/winamp\.ini'/s.test(indexHtml), 'Winamp web manifest should preload winamp.ini to keep the minibrowser closed');
 assert(/winamp:\s*\{[\s\S]*resetIniOnLaunch:\s*\['winamp\.ini'\]/s.test(indexHtml), 'Winamp web launch should reset stale persisted INI layout state');
 assert(/\[WinampReg\][\s\S]*?NeedReg=0/.test(fs.readFileSync(path.join(ROOT, 'binaries', 'winamp.ini'), 'utf8')), 'Winamp web INI should suppress first-run setup so playback controls are reachable');

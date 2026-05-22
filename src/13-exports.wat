@@ -809,6 +809,11 @@
   ;; after WAT populates them in $dlg_load. Everything is keyed by the
   ;; dialog HWND. x/y/cx/cy are raw dialog units (DLUs) from the template —
   ;; the renderer multiplies by dluX/dluY to convert to pixels.
+  (func (export "dlg_get_key") (param $hwnd i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (i32.load (local.get $rec)))
   (func (export "dlg_get_style") (param $hwnd i32) (result i32)
     (local $rec i32)
     (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
