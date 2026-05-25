@@ -277,6 +277,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
+  ;; UpdateColors(hdc) — palette refresh is a no-op for canvas-backed GDI.
+  (func $handle_UpdateColors (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 171: SetBkColor(hdc, color) → prev color
   (func $handle_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_set_bk_color (local.get $arg0) (local.get $arg1)))

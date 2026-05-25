@@ -66,7 +66,8 @@ assert(!/Pinball sound fallback/.test(exportsWat), 'run loop should not contain 
 assert(!/0x01009895/.test(exportsWat), 'run loop should not trap Pinball sound-request EIP');
 assert(!/Pinball flag poke/.test(windowHandlersWat), 'window handlers should not contain Pinball-specific gameplay flag pokes');
 assert(!/0x1024fe0|0x1024ff8|0x01007264/.test(windowHandlersWat), 'window handlers should not poke Pinball-specific guest addresses');
-assert(!/_menuPaintSubmenuFallback|menu_subchild_label_ptr/.test(rendererJs), 'renderer should not paint cascading menus with a JS fallback');
+assert(/_menuPaintDropdownJs/.test(rendererJs) && /menu_subchild_label_ptr/.test(rendererJs),
+  'renderer should paint worker popup cascading menus with a JS fallback');
 assert(!/menu_hittest_bar|\.menu_open\(/.test(rendererInputJs), 'renderer input should not fall back to JS-driven menu hit-test/open logic');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
@@ -114,6 +115,12 @@ for (const dll of [
   assert(fs.existsSync(full), `${dll} should exist for web fetch/deploy`);
   assert(fs.statSync(full).size > 0, `${dll} should not be empty`);
 }
+assert(indexHtml.includes(`vfsPath: 'c:\\\\plugins\\\\vis_w.dll'`), 'Winamp web manifest should mount wVis as a visualizer plugin');
+assert(indexHtml.includes(`'binaries/plugins/candidates/vis_w.dll'`), 'Winamp web manifest should load wVis from candidates');
+assert(/winamp:\s*\{[\s\S]*dlls:\s*\[[^\]]*'binaries\/plugins\/candidates\/vis_w\.dll'/s.test(indexHtml), 'Winamp web manifest should preload wVis before preferences enumerates plugins');
+assert(deployJs.includes(`'binaries/plugins/candidates/vis_w.dll'`), 'deploy should include wVis candidate');
+assert(fs.existsSync(path.join(ROOT, 'binaries', 'plugins', 'candidates', 'vis_w.dll')), 'wVis candidate should exist for web fetch/deploy');
+assert(sourcesMd.includes('vis_w.dll'), 'SOURCES.md should document how to recover vis_w.dll');
 for (const dll of [
   'cddbcontrolwinamp.dll',
   'cddbuiwinamp.dll',
@@ -138,10 +145,10 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=137'), 'web host should cache-bust renderer input after desktop changes');
-assert(indexHtml.includes('lib/host-imports.js?v=137'), 'web host should cache-bust host-imports after desktop changes');
+assert(indexHtml.includes('lib/renderer-input.js?v=149'), 'web host should cache-bust renderer input after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=149'), 'web host should cache-bust host-imports after desktop changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(hostJs.includes("SOURCE_VERSION = '137'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '149'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes("this._audioCtx.state === 'closed'"), 'web host should not reuse a closed browser AudioContext');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');

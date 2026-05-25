@@ -269,6 +269,56 @@
   (func (export "get_window_title_len") (param $hwnd i32) (result i32)
     (call $title_table_get_len (local.get $hwnd)))
 
+  ;; Worker instances share the thunk table memory, but continuation thunk
+  ;; globals are per-instance. Rebuild them from the shared marker entries.
+  (func $sync_thread_thunk_globals
+    (local $i i32) (local $marker i32) (local $guest i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $num_thunks)))
+      (local.set $marker
+        (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $i) (i32.const 8)))))
+      (local.set $guest
+        (i32.add (global.get $thunk_guest_base) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0000))
+        (then (global.set $catch_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0001))
+        (then (global.set $createwnd_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0002))
+        (then (global.set $cbt_hook_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0003))
+        (then (global.set $initterm_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0004))
+        (then (global.set $dlg_loop_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0005))
+        (then (global.set $sync_msg_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0006))
+        (then (global.set $modal_loop_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0007))
+        (then (global.set $ddenum_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0008))
+        (then (global.set $enum_modes_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA000A))
+        (then (global.set $mm_timer_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA000B))
+        (then (global.set $d3d_enum_dev_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA000C))
+        (then (global.set $bsearch_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0022))
+        (then (global.set $createwnd_activate_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0023))
+        (then (global.set $createwnd_setfocus_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0024))
+        (then (global.set $createwnd_size_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0026))
+        (then (global.set $child_cbt_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0027))
+        (then (global.set $child_create_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0028))
+        (then (global.set $dialog_cbt_ret_thunk (local.get $guest))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
   ;; Thread init — called by host after creating worker instance
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
@@ -286,6 +336,7 @@
     (global.set $thunk_guest_base (local.get $thunk_gs))
     (global.set $thunk_guest_end (local.get $thunk_ge))
     (global.set $num_thunks (local.get $num_th))
+    (call $sync_thread_thunk_globals)
   )
 
   ;; Yield state exports
@@ -522,6 +573,7 @@
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
+  (func (export "set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "test_set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "get_ansi_code_page") (result i32) (global.get $ansi_code_page))
   (func (export "set_ansi_code_page") (param $cp i32)
@@ -758,6 +810,11 @@
     (call $wnd_screen_h (local.get $hwnd)))
   (func (export "modal_dialog_hwnd") (result i32)
     (global.get $modal_dlg_hwnd))
+  (func (export "modal_cancel_if_hwnd") (param $hwnd i32)
+    (if (i32.eq (global.get $modal_dlg_hwnd) (local.get $hwnd))
+      (then
+        (global.set $modal_result (i32.const 0))
+        (global.set $modal_dlg_hwnd (i32.const 0)))))
   (func (export "wnd_mouse_msg_origin_x") (param $hwnd i32) (result i32)
     (call $wnd_mouse_msg_origin_x (local.get $hwnd)))
   (func (export "wnd_mouse_msg_origin_y") (param $hwnd i32) (result i32)

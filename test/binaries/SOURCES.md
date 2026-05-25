@@ -142,9 +142,10 @@ Matched 1996 exe + DAT pair. `PINBALL.DAT` is the same size (928,700 B) as the X
 Winamp 2.91 fixture. The additional input/output/general plug-ins below were
 copied from a local extraction of `installers/winamp295.exe`. All are
 recoverable from the commands below, but the web fixture currently mounts only
-`in_mp3.dll` and `out_wave.dll`: Winamp's Visualization preferences page
-enumerates `C:\Plugins\*.DLL`, and loading arbitrary non-visualizer plugins
-currently prevents the pane from completing its move/show initialization.
+`in_mp3.dll`, `out_wave.dll`, and the wVis visualizer candidate below: Winamp's
+Visualization preferences page enumerates `C:\Plugins\*.DLL`, and loading
+arbitrary non-visualizer plugins currently prevents the pane from completing its
+move/show initialization.
 
 | Binary | Notes |
 |--------|-------|
@@ -174,10 +175,32 @@ cp "/private/tmp/winamp291-vfs/program files/winamp/plugins/out_wave.dll" test/b
 cp "/private/tmp/winamp295-vfs/program files/winamp/plugins/"{cddbcontrolwinamp.dll,cddbuiwinamp.dll,enc_vorbis.dll,gen_ml.dll,in_cdda.dll,in_midi.dll,in_mod.dll,in_vorbis.dll,in_wm.dll,out_wm.dll,read_file.dll} test/binaries/plugins/
 ```
 
-**`plugins/candidates/`** — unmounted visualization candidates. These are kept
-locally for compatibility work but are intentionally not listed in the web
-Winamp manifest yet, so they do not affect startup, playback, or plug-in
-enumeration until each candidate is validated.
+**`plugins/candidates/`** — visualization candidates. `vis_w.dll` is mounted by
+the web Winamp fixture as `C:\Plugins\vis_w.dll`; the other candidates remain
+unmounted until each one is validated. The current AVS candidate is from Winamp
+5.666 and is intentionally unmounted: its `winampVisGetHeader` path sends newer
+Winamp IPC `3025` and dereferences the returned service pointer, which is not a
+minimal compatibility target for the Winamp 2.91 fixture.
+
+From `https://archive.org/details/vis-w`:
+
+| Binary | Size | SHA1 | Compatibility note |
+|--------|------|------|--------------------|
+| vis_w.dll | 56,832 | `da56f8a2cba2f31068d9c76e9af304a4cec9c9bc` | Nullsoft wVis 2.0d, dated 2000. Classic `winampVisGetHeader`; imports KERNEL32/USER32/GDI32/COMDLG32 only. Best first web fixture candidate because it avoids DirectDraw while exercising the Winamp visualization pane. |
+
+From `https://www.geisswerks.com/geiss/`:
+
+| Binary | Size | SHA1 | Compatibility note |
+|--------|------|------|--------------------|
+| vis_geis.dll | 172,032 | `8420a6c1887f70737432dc451a3ee1d1c56960de` | Geiss 4.24c. Popular Winamp 2.x-era fullscreen visualizer; imports `DDRAW.dll!DirectDrawCreate` and uses the classic visualization ABI. Prefs enumeration works under the CLI harness, but starting it needs DirectDraw fullscreen work. |
+
+Additional 2.91-era search results not staged by default:
+
+| Candidate | Source | Compatibility note |
+|-----------|--------|--------------------|
+| Geiss 4.23 | `https://winampheritage.com/visualization/geiss-4-23/3089` | Dated February 1, 2003 by Ryan Geiss. WinampHeritage download path is `/visualization/3089/geiss_423.exe`; official Geiss 4.24c above is easier to recover and nearly the same target. |
+| PixelTrip 1.0 | `https://archive.org/details/pixel-trip-wmp` | Dated 2002/2003. Extracted `PixelTrip.dll` imports `DDRAW.dll!DirectDrawCreateEx` plus MSVFW32 DrawDib APIs, so it is more work than wVis or Geiss. |
+| 2.x AVS/NSFS | Historical Winamp 2.71-era full installers and cover discs | Era-correct AVS/NSFS should be preferred over the Winamp 5.666 AVS below, but a small directly recoverable `vis_avs.dll` + `vis_avs.dat` source has not been pinned yet. |
 
 From `https://archive.org/details/winamp5666_full_en-us_redux`
 (`winamp5666_full_en-us_redux.exe`, SHA1
@@ -185,7 +208,7 @@ From `https://archive.org/details/winamp5666_full_en-us_redux`
 
 | Binary | Size | SHA1 | Compatibility note |
 |--------|------|------|--------------------|
-| vis_avs.dll | 462,902 | `8084b90489072a9b02c5cafdfc036bea7f1b706a` | Best near-term candidate. Static imports include DDRAW plus MSVFW32/AVIFIL32 for optional AVI features. |
+| vis_avs.dll | 462,902 | `8084b90489072a9b02c5cafdfc036bea7f1b706a` | Winamp 5-era AVS. Static imports include DDRAW plus MSVFW32/AVIFIL32, but header enumeration currently fails because it queries newer Winamp IPC services. |
 | vis_nsfs.dll | 33,792 | `a763ea519713eff86e909d5f6636acdf6cf2fa7f` | DirectDraw-based Nullsoft fullscreen visualizer; small, but imports MSVCR90. |
 | vis_milk2.dll | 425,472 | `1b81c81a578952ecccc0f53ddea5ec37acc975c1` | MilkDrop 2. Dynamically loads D3D9/D3DX9; not a minimal-change target. |
 
@@ -196,11 +219,22 @@ From `https://archive.org/details/milk-drop-104e`
 |--------|------|------|--------------------|
 | vis_milk.dll | 430,592 | `099cefe04c8cb88f38f7f1f1a9b1923434259792` | MilkDrop 1.04e. Dynamically loads D3D8; not a minimal-change target. |
 
-Recover the unmounted visualization candidates:
+Recover the mounted wVis fixture and unmounted visualization candidates:
 
 ```bash
-rm -rf /private/tmp/winamp5666-vis /private/tmp/milkdrop104e-extract
+rm -rf /private/tmp/winamp5666-vis /private/tmp/geiss424c-extract /private/tmp/milkdrop104e-extract
 mkdir -p /private/tmp/winamp5666-vis test/binaries/plugins/candidates
+
+curl -L -o /private/tmp/VIS_W.DLL \
+  "https://archive.org/download/vis-w/VIS_W.DLL"
+cp /private/tmp/VIS_W.DLL test/binaries/plugins/candidates/vis_w.dll
+
+curl -L -A "Mozilla/5.0" -o /private/tmp/geiss4winamp_424c.zip \
+  "https://www.geisswerks.com/geiss/file/geiss4winamp_424c.zip"
+unzip -q /private/tmp/geiss4winamp_424c.zip -d /private/tmp/geiss424c-extract
+cp "/private/tmp/geiss424c-extract/Program Files/Winamp/Plugins/vis_geis.dll" \
+  test/binaries/plugins/candidates/
+
 curl -L -o /private/tmp/winamp5666_full_en-us_redux.exe \
   "https://archive.org/download/winamp5666_full_en-us_redux/winamp5666_full_en-us_redux.exe"
 7z e -y -o/private/tmp/winamp5666-vis /private/tmp/winamp5666_full_en-us_redux.exe \

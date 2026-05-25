@@ -11531,5 +11531,12 @@
     "nargs": 0,
     "convention": "cdecl",
     "hash": 51420124
+  },
+  {
+    "id": 1528,
+    "name": "UpdateColors",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3463167992
   }
 ]

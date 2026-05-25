@@ -577,21 +577,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=137"></script>
-  <script src="lib/dib.js?v=137"></script>
-  <script src="lib/resources-icon.js?v=137"></script>
-  <script src="lib/renderer-input.js?v=137"></script>
-  <script src="lib/renderer.js?v=137"></script>
-  <script src="lib/dll-loader.js?v=137"></script>
-  <script src="lib/storage.js?v=137"></script>
-  <script src="lib/filesystem.js?v=137"></script>
-  <script src="lib/hlp-parser.js?v=137"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=137"></script>
-  <script src="lib/host-imports.js?v=137"></script>
-  <script src="lib/compile-wat.js?v=137"></script>
-  <script src="lib/thread-manager.js?v=137"></script>
-  <script src="host.js?v=137"></script>
-  <script src="lib/recorder.js?v=137"></script>
+  <script src="lib/mem-utils.js?v=149"></script>
+  <script src="lib/dib.js?v=149"></script>
+  <script src="lib/resources-icon.js?v=149"></script>
+  <script src="lib/renderer-input.js?v=149"></script>
+  <script src="lib/renderer.js?v=149"></script>
+  <script src="lib/dll-loader.js?v=149"></script>
+  <script src="lib/storage.js?v=149"></script>
+  <script src="lib/filesystem.js?v=149"></script>
+  <script src="lib/hlp-parser.js?v=149"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=149"></script>
+  <script src="lib/host-imports.js?v=149"></script>
+  <script src="lib/compile-wat.js?v=149"></script>
+  <script src="lib/thread-manager.js?v=149"></script>
+  <script src="host.js?v=149"></script>
+  <script src="lib/recorder.js?v=149"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1032,6 +1032,7 @@ Resource-aware Win98 emulator
       ] },
       winamp:     {
         exe: 'binaries/winamp.exe',
+        dlls: ['binaries/plugins/candidates/vis_w.dll'],
         files: [
           // Keep the web default to the known-good playback pair. Winamp's
           // Visualization prefs enumerate C:\Plugins\*.DLL and dynamically
@@ -1039,6 +1040,7 @@ Resource-aware Win98 emulator
           // init under the current loader.
           { url: 'binaries/plugins/in_mp3.dll', vfsPath: 'c:\\plugins\\in_mp3.dll' },
           { url: 'binaries/plugins/out_wave.dll', vfsPath: 'c:\\plugins\\out_wave.dll' },
+          { url: 'binaries/plugins/candidates/vis_w.dll', vfsPath: 'c:\\plugins\\vis_w.dll' },
           'binaries/demo.mp3',
           'binaries/winamp.ini',
           'binaries/winamp.m3u',
@@ -1186,7 +1188,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=137');
+        const response = await fetch(url + '?v=149');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {

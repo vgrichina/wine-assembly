@@ -734,9 +734,22 @@
 
   ;; DLL name compare: compare guest ANSI string at $name_ptr with WASM string at $cmp_ptr (case-insensitive)
   (func $dll_name_match (param $name_ptr i32) (param $cmp_ptr i32) (result i32)
-    (local $a i32) (local $b i32) (local $i i32)
+    (local $a i32) (local $b i32) (local $i i32) (local $scan i32) (local $start i32)
+    ;; LoadLibrary often receives a path ("C:\Plugins\foo.dll"), while PE
+    ;; export-directory names are bare filenames. Match on the basename.
+    (block $base_done (loop $base
+      (local.set $a (call $gl8 (i32.add (local.get $name_ptr) (local.get $scan))))
+      (br_if $base_done (i32.eqz (local.get $a)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $a) (i32.const 92))  ;; '\'
+                    (i32.eq (local.get $a) (i32.const 47))) ;; '/'
+            (i32.eq (local.get $a) (i32.const 58)))         ;; ':'
+        (then (local.set $start (i32.add (local.get $scan) (i32.const 1)))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $base)))
     (block $no (loop $l
-      (local.set $a (call $tolower (call $gl8 (i32.add (local.get $name_ptr) (local.get $i)))))
+      (local.set $a (call $tolower (call $gl8
+        (i32.add (local.get $name_ptr) (i32.add (local.get $start) (local.get $i))))))
       (local.set $b (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (local.get $i)))))
       (br_if $no (i32.ne (local.get $a) (local.get $b)))
       (if (i32.eqz (local.get $a)) (then (return (i32.const 1)))) ;; both null = match

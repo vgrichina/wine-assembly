@@ -2322,7 +2322,10 @@
   (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
     (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
+      (then
+        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (global.set $last_load_menu_hinst (local.get $arg0))
+        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
       (else (global.set $eax (i32.const 0x00BE0001))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -3779,7 +3782,10 @@
   (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; LoadMenuW — same as LoadMenuA
     (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
+      (then
+        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (global.set $last_load_menu_hinst (local.get $arg0))
+        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
       (else (global.set $eax (i32.const 0x00BE0001))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

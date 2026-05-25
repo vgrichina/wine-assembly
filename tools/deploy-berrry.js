@@ -74,6 +74,7 @@ const DESKTOP_BINARY_FILES = new Set([
   'binaries/winamp.exe',
   'binaries/plugins/in_mp3.dll',
   'binaries/plugins/out_wave.dll',
+  'binaries/plugins/candidates/vis_w.dll',
   'binaries/demo.mp3',
   'binaries/whatsnew.txt',
   'binaries/wep32-community/Bricks/bricks.exe',

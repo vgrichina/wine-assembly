@@ -52,6 +52,12 @@ const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLower
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
 const TRACE_TREE_GDI = process.env.TRACE_TREE_GDI === '1' || process.argv.includes('--trace-tree-gdi');
+const DUMP_CONSOLE = process.env.DUMP_CONSOLE === '1' || process.argv.includes('--dump-console');
+const PROGRESS = process.env.PROGRESS === '1' || process.argv.includes('--progress');
+const TRACE_HOST_NAMES = (argValue('trace-host') || process.env.TRACE_HOST || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const TRACE_API_NAMES = (argValue('trace-api') || process.env.TRACE_API || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 const ABOUT_TAB_POINTS = {
   winamp: { x: 63, y: 40 },
   credits: { x: 178, y: 40 },
@@ -61,6 +67,9 @@ const ABOUT_TAB_POINTS = {
 };
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+function progress(msg) {
+  if (PROGRESS) console.error(`[profile] ${msg}`);
+}
 
 function getJson(url) {
   return new Promise((resolve, reject) => {
@@ -172,6 +181,33 @@ function wsConnect(wsUrl) {
   return { opened, send, close: () => socket.destroy(), events };
 }
 
+function consoleEventSummary(events) {
+  const out = [];
+  for (const ev of events) {
+    if (ev.method === 'Runtime.consoleAPICalled') {
+      const p = ev.params || {};
+      out.push({
+        type: p.type || 'log',
+        text: (p.args || []).map(a => {
+          if (Object.prototype.hasOwnProperty.call(a, 'value')) return String(a.value);
+          return a.description || a.unserializableValue || '';
+        }).join(' '),
+      });
+    } else if (ev.method === 'Runtime.exceptionThrown') {
+      const p = ev.params || {};
+      const d = p.exceptionDetails || {};
+      out.push({
+        type: 'exception',
+        text: d.text || (d.exception && d.exception.description) || '',
+      });
+    } else if (ev.method === 'Log.entryAdded') {
+      const e = (ev.params && ev.params.entry) || {};
+      out.push({ type: e.level || 'log', text: e.text || '' });
+    }
+  }
+  return out.filter(e => e.text).slice(-240);
+}
+
 async function main() {
   const headless = process.env.HEADLESS !== '0';
   const mode = process.env.MODE ||
@@ -181,10 +217,14 @@ async function main() {
   const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
+  progress('started local HTTP server');
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-chrome-profile-'));
   const chromeArgs = [
     '--disable-gpu',
     '--no-sandbox',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-search-engine-choice-screen',
     `--remote-debugging-port=${DEBUG_PORT}`,
     `--user-data-dir=${userData}`,
     `http://127.0.0.1:${PORT}/index.html?profile=${Date.now()}`,
@@ -192,6 +232,7 @@ async function main() {
   if (VIEWPORT_WIDTH && VIEWPORT_HEIGHT) chromeArgs.splice(3, 0, `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`);
   if (headless) chromeArgs.unshift('--headless=new');
   const chrome = spawn(CHROME, chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+  progress(`${headless ? 'headless' : 'visible'} Chrome spawned`);
   let chromeErr = '';
   let serverErr = '';
   let chromeExit = null;
@@ -213,7 +254,9 @@ async function main() {
   for (let i = 0; i < 80; i++) {
     try {
       const pages = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
-      page = pages.find(p => p.type === 'page');
+      page = pages.find(p =>
+        p.type === 'page' &&
+        String(p.url || '').startsWith(`http://127.0.0.1:${PORT}/index.html`));
       if (page) break;
     } catch (_) {}
     await wait(100);
@@ -226,11 +269,17 @@ async function main() {
       'chrome stderr:\n' + chromeErr.slice(-4000) + '\n' +
       'server stderr:\n' + serverErr.slice(-1000));
   }
+  progress(`CDP page found: ${page.url || page.id || ''}`);
 
   const cdp = wsConnect(page.webSocketDebuggerUrl);
   await cdp.opened;
+  progress('CDP websocket connected');
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  progress('CDP domains enabled');
+  if (DUMP_CONSOLE) {
+    try { await cdp.send('Log.enable'); } catch (_) {}
+  }
   if (VIEWPORT_WIDTH && VIEWPORT_HEIGHT) {
     await cdp.send('Emulation.setDeviceMetricsOverride', {
       width: VIEWPORT_WIDTH,
@@ -322,6 +371,7 @@ async function main() {
     if (document.readyState === 'complete') r(1);
     else window.addEventListener('load', () => r(1), { once: true });
   })`);
+  progress('document loaded');
   await evalExpr(`new Promise((resolve, reject) => {
     const started = performance.now();
     const tick = () => {
@@ -333,6 +383,7 @@ async function main() {
     };
     tick();
   })`, 9000);
+  progress('app globals ready');
 
   await evalExpr(`(() => {
     window.__waProfile = {
@@ -368,13 +419,56 @@ async function main() {
       };
       proto[key].__profiled = true;
     };
+    window.__waInputTrace = [];
+    const traceInput = (proto, key) => {
+      const orig = proto && proto[key];
+      if (!orig || orig.__inputTraced) return;
+      proto[key] = function(...args) {
+        const r = this;
+        const beforeQ = r && r.inputQueue ? r.inputQueue.length : -1;
+        const beforeModal = r && r._modalDialogHwnd ? (r._modalDialogHwnd() >>> 0) : 0;
+        const hit = (() => {
+          if (!r || !r.windows) return null;
+          const x = args[0] | 0, y = args[1] | 0;
+          const wins = Object.values(r.windows)
+            .filter(w => w && w.visible && !w.isChild && x >= w.x && x < w.x + w.w && y >= w.y && y < w.y + w.h)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          const w = wins[0];
+          return w ? { hwnd: w.hwnd >>> 0, title: w.title || '', zOrder: w.zOrder || 0 } : null;
+        })();
+        let ret;
+        try {
+          ret = orig.apply(this, args);
+          return ret;
+        } finally {
+          const afterQ = r && r.inputQueue ? r.inputQueue.length : -1;
+          const last = afterQ > beforeQ && r.inputQueue ? r.inputQueue[r.inputQueue.length - 1] : null;
+          window.__waInputTrace.push({
+            name: key,
+            args: args.slice(0, 4),
+            beforeQ,
+            afterQ,
+            beforeModal,
+            afterModal: r && r._modalDialogHwnd ? (r._modalDialogHwnd() >>> 0) : 0,
+            hit,
+            queued: last ? { hwnd: last.hwnd >>> 0, msg: last.msg >>> 0, wParam: last.wParam >>> 0, lParam: last.lParam >>> 0 } : null,
+            at: +(performance.now() - window.__waProfile.t0).toFixed(1),
+          });
+          if (window.__waInputTrace.length > 120) window.__waInputTrace.shift();
+        }
+      };
+      proto[key].__inputTraced = true;
+    };
     wrap(Win98Renderer.prototype, 'repaint', 'renderer.repaint');
     wrap(Win98Renderer.prototype, 'flushRepaint', 'renderer.flushRepaint');
     wrap(Win98Renderer.prototype, 'handleMouseDown', 'input.mouseDown');
     wrap(Win98Renderer.prototype, 'handleMouseUp', 'input.mouseUp');
+    traceInput(Win98Renderer.prototype, 'handleMouseDown');
+    traceInput(Win98Renderer.prototype, 'handleMouseUp');
     wrap(ThreadManager.prototype, 'checkMainYield', 'thread.checkMainYield');
     wrap(ThreadManager.prototype, 'runSlice', 'thread.runSlice');
   })()`);
+  progress('profiling hooks installed');
 
   await evalExpr(`(() => {
     window.__waAudioProbe = { starts: 0, startTimes: [], peaks: [], resumes: 0, resumeStates: [] };
@@ -415,6 +509,7 @@ async function main() {
     }
     return 1;
   })()`);
+  progress('audio probe installed');
 
   if (TRACE_TREE_GDI) {
     await evalExpr(`(() => {
@@ -469,6 +564,15 @@ async function main() {
     })()`);
   }
 
+  if (TRACE_HOST_NAMES.length || TRACE_API_NAMES.length) {
+    await evalExpr(`(() => {
+      window.__waTraceHostNames = new Set(${JSON.stringify(TRACE_HOST_NAMES)});
+      window.__waTraceApiNames = new Set(${JSON.stringify(TRACE_API_NAMES)});
+      return 1;
+    })()`);
+    progress('trace filters installed');
+  }
+
   await evalExpr(`(() => {
     if (${WINAMP_DOUBLE_SIZE || WINAMP_PLAYLIST_LARGE ? 'true' : 'false'}) {
       localStorage.setItem('ini:winamp.ini', JSON.stringify({
@@ -493,6 +597,7 @@ async function main() {
     document.getElementById('app-select').value = 'winamp';
     return launchApp();
   })()`, 20000, true);
+  progress('launchApp(winamp) requested');
   await evalExpr(`new Promise((resolve, reject) => {
     const started = performance.now();
     const tick = () => {
@@ -502,12 +607,14 @@ async function main() {
     };
     tick();
   })`, 16000);
+  progress('Winamp instance ready');
   await wait(1800);
   await evalExpr(`(() => {
     const app = runningApps[0];
     app.wine.instance.exports.post_message_q(app.wine.instance.exports.get_main_hwnd(), 0x0111, 2, 0);
     return 1;
   })()`);
+  progress('dismissed initial Winamp modal if present');
   await wait(900);
 
   if (mode === 'audio') {
@@ -563,6 +670,7 @@ async function main() {
           .map(w => ({ hwnd: w.hwnd, title: w.title || '', x: w.x, y: w.y, w: w.w, h: w.h })),
       };
     })()`);
+    if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
     console.log(JSON.stringify(result, null, 2));
     await saveScreenshot();
     cdp.close();
@@ -577,11 +685,14 @@ async function main() {
       e.post_message_q(e.get_main_hwnd(), 0x0111, ${POST_CMD}, 0);
       return 1;
     })()`);
+    progress(`posted WM_COMMAND ${POST_CMD}`);
     await wait(POST_WAIT_MS);
     for (const p of POST_CLICKS) {
+      progress(`click canvas ${p.x},${p.y}`);
       await clickCanvasPoint(p.x, p.y, p.button);
       await wait(POST_CLICK_WAIT_MS);
     }
+    progress('collecting post-cmd result');
     const result = await evalExpr(`(() => {
       const app = runningApps[0];
       const wine = app && app.wine;
@@ -622,6 +733,32 @@ async function main() {
           }
           return s;
         };
+        const readControlText = (fn, hwnd, idx) => {
+          if (!e || !e.guest_alloc || !e[fn]) return '';
+          const buf = e.guest_alloc(256) >>> 0;
+          const len = fn === 'listbox_get_item_text'
+            ? (e[fn](hwnd, idx, buf, 256) | 0)
+            : (e[fn](hwnd, buf, 256) | 0);
+          return len > 0 ? readStr(buf, Math.min(255, len + 1)) : '';
+        };
+        const listboxInfo = (hwnd) => {
+          if (!e || !e.listbox_get_count) return null;
+          const count = e.listbox_get_count(hwnd) | 0;
+          const curSel = e.listbox_get_cur_sel ? (e.listbox_get_cur_sel(hwnd) | 0) : -1;
+          const items = [];
+          for (let i = 0; i < Math.min(8, count); i++) {
+            items.push(readControlText('listbox_get_item_text', hwnd, i));
+          }
+          return { count, curSel, items };
+        };
+        const comboboxInfo = (hwnd) => {
+          if (!e || !e.combobox_get_cur_sel) return null;
+          return {
+            curSel: e.combobox_get_cur_sel(hwnd) | 0,
+            text: readControlText('combobox_get_text', hwnd, 0),
+            listHwnd: e.combobox_get_lb_hwnd ? (e.combobox_get_lb_hwnd(hwnd) >>> 0) : 0,
+          };
+        };
         const treeItems = () => {
           if (!dv) return [];
           const out = [];
@@ -661,6 +798,8 @@ async function main() {
             w: wh & 0xffff,
             h: wh >>> 16,
             treeItems: cls === 8 ? treeItems() : undefined,
+            listbox: cls === 4 ? listboxInfo(ch) : undefined,
+            combobox: cls === 5 ? comboboxInfo(ch) : undefined,
           });
           s++;
         }
@@ -668,6 +807,11 @@ async function main() {
       };
 	      return {
 	        postCmd: ${POST_CMD},
+            winampVisGlobals: {
+              pluginPath: readStr(0x4595b8, 260),
+              pluginDir: readStr(0x45c880, 260),
+              pluginFile: readStr(0x45cd00, 260),
+            },
 	        visibleWindows: Object.values((r && r.windows) || {})
 	          .filter(w => w && w.visible)
 	          .map(w => ({
@@ -679,9 +823,79 @@ async function main() {
             back: sampleCanvas(w._backCanvas),
             children: w.isDialog ? childrenOf(w.hwnd >>> 0) : [],
           })),
+          inputQueue: ((r && r.inputQueue) || []).slice(0, 20).map(ev => ({
+            hwnd: ev.hwnd >>> 0,
+            msg: ev.msg >>> 0,
+            wParam: ev.wParam >>> 0,
+            lParam: ev.lParam >>> 0,
+          })),
+          threads: wine && wine.threadManager ? Array.from(wine.threadManager.threads.entries()).map(([handle, t]) => ({
+            handle: handle >>> 0,
+            tid: t.tid,
+            state: t.state,
+            eip: t.instance && t.instance.exports && t.instance.exports.get_eip ? (t.instance.exports.get_eip() >>> 0) : 0,
+            yieldReason: t.instance && t.instance.exports && t.instance.exports.get_yield_reason ? (t.instance.exports.get_yield_reason() >>> 0) : 0,
+            hwndBase: t.instance && t.instance.exports && t.instance.exports.get_hwnd_base ? (t.instance.exports.get_hwnd_base() >>> 0) : 0,
+          })) : [],
+          menuStates: (() => {
+            const states = [];
+            const seen = new Set();
+            const wins = Object.values((r && r.windows) || {});
+            const readText = (memory, ptr, len) => {
+              if (!memory || !memory.buffer || !ptr || len <= 0) return '';
+              const bytes = new Uint8Array(memory.buffer);
+              let s = '';
+              ptr = ptr >>> 0;
+              if (ptr >= bytes.length) return '';
+              len = Math.min(256, len | 0);
+              const end = Math.min(bytes.length, ptr + len);
+              for (let p = ptr >>> 0; p < end; p++) s += String.fromCharCode(bytes[p]);
+              return s;
+            };
+            for (const w of Object.values((r && r.windows) || {})) {
+              const inst = w && w.wasm;
+              if (!inst || seen.has(inst)) continue;
+              seen.add(inst);
+              const ex = inst.exports || {};
+              const hwnd = ex.menu_open_hwnd ? (ex.menu_open_hwnd() >>> 0) : 0;
+              const top = ex.menu_open_top ? (ex.menu_open_top() | 0) : -99;
+              const hover = ex.menu_open_hover ? (ex.menu_open_hover() | 0) : -99;
+              const owner = wins.find(ww => ww && ww.wasm === inst);
+              const memory = (owner && owner.wasmMemory) || ex.memory || (wine && wine.memory);
+              const labels = [];
+              const subLabels = [];
+              const count = hwnd && top >= 0 && ex.menu_child_count ? (ex.menu_child_count(hwnd, top) | 0) : 0;
+              for (let i = 0; i < Math.min(count, 12); i++) {
+                const ptr = ex.menu_child_label_ptr ? (ex.menu_child_label_ptr(hwnd, top, i) >>> 0) : 0;
+                const len = ex.menu_child_label_len ? (ex.menu_child_label_len(hwnd, top, i) | 0) : 0;
+                labels.push(readText(memory, ptr, len));
+              }
+              const subCount = hwnd && top >= 0 && hover >= 0 && ex.menu_child_sub_count
+                ? (ex.menu_child_sub_count(hwnd, top, hover) | 0)
+                : 0;
+              for (let i = 0; i < Math.min(subCount, 12); i++) {
+                const ptr = ex.menu_subchild_label_ptr ? (ex.menu_subchild_label_ptr(hwnd, top, hover, i) >>> 0) : 0;
+                const len = ex.menu_subchild_label_len ? (ex.menu_subchild_label_len(hwnd, top, hover, i) | 0) : 0;
+                subLabels.push(readText(memory, ptr, len));
+              }
+              states.push({
+                openHwnd: hwnd,
+                top,
+                hover,
+                x: ex.menu_open_x ? (ex.menu_open_x() | 0) : -99,
+                y: ex.menu_open_y ? (ex.menu_open_y() | 0) : -99,
+                labels,
+                subLabels,
+                windows: wins.filter(ww => ww && ww.wasm === inst).map(ww => ww.hwnd >>> 0),
+              });
+            }
+            return states;
+          })(),
           treeGdiCalls: (window.__waTreeGdiCalls || []).slice(-400),
+          inputTrace: (window.__waInputTrace || []).slice(-40),
         };
       })()`);
+    if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
     console.log(JSON.stringify(result, null, 2));
     await saveScreenshot();
     cdp.close();

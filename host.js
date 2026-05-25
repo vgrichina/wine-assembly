@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '137';
+  static SOURCE_VERSION = '149';
 
   constructor() {
     this.instance = null;
@@ -51,7 +51,17 @@ class WineAssembly {
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
       get dllResources() { return self.dllResources; },
-      get exports() { return opts.exports || (self.instance ? self.instance.exports : null); },
+      get instance() {
+        if (typeof opts.instance === 'function') return opts.instance();
+        return opts.instance || self.instance || null;
+      },
+      get exports() {
+        if (typeof opts.exports === 'function') return opts.exports();
+        if (opts.exports) return opts.exports;
+        const instance = this.instance;
+        return instance ? instance.exports : null;
+      },
+      traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       vfs: opts.vfs || null,
       sharedGdi: opts.sharedGdi || null,
       sharedAudio: opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {}),
@@ -226,7 +236,8 @@ class WineAssembly {
       ctx._windowText.set(hwnd, title);
       if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
-      if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId, self.instance, self.memory);
+      const ownerInstance = ctx.instance || self.instance;
+      if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId, ownerInstance, self.memory);
       return hwnd;
     };
     h.dialog_loaded = (hwnd, parentHwnd) => {
@@ -259,12 +270,31 @@ class WineAssembly {
         if (idx < 0) return 0;
         evt = q.splice(idx, 1)[0];
       } else {
-        evt = self.renderer.checkInput();
+        const q = self.renderer.inputQueue;
+        const ownerInstance = ctx.instance || self.instance;
+        const ownsEvent = (e) => {
+          if (!ownerInstance || !e || !e.hwnd) return true;
+          const win = self.renderer.windows && self.renderer.windows[e.hwnd];
+          return !win || !win.wasm || win.wasm === ownerInstance;
+        };
+        const idx = q.findIndex(ownsEvent);
+        if (idx < 0) return 0;
+        evt = q.splice(idx, 1)[0];
+        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0102 || evt.msg === 0x0104)) {
+          self.renderer._profileMark && self.renderer._profileMark('input-queue-dispatch', { msg: evt.msg, wParam: evt.wParam });
+        }
+        if (evt && evt.msg === 0x000F) self.renderer.scheduleRepaint();
+        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0104)) {
+          if (!self.renderer._asyncKeys) self.renderer._asyncKeys = Object.create(null);
+          self.renderer._asyncKeys[evt.wParam & 0xFF] = true;
+        } else if (evt && (evt.msg === 0x0101 || evt.msg === 0x0105)) {
+          if (self.renderer._asyncKeys) self.renderer._asyncKeys[evt.wParam & 0xFF] = false;
+        }
       }
       if (!evt) return 0;
       self._lastInputEvent = evt;
       if (evt.msg !== 0x200) {
-        self.logToUI('[input] msg=0x' + evt.msg.toString(16) + ' wParam=0x' + evt.wParam.toString(16));
+        self.logToUI('[input] hwnd=0x' + (evt.hwnd >>> 0).toString(16) + ' msg=0x' + evt.msg.toString(16) + ' wParam=0x' + evt.wParam.toString(16));
       }
       return (evt.wParam << 16) | (evt.msg & 0xFFFF);
     };
@@ -399,22 +429,43 @@ class WineAssembly {
     if (this.renderer) {
       this.renderer.wasm = this.instance;
       this.renderer.wasmMemory = this.memory;
+      this.renderer.mainWasm = this.instance;
+      this.renderer.mainWasmMemory = this.memory;
     }
 
     // Create ThreadManager
     const self = this;
     const makeWorkerImports = (tid) => {
       const mainCtx = self.hostCtx || self._helpCtx || {};
+      const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
+        ? window.__waTraceApiNames
+        : null;
+      let lastTraceApi = false;
+      let workerInstance = null;
       const wi = self.getImports({
         detached: true,
-        exports: self.instance.exports,
+        instance: () => workerInstance || self.instance,
+        exports: () => workerInstance ? workerInstance.exports : self.instance.exports,
         vfs: mainCtx.vfs,
         sharedGdi: mainCtx.sharedGdi,
         sharedAudio: mainCtx.sharedAudio,
       });
+      wi.__setInstance = (instance) => { workerInstance = instance; };
       wi.host.memory = self.memory;
-      wi.host.log = () => {};
-      wi.host.log_i32 = () => {};
+      wi.host.log = (ptr, len) => {
+        lastTraceApi = false;
+        if (!traceApiNames || !traceApiNames.size) return;
+        const bytes = new Uint8Array(self.memory.buffer, ptr, Math.min(len, 256));
+        let text = '';
+        for (let i = 0; i < bytes.length && bytes[i]; i++) text += String.fromCharCode(bytes[i]);
+        if (traceApiNames.has(text)) {
+          lastTraceApi = true;
+          console.log(`[API T${tid}] ${text}`);
+        }
+      };
+      wi.host.log_i32 = (val) => {
+        if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
+      };
       wi.host.exit = () => {};
       return wi;
     };
@@ -890,6 +941,8 @@ class WineAssembly {
           if (self.renderer) {
             self.renderer.wasm = self.instance;
             self.renderer.wasmMemory = self.memory;
+            self.renderer.mainWasm = self.instance;
+            self.renderer.mainWasmMemory = self.memory;
           }
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           self.instance.exports.run(activeStepsPerSlice);

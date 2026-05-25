@@ -930,6 +930,8 @@
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $next_hmenu   (mut i32) (i32.const 0x800001)) ;; HMENU allocator — opaque handle, no backing state (AppendMenu is no-op; menu bar rendered from PE resources)
+  (global $last_load_menu_id (mut i32) (i32.const 0)) ;; low-word resource id from most recent LoadMenuA/W
+  (global $last_load_menu_hinst (mut i32) (i32.const 0)) ;; hInstance paired with $last_load_menu_id
   (global $next_atom    (mut i32) (i32.const 0xC000))  ;; Atom allocator (0xC000+)
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
