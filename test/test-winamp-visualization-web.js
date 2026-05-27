@@ -61,6 +61,12 @@ assert(jsonStart >= 0, 'profile output should include JSON\n' + out.slice(-4000)
 const result = JSON.parse(out.slice(jsonStart));
 
 const windows = result.visibleWindows || [];
+const eq = windows.find(w => w.title === 'Winamp Equalizer');
+assert(eq, 'Winamp equalizer window should be visible');
+assert(eq.back, 'Winamp equalizer should have a backing canvas');
+assert(eq.back.sampledColors > 8, `Winamp equalizer should paint its skin, got ${eq.back.sampledColors} colors`);
+assert(eq.back.sampledInk > 300, `Winamp equalizer should paint non-background pixels, got ${eq.back.sampledInk}`);
+
 const wvis = windows.find(w => w.title === 'wVis Plug-in 2');
 assert(wvis, 'wVis plug-in window should be visible');
 assert(wvis.back, 'wVis plug-in window should have a backing canvas');

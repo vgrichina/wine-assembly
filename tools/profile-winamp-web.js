@@ -34,6 +34,8 @@ const VIEWPORT_HEIGHT = Math.max(0, parseInt(process.env.VIEWPORT_HEIGHT || '0',
 const SCREENSHOT_PATH = argValue('screenshot') || process.env.SCREENSHOT_PATH || '';
 const WINAMP_DOUBLE_SIZE = process.env.WINAMP_DOUBLE_SIZE === '1';
 const WINAMP_PLAYLIST_LARGE = process.env.WINAMP_PLAYLIST_LARGE === '1';
+const WINAMP_START_WAIT_MS = intArgOrEnv('winamp-start-wait-ms', 'WINAMP_START_WAIT_MS', 1800);
+const WINAMP_DISMISS_WAIT_MS = intArgOrEnv('winamp-dismiss-wait-ms', 'WINAMP_DISMISS_WAIT_MS', 900);
 const AUDIO_PLAYS = Math.max(1, parseInt(argValue('audio-plays') || process.env.AUDIO_PLAYS || '1', 10) || 1);
 const AUDIO_WAIT_MS = intArgOrEnv('audio-wait-ms', 'AUDIO_WAIT_MS', 2500);
 const POST_CMD = Math.max(0, parseInt(argValue('post-cmd') || process.env.POST_CMD || '0', 10) || 0);
@@ -44,10 +46,24 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
   .map(s => s.trim())
   .filter(Boolean)
   .map(s => {
+    const waitMatch = s.match(/^wait:(\d+)$/i);
+    if (waitMatch) return { wait: parseInt(waitMatch[1], 10) || 0 };
+    const dragMatch = s.match(/^drag:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:,(\d+))?(?:,(\d+))?$/i);
+    if (dragMatch) {
+      return {
+        drag: true,
+        x1: Number(dragMatch[1]),
+        y1: Number(dragMatch[2]),
+        x2: Number(dragMatch[3]),
+        y2: Number(dragMatch[4]),
+        steps: Math.max(1, parseInt(dragMatch[5] || '8', 10) || 8),
+        delay: Math.max(0, parseInt(dragMatch[6] || '25', 10) || 0),
+      };
+    }
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+  .filter(p => p.wait !== undefined || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -210,7 +226,7 @@ function consoleEventSummary(events) {
 
 async function main() {
   const headless = process.env.HEADLESS !== '0';
-  const mode = process.env.MODE ||
+  const mode = argValue('mode') || process.env.MODE ||
     (process.argv.includes('--audio') ? 'audio' :
      process.argv.includes('--about-menu') ? 'about-menu' :
      POST_CMD ? 'post-cmd' : 'credits');
@@ -365,6 +381,50 @@ async function main() {
       };
     })()`);
     await clickClient(p.x, p.y, button);
+  }
+
+  async function canvasClientPoint(x, y) {
+    return await evalExpr(`(() => {
+      const c = document.getElementById('screen');
+      const r = c.getBoundingClientRect();
+      return {
+        x: r.left + (${x} / Math.max(1, c.width)) * r.width,
+        y: r.top + (${y} / Math.max(1, c.height)) * r.height,
+      };
+    })()`);
+  }
+
+  async function dragCanvasPoint(x1, y1, x2, y2, steps = 8, delay = 25) {
+    const a = await canvasClientPoint(x1, y1);
+    const b = await canvasClientPoint(x2, y2);
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: a.x,
+      y: a.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        button: 'left',
+        buttons: 1,
+        clickCount: 1,
+      });
+      if (delay) await wait(delay);
+    }
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: b.x,
+      y: b.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
   }
 
   await evalExpr(`new Promise(r => {
@@ -608,14 +668,14 @@ async function main() {
     tick();
   })`, 16000);
   progress('Winamp instance ready');
-  await wait(1800);
+  await wait(WINAMP_START_WAIT_MS);
   await evalExpr(`(() => {
     const app = runningApps[0];
     app.wine.instance.exports.post_message_q(app.wine.instance.exports.get_main_hwnd(), 0x0111, 2, 0);
     return 1;
   })()`);
   progress('dismissed initial Winamp modal if present');
-  await wait(900);
+  await wait(WINAMP_DISMISS_WAIT_MS);
 
   if (mode === 'audio') {
     const playSnapshots = [];
@@ -687,10 +747,79 @@ async function main() {
     })()`);
     progress(`posted WM_COMMAND ${POST_CMD}`);
     await wait(POST_WAIT_MS);
+    const postClickSnapshots = [];
     for (const p of POST_CLICKS) {
+      if (p.wait !== undefined) {
+        progress(`wait ${p.wait}ms`);
+        await wait(p.wait);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const shared = wine && wine._sharedAudio;
+          const voices = shared && shared.voices;
+          const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+          return {
+            action: 'wait',
+            wait: ${p.wait},
+            starts: window.__waAudioProbe && window.__waAudioProbe.starts,
+            currentTime: ac ? +ac.currentTime.toFixed(3) : null,
+            openHandles: shared && shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+            pendingWaveDoneCount: shared && (shared.pendingWaveDoneCount || 0),
+            voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
+          };
+        })()`));
+        continue;
+      }
+      if (p.drag) {
+        progress(`drag canvas ${p.x1},${p.y1} -> ${p.x2},${p.y2}`);
+        await dragCanvasPoint(p.x1, p.y1, p.x2, p.y2, p.steps, p.delay);
+        await wait(POST_CLICK_WAIT_MS);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const shared = wine && wine._sharedAudio;
+          const voices = shared && shared.voices;
+          const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+          const r = window.sharedRenderer || (wine && wine.renderer);
+          const main = r && Object.values(r.windows || {}).find(w => w && w.visible && w.region && (w.w | 0) === 275) ||
+            (r && Object.values(r.windows || {}).find(w => w && w.visible && /Winamp/.test(w.title || '') && (w.w | 0) === 275));
+          return {
+            action: 'drag',
+            x1: ${p.x1},
+            y1: ${p.y1},
+            x2: ${p.x2},
+            y2: ${p.y2},
+            starts: window.__waAudioProbe && window.__waAudioProbe.starts,
+            currentTime: ac ? +ac.currentTime.toFixed(3) : null,
+            mainWindow: main ? { hwnd: main.hwnd >>> 0, x: main.x | 0, y: main.y | 0, client: main.clientRect || null, region: !!main.region } : null,
+            openHandles: shared && shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+            pendingWaveDoneCount: shared && (shared.pendingWaveDoneCount || 0),
+            voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
+          };
+        })()`));
+        continue;
+      }
       progress(`click canvas ${p.x},${p.y}`);
       await clickCanvasPoint(p.x, p.y, p.button);
       await wait(POST_CLICK_WAIT_MS);
+      postClickSnapshots.push(await evalExpr(`(() => {
+        const app = runningApps[0];
+        const wine = app && app.wine;
+        const shared = wine && wine._sharedAudio;
+        const voices = shared && shared.voices;
+        const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+        return {
+          action: 'click',
+          x: ${p.x},
+          y: ${p.y},
+          button: ${JSON.stringify(p.button)},
+          starts: window.__waAudioProbe && window.__waAudioProbe.starts,
+          currentTime: ac ? +ac.currentTime.toFixed(3) : null,
+          openHandles: shared && shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+          pendingWaveDoneCount: shared && (shared.pendingWaveDoneCount || 0),
+          voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
+        };
+      })()`));
     }
     progress('collecting post-cmd result');
     const result = await evalExpr(`(() => {
@@ -807,6 +936,40 @@ async function main() {
       };
 	      return {
 	        postCmd: ${POST_CMD},
+            audioProbe: window.__waAudioProbe,
+            audioContext: (() => {
+              const shared = wine && wine._sharedAudio;
+              const voices = shared && shared.voices;
+              const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+              return ac ? {
+                state: ac.state,
+                currentTime: +ac.currentTime.toFixed(3),
+                sampleRate: ac.sampleRate,
+              } : null;
+            })(),
+            sharedAudio: (() => {
+              const shared = wine && wine._sharedAudio;
+              return shared ? {
+                hotUntilMs: shared.waveOutHotUntilMs || 0,
+                pendingWaveDoneCount: shared.pendingWaveDoneCount || 0,
+                openHandles: shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+                scheduledHeaders: shared.waveScheduledHeaders && shared.waveScheduledHeaders.size,
+              } : null;
+            })(),
+            postClickSnapshots: ${JSON.stringify(postClickSnapshots)},
+            voices: (() => {
+              const shared = wine && wine._sharedAudio;
+              const voices = shared && shared.voices;
+              return voices && voices._map ? Object.values(voices._map).map(v => ({
+                id: v.id,
+                mode: v.mode,
+                bytesWritten: v.bytesWritten,
+                sources: v.sources ? v.sources.size : 0,
+                timers: v.timers ? v.timers.size : 0,
+                nextTime: Number.isFinite(v.nextTime) ? +v.nextTime.toFixed(3) : null,
+                streamStartTime: Number.isFinite(v.streamStartTime) ? +v.streamStartTime.toFixed(3) : null,
+              })) : [];
+            })(),
             winampVisGlobals: {
               pluginPath: readStr(0x4595b8, 260),
               pluginDir: readStr(0x45c880, 260),
@@ -818,6 +981,8 @@ async function main() {
 	            hwnd: w.hwnd >>> 0,
 	            title: w.title || '',
 	            x: w.x, y: w.y, w: w.w, h: w.h,
+                client: w.clientRect || null,
+                region: !!w.region,
 	            isDialog: !!w.isDialog,
             dlgKey: e && e.dlg_get_key && w.isDialog ? (e.dlg_get_key(w.hwnd >>> 0) >>> 0) : 0,
             back: sampleCanvas(w._backCanvas),

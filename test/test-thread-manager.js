@@ -99,5 +99,26 @@ const messageStats = messageTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 1
 assert.strictEqual(messageRuns, 0, 'budgeted scheduler should not run workers when main messages are pending');
 assert.strictEqual(messageStats.stoppedForMessage, true, 'budgeted scheduler should report message stops');
 
+const priorityTm = makeThreadManager();
+priorityTm._now = () => now;
+now = 0;
+const priorityRuns = [];
+priorityTm.threads.set(0xe1000, makeRunnableThread(1, () => {
+  priorityRuns.push('visualizer');
+  now += 10;
+}));
+priorityTm.threads.set(0xe1001, makeRunnableThread(4, () => {
+  priorityRuns.push('audio');
+}));
+priorityTm.markAudioThread(4, 1000);
+priorityTm.runBudgeted({
+  quantumSteps: 100,
+  maxTotalSteps: 1000,
+  maxWallMs: 5,
+  prioritizeAudioThreads: true,
+});
+assert.strictEqual(priorityRuns[0], 'audio', 'budgeted scheduler should run hot audio threads before visual workers');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
+console.log('PASS  ThreadManager prioritizes hot audio threads');

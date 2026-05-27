@@ -169,6 +169,12 @@
   (func (export "get_post_queue_count") (result i32) (global.get $post_queue_count))
   (func (export "set_post_queue_count") (param i32) (global.set $post_queue_count (local.get 0)))
   (func (export "wnd_table_set") (param i32) (param i32) (call $wnd_table_set (local.get 0) (local.get 1)))
+  (func (export "wnd_set_style_export") (param $hwnd i32) (param $style i32) (result i32)
+    (call $wnd_set_style (local.get $hwnd) (local.get $style)))
+  (func (export "wnd_region_set_export") (param $hwnd i32) (param $val i32)
+    (call $wnd_region_set (local.get $hwnd) (local.get $val)))
+  (func (export "wnd_region_get_export") (param $hwnd i32) (result i32)
+    (call $wnd_region_get (local.get $hwnd)))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)

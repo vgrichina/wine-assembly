@@ -3644,6 +3644,7 @@
     (global.set $pending_child_size (i32.or
       (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
       (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
+    (global.set $pending_child_size_hwnd (global.get $next_hwnd))
     (call $paint_flag_set_inv (global.get $next_hwnd))
     ))
     ;; Store parent hwnd (hWndParent = [esp+36])
@@ -8176,7 +8177,8 @@
     (then
     (local.set $packed (global.get $pending_child_size))
     (global.set $pending_child_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_create))
+    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_size_hwnd))
+    (global.set $pending_child_size_hwnd (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
@@ -9565,24 +9567,31 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (if (global.get $eax)
       (then
+        (call $wnd_region_set
+          (local.get $arg0)
+          (i32.ne (local.get $arg1) (i32.const 0)))
         ;; Regioned skin windows draw and route input over the whole shaped
         ;; surface. Keep WAT client-origin exports aligned with that surface.
-        (local.set $rect (global.get $PAINT_SCRATCH))
-        (call $host_get_window_rect (local.get $arg0) (local.get $rect))
-        (local.set $w (i32.sub
-          (i32.load offset=8 (local.get $rect))
-          (i32.load (local.get $rect))))
-        (local.set $h (i32.sub
-          (i32.load offset=12 (local.get $rect))
-          (i32.load offset=4 (local.get $rect))))
-        (if (i32.and
-              (i32.gt_s (local.get $w) (i32.const 0))
-              (i32.gt_s (local.get $h) (i32.const 0)))
+        (if (local.get $arg1)
           (then
-            (call $client_rect_set
-              (local.get $arg0)
-              (i32.const 0) (i32.const 0)
-              (local.get $w) (local.get $h)))))))
+            (local.set $rect (global.get $PAINT_SCRATCH))
+            (call $host_get_window_rect (local.get $arg0) (local.get $rect))
+            (local.set $w (i32.sub
+              (i32.load offset=8 (local.get $rect))
+              (i32.load (local.get $rect))))
+            (local.set $h (i32.sub
+              (i32.load offset=12 (local.get $rect))
+              (i32.load offset=4 (local.get $rect))))
+            (if (i32.and
+                  (i32.gt_s (local.get $w) (i32.const 0))
+                  (i32.gt_s (local.get $h) (i32.const 0)))
+              (then
+                (call $client_rect_set
+                  (local.get $arg0)
+                  (i32.const 0) (i32.const 0)
+                  (local.get $w) (local.get $h)))))
+          (else
+            (call $defwndproc_do_nccalcsize (local.get $arg0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

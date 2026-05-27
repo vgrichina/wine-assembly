@@ -555,7 +555,8 @@
   ;; 0x0000EE70  2KB     TITLE_TABLE    (256 entries × 8 bytes — WASM title ptr + len, ends 0xF670)
   ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
   ;; 0x00010670  256B    MAX_TABLE      (256 × 1 byte — per-hwnd maximized flag, ends 0x10770)
-  ;; 0x00010770  144B    Free
+  ;; 0x00010770  32B     WINDOW_REGION_BITS (256 × 1 bit — SetWindowRgn state, ends 0x10790)
+  ;; 0x00010790  112B    Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
@@ -750,6 +751,11 @@
   ;; 256 entries × 1 byte (0 = normal, 1 = maximized). Toggled by the
   ;; WM_SYSCOMMAND handler after $host_sys_command commits geometry.
   (global $MAX_TABLE i32 (i32.const 0x00010670))
+  ;; WINDOW_REGION_BITS — bitset keyed by WND_RECORDS slot. Regioned/skinned
+  ;; windows (Winamp) use their whole shaped surface as the client area, so
+  ;; later MoveWindow/SetWindowPos NCCALCSIZE must not restore standard chrome
+  ;; offsets.
+  (global $WINDOW_REGION_BITS i32 (i32.const 0x00010770))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)

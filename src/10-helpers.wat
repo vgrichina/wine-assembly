@@ -1401,6 +1401,59 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load (i32.add (i32.add (global.get $CLIENT_RECT) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 12))))
 
+  ;; Regioned top-level windows (SetWindowRgn) are app-drawn skins. Track a
+  ;; persistent bit so later MoveWindow/SetWindowPos NCCALCSIZE does not
+  ;; overwrite their whole-surface client rect with standard caption offsets.
+  (func $wnd_region_reset_slot (param $slot i32)
+    (local $addr i32) (local $mask i32)
+    (if (i32.or
+          (i32.lt_s (local.get $slot) (i32.const 0))
+          (i32.ge_s (local.get $slot) (global.get $MAX_WINDOWS)))
+      (then (return)))
+    (local.set $addr
+      (i32.add (global.get $WINDOW_REGION_BITS)
+               (i32.shr_u (local.get $slot) (i32.const 3))))
+    (local.set $mask
+      (i32.shl (i32.const 1)
+               (i32.and (local.get $slot) (i32.const 7))))
+    (i32.store8 (local.get $addr)
+      (i32.and
+        (i32.load8_u (local.get $addr))
+        (i32.xor (local.get $mask) (i32.const -1)))))
+
+  (func $wnd_region_set (param $hwnd i32) (param $val i32)
+    (local $idx i32) (local $addr i32) (local $mask i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $addr
+      (i32.add (global.get $WINDOW_REGION_BITS)
+               (i32.shr_u (local.get $idx) (i32.const 3))))
+    (local.set $mask
+      (i32.shl (i32.const 1)
+               (i32.and (local.get $idx) (i32.const 7))))
+    (if (local.get $val)
+      (then
+        (i32.store8 (local.get $addr)
+          (i32.or (i32.load8_u (local.get $addr)) (local.get $mask))))
+      (else
+        (i32.store8 (local.get $addr)
+          (i32.and
+            (i32.load8_u (local.get $addr))
+            (i32.xor (local.get $mask) (i32.const -1)))))))
+
+  (func $wnd_region_get (param $hwnd i32) (result i32)
+    (local $idx i32) (local $addr i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $addr
+      (i32.add (global.get $WINDOW_REGION_BITS)
+               (i32.shr_u (local.get $idx) (i32.const 3))))
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u (local.get $addr))
+        (i32.and (local.get $idx) (i32.const 7)))
+      (i32.const 1)))
+
   ;; WAT-owned absolute HWND geometry. JS owns only top-level canvas placement;
   ;; child HWND origins/parent walks stay here so GDI target offsets, clipping,
   ;; and input hit-testing all use the same Win32 window tree.

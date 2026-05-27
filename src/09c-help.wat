@@ -53,6 +53,7 @@
         (call $nc_flags_reset_slot (local.get $empty))
         (call $title_table_reset_slot (local.get $empty))
         (call $client_rect_reset_slot (local.get $empty))
+        (call $wnd_region_reset_slot (local.get $empty))
         (call $paint_flag_reset_slot (local.get $empty))
         (call $wnd_owner_reset_slot (local.get $empty))))
   )
@@ -88,6 +89,7 @@
           (call $nc_flags_reset_slot (local.get $i))
           (call $title_table_reset_slot (local.get $i))
           (call $client_rect_reset_slot (local.get $i))
+          (call $wnd_region_reset_slot (local.get $i))
           (call $paint_flag_reset_slot (local.get $i))
           (call $wnd_owner_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record

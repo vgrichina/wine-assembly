@@ -448,6 +448,13 @@
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
                 (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
+    (if (call $wnd_region_get (local.get $hwnd))
+      (then
+        (call $client_rect_set
+          (local.get $hwnd)
+          (i32.const 0) (i32.const 0)
+          (local.get $w) (local.get $h))
+        (return)))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
     (local.set $has_cap

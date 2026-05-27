@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '149';
+  static SOURCE_VERSION = '151';
 
   constructor() {
     this.instance = null;
@@ -452,6 +452,24 @@ class WineAssembly {
       });
       wi.__setInstance = (instance) => { workerInstance = instance; };
       wi.host.memory = self.memory;
+      const markAudioThread = () => {
+        if (self.threadManager && self.threadManager.markAudioThread) {
+          self.threadManager.markAudioThread(tid, 1500);
+        }
+      };
+      for (const name of [
+        'wave_out_open', 'wave_out_write', 'wave_out_schedule_done',
+        'wave_out_reset', 'wave_out_close',
+        'voice_open', 'voice_write_stream', 'voice_play_ring',
+        'voice_stop', 'voice_close',
+      ]) {
+        const orig = wi.host[name];
+        if (typeof orig !== 'function') continue;
+        wi.host[name] = (...args) => {
+          markAudioThread();
+          return orig(...args);
+        };
+      }
       wi.host.log = (ptr, len) => {
         lastTraceApi = false;
         if (!traceApiNames || !traceApiNames.size) return;
@@ -1024,12 +1042,13 @@ class WineAssembly {
               : activeStepsPerSlice;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {
-                const quantumSteps = audioHot ? 10000 : 50000;
-                const maxWallMs = audioHot ? (mainThreadWaiting ? 4 : 3) : (mainThreadWaiting ? 16 : 12);
+                const quantumSteps = audioHot ? 5000 : 50000;
+                const maxWallMs = audioHot ? (mainThreadWaiting ? 6 : 4) : (mainThreadWaiting ? 16 : 12);
                 self.threadManager.runBudgeted({
                   maxTotalSteps: threadBudget,
                   quantumSteps,
                   maxWallMs,
+                  prioritizeAudioThreads: audioHot,
                   stopIfMessagePending: false,
                 });
               } else {
