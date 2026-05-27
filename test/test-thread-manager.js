@@ -118,6 +118,14 @@ priorityTm.runBudgeted({
   prioritizeAudioThreads: true,
 });
 assert.strictEqual(priorityRuns[0], 'audio', 'budgeted scheduler should run hot audio threads before visual workers');
+priorityRuns.length = 0;
+priorityTm.runBudgeted({
+  quantumSteps: 100,
+  maxTotalSteps: 1000,
+  maxWallMs: 5,
+  prioritizeAudioThreads: true,
+});
+assert.strictEqual(priorityRuns[0], 'visualizer', 'budgeted scheduler should alternate priority so hot audio cannot starve visual workers');
 
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');

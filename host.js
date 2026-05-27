@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '151';
+  static SOURCE_VERSION = '152';
 
   constructor() {
     this.instance = null;
@@ -943,6 +943,31 @@ class WineAssembly {
     return hotUntil > this._audioSchedulerNow();
   }
 
+  _hasOpenMenu() {
+    const renderer = this.renderer;
+    if (!renderer) return false;
+    const seen = new Set();
+    const wasms = [];
+    const add = (wasm) => {
+      if (wasm && !seen.has(wasm)) {
+        seen.add(wasm);
+        wasms.push(wasm);
+      }
+    };
+    add(this.instance);
+    add(renderer.wasm);
+    add(renderer.mainWasm);
+    for (const win of Object.values(renderer.windows || {})) add(win && win.wasm);
+    for (const wasm of wasms) {
+      const ex = wasm && wasm.exports;
+      if (!ex || !ex.menu_open_hwnd) continue;
+      try {
+        if ((ex.menu_open_hwnd() >>> 0) !== 0) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     this.running = true;
@@ -1037,18 +1062,21 @@ class WineAssembly {
             // Keep a wall-clock cap for browser responsiveness, but give
             // active workers enough total steps to use that budget.
             const audioHot = self._isAudioHot();
+            const menuOpen = self._hasOpenMenu();
             const threadBudget = windowCount
               ? (recentInputWake ? 0 : activeStepsPerSlice)
               : activeStepsPerSlice;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {
-                const quantumSteps = audioHot ? 5000 : 50000;
-                const maxWallMs = audioHot ? (mainThreadWaiting ? 6 : 4) : (mainThreadWaiting ? 16 : 12);
+                const quantumSteps = audioHot ? (menuOpen ? 20000 : 5000) : 50000;
+                const maxWallMs = audioHot
+                  ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : (mainThreadWaiting ? 6 : 4))
+                  : (mainThreadWaiting ? 16 : 12);
                 self.threadManager.runBudgeted({
                   maxTotalSteps: threadBudget,
                   quantumSteps,
                   maxWallMs,
-                  prioritizeAudioThreads: audioHot,
+                  prioritizeAudioThreads: audioHot && !menuOpen,
                   stopIfMessagePending: false,
                 });
               } else {
