@@ -77,7 +77,8 @@ const menuStates = result.menuStates || [];
 const wvisMenu = menuStates.find(s => s.openHwnd === wvis.hwnd);
 assert(wvisMenu,
   'right-click should open the wVis worker-owned popup menu');
-assert((wvisMenu.labels || []).includes('Rendering Options'),
+const displayMenuText = text => String(text || '').replace(/&&/g, '\0').replace(/&([^&])/g, '$1').replace(/\0/g, '&');
+assert((wvisMenu.labels || []).map(displayMenuText).includes('Rendering Options'),
   'wVis popup should expose Rendering Options');
 assert((wvisMenu.subLabels || []).length > 0,
   'Rendering Options should expose a usable submenu');

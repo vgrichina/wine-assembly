@@ -2317,6 +2317,10 @@
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x08000000))
+          (then
+            (drop (call $host_gdi_set_text_color
+              (local.get $hdc) (i32.const 0x00808080)))))
 
         ;; Resolve text pointer/length once (used by every kind that has a label).
         (if (i32.load (local.get $state_w))
@@ -7118,6 +7122,10 @@
       ;; Win98 hit-testing ignores effectively hidden child windows. NSIS
       ;; wizard pages keep prior-page controls WS_VISIBLE under a hidden page.
       (if (i32.eqz (call $wnd_is_effectively_visible (local.get $ch)))
+        (then
+          (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+          (br $walk)))
+      (if (i32.and (local.get $style) (i32.const 0x08000000))
         (then
           (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
           (br $walk)))

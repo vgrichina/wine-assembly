@@ -1895,10 +1895,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 112: EnableWindow — STUB: unimplemented
+  ;; 112: EnableWindow
   ;; EnableWindow(hWnd, bEnable) → BOOL (previous state)
   (func $handle_EnableWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; was previously enabled
+    (local $idx i32) (local $style i32) (local $new_style i32) (local $prev_enabled i32)
+    (local.set $idx (call $wnd_table_find (local.get $arg0)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $style (call $wnd_get_style (local.get $arg0)))
+    (local.set $prev_enabled
+      (select (i32.const 0) (i32.const 1)
+        (i32.and (local.get $style) (i32.const 0x08000000))))
+    (if (local.get $arg1)
+      (then
+        (local.set $new_style
+          (i32.and (local.get $style) (i32.const 0xF7FFFFFF))))
+      (else
+        (local.set $new_style
+          (i32.or (local.get $style) (i32.const 0x08000000)))))
+    (if (i32.ne (local.get $new_style) (local.get $style))
+      (then
+        (drop (call $wnd_set_style (local.get $arg0) (local.get $new_style)))
+        ;; WM_ENABLE(wParam=bEnable). Most built-in controls ignore it, but
+        ;; owner/subclassed windows may rely on the notification.
+        (drop (call $wnd_send_message
+          (local.get $arg0) (i32.const 0x000A)
+          (select (i32.const 1) (i32.const 0) (local.get $arg1))
+          (i32.const 0)))
+        (call $invalidate_hwnd (local.get $arg0))))
+    (global.set $eax (local.get $prev_enabled))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -8067,10 +8095,16 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 640: IsWindowEnabled — STUB: unimplemented
+  ;; 640: IsWindowEnabled
   (func $handle_IsWindowEnabled (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; IsWindowEnabled(hwnd) — always return TRUE
-    (global.set $eax (i32.const 1))
+    (if (i32.eq (call $wnd_table_find (local.get $arg0)) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (global.set $eax
+      (select (i32.const 0) (i32.const 1)
+        (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x08000000))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 

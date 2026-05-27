@@ -844,31 +844,33 @@ async function main() {
 	        }
 	        return { w, h, sampledColors: colors.size, sampledInk: ink };
 	      };
+      const dv = wine && wine.memory ? new DataView(wine.memory.buffer) : null;
+      const imageBase = e && e.get_image_base ? (e.get_image_base() >>> 0) : 0;
+      const guestBase = e && e.get_guest_base ? (e.get_guest_base() >>> 0) : 0x12000;
+      const g2w = (p) => ((p >>> 0) - imageBase + guestBase) >>> 0;
+      const readStr = (guestPtr, max = 80) => {
+        if (!dv || !guestPtr || guestPtr === 0xffffffff || !imageBase) return '';
+        const wa = g2w(guestPtr);
+        if (wa >= dv.byteLength) return '';
+        let s = '';
+        for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
+          const c = dv.getUint8(wa + i);
+          if (!c) break;
+          s += String.fromCharCode(c);
+        }
+        return s;
+      };
       const childrenOf = (hwnd) => {
         if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd) return [];
-        const dv = wine && wine.memory ? new DataView(wine.memory.buffer) : null;
-        const imageBase = e && e.get_image_base ? (e.get_image_base() >>> 0) : 0;
-        const guestBase = e && e.get_guest_base ? (e.get_guest_base() >>> 0) : 0x12000;
-        const g2w = (p) => ((p >>> 0) - imageBase + guestBase) >>> 0;
-        const readStr = (guestPtr, max = 80) => {
-          if (!dv || !guestPtr || guestPtr === 0xffffffff || !imageBase) return '';
-          const wa = g2w(guestPtr);
-          if (wa >= dv.byteLength) return '';
-          let s = '';
-          for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
-            const c = dv.getUint8(wa + i);
-            if (!c) break;
-            s += String.fromCharCode(c);
-          }
-          return s;
-        };
         const readControlText = (fn, hwnd, idx) => {
           if (!e || !e.guest_alloc || !e[fn]) return '';
           const buf = e.guest_alloc(256) >>> 0;
           const len = fn === 'listbox_get_item_text'
             ? (e[fn](hwnd, idx, buf, 256) | 0)
             : (e[fn](hwnd, buf, 256) | 0);
-          return len > 0 ? readStr(buf, Math.min(255, len + 1)) : '';
+          const text = len > 0 ? readStr(buf, Math.min(255, len + 1)) : '';
+          if (e.guest_free) e.guest_free(buf);
+          return text;
         };
         const listboxInfo = (hwnd) => {
           if (!e || !e.listbox_get_count) return null;
@@ -927,6 +929,7 @@ async function main() {
             w: wh & 0xffff,
             h: wh >>> 16,
             treeItems: cls === 8 ? treeItems() : undefined,
+            text: cls === 1 ? readControlText('button_get_text', ch, 0) : undefined,
             listbox: cls === 4 ? listboxInfo(ch) : undefined,
             combobox: cls === 5 ? comboboxInfo(ch) : undefined,
           });
@@ -974,6 +977,14 @@ async function main() {
               pluginPath: readStr(0x4595b8, 260),
               pluginDir: readStr(0x45c880, 260),
               pluginFile: readStr(0x45cd00, 260),
+            },
+            memoryRegions: {
+              imageBase,
+              guestBase,
+              heapBase: e && e.get_heap_base ? (e.get_heap_base() >>> 0) : 0,
+              heapPtr: e && e.get_heap_ptr ? (e.get_heap_ptr() >>> 0) : 0,
+              threadAlloc: e && e.get_thread_alloc ? (e.get_thread_alloc() >>> 0) : 0,
+              byteLength: wine && wine.memory ? wine.memory.buffer.byteLength : 0,
             },
 	        visibleWindows: Object.values((r && r.windows) || {})
 	          .filter(w => w && w.visible)
