@@ -894,7 +894,7 @@ async function main() {
           if (!dv) return [];
           const out = [];
           for (let i = 0; i < 32; i++) {
-            const base = 0x9000 + i * 32;
+            const base = 0x07F00000 + i * 32;
             const handle = dv.getUint32(base, true) >>> 0;
             if (!handle) continue;
             const textPtr = dv.getUint32(base + 28, true) >>> 0;

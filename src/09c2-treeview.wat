@@ -1,7 +1,7 @@
   ;; ============================================================
   ;; WAT-NATIVE TREEVIEW CONTROL
   ;; ============================================================
-  ;; Memory layout at TV_TABLE (0x9000), 32 items × 32 bytes = 1024B
+  ;; Memory layout at TV_TABLE ($TV_TABLE), 32 items × 32 bytes = 1024B
   ;; Per item (32 bytes):
   ;;   +0:  handle      (0 = free slot, else 0xCC000001+)
   ;;   +4:  parent      (HTREEITEM or 0 for root)
@@ -23,7 +23,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (if (i32.eq (i32.load (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32)))) (local.get $handle))
+        (if (i32.eq (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32)))) (local.get $handle))
           (then (return (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
@@ -36,7 +36,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (if (i32.eqz (i32.load (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32)))))
+        (if (i32.eqz (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32)))))
           (then (return (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
@@ -49,7 +49,7 @@
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
         (local.set $scan
-          (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
               (i32.and
                 (i32.ne (i32.load (local.get $scan)) (i32.const 0))
@@ -64,7 +64,7 @@
         (if (i32.ne (local.get $prev_slot) (i32.const -1))
           (then
             (i32.store offset=12
-              (i32.add (i32.const 0x9000) (i32.mul (local.get $prev_slot) (i32.const 32)))
+              (i32.add (global.get $TV_TABLE) (i32.mul (local.get $prev_slot) (i32.const 32)))
               (local.get $handle))
             (i32.store offset=16 (local.get $base) (local.get $prev_handle)))))))
 
@@ -86,7 +86,7 @@
     (global.set $tv_next_handle (i32.add (global.get $tv_next_handle) (i32.const 1)))
     (global.set $tv_count (i32.add (global.get $tv_count) (i32.const 1)))
     ;; Slot base address
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     ;; Store handle
     (i32.store (local.get $base) (local.get $handle))
     ;; Read parent from TV_INSERTSTRUCT
@@ -141,12 +141,12 @@
         (if (i32.ne (local.get $parent_slot) (i32.const -1))
           (then
             (local.set $sib (i32.load offset=8
-              (i32.add (i32.const 0x9000) (i32.mul (local.get $parent_slot) (i32.const 32)))))
+              (i32.add (global.get $TV_TABLE) (i32.mul (local.get $parent_slot) (i32.const 32)))))
             (if (i32.eqz (local.get $sib))
               (then
                 ;; First child
                 (i32.store offset=8
-                  (i32.add (i32.const 0x9000) (i32.mul (local.get $parent_slot) (i32.const 32)))
+                  (i32.add (global.get $TV_TABLE) (i32.mul (local.get $parent_slot) (i32.const 32)))
                   (local.get $handle)))
               (else
                 ;; Find last sibling, append
@@ -155,16 +155,16 @@
                     (local.set $slot (call $tv_find_slot (local.get $sib)))
                     (br_if $end (i32.eq (local.get $slot) (i32.const -1)))
                     (if (i32.eqz (i32.load offset=12
-                          (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32)))))
+                          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32)))))
                       (then
                         ;; This is the last sibling — link new item
                         (i32.store offset=12
-                          (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32)))
+                          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32)))
                           (local.get $handle))
                         (i32.store offset=16 (local.get $base) (local.get $sib))
                         (br $end)))
                     (local.set $sib (i32.load offset=12
-                      (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32)))))
+                      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32)))))
                     (br $find)))))))))
     (if (i32.eqz (local.get $hParent))
       (then (call $tv_link_root_item (local.get $base) (local.get $handle))))
@@ -180,7 +180,7 @@
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     ;; TVIF_HANDLE (0x10)
     (if (i32.and (local.get $mask) (i32.const 0x10))
       (then
@@ -237,7 +237,7 @@
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     ;; TVIF_STATE (0x8)
     (if (i32.and (local.get $mask) (i32.const 0x8))
       (then
@@ -266,7 +266,7 @@
         (if (i32.eq (local.get $slot) (i32.const -1))
           (then (return (i32.const 0))))
         (local.set $parent_base
-          (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
         (if (i32.eqz (i32.and (i32.load offset=20 (local.get $parent_base)) (i32.const 0x20)))
           (then (return (i32.const 0))))
         (local.set $parent (i32.load offset=4 (local.get $parent_base)))
@@ -288,7 +288,7 @@
         (if (i32.eq (local.get $slot) (i32.const -1))
           (then (return (i32.const 0))))
         (local.set $parent_base
-          (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
         (local.set $parent (i32.load offset=4 (local.get $parent_base)))
         (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
         (br $walk)))
@@ -300,7 +300,7 @@
     (local.set $i (i32.const 0))
     (block $done (loop $items
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $scan_base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
             (i32.load (local.get $scan_base))
             (i32.and
@@ -319,7 +319,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
               (i32.ne (i32.load (local.get $base)) (i32.const 0))
               (call $tv_item_visible (local.get $base)))
@@ -334,7 +334,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
               (i32.ne (i32.load (local.get $base)) (i32.const 0))
               (call $tv_item_visible (local.get $base)))
@@ -350,7 +350,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
               (i32.ne (i32.load (local.get $base)) (i32.const 0))
               (call $tv_item_visible (local.get $base)))
@@ -372,7 +372,7 @@
         (block $done
           (loop $loop
             (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+            (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
             (if (i32.and (i32.ne (i32.load (local.get $base)) (i32.const 0))  ;; handle != 0
                          (i32.eqz (i32.load offset=4 (local.get $base))))  ;; parent == 0
               (then (return (i32.load (local.get $base)))))
@@ -389,7 +389,7 @@
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     ;; TVGN_NEXT (1) — next sibling
     (if (i32.eq (local.get $flag) (i32.const 1))
       (then (return (i32.load offset=12 (local.get $base)))))
@@ -434,7 +434,7 @@
         (local.set $slot (call $tv_find_slot (local.get $old_handle)))
         (if (i32.ne (local.get $slot) (i32.const -1))
           (then
-            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+            (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
             (i32.store offset=16 (local.get $notify_w) (i32.const 0x14))
             (i32.store offset=20 (local.get $notify_w) (local.get $old_handle))
             (i32.store offset=48 (local.get $notify_w)
@@ -446,7 +446,7 @@
         (local.set $slot (call $tv_find_slot (local.get $new_handle)))
         (if (i32.ne (local.get $slot) (i32.const -1))
           (then
-            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+            (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
             (i32.store offset=56 (local.get $notify_w) (i32.const 0x1C))
             (i32.store offset=60 (local.get $notify_w) (local.get $new_handle))
             (i32.store offset=64 (local.get $notify_w) (i32.const 0x0002))
@@ -495,13 +495,13 @@
         (local.set $slot (call $tv_find_slot (local.get $old_sel)))
 	        (if (i32.ne (local.get $slot) (i32.const -1))
 	          (then
-	            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+	            (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
 	            (i32.store offset=20 (local.get $base)
 	              (i32.and (i32.load offset=20 (local.get $base)) (i32.const 0xFFFFFFFD)))))))
     (local.set $i (i32.const 0))
     (block $clear_done (loop $clear_items
       (br_if $clear_done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $scan_base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.load (local.get $scan_base))
         (then
           (i32.store offset=20 (local.get $scan_base)
@@ -513,7 +513,7 @@
         (local.set $slot (call $tv_find_slot (local.get $hItem)))
         (if (i32.ne (local.get $slot) (i32.const -1))
           (then
-            (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+            (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
             (i32.store offset=20 (local.get $base)
               (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x0002)))))))
     (global.set $tv_selected_handle (local.get $hItem))
@@ -551,7 +551,7 @@
         (i32.store offset=8 (local.get $hittest_wa) (i32.const 0x0001))
         (i32.store offset=12 (local.get $hittest_wa) (i32.const 0))
         (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     (local.set $depth (call $tv_item_depth (local.get $base)))
     (local.set $box_x (i32.add (i32.const 4) (i32.mul (local.get $depth) (i32.const 16))))
     (local.set $text_x (local.get $box_x))
@@ -576,7 +576,7 @@
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     (local.set $state (i32.load offset=20 (local.get $base)))
     (local.set $cmd (i32.and (local.get $action) (i32.const 0x000F)))
     ;; TVE_COLLAPSE=1, TVE_EXPAND=2, TVE_TOGGLE=3.
@@ -596,7 +596,7 @@
         (local.set $sel_slot (call $tv_find_slot (global.get $tv_selected_handle)))
         (if (i32.ne (local.get $sel_slot) (i32.const -1))
           (then
-            (local.set $sel_base (i32.add (i32.const 0x9000)
+            (local.set $sel_base (i32.add (global.get $TV_TABLE)
               (i32.mul (local.get $sel_slot) (i32.const 32))))
             (if (i32.eqz (call $tv_item_visible (local.get $sel_base)))
               (then (return (call $tv_select_caret
@@ -606,7 +606,7 @@
         (local.set $i (i32.const 0))
         (block $scan_done (loop $scan_items
           (br_if $scan_done (i32.ge_u (local.get $i) (i32.const 32)))
-          (local.set $scan_base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+          (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
           (if (i32.and
                 (i32.load (local.get $scan_base))
                 (i32.and
@@ -644,7 +644,7 @@
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     (local.set $depth (call $tv_item_depth (local.get $base)))
     (local.set $box_x (i32.add (i32.const 4) (i32.mul (local.get $depth) (i32.const 16))))
     (if (i32.and
@@ -678,7 +678,7 @@
           (then
             (if (i32.eq (global.get $tv_selected_handle) (local.get $lParam))
               (then (global.set $tv_selected_handle (i32.const 0))))
-            (i32.store (i32.add (i32.const 0x9000)
+            (i32.store (i32.add (global.get $TV_TABLE)
               (i32.mul (call $tv_find_slot (local.get $lParam)) (i32.const 32))) (i32.const 0))
             (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
         (return (i32.const 1))))
@@ -726,7 +726,7 @@
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
       (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
       (local.set $parent (i32.load offset=4
-        (i32.add (i32.const 0x9000) (i32.mul (local.get $slot) (i32.const 32)))))
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32)))))
       (br $walk)))
     (local.get $depth))
 
@@ -759,7 +759,7 @@
     (local.set $row (i32.const 0))
     (block $done (loop $items
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-      (local.set $base (i32.add (i32.const 0x9000) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
             (i32.ne (i32.load (local.get $base)) (i32.const 0))
             (call $tv_item_visible (local.get $base)))

@@ -33,12 +33,12 @@
   (global $D3DIM_OFF_VP_SCALE  i32 (i32.const 3104))
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
 
-  ;; Crash-name strings for unimplemented D3DIM paths. 01-header.wat uses
-  ;; 0x100..0x2FB; 0x300..0x4000 is unused before the API hash table.
-  (data (i32.const 0x340) "D3DIM:Execute opcode\00")
-  (data (i32.const 0x360) "D3DIM:DrawPrimitive vtx/prim\00")
-  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x340))
-  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x360))
+  ;; Crash-name strings for unimplemented D3DIM paths live in the high
+  ;; WAT-private scratch area so they cannot collide with low system strings.
+  (data (i32.const 0x07F02400) "D3DIM:Execute opcode\00")
+  (data (i32.const 0x07F02420) "D3DIM:DrawPrimitive vtx/prim\00")
+  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07F02400))
+  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x07F02420))
 
   ;; ── QueryInterface upgrade routing ────────────────────────────
   ;; Recognizes versioned IIDs by their first DWORD and writes the matching

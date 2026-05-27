@@ -14,21 +14,25 @@
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
   (global $DX_OBJECTS i32 (i32.const 0x07FF0000))
+  (global $DX_OBJECTS_SIZE i32 (i32.const 0x00008000))
   (global $DX_MAX i32 (i32.const 1024))
   ;; D3DIM matrix handle table (Immediate Mode): 256 slots × 64 bytes.
   ;; Handle value = slot_idx + 1 (0 is invalid). A slot whose 64-byte body
   ;; is entirely zero is considered free; CreateMatrix fills with the 4x4
   ;; identity so subsequent scans skip it. DeleteMatrix zeroes it again.
   (global $D3DIM_MATRICES i32 (i32.const 0x07FEC000))
+  (global $D3DIM_MATRICES_SIZE i32 (i32.const 0x00004000))
   (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
+  (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00002000))
   ;; Auxiliary wrappers for QueryInterface results that need a different vtable
   ;; than the primary wrapper. Each entry is [vtbl, slot], same shape as the
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
+  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00004000))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
   (global $com_aux_next (mut i32) (i32.const 0))
 
@@ -3532,4 +3536,3 @@
   (func $handle_ICClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
