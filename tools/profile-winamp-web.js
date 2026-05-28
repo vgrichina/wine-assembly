@@ -46,6 +46,8 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
   .map(s => s.trim())
   .filter(Boolean)
   .map(s => {
+    const resetMatch = s.match(/^profile-reset(?::(.+))?$/i);
+    if (resetMatch) return { profileReset: resetMatch[1] || 'playback' };
     const waitMatch = s.match(/^wait:(\d+)$/i);
     if (waitMatch) return { wait: parseInt(waitMatch[1], 10) || 0 };
     const dragMatch = s.match(/^drag:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:,(\d+))?(?:,(\d+))?$/i);
@@ -63,7 +65,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.wait !== undefined || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -451,6 +453,9 @@ async function main() {
       counters: Object.create(null),
       samples: Object.create(null),
       marks: [],
+      threads: Object.create(null),
+      hostEvents: Object.create(null),
+      label: 'startup',
     };
     const p = window.__waProfile;
     const add = (name, dt, data) => {
@@ -464,6 +469,116 @@ async function main() {
       }
     };
     p.add = add;
+    p.reset = (label) => {
+      p.t0 = performance.now();
+      p.counters = Object.create(null);
+      p.samples = Object.create(null);
+      p.marks = [];
+      p.threads = Object.create(null);
+      p.hostEvents = Object.create(null);
+      p.label = label || 'profile';
+    };
+    const round = v => +((Number(v) || 0).toFixed(3));
+    const counterOut = (map) => {
+      const out = {};
+      for (const [name, c] of Object.entries(map || {})) {
+        out[name] = {
+          count: c.count | 0,
+          totalMs: round(c.total),
+          maxMs: round(c.max),
+          avgMs: c.count ? round(c.total / c.count) : 0,
+        };
+      }
+      return out;
+    };
+    window.__waResetProfile = (label) => p.reset(label);
+    window.__waProfileSnapshot = () => ({
+      label: p.label || 'profile',
+      elapsedMs: round(performance.now() - p.t0),
+      counters: counterOut(p.counters),
+      samples: p.samples || {},
+      threads: Object.fromEntries(Object.entries(p.threads || {}).map(([tid, t]) => [tid, {
+        tid: t.tid | 0,
+        handle: t.handle >>> 0,
+        startAddr: t.startAddr >>> 0,
+        param: t.param >>> 0,
+        runs: t.runs | 0,
+        steps: t.steps | 0,
+        totalMs: round(t.totalMs),
+        maxMs: round(t.maxMs),
+        hotAudioMs: round(t.hotAudioMs),
+        audioHostMs: round(t.audioHostMs),
+        gdiHostMs: round(t.gdiHostMs),
+        hostMs: round(t.hostMs),
+        audioEvents: t.audioEvents | 0,
+        gdiEvents: t.gdiEvents | 0,
+        lastEip: t.lastEip >>> 0,
+        lastYield: t.lastYield >>> 0,
+        state: t.state || '',
+      }])),
+      hostEvents: counterOut(p.hostEvents),
+    });
+    const threadEntry = (tid) => {
+      const key = String((tid || 0) | 0);
+      return p.threads[key] || (p.threads[key] = {
+        tid: (tid || 0) | 0,
+        handle: 0,
+        startAddr: 0,
+        param: 0,
+        runs: 0,
+        steps: 0,
+        totalMs: 0,
+        maxMs: 0,
+        hotAudioMs: 0,
+        audioHostMs: 0,
+        gdiHostMs: 0,
+        hostMs: 0,
+        audioEvents: 0,
+        gdiEvents: 0,
+        lastEip: 0,
+        lastYield: 0,
+        state: '',
+      });
+    };
+    window.__waProfileThreadRun = (info) => {
+      info = info || {};
+      const dt = Number(info.elapsedMs) || 0;
+      const tid = (info.tid || 0) | 0;
+      const t = threadEntry(tid);
+      t.handle = info.handle >>> 0;
+      t.startAddr = info.startAddr >>> 0;
+      t.param = info.param >>> 0;
+      t.runs++;
+      t.steps += (info.steps || 0) | 0;
+      t.totalMs += dt;
+      if (dt > t.maxMs) t.maxMs = dt;
+      if (info.hotAudio) t.hotAudioMs += dt;
+      t.lastEip = info.eipAfter >>> 0;
+      t.lastYield = info.yieldReason >>> 0;
+      t.state = info.state || t.state || '';
+      add('thread.run', dt, info);
+      add('thread.T' + tid, dt, info);
+      if (info.hotAudio) add('thread.audioHot', dt, info);
+    };
+    window.__waProfileHostEvent = (ev) => {
+      ev = ev || {};
+      const dt = Number(ev.elapsedMs) || 0;
+      const name = ev.name || 'host';
+      const c = p.hostEvents[name] || (p.hostEvents[name] = { count: 0, total: 0, max: 0 });
+      c.count++; c.total += dt; if (dt > c.max) c.max = dt;
+      add(name, dt, ev.data || null);
+      const tid = (ev.threadId || 0) | 0;
+      const t = threadEntry(tid);
+      t.hostMs += dt;
+      if (/^(audio\\.|host\\.waveOut)/.test(name)) {
+        t.audioHostMs += dt;
+        t.audioEvents++;
+      }
+      if (/^gdi\\./.test(name)) {
+        t.gdiHostMs += dt;
+        t.gdiEvents++;
+      }
+    };
     const wrap = (proto, key, name) => {
       const orig = proto && proto[key];
       if (!orig || orig.__profiled) return;
@@ -701,6 +816,10 @@ async function main() {
   await wait(WINAMP_DISMISS_WAIT_MS);
 
   if (mode === 'audio') {
+    await evalExpr(`(() => {
+      if (window.__waResetProfile) window.__waResetProfile('audio-playback');
+      return 1;
+    })()`);
     const playSnapshots = [];
     for (let i = 0; i < AUDIO_PLAYS; i++) {
       await clickCanvasPoint(66, 129);
@@ -746,6 +865,7 @@ async function main() {
           openHandles: shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
           scheduledHeaders: shared.waveScheduledHeaders && shared.waveScheduledHeaders.size,
         } : null,
+        profile: window.__waProfileSnapshot ? window.__waProfileSnapshot() : null,
         playSnapshots: ${JSON.stringify(playSnapshots)},
         voices: voiceMap,
         windows: Object.values((window.sharedRenderer || wine.renderer).windows)
@@ -772,6 +892,15 @@ async function main() {
     await wait(POST_WAIT_MS);
     const postClickSnapshots = [];
     for (const p of POST_CLICKS) {
+      if (p.profileReset !== undefined) {
+        progress(`profile reset ${p.profileReset}`);
+        await evalExpr(`(() => {
+          if (window.__waResetProfile) window.__waResetProfile(${JSON.stringify(p.profileReset)});
+          return 1;
+        })()`);
+        postClickSnapshots.push({ action: 'profile-reset', label: p.profileReset });
+        continue;
+      }
       if (p.wait !== undefined) {
         progress(`wait ${p.wait}ms`);
         await wait(p.wait);
@@ -988,6 +1117,7 @@ async function main() {
                 scheduledHeaders: shared.waveScheduledHeaders && shared.waveScheduledHeaders.size,
               } : null;
             })(),
+            profile: window.__waProfileSnapshot ? window.__waProfileSnapshot() : null,
             postClickSnapshots: ${JSON.stringify(postClickSnapshots)},
             voices: (() => {
               const shared = wine && wine._sharedAudio;

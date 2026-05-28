@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '153';
+  static SOURCE_VERSION = '154';
 
   constructor() {
     this.instance = null;
@@ -155,6 +155,7 @@ class WineAssembly {
         return instance ? instance.exports : null;
       },
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
+      threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
       sharedGdi: opts.sharedGdi || null,
       sharedAudio: opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {}),
@@ -558,6 +559,7 @@ class WineAssembly {
         vfs: mainCtx.vfs,
         sharedGdi: mainCtx.sharedGdi,
         sharedAudio: mainCtx.sharedAudio,
+        threadId: tid,
       });
       wi.__setInstance = (instance) => { workerInstance = instance; };
       wi.host.memory = self.memory;
@@ -600,6 +602,11 @@ class WineAssembly {
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       onThreadExit: (info) => self._cleanupWinampVisualizerThread(info),
+      profileThreadRun: (info) => {
+        if (typeof window !== 'undefined' && typeof window.__waProfileThreadRun === 'function') {
+          window.__waProfileThreadRun(info);
+        }
+      },
     });
 
     if (canvas && !this.renderer) {
