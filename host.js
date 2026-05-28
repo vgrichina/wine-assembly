@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '155';
+  static SOURCE_VERSION = '156';
 
   constructor() {
     this.instance = null;
@@ -251,6 +251,11 @@ class WineAssembly {
       if (self.verbose) {
         console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
         self.logToUI('[wine-asm] i32: 0x' + (val >>> 0).toString(16));
+      }
+    };
+    h.log_eip = (eip) => {
+      if (typeof window !== 'undefined' && typeof window.__waProfileEipHit === 'function') {
+        window.__waProfileEipHit(eip >>> 0, 0);
       }
     };
     // Browser-only Open/Save common-dialog hooks. has_dom returns 1 so
@@ -594,6 +599,11 @@ class WineAssembly {
       };
       wi.host.log_i32 = (val) => {
         if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
+      };
+      wi.host.log_eip = (eip) => {
+        if (typeof window !== 'undefined' && typeof window.__waProfileEipHit === 'function') {
+          window.__waProfileEipHit(eip >>> 0, tid | 0);
+        }
       };
       wi.host.exit = () => {};
       return wi;
@@ -1186,9 +1196,9 @@ class WineAssembly {
               : activeStepsPerSlice;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {
-                const quantumSteps = audioHot ? (menuOpen ? 20000 : 5000) : 50000;
+                const quantumSteps = audioHot ? (menuOpen ? 20000 : 10000) : 50000;
                 const maxWallMs = audioHot
-                  ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : (mainThreadWaiting ? 6 : 4))
+                  ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : 4)
                   : (mainThreadWaiting ? 16 : 12);
                 self.threadManager.runBudgeted({
                   maxTotalSteps: threadBudget,

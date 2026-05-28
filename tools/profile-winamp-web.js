@@ -60,6 +60,26 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     if (timerMatch) return { timerInterval: true, hwnd: parseIntAuto(timerMatch[1]), intervalMs: parseIntAuto(timerMatch[2]) };
     const guest8Match = s.match(/^guest8:([^,]+),([^,]+)$/i);
     if (guest8Match) return { guest8: true, addr: parseIntAuto(guest8Match[1]), value: parseIntAuto(guest8Match[2]) & 0xff };
+    const traceEipMatch = s.match(/^trace-eip:([^,]+),([^,]+),([^,]+),([^,]+)$/i);
+    if (traceEipMatch) {
+      const tidRaw = String(traceEipMatch[2] || '').trim().toLowerCase();
+      const tid = tidRaw === 'all' ? null : parseIntAuto(tidRaw.replace(/^t/, ''));
+      return {
+        traceEip: true,
+        label: traceEipMatch[1],
+        tid,
+        lo: parseIntAuto(traceEipMatch[3]),
+        hi: parseIntAuto(traceEipMatch[4]),
+      };
+    }
+    const schedulerMatch = s.match(/^scheduler-hot:(\d+),(\d+)$/i);
+    if (schedulerMatch) {
+      return {
+        schedulerHot: true,
+        quantumSteps: parseIntAuto(schedulerMatch[1]),
+        maxWallMs: parseIntAuto(schedulerMatch[2]),
+      };
+    }
     const dragMatch = s.match(/^drag:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:,(\d+))?(?:,(\d+))?$/i);
     if (dragMatch) {
       return {
@@ -75,7 +95,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -263,6 +283,7 @@ function compactProfileResult(result) {
       counters: result.profile.counters,
       jitter: result.profile.jitter,
       threadSleepIntervals: result.profile.threadSleepIntervals,
+      eipRanges: result.profile.eipRanges,
       threads: result.profile.threads,
       hostEvents: result.profile.hostEvents,
     },
@@ -503,6 +524,7 @@ async function main() {
       frames: Object.create(null),
       threads: Object.create(null),
       hostEvents: Object.create(null),
+      eipRanges: [],
       label: 'startup',
     };
     const p = window.__waProfile;
@@ -525,6 +547,7 @@ async function main() {
       p.frames = Object.create(null);
       p.threads = Object.create(null);
       p.hostEvents = Object.create(null);
+      p.eipRanges = [];
       p.label = label || 'profile';
       if (window.__waAudioProbe) {
         Object.assign(window.__waAudioProbe, {
@@ -647,7 +670,45 @@ async function main() {
       }
       return out;
     };
+    const eipRangeOut = () => (p.eipRanges || []).map(r => ({
+      label: r.label || '',
+      tid: r.tid == null ? null : r.tid | 0,
+      lo: r.lo >>> 0,
+      hi: r.hi >>> 0,
+      count: r.count | 0,
+      byThread: Object.fromEntries(Object.entries(r.byThread || {}).map(([tid, count]) => [tid, count | 0])),
+      topEips: Object.entries(r.byEip || {})
+        .map(([eip, count]) => ({ eip: Number(eip) >>> 0, count: count | 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 24),
+    }));
     window.__waResetProfile = (label) => p.reset(label);
+    window.__waProfileAddEipRange = (label, tid, lo, hi) => {
+      const range = {
+        label: String(label || 'eip'),
+        tid: tid == null ? null : (tid | 0),
+        lo: lo >>> 0,
+        hi: hi >>> 0,
+        count: 0,
+        byThread: Object.create(null),
+        byEip: Object.create(null),
+      };
+      p.eipRanges.push(range);
+      return range;
+    };
+    window.__waProfileEipHit = (eip, tid) => {
+      eip = eip >>> 0;
+      tid = (tid || 0) | 0;
+      for (const r of p.eipRanges || []) {
+        if (r.tid != null && r.tid !== tid) continue;
+        if (eip < (r.lo >>> 0) || eip > (r.hi >>> 0)) continue;
+        r.count++;
+        const tidKey = String(tid);
+        r.byThread[tidKey] = (r.byThread[tidKey] || 0) + 1;
+        const eipKey = String(eip);
+        r.byEip[eipKey] = (r.byEip[eipKey] || 0) + 1;
+      }
+    };
     window.__waProfileSnapshot = () => ({
       label: p.label || 'profile',
       elapsedMs: round(performance.now() - p.t0),
@@ -676,6 +737,7 @@ async function main() {
         };
       })(),
       threadSleepIntervals: threadSleepIntervals(),
+      eipRanges: eipRangeOut(),
       samples: p.samples || {},
       threads: Object.fromEntries(Object.entries(p.threads || {}).map(([tid, t]) => [tid, {
         tid: t.tid | 0,
@@ -1228,6 +1290,67 @@ async function main() {
             value: ${p.value} & 0xff,
             before,
             after,
+          };
+        })()`));
+        continue;
+      }
+      if (p.traceEip) {
+        progress(`trace eip ${p.label} ${p.tid == null ? 'all' : 'T' + p.tid} 0x${p.lo.toString(16)}-0x${p.hi.toString(16)}`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const tm = wine && wine.threadManager;
+          const armed = [];
+          const arm = (tid, ex) => {
+            if (!ex || !ex.set_trace_eip_range) return;
+            if (${p.tid == null ? 'false' : `(${p.tid} !== (tid | 0))`}) return;
+            ex.set_trace_eip_range(1, ${p.lo} >>> 0, ${p.hi} >>> 0);
+            armed.push(tid | 0);
+          };
+          if (window.__waProfileAddEipRange) {
+            window.__waProfileAddEipRange(${JSON.stringify(p.label)}, ${p.tid == null ? 'null' : p.tid}, ${p.lo} >>> 0, ${p.hi} >>> 0);
+          }
+          arm(0, wine && wine.instance && wine.instance.exports);
+          if (tm && tm.threads) {
+            for (const t of tm.threads.values()) {
+              arm(t.tid | 0, t.instance && t.instance.exports);
+            }
+          }
+          return {
+            action: 'trace-eip',
+            label: ${JSON.stringify(p.label)},
+            tid: ${p.tid == null ? 'null' : p.tid},
+            lo: ${p.lo} >>> 0,
+            hi: ${p.hi} >>> 0,
+            armed,
+          };
+        })()`));
+        continue;
+      }
+      if (p.schedulerHot) {
+        progress(`scheduler hot quantum=${p.quantumSteps} maxWall=${p.maxWallMs}ms`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          window.__waProfileSchedulerHot = {
+            quantumSteps: ${p.quantumSteps} | 0,
+            maxWallMs: ${p.maxWallMs} | 0,
+          };
+          if (window.ThreadManager && !ThreadManager.prototype.runBudgeted.__waSchedulerHotProfiled) {
+            const origRunBudgeted = ThreadManager.prototype.runBudgeted;
+            ThreadManager.prototype.runBudgeted = function(options) {
+              const tuning = window.__waProfileSchedulerHot;
+              if (tuning && options && options.prioritizeAudioThreads) {
+                options = Object.assign({}, options);
+                if (tuning.quantumSteps > 0) options.quantumSteps = tuning.quantumSteps;
+                if (tuning.maxWallMs > 0) options.maxWallMs = tuning.maxWallMs;
+              }
+              return origRunBudgeted.call(this, options);
+            };
+            ThreadManager.prototype.runBudgeted.__waSchedulerHotProfiled = true;
+          }
+          return {
+            action: 'scheduler-hot',
+            quantumSteps: window.__waProfileSchedulerHot.quantumSteps,
+            maxWallMs: window.__waProfileSchedulerHot.maxWallMs,
           };
         })()`));
         continue;

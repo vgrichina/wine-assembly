@@ -1891,6 +1891,59 @@ Next useful work:
 2. Try a scheduler experiment that gives T1 a larger contiguous quantum only while audio lead is healthy, then compare wVis fps and audio lead.
 3. If scheduler changes cannot raise fps without audio risk, the real fix is likely a host-side/native fast path for this visualizer rather than more Win32 timer tuning.
 
+## SESSION 27 - wVis render hotspot and scheduler tuning.
+
+ASCII TLDR:
+
+- Low wVis FPS is guest CPU inside `vis_w.dll!Render`, not browser repaint, GDI BitBlt, WebAudio, the 100ms HWND timer, or `config_saref`.
+- The hottest traced EIP is runtime `0x004e5802`, which maps to static `vis_w.dll` VA `0x10001802`.
+- That static range is the inner RGB smoothing/pixel loop. It dominates the render sample count.
+- Scheduler tuning can help a little, but too much T1 runway damages audio.
+
+EIP trace command:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;440,16;profile-reset:wvis-render-eip;trace-eip:wvis-render,T1,0x4e5540,0x4e69b0;66,129;wait:5000' \
+  '--post-click-wait-ms=1200'
+```
+
+Trace result:
+
+```
+wVis frames: 42 events, about 7.5 fps, avg frame interval about 133ms
+T1 time: about 1739ms
+EIP range hits: 1,696,908
+top runtime EIP: 0x004e5802, 1,290,024 hits
+static VA: 0x10001802 = 0x10000000 + (0x004e5802 - 0x004e4000)
+```
+
+The sampled static addresses around `0x10001802` disassemble to the hot smoothing loop that reads neighboring RGB bytes and writes filtered pixels. Secondary hot spots around `0x10001d0f`, `0x10001d41`, and `0x10001d7c` are in the draw/waveform path. This confirms the cost is executing the visualizer's guest render loop under the scheduler.
+
+Scheduler experiments:
+
+| Tuning | wVis result | Audio result | Decision |
+|--------|-------------|--------------|----------|
+| `scheduler-hot:20000,10` | about 9.4 fps | bad: audio starts only 86, scheduled avg about 62ms | reject |
+| `scheduler-hot:10000,6` | about 9.1 fps | bad: audio starts 126, scheduled avg about 42ms | reject |
+| `scheduler-hot:10000,4` | about 8.9 fps | OK: audio starts 199, scheduled avg about 26.8ms | keep |
+| permanent `10000` plus old waiting wall cap `6ms` | about 9.2 fps | weaker: audio starts 164 | reject |
+| permanent `10000`, non-menu audio-hot wall cap `4ms` | about 8.3 fps in a noisy run | OK: audio starts 199, scheduled avg about 26.8ms | committed |
+
+Code change:
+
+- `host.js` now gives audio-hot non-menu workers `quantumSteps=10000` and a fixed `maxWallMs=4`.
+- Menu-open audio-hot behavior remains `quantumSteps=20000`, wall cap `6-8ms`.
+- The profiler can now register guest EIP ranges with `trace-eip:<label>,T<n>|all,<lo>,<hi>`.
+- The profiler can test scheduler values with `scheduler-hot:<quantumSteps>,<maxWallMs>` without changing app code.
+
+Next useful work:
+
+1. For a real FPS jump, add a native/host fast path for the `vis_w.dll` smoothing loop or short-circuit that visualizer path.
+2. Keep watching Safari gray-start/restart behavior separately; this profile only proves Chrome's steady-state frame limiter.
+3. Keep audio lead checks in every wVis scheduler experiment. More visualizer quantum quickly regresses audio cadence.
+
 ## Automated Tests
 
 | Test | What it checks |
