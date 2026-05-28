@@ -72,6 +72,7 @@ const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS
 const TRACE_TREE_GDI = process.env.TRACE_TREE_GDI === '1' || process.argv.includes('--trace-tree-gdi');
 const DUMP_CONSOLE = process.env.DUMP_CONSOLE === '1' || process.argv.includes('--dump-console');
 const PROGRESS = process.env.PROGRESS === '1' || process.argv.includes('--progress');
+const PROFILE_SUMMARY = process.env.PROFILE_SUMMARY === '1' || process.argv.includes('--profile-summary');
 const TRACE_HOST_NAMES = (argValue('trace-host') || process.env.TRACE_HOST || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 const TRACE_API_NAMES = (argValue('trace-api') || process.env.TRACE_API || '')
@@ -224,6 +225,40 @@ function consoleEventSummary(events) {
     }
   }
   return out.filter(e => e.text).slice(-240);
+}
+
+function compactProfileResult(result) {
+  if (!PROFILE_SUMMARY || !result || !result.profile) return result;
+  const visibleWindows = (result.visibleWindows || []).map(w => ({
+    hwnd: w.hwnd,
+    title: w.title,
+    w: w.w,
+    h: w.h,
+    back: w.back,
+  }));
+  const audioProbe = result.audioProbe ? {
+    starts: result.audioProbe.starts,
+    resumes: result.audioProbe.resumes,
+    leadSamples: (result.audioProbe.scheduleLeadMs || []).length,
+    bufferDurationMs: (result.audioProbe.bufferDurationsMs || [])[0] || null,
+  } : null;
+  return {
+    postCmd: result.postCmd,
+    audioProbe,
+    audioContext: result.audioContext,
+    sharedAudio: result.sharedAudio,
+    profile: {
+      label: result.profile.label,
+      elapsedMs: result.profile.elapsedMs,
+      counters: result.profile.counters,
+      jitter: result.profile.jitter,
+      threads: result.profile.threads,
+      hostEvents: result.profile.hostEvents,
+    },
+    postClickSnapshots: result.postClickSnapshots,
+    winampVisGlobals: result.winampVisGlobals,
+    visibleWindows,
+  };
 }
 
 async function main() {
@@ -453,6 +488,7 @@ async function main() {
       counters: Object.create(null),
       samples: Object.create(null),
       marks: [],
+      frames: Object.create(null),
       threads: Object.create(null),
       hostEvents: Object.create(null),
       label: 'startup',
@@ -474,11 +510,102 @@ async function main() {
       p.counters = Object.create(null);
       p.samples = Object.create(null);
       p.marks = [];
+      p.frames = Object.create(null);
       p.threads = Object.create(null);
       p.hostEvents = Object.create(null);
       p.label = label || 'profile';
+      if (window.__waAudioProbe) {
+        Object.assign(window.__waAudioProbe, {
+          starts: 0,
+          startTimes: [],
+          startCallTimes: [],
+          scheduleLeadMs: [],
+          bufferDurationsMs: [],
+          peaks: [],
+          resumes: 0,
+          resumeStates: [],
+        });
+      }
     };
     const round = v => +((Number(v) || 0).toFixed(3));
+    const pushFrame = (name, t, data) => {
+      if (!Number.isFinite(t) || t < 0) return;
+      const arr = p.frames[name] || (p.frames[name] = []);
+      arr.push({ t: round(t), data: data || null });
+      if (arr.length > 5000) arr.splice(0, arr.length - 5000);
+    };
+    const valueStats = (values) => {
+      const nums = (values || []).map(Number).filter(Number.isFinite);
+      if (!nums.length) return { count: 0 };
+      const sorted = nums.slice().sort((a, b) => a - b);
+      const sum = nums.reduce((a, b) => a + b, 0);
+      const avg = sum / nums.length;
+      const pct = q => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * q)))];
+      const variance = nums.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / nums.length;
+      return {
+        count: nums.length,
+        minMs: round(sorted[0]),
+        avgMs: round(avg),
+        p50Ms: round(pct(0.50)),
+        p95Ms: round(pct(0.95)),
+        p99Ms: round(pct(0.99)),
+        maxMs: round(sorted[sorted.length - 1]),
+        stddevMs: round(Math.sqrt(variance)),
+      };
+    };
+    const intervalStats = (events, targetMs) => {
+      const times = (events || [])
+        .map(e => typeof e === 'number' ? e : e && e.t)
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      const intervals = [];
+      for (let i = 1; i < times.length; i++) {
+        const dt = times[i] - times[i - 1];
+        if (dt >= 0) intervals.push(dt);
+      }
+      const stats = valueStats(intervals);
+      const target = Number(targetMs) || 16.667;
+      stats.events = times.length;
+      stats.durationMs = times.length > 1 ? round(times[times.length - 1] - times[0]) : 0;
+      stats.fps = stats.durationMs > 0 ? round((Math.max(0, times.length - 1) * 1000) / stats.durationMs) : 0;
+      stats.targetMs = round(target);
+      stats.over20ms = intervals.filter(v => v > 20).length;
+      stats.over33ms = intervals.filter(v => v > 33.334).length;
+      stats.over50ms = intervals.filter(v => v > 50).length;
+      stats.droppedAtTarget = intervals.reduce((n, v) => n + Math.max(0, Math.round(v / target) - 1), 0);
+      return stats;
+    };
+    const worstIntervals = (events, limit) => {
+      const times = (events || [])
+        .map(e => ({ t: Number(typeof e === 'number' ? e : e && e.t), data: e && e.data }))
+        .filter(e => Number.isFinite(e.t))
+        .sort((a, b) => a.t - b.t);
+      const intervals = [];
+      for (let i = 1; i < times.length; i++) {
+        intervals.push({ dtMs: round(times[i].t - times[i - 1].t), atMs: round(times[i].t), data: times[i].data || null });
+      }
+      return intervals.sort((a, b) => b.dtMs - a.dtMs).slice(0, limit || 8);
+    };
+    const coalescedFrames = (events, mergeMs) => {
+      const sorted = (events || [])
+        .map(e => ({ t: Number(typeof e === 'number' ? e : e && e.t), data: e && e.data }))
+        .filter(e => Number.isFinite(e.t))
+        .sort((a, b) => a.t - b.t);
+      const out = [];
+      let cur = null;
+      const gap = Number(mergeMs) || 5;
+      for (const ev of sorted) {
+        if (!cur || ev.t - cur.lastT > gap) {
+          cur = { t: ev.t, lastT: ev.t, count: 1, data: ev.data || null };
+          out.push(cur);
+        } else {
+          cur.lastT = ev.t;
+          cur.count++;
+        }
+      }
+      return out.map(ev => ({ t: round(ev.t), data: { blits: ev.count, lastT: round(ev.lastT) } }));
+    };
     const counterOut = (map) => {
       const out = {};
       for (const [name, c] of Object.entries(map || {})) {
@@ -496,6 +623,29 @@ async function main() {
       label: p.label || 'profile',
       elapsedMs: round(performance.now() - p.t0),
       counters: counterOut(p.counters),
+      jitter: (() => {
+        const audio = window.__waAudioProbe || {};
+        const scheduled = (audio.startTimes || [])
+          .map(t => Number(t) * 1000)
+          .filter(Number.isFinite);
+        return {
+          raf: intervalStats(p.frames.raf, 16.667),
+          repaint: intervalStats(p.frames['renderer.repaint'], 16.667),
+          bitblt: intervalStats(p.frames['gdi.bitblt'], 16.667),
+          visualBitblt: intervalStats(p.frames['visual.bitblt'], 16.667),
+          visualFrames: intervalStats(coalescedFrames(p.frames['visual.bitblt'], 5), 66.667),
+          audioSubmit: intervalStats(p.frames['audio.startCall'], 26.122),
+          audioScheduled: intervalStats(scheduled, 26.122),
+          audioLead: valueStats(audio.scheduleLeadMs || []),
+          worst: {
+            raf: worstIntervals(p.frames.raf, 6),
+            repaint: worstIntervals(p.frames['renderer.repaint'], 6),
+            visualBitblt: worstIntervals(p.frames['visual.bitblt'], 6),
+            visualFrames: worstIntervals(coalescedFrames(p.frames['visual.bitblt'], 5), 6),
+            audioSubmit: worstIntervals(p.frames['audio.startCall'], 6),
+          },
+        };
+      })(),
       samples: p.samples || {},
       threads: Object.fromEntries(Object.entries(p.threads || {}).map(([tid, t]) => [tid, {
         tid: t.tid | 0,
@@ -578,7 +728,25 @@ async function main() {
         t.gdiHostMs += dt;
         t.gdiEvents++;
       }
+      if (name === 'gdi.bitblt') {
+        const at = performance.now() - p.t0;
+        pushFrame('gdi.bitblt', at, Object.assign({ threadId: tid, dtMs: round(dt) }, ev.data || {}));
+        if (tid === 1) {
+          pushFrame('visual.bitblt', at, Object.assign({ threadId: tid, dtMs: round(dt) }, ev.data || {}));
+        }
+      }
     };
+    if (!window.__waProfileRafInstalled) {
+      window.__waProfileRafInstalled = true;
+      const tick = ts => {
+        const profile = window.__waProfile;
+        if (profile && profile.frames) {
+          pushFrame('raf', ts - profile.t0, null);
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
     const wrap = (proto, key, name) => {
       const orig = proto && proto[key];
       if (!orig || orig.__profiled) return;
@@ -589,7 +757,11 @@ async function main() {
           ret = orig.apply(this, args);
           return ret;
         } finally {
-          add(name, performance.now() - t, { arg0: args[0], ret: ret || null });
+          const dt = performance.now() - t;
+          add(name, dt, { arg0: args[0], ret: ret || null });
+          if (name === 'renderer.repaint') {
+            pushFrame('renderer.repaint', performance.now() - p.t0, { dtMs: round(dt) });
+          }
         }
       };
       proto[key].__profiled = true;
@@ -669,13 +841,43 @@ async function main() {
   progress('profiling hooks installed');
 
   await evalExpr(`(() => {
-    window.__waAudioProbe = { starts: 0, startTimes: [], peaks: [], resumes: 0, resumeStates: [] };
+    window.__waAudioProbe = {
+      starts: 0,
+      startTimes: [],
+      startCallTimes: [],
+      scheduleLeadMs: [],
+      bufferDurationsMs: [],
+      peaks: [],
+      resumes: 0,
+      resumeStates: [],
+    };
     const srcProto = window.AudioBufferSourceNode && window.AudioBufferSourceNode.prototype;
     if (srcProto && srcProto.start && !srcProto.start.__waProfiled) {
       const orig = srcProto.start;
       srcProto.start = function(...args) {
+        const profile = window.__waProfile;
+        const at = profile ? performance.now() - profile.t0 : 0;
+        const when = args[0] == null ? null : +args[0];
+        const currentTime = this.context && Number.isFinite(this.context.currentTime) ? this.context.currentTime : null;
+        const leadMs = when !== null && currentTime !== null ? (when - currentTime) * 1000 : null;
+        const durationMs = this.buffer && Number.isFinite(this.buffer.duration) ? this.buffer.duration * 1000 : null;
         window.__waAudioProbe.starts++;
-        window.__waAudioProbe.startTimes.push(args[0] == null ? null : +args[0]);
+        window.__waAudioProbe.startTimes.push(when);
+        window.__waAudioProbe.startCallTimes.push(+at.toFixed(3));
+        if (Number.isFinite(leadMs)) window.__waAudioProbe.scheduleLeadMs.push(+leadMs.toFixed(3));
+        if (Number.isFinite(durationMs)) window.__waAudioProbe.bufferDurationsMs.push(+durationMs.toFixed(3));
+        if (profile && profile.frames) {
+          const arr = profile.frames['audio.startCall'] || (profile.frames['audio.startCall'] = []);
+          arr.push({
+            t: +at.toFixed(3),
+            data: {
+              when,
+              leadMs: Number.isFinite(leadMs) ? +leadMs.toFixed(3) : null,
+              durationMs: Number.isFinite(durationMs) ? +durationMs.toFixed(3) : null,
+            },
+          });
+          if (arr.length > 5000) arr.splice(0, arr.length - 5000);
+        }
         try {
           const buf = this.buffer;
           const data = buf && buf.numberOfChannels ? buf.getChannelData(0) : null;
@@ -874,7 +1076,7 @@ async function main() {
       };
     })()`);
     if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(compactProfileResult(result), null, 2));
     await saveScreenshot();
     cdp.close();
     cleanup();
@@ -1260,9 +1462,9 @@ async function main() {
           inputTrace: (window.__waInputTrace || []).slice(-40),
           windowTrace: (window.__waWindowTrace || []).slice(-80),
         };
-      })()`);
+    })()`);
     if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(compactProfileResult(result), null, 2));
     await saveScreenshot();
     cdp.close();
     cleanup();
