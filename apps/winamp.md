@@ -1944,6 +1944,37 @@ Next useful work:
 2. Keep watching Safari gray-start/restart behavior separately; this profile only proves Chrome's steady-state frame limiter.
 3. Keep audio lead checks in every wVis scheduler experiment. More visualizer quantum quickly regresses audio cadence.
 
+## SESSION 28 - wVis scheduler lead and audio gap profiling.
+
+ASCII TLDR:
+
+- `audioScheduled` by itself was misleading: fewer `start()` calls can still be contiguous audio if each call queues a larger buffer.
+- The profiler now reports `audioBufferDuration`, `audioScheduleGap`, and `audioUnderrunGap`; the useful red flag is a positive underrun gap, not just low start count.
+- `scheduler-lead:<quantum>,<lowMs>,<highMs>,<thresholdMs>` can test larger worker budgets only while WebAudio lead is healthy.
+- Larger slices are not a free fix for low wVis FPS. They can buy under 1 fps but build too much audio lead/latency.
+
+Lead-gated test command shape:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;440,16;profile-reset:lead-gap-10000-4-6-300;scheduler-lead:10000,4,6,300;66,129;wait:5000' \
+  '--post-click-wait-ms=1200'
+```
+
+Measured Chrome runs:
+
+| Tuning | wVis result | Audio gap result | Audio/latency notes | Decision |
+|--------|-------------|------------------|---------------------|----------|
+| permanent `10000,4` | about 8.75 fps | `audioUnderrunGap.count = 0` | 197 starts, avg buffer about 27ms, lead avg about 488ms | keep baseline |
+| `scheduler-lead:10000,4,6,300` | about 8.65 fps | `audioUnderrunGap.count = 0` | 169 starts, avg buffer about 32ms, lead avg about 548ms | no runtime change |
+| `scheduler-lead:20000,4,6,300` | about 9.42 fps | `audioUnderrunGap.count = 0` | 71 starts, avg buffer about 75ms, lead avg about 906ms, max about 1.78s | reject for latency |
+| `scheduler-lead:20000,4,4,300` | about 8.65 fps | `audioUnderrunGap.count = 0` | 43 starts, avg buffer about 124ms, lead avg about 883ms | reject |
+
+Conclusion:
+
+The current threaded loop is not obviously losing time to too-small JS scheduler slices. `runBudgeted` checks the wall deadline between guest `run(quantumSteps)` calls, so larger quantum sizes create coarser guest runs and can increase audio lead even when there are no underruns. The low wVis frame rate still points at guest CPU in the `vis_w.dll` render/smoothing loop. Scheduler tuning can change the tradeoff, but a production change should not inflate queued audio latency while stop/restart behavior is still fragile.
+
 ## Automated Tests
 
 | Test | What it checks |

@@ -80,6 +80,16 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
         maxWallMs: parseIntAuto(schedulerMatch[2]),
       };
     }
+    const schedulerLeadMatch = s.match(/^scheduler-lead:(\d+),(\d+),(\d+),(\d+)$/i);
+    if (schedulerLeadMatch) {
+      return {
+        schedulerLead: true,
+        quantumSteps: parseIntAuto(schedulerLeadMatch[1]),
+        lowWallMs: parseIntAuto(schedulerLeadMatch[2]),
+        highWallMs: parseIntAuto(schedulerLeadMatch[3]),
+        leadThresholdMs: parseIntAuto(schedulerLeadMatch[4]),
+      };
+    }
     const dragMatch = s.match(/^drag:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:,(\d+))?(?:,(\d+))?$/i);
     if (dragMatch) {
       return {
@@ -95,7 +105,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -284,6 +294,7 @@ function compactProfileResult(result) {
       jitter: result.profile.jitter,
       threadSleepIntervals: result.profile.threadSleepIntervals,
       eipRanges: result.profile.eipRanges,
+      schedulerLead: result.profile.schedulerLead,
       threads: result.profile.threads,
       hostEvents: result.profile.hostEvents,
     },
@@ -718,6 +729,15 @@ async function main() {
         const scheduled = (audio.startTimes || [])
           .map(t => Number(t) * 1000)
           .filter(Number.isFinite);
+        const durations = (audio.bufferDurationsMs || [])
+          .map(Number)
+          .filter(Number.isFinite);
+        const scheduleGaps = [];
+        for (let i = 1; i < scheduled.length; i++) {
+          const prevDuration = Number.isFinite(durations[i - 1]) ? durations[i - 1] : 0;
+          scheduleGaps.push(+(scheduled[i] - scheduled[i - 1] - prevDuration).toFixed(3));
+        }
+        const underrunGaps = scheduleGaps.filter(g => g > 2);
         return {
           raf: intervalStats(p.frames.raf, 16.667),
           repaint: intervalStats(p.frames['renderer.repaint'], 16.667),
@@ -726,6 +746,9 @@ async function main() {
           visualFrames: intervalStats(coalescedFrames(p.frames['visual.bitblt'], 5), 66.667),
           audioSubmit: intervalStats(p.frames['audio.startCall'], 26.122),
           audioScheduled: intervalStats(scheduled, 26.122),
+          audioBufferDuration: valueStats(durations),
+          audioScheduleGap: valueStats(scheduleGaps),
+          audioUnderrunGap: valueStats(underrunGaps),
           audioLead: valueStats(audio.scheduleLeadMs || []),
           worst: {
             raf: worstIntervals(p.frames.raf, 6),
@@ -738,6 +761,13 @@ async function main() {
       })(),
       threadSleepIntervals: threadSleepIntervals(),
       eipRanges: eipRangeOut(),
+      schedulerLead: window.__waProfileSchedulerLead ? {
+        quantumSteps: window.__waProfileSchedulerLead.quantumSteps,
+        lowWallMs: window.__waProfileSchedulerLead.lowWallMs,
+        highWallMs: window.__waProfileSchedulerLead.highWallMs,
+        leadThresholdMs: window.__waProfileSchedulerLead.leadThresholdMs,
+        samples: (window.__waProfileSchedulerLead.samples || []).slice(-240),
+      } : null,
       samples: p.samples || {},
       threads: Object.fromEntries(Object.entries(p.threads || {}).map(([tid, t]) => [tid, {
         tid: t.tid | 0,
@@ -1351,6 +1381,61 @@ async function main() {
             action: 'scheduler-hot',
             quantumSteps: window.__waProfileSchedulerHot.quantumSteps,
             maxWallMs: window.__waProfileSchedulerHot.maxWallMs,
+          };
+        })()`));
+        continue;
+      }
+      if (p.schedulerLead) {
+        progress(`scheduler lead quantum=${p.quantumSteps} wall=${p.lowWallMs}/${p.highWallMs}ms threshold=${p.leadThresholdMs}ms`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          window.__waProfileSchedulerLead = {
+            quantumSteps: ${p.quantumSteps} | 0,
+            lowWallMs: ${p.lowWallMs} | 0,
+            highWallMs: ${p.highWallMs} | 0,
+            leadThresholdMs: ${p.leadThresholdMs} | 0,
+            samples: [],
+          };
+          const leadMs = () => {
+            const app = runningApps[0];
+            const wine = app && app.wine;
+            const shared = wine && wine._sharedAudio;
+            const voices = shared && shared.voices;
+            const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+            if (!voices || !voices._map || !ac || !Number.isFinite(ac.currentTime)) return 0;
+            let best = 0;
+            for (const v of Object.values(voices._map)) {
+              if (!v || !Number.isFinite(v.nextTime)) continue;
+              best = Math.max(best, (v.nextTime - ac.currentTime) * 1000);
+            }
+            return Math.max(0, best);
+          };
+          if (window.ThreadManager && !ThreadManager.prototype.runBudgeted.__waSchedulerLeadProfiled) {
+            const origRunBudgeted = ThreadManager.prototype.runBudgeted;
+            ThreadManager.prototype.runBudgeted = function(options) {
+              const tuning = window.__waProfileSchedulerLead;
+              if (tuning && options && options.prioritizeAudioThreads) {
+                const lead = leadMs();
+                options = Object.assign({}, options);
+                if (tuning.quantumSteps > 0) options.quantumSteps = tuning.quantumSteps;
+                options.maxWallMs = lead >= tuning.leadThresholdMs ? tuning.highWallMs : tuning.lowWallMs;
+                if (tuning.samples.length < 2000) {
+                  tuning.samples.push({
+                    at: +(performance.now() - (window.__waProfile ? window.__waProfile.t0 : 0)).toFixed(1),
+                    leadMs: +lead.toFixed(3),
+                    maxWallMs: options.maxWallMs,
+                  });
+                }
+              }
+              return origRunBudgeted.call(this, options);
+            };
+            ThreadManager.prototype.runBudgeted.__waSchedulerLeadProfiled = true;
+          }
+          return {
+            action: 'scheduler-lead',
+            quantumSteps: window.__waProfileSchedulerLead.quantumSteps,
+            lowWallMs: window.__waProfileSchedulerLead.lowWallMs,
+            highWallMs: window.__waProfileSchedulerLead.highWallMs,
+            leadThresholdMs: window.__waProfileSchedulerLead.leadThresholdMs,
           };
         })()`));
         continue;
