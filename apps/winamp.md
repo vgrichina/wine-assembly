@@ -1849,6 +1849,48 @@ The earlier S22-style "in the in_mp3 frame loop" investigation is the right dire
 
 Trust `prev_eip` over a post-run hexdump for "what code actually ran". `prev_eip` is recorded at the moment of the BP from the WAT-side block dispatcher; the post-run dump is from after T3 has exited and freed/reused memory. When the two disagree, **`prev_eip` wins**. S24 prioritized the dump and built a wrong story; S25 prioritized `prev_eip` and confirmed the static xref of the real IsEOF.
 
+## SESSION 26 — wVis low frame rate is guest visualizer render cost, not browser canvas or WebAudio.
+
+Focused playback profile:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;440,16;profile-reset:playback;66,129;wait:5000' \
+  '--post-click-wait-ms=1200'
+```
+
+Key results:
+
+- Browser side is fine: `raf` and `renderer.repaint` stay near 60 fps.
+- WebAudio is not the visual limiter: the scheduled audio timeline is steady, while submit jitter is scheduler-side and audio lead remains positive.
+- wVis frames are around 7-8 fps (`visualFrames` ~42 events over ~5.4s, avg interval ~130ms).
+- T1, the Winamp visualizer/plugin thread, requests `Sleep(24)` from `module->delayMs`, but actual sleep-to-sleep intervals include long 110-160ms render stretches. Those long T1 intervals line up with the wVis BitBlt frames.
+- T2, Winamp's visual data helper at `0x432bc0`, requests `Sleep(16)` and uses `config_saref` at `0x449e65` as a divider before calling `0x40e8f0`.
+
+Runtime state captured by the profiler:
+
+```
+winampVisRuntime.visualizerTimers[0].intervalMs = 100
+winampVisRuntime.visualDivider = 2
+winampVisRuntime.moduleDelayMs = 24
+winampVisRuntime.moduleLatencyMs = 10
+winampVisRuntime.moduleRenderPtr = 0x004e5040  ; vis_w render at DLL VA 0x10001540
+```
+
+Two forced-control runs ruled out obvious timer/divider causes:
+
+- `timer-interval:0x20001,24` changed the wVis HWND timer from 100ms to 24ms. Result: frame rate stayed ~7.2 fps.
+- `guest8:0x449e65,1` changed `config_saref` from 2 to 1. Result: frame rate stayed ~7.2 fps.
+
+Conclusion: the low frame rate is not canvas compositing, not the plugin's `SetTimer(100)`, and not Winamp's `config_saref` divider. The expensive part is executing the wVis render/data path in the guest thread under the current scheduler. The smoking gun is T1: requested sleeps are 24ms, but render-bearing iterations stretch to ~120-160ms wall time before the next sleep. Host GDI BitBlt cost is tiny; most time is guest CPU in the plugin/Winamp render routines.
+
+Next useful work:
+
+1. Add T1 EIP-range sampling or breakpoint counters around `0x4405ee` and `vis_w.dll!Render` to quantify how many scheduler slices one render consumes.
+2. Try a scheduler experiment that gives T1 a larger contiguous quantum only while audio lead is healthy, then compare wVis fps and audio lead.
+3. If scheduler changes cannot raise fps without audio risk, the real fix is likely a host-side/native fast path for this visualizer rather than more Win32 timer tuning.
+
 ## Automated Tests
 
 | Test | What it checks |

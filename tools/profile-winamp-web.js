@@ -27,6 +27,12 @@ function intArgOrEnv(argName, envName, fallback) {
   return Math.max(0, parseInt(argValue(argName) || process.env[envName] || String(fallback), 10) || 0);
 }
 
+function parseIntAuto(value) {
+  const s = String(value || '').trim();
+  if (!s) return 0;
+  return Math.max(0, parseInt(s, /^0x/i.test(s) ? 16 : 10) || 0);
+}
+
 const ABOUT_WAIT_MS = intArgOrEnv('about-wait-ms', 'ABOUT_WAIT_MS', 1800);
 const ABOUT_MANUAL_RUN_STEPS = Math.max(0, parseInt(process.env.ABOUT_MANUAL_RUN_STEPS || '0', 10) || 0);
 const VIEWPORT_WIDTH = Math.max(0, parseInt(process.env.VIEWPORT_WIDTH || '0', 10) || 0);
@@ -50,6 +56,10 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     if (resetMatch) return { profileReset: resetMatch[1] || 'playback' };
     const waitMatch = s.match(/^wait:(\d+)$/i);
     if (waitMatch) return { wait: parseInt(waitMatch[1], 10) || 0 };
+    const timerMatch = s.match(/^timer-interval:([^,]+),([^,]+)$/i);
+    if (timerMatch) return { timerInterval: true, hwnd: parseIntAuto(timerMatch[1]), intervalMs: parseIntAuto(timerMatch[2]) };
+    const guest8Match = s.match(/^guest8:([^,]+),([^,]+)$/i);
+    if (guest8Match) return { guest8: true, addr: parseIntAuto(guest8Match[1]), value: parseIntAuto(guest8Match[2]) & 0xff };
     const dragMatch = s.match(/^drag:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:,(\d+))?(?:,(\d+))?$/i);
     if (dragMatch) {
       return {
@@ -65,7 +75,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -252,11 +262,13 @@ function compactProfileResult(result) {
       elapsedMs: result.profile.elapsedMs,
       counters: result.profile.counters,
       jitter: result.profile.jitter,
+      threadSleepIntervals: result.profile.threadSleepIntervals,
       threads: result.profile.threads,
       hostEvents: result.profile.hostEvents,
     },
     postClickSnapshots: result.postClickSnapshots,
     winampVisGlobals: result.winampVisGlobals,
+    winampVisRuntime: result.winampVisRuntime,
     visibleWindows,
   };
 }
@@ -618,6 +630,23 @@ async function main() {
       }
       return out;
     };
+    const sleepHistOut = (hist) => {
+      const out = {};
+      for (const [ms, count] of Object.entries(hist || {})) out[ms] = count | 0;
+      return out;
+    };
+    const threadSleepIntervals = () => {
+      const out = {};
+      for (const [name, events] of Object.entries(p.frames || {})) {
+        const m = /^thread\\.T(\\d+)\\.sleep$/.exec(name);
+        if (!m) continue;
+        out[m[1]] = {
+          intervals: intervalStats(events, 16.667),
+          worst: worstIntervals(events, 6),
+        };
+      }
+      return out;
+    };
     window.__waResetProfile = (label) => p.reset(label);
     window.__waProfileSnapshot = () => ({
       label: p.label || 'profile',
@@ -646,6 +675,7 @@ async function main() {
           },
         };
       })(),
+      threadSleepIntervals: threadSleepIntervals(),
       samples: p.samples || {},
       threads: Object.fromEntries(Object.entries(p.threads || {}).map(([tid, t]) => [tid, {
         tid: t.tid | 0,
@@ -660,6 +690,11 @@ async function main() {
         audioHostMs: round(t.audioHostMs),
         gdiHostMs: round(t.gdiHostMs),
         hostMs: round(t.hostMs),
+        sleepYields: t.sleepYields | 0,
+        sleepMsTotal: round(t.sleepMsTotal),
+        sleepMsMax: round(t.sleepMsMax),
+        sleepMsAvg: t.sleepYields ? round(t.sleepMsTotal / t.sleepYields) : 0,
+        sleepMsHist: sleepHistOut(t.sleepMsHist),
         audioEvents: t.audioEvents | 0,
         gdiEvents: t.gdiEvents | 0,
         lastEip: t.lastEip >>> 0,
@@ -683,6 +718,10 @@ async function main() {
         audioHostMs: 0,
         gdiHostMs: 0,
         hostMs: 0,
+        sleepYields: 0,
+        sleepMsTotal: 0,
+        sleepMsMax: 0,
+        sleepMsHist: Object.create(null),
         audioEvents: 0,
         gdiEvents: 0,
         lastEip: 0,
@@ -703,6 +742,20 @@ async function main() {
       t.totalMs += dt;
       if (dt > t.maxMs) t.maxMs = dt;
       if (info.hotAudio) t.hotAudioMs += dt;
+      if (info.sleepYielded) {
+        const ms = info.sleepMs >>> 0;
+        t.sleepYields++;
+        t.sleepMsTotal += ms;
+        if (ms > t.sleepMsMax) t.sleepMsMax = ms;
+        t.sleepMsHist[String(ms)] = (t.sleepMsHist[String(ms)] || 0) + 1;
+        add('thread.sleepYield', ms, info);
+        add('thread.T' + tid + '.sleepYield', ms, info);
+        pushFrame('thread.T' + tid + '.sleep', performance.now() - p.t0, {
+          ms,
+          eipAfter: info.eipAfter >>> 0,
+          hotAudio: !!info.hotAudio,
+        });
+      }
       t.lastEip = info.eipAfter >>> 0;
       t.lastYield = info.yieldReason >>> 0;
       t.state = info.state || t.state || '';
@@ -1124,6 +1177,61 @@ async function main() {
         })()`));
         continue;
       }
+      if (p.timerInterval) {
+        progress(`timer interval hwnd 0x${p.hwnd.toString(16)} -> ${p.intervalMs}ms`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const memory = wine && wine.memory;
+          const dv = memory ? new DataView(memory.buffer) : null;
+          const updated = [];
+          if (dv) {
+            for (let slot = 0; slot < 16; slot++) {
+              const base = 0xAC00 + slot * 20;
+              if (base + 20 > dv.byteLength) break;
+              const id = dv.getUint32(base + 4, true) >>> 0;
+              if (!id) continue;
+              const hwnd = dv.getUint32(base, true) >>> 0;
+              if (hwnd === (${p.hwnd} >>> 0)) {
+                const before = dv.getUint32(base + 8, true) >>> 0;
+                dv.setUint32(base + 8, ${p.intervalMs} >>> 0, true);
+                updated.push({ slot, hwnd, id, before, after: dv.getUint32(base + 8, true) >>> 0 });
+              }
+            }
+          }
+          return {
+            action: 'timer-interval',
+            hwnd: ${p.hwnd} >>> 0,
+            intervalMs: ${p.intervalMs} >>> 0,
+            updated,
+          };
+        })()`));
+        continue;
+      }
+      if (p.guest8) {
+        progress(`guest8 0x${p.addr.toString(16)} -> ${p.value}`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const e = wine && wine.instance && wine.instance.exports;
+          const memory = wine && wine.memory;
+          const dv = memory ? new DataView(memory.buffer) : null;
+          const imageBase = e && e.get_image_base ? (e.get_image_base() >>> 0) : 0;
+          const guestBase = e && e.get_guest_base ? (e.get_guest_base() >>> 0) : 0x12000;
+          const wa = (((${p.addr} >>> 0) - imageBase + guestBase) >>> 0);
+          const before = dv && imageBase && wa < dv.byteLength ? (dv.getUint8(wa) >>> 0) : null;
+          if (dv && imageBase && wa < dv.byteLength) dv.setUint8(wa, ${p.value} & 0xff);
+          const after = dv && imageBase && wa < dv.byteLength ? (dv.getUint8(wa) >>> 0) : null;
+          return {
+            action: 'guest8',
+            addr: ${p.addr} >>> 0,
+            value: ${p.value} & 0xff,
+            before,
+            after,
+          };
+        })()`));
+        continue;
+      }
       if (p.drag) {
         progress(`drag canvas ${p.x1},${p.y1} -> ${p.x2},${p.y2}`);
         await dragCanvasPoint(p.x1, p.y1, p.x2, p.y2, p.steps, p.delay);
@@ -1220,6 +1328,12 @@ async function main() {
         if (wa + 4 > dv.byteLength) return 0;
         return dv.getUint32(wa, true) >>> 0;
       };
+      const read8 = (guestPtr) => {
+        if (!dv || !guestPtr || guestPtr === 0xffffffff || !imageBase) return 0;
+        const wa = g2w(guestPtr);
+        if (wa >= dv.byteLength) return 0;
+        return dv.getUint8(wa) >>> 0;
+      };
       const childrenOf = (hwnd) => {
         if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd) return [];
         const readControlText = (fn, hwnd, idx) => {
@@ -1297,6 +1411,26 @@ async function main() {
         }
         return out;
       };
+      const visModule = read32(0x458c78);
+      const timerTable = (() => {
+        const out = [];
+        if (!dv) return out;
+        for (let slot = 0; slot < 16; slot++) {
+          const base = 0xAC00 + slot * 20;
+          if (base + 20 > dv.byteLength) break;
+          const id = dv.getUint32(base + 4, true) >>> 0;
+          if (!id) continue;
+          out.push({
+            slot,
+            hwnd: dv.getUint32(base, true) >>> 0,
+            id,
+            intervalMs: dv.getUint32(base + 8, true) >>> 0,
+            lastTick: dv.getUint32(base + 12, true) >>> 0,
+            callback: dv.getUint32(base + 16, true) >>> 0,
+          });
+        }
+        return out;
+      })();
 	      return {
 	        postCmd: ${POST_CMD},
             audioProbe: window.__waAudioProbe,
@@ -1345,6 +1479,25 @@ async function main() {
               stopInProgress: read32(0x459810),
               visDataThreadHandle: read32(0x45805c),
               visDataThreadStop: read32(0x458060),
+            },
+            winampVisRuntime: {
+              timerTable,
+              visualizerTimers: timerTable.filter(t => t.hwnd === 0x20001 || t.hwnd === 0x20000),
+              visualDivider: read8(0x449e65),
+              visualDividerCounter: read32(0x458080),
+              visualUpdatePtr: read32(0x449e78),
+              visualUpdateAltPtr: read32(0x449e84),
+              visualUpdateAge: read32(0x449e88),
+              visualUpdateMode: read32(0x449e8c),
+              renderPending: read32(0x4595b0),
+              playbackState1: read32(0x451604),
+              playbackState2: read32(0x451608),
+              pluginModule: visModule,
+              moduleLatencyMs: visModule ? read32(visModule + 0x14) : 0,
+              moduleDelayMs: visModule ? read32(visModule + 0x18) : 0,
+              moduleSpectrumNch: visModule ? read32(visModule + 0x1c) : 0,
+              moduleWaveformNch: visModule ? read32(visModule + 0x20) : 0,
+              moduleRenderPtr: visModule ? read32(visModule + 0x92c) : 0,
             },
             mainThread: {
               eip: e && e.get_eip ? (e.get_eip() >>> 0) : 0,
