@@ -2,11 +2,11 @@
 const assert = require('assert');
 const { ThreadManager } = require('../lib/thread-manager');
 
-function makeThreadManager() {
-  return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }));
+function makeThreadManager(opts) {
+  return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }), opts);
 }
 
-function makeThreadManagerWithMemory(memory) {
+function makeThreadManagerWithMemory(memory, opts) {
   const mainInstance = {
     exports: {
       get_sync_table: () => 0,
@@ -14,7 +14,7 @@ function makeThreadManagerWithMemory(memory) {
       set_heap_ptr: () => {},
     },
   };
-  const tm = new ThreadManager({}, memory, mainInstance, () => ({ host: {} }), {});
+  const tm = new ThreadManager({}, memory, mainInstance, () => ({ host: {} }), opts || {});
   tm._log = () => {};
   return tm;
 }
@@ -127,6 +127,27 @@ priorityTm.runBudgeted({
 });
 assert.strictEqual(priorityRuns[0], 'visualizer', 'budgeted scheduler should alternate priority so hot audio cannot starve visual workers');
 
+const exitNotifications = [];
+const exitTm = makeThreadManager({
+  onThreadExit: info => exitNotifications.push(info),
+});
+exitTm.markAudioThread(3, 1000);
+const exitThread = { tid: 3, state: 'active', startAddr: 0x440330, param: 0x458060 };
+exitTm.threads.set(0xe1007, exitThread);
+exitTm._markThreadExited(0xe1007, exitThread, 7, 'test');
+exitTm._markThreadExited(0xe1007, exitThread, 8, 'duplicate');
+assert.strictEqual(exitNotifications.length, 1, 'thread exit callback should fire once');
+assert.deepStrictEqual(exitNotifications[0], {
+  handle: 0xe1007,
+  tid: 3,
+  startAddr: 0x440330,
+  param: 0x458060,
+  exitCode: 7,
+  reason: 'test',
+});
+assert.strictEqual(exitTm._audioThreadHotUntil.has(3), false, 'exited audio-marked threads should be removed from hot priority');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
+console.log('PASS  ThreadManager notifies thread exits once');

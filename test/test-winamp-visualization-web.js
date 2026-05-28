@@ -2,8 +2,9 @@
 // Winamp web visualization regression.
 //
 // Drives the browser build through Preferences -> Plug-ins -> Visualization,
-// starts wVis, closes Preferences, starts playback, right-clicks the visualizer,
-// opens its Rendering Options submenu, and verifies the visualizer owns a
+// starts wVis, stops it, starts it again, closes Preferences, starts playback,
+// right-clicks the visualizer, opens its Rendering Options submenu, and verifies
+// the restarted visualizer owns a
 // visible, non-black backing canvas plus its worker-owned configuration popup.
 // This covers the browser worker path that loads the visualizer DLL and paints
 // via GDI/BitBlt.
@@ -36,7 +37,7 @@ const args = [
   '--trace-api=waveOutWrite,LoadLibraryA,GetProcAddress,CreateWindowExA,CreateDIBSection,CreatePalette,SelectPalette,RealizePalette,UpdateColors,BitBlt',
   '--post-cmd=40317',
   '--post-wait-ms=3000',
-  '--post-clicks=54,188;170,59;184,346;440,16;66,129;150,205,right;230,137',
+  '--post-clicks=54,188;170,59;184,346;wait:2200;244,346;wait:2200;184,346;wait:2200;440,16;66,129;wait:4000;150,205,right;230,137',
   '--post-click-wait-ms=1200',
   '--screenshot', SHOT,
 ];
@@ -69,9 +70,16 @@ assert(eq.back.sampledInk > 300, `Winamp equalizer should paint non-background p
 
 const wvis = windows.find(w => w.title === 'wVis Plug-in 2');
 assert(wvis, 'wVis plug-in window should be visible');
+assert(wvis.w > 0 && wvis.h > 0, `restarted wVis should have non-zero geometry, got ${wvis.w}x${wvis.h}`);
 assert(wvis.back, 'wVis plug-in window should have a backing canvas');
 assert(wvis.back.sampledColors > 8, `wVis should paint non-trivial color content, got ${wvis.back.sampledColors}`);
 assert(wvis.back.sampledInk > 300, `wVis should paint non-background pixels, got ${wvis.back.sampledInk}`);
+
+const visGlobals = result.winampVisGlobals || {};
+assert(visGlobals.threadHandle, 'wVis restart should leave an active visualizer thread handle');
+assert.strictEqual(visGlobals.stopInProgress, 0, 'wVis restart should clear Winamp stop-in-progress state');
+assert((result.windowTrace || []).filter(e => e.title === 'wVis Plug-in 2').length >= 2,
+  'test should exercise Stop followed by Start, not only the first launch');
 
 const menuStates = result.menuStates || [];
 const wvisMenu = menuStates.find(s => s.openHwnd === wvis.hwnd);
@@ -89,8 +97,8 @@ const events = result.consoleEvents || [];
 const logText = events.map(e => e.text || '').join('\n');
 assert(!/UNIMPLEMENTED API:|RuntimeError:\s*unreachable|Thread \d+ crashed|FATAL:/i.test(logText),
   'visualizer start should not crash\n' + logText.slice(-4000));
-assert(/\[API T1\] BitBlt/.test(logText), 'visualizer worker should present frames via BitBlt');
-assert(/\[API T4\] waveOutWrite/.test(logText), 'Winamp audio thread should write playback buffers');
+assert(/\[API(?: T\d+)?\] BitBlt/.test(logText), 'visualizer worker should present frames via BitBlt');
+assert((result.audioProbe && result.audioProbe.starts) > 0, 'Winamp audio thread should write playback buffers');
 assert(fs.existsSync(SHOT) && fs.statSync(SHOT).size > 1000, 'debug screenshot should be written');
 
 console.log(`PASS  Winamp web visualizer started and painted (${wvis.back.sampledColors} colors, ${wvis.back.sampledInk} ink samples)`);

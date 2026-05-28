@@ -525,6 +525,29 @@ async function main() {
     wrap(Win98Renderer.prototype, 'handleMouseUp', 'input.mouseUp');
     traceInput(Win98Renderer.prototype, 'handleMouseDown');
     traceInput(Win98Renderer.prototype, 'handleMouseUp');
+    window.__waWindowTrace = [];
+    const origCreateWindow = Win98Renderer.prototype.createWindow;
+    if (origCreateWindow && !origCreateWindow.__waWindowTraced) {
+      Win98Renderer.prototype.createWindow = function(hwnd, style, x, y, cx, cy, title, menuId, wasm, wasmMemory) {
+        const ret = origCreateWindow.apply(this, arguments);
+        const win = this.windows && this.windows[hwnd];
+        window.__waWindowTrace.push({
+          name: 'createWindow',
+          hwnd: hwnd >>> 0,
+          title: title || '',
+          style: style >>> 0,
+          x: x | 0,
+          y: y | 0,
+          cx: cx | 0,
+          cy: cy | 0,
+          final: win ? { x: win.x | 0, y: win.y | 0, w: win.w | 0, h: win.h | 0, visible: !!win.visible } : null,
+          at: +(performance.now() - window.__waProfile.t0).toFixed(1),
+        });
+        if (window.__waWindowTrace.length > 200) window.__waWindowTrace.shift();
+        return ret;
+      };
+      Win98Renderer.prototype.createWindow.__waWindowTraced = true;
+    }
     wrap(ThreadManager.prototype, 'checkMainYield', 'thread.checkMainYield');
     wrap(ThreadManager.prototype, 'runSlice', 'thread.runSlice');
   })()`);
@@ -860,6 +883,12 @@ async function main() {
         }
         return s;
       };
+      const read32 = (guestPtr) => {
+        if (!dv || !guestPtr || guestPtr === 0xffffffff || !imageBase) return 0;
+        const wa = g2w(guestPtr);
+        if (wa + 4 > dv.byteLength) return 0;
+        return dv.getUint32(wa, true) >>> 0;
+      };
       const childrenOf = (hwnd) => {
         if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd) return [];
         const readControlText = (fn, hwnd, idx) => {
@@ -977,6 +1006,22 @@ async function main() {
               pluginPath: readStr(0x4595b8, 260),
               pluginDir: readStr(0x45c880, 260),
               pluginFile: readStr(0x45cd00, 260),
+              threadId: read32(0x4595a4),
+              threadHandle: read32(0x4595ac),
+              pluginModule: read32(0x458c78),
+              stopRequested: read32(0x459584),
+              stopInProgress: read32(0x459810),
+              visDataThreadHandle: read32(0x45805c),
+              visDataThreadStop: read32(0x458060),
+            },
+            mainThread: {
+              eip: e && e.get_eip ? (e.get_eip() >>> 0) : 0,
+              esp: e && e.get_esp ? (e.get_esp() >>> 0) : 0,
+              eax: e && e.get_eax ? (e.get_eax() >>> 0) : 0,
+              yieldReason: e && e.get_yield_reason ? (e.get_yield_reason() >>> 0) : 0,
+              waitHandle: e && e.get_wait_handle ? (e.get_wait_handle() >>> 0) : 0,
+              waitTimeout: e && e.get_wait_timeout ? (e.get_wait_timeout() >>> 0) : 0,
+              waitStackBytes: e && e.get_wait_stack_bytes ? (e.get_wait_stack_bytes() >>> 0) : 0,
             },
             memoryRegions: {
               imageBase,
@@ -993,6 +1038,20 @@ async function main() {
 	            title: w.title || '',
 	            x: w.x, y: w.y, w: w.w, h: w.h,
                 client: w.clientRect || null,
+                wat: (() => {
+                  const ex = (w.wasm && w.wasm.exports) || e;
+                  if (!ex) return null;
+                  return {
+                    x: ex.wnd_window_screen_x ? (ex.wnd_window_screen_x(w.hwnd >>> 0) | 0) : null,
+                    y: ex.wnd_window_screen_y ? (ex.wnd_window_screen_y(w.hwnd >>> 0) | 0) : null,
+                    w: ex.wnd_screen_w ? (ex.wnd_screen_w(w.hwnd >>> 0) | 0) : null,
+                    h: ex.wnd_screen_h ? (ex.wnd_screen_h(w.hwnd >>> 0) | 0) : null,
+                    cl: ex.get_client_rect_l ? (ex.get_client_rect_l(w.hwnd >>> 0) | 0) : null,
+                    ct: ex.get_client_rect_t ? (ex.get_client_rect_t(w.hwnd >>> 0) | 0) : null,
+                    cr: ex.get_client_rect_r ? (ex.get_client_rect_r(w.hwnd >>> 0) | 0) : null,
+                    cb: ex.get_client_rect_b ? (ex.get_client_rect_b(w.hwnd >>> 0) | 0) : null,
+                  };
+                })(),
                 region: !!w.region,
 	            isDialog: !!w.isDialog,
             dlgKey: e && e.dlg_get_key && w.isDialog ? (e.dlg_get_key(w.hwnd >>> 0) >>> 0) : 0,
@@ -1069,6 +1128,7 @@ async function main() {
           })(),
           treeGdiCalls: (window.__waTreeGdiCalls || []).slice(-400),
           inputTrace: (window.__waInputTrace || []).slice(-40),
+          windowTrace: (window.__waWindowTrace || []).slice(-80),
         };
       })()`);
     if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
