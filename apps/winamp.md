@@ -2145,6 +2145,66 @@ PASS  Winamp web visualizer started and painted (1310 colors, 2011 ink samples)
 
 No code change is needed for the right-click path unless the timeout returns. If it does return, split the regression into a shorter right-click/submenu test and a separate lifecycle test so long trace logging and natural MP3 end timing do not obscure the behavior being checked.
 
+## SESSION 31 - wVis scheduler quantum check.
+
+ASCII TLDR:
+
+- The threaded scheduler loop is not the main cost. Wrapper overhead was about 56ms over a 5.5s baseline run.
+- The current 10k/4ms audio-hot worker quantum is the best measured balance so far.
+- Larger worker quanta improve wVis FPS a little, but only by letting the audio path batch much larger buffers and build high output latency.
+- The hot wVis loop does not use MMX/SSE. It is scalar byte math: load neighboring RGB bytes, add/weight them, shift, then map through byte lookup tables.
+- The next real speedup is not another scheduler slice tweak. It is either a native/host fast path for the visualizer smoothing/render path or a deliberate visual-quality tradeoff.
+
+Commands:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;profile-reset:wvis-baseline-10k4;66,129;wait:5000' \
+  '--post-click-wait-ms=500'
+
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;profile-reset:wvis-q20000-4;scheduler-hot:20000,4;66,129;wait:5000' \
+  '--post-click-wait-ms=500'
+
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;profile-reset:wvis-q50000-4;scheduler-hot:50000,4;66,129;wait:5000' \
+  '--post-click-wait-ms=500'
+```
+
+Measured Chrome runs:
+
+| Tuning | wVis FPS | Audio starts | Audio buffer avg/max | Audio lead avg/max | Underrun gaps | Notes |
+|--------|----------|--------------|----------------------|--------------------|---------------|-------|
+| baseline `10000,4` | 8.31 | 198 | 26.9ms / 130.6ms | 536.8ms / 894.0ms | 0 | current balance |
+| `scheduler-hot:20000,4` | 8.79 | 50 | 106.6ms / 391.8ms | 841.5ms / 1602.2ms | 0 | small FPS gain, high latency |
+| `scheduler-hot:50000,4` | 9.62 | 28 | 190.3ms / 500.0ms | 1390.4ms / 1825.7ms | 0 | more FPS, unacceptable latency/repaint jitter |
+
+Baseline thread time:
+
+```
+thread.runSlice total: about 2961ms
+thread.run total: about 2905ms
+scheduler wrapper overhead: about 56ms over 5.5s
+T1 wVis render thread: about 1721ms
+T3 decode/data thread: about 1149ms
+T4 audio/output thread: about 34ms guest time, about 54ms host audio events
+```
+
+Hot loop disassembly around static VA `0x10001802` is scalar. The loop repeatedly uses `mov` byte loads, `lea`/`add` accumulation, `sar` division, and byte lookup tables at `0x1000de98`, `0x1000df98`, and `0x1000e098`. A full text search found one apparent `xmm` instruction in a data-table region, not in the sampled render loop. No MMX path was found in the hot code.
+
+Conclusion:
+
+The "slices are too small" hypothesis is now mostly ruled out. Bigger slices reduce scheduler interleaving overhead only marginally because that overhead is already small. The FPS gain comes from giving guest code longer uninterrupted bursts, which also lets audio queue larger chunks and increases output latency. The production scheduler should stay near the 10k/4ms balance unless a separate low-latency audio limiter is added.
+
+Next useful work:
+
+1. Prototype a native fast path for the `vis_w.dll` smoothing loop using the same backing bitmap buffers.
+2. Or add a controlled visual-quality mode, such as skipping every other smoothing row/column, and measure whether it looks acceptable.
+3. Keep `audioUnderrunGap` and `audioLead` in every wVis performance profile; no-underrun alone is not enough if the lead grows past about 1s.
+
 ## Automated Tests
 
 | Test | What it checks |
