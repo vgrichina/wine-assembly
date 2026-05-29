@@ -2045,6 +2045,106 @@ Conclusion:
 
 The visible gray state before playback is not enough to prove restart failure. The plug-in can be alive but waiting for visual data. The active playback restart path is worse: it can restart, but the Stop/Start operation stalls audio scheduling badly. Next useful work is to profile that active restart window directly, especially the long gap around the wVis Stop/Start and how it interacts with the decode/output threads.
 
+## SESSION 30 - wVis active restart and right-click isolates.
+
+ASCII TLDR:
+
+- The earlier active Stop/Start stall was not stable under isolated profiling.
+- Active Stop alone tears down wVis cleanly and does not create audio underrun gaps.
+- Early active Start-after-Stop restarts wVis, keeps audio contiguous, and paints at the usual low frame rate.
+- Plain right-click and Rendering Options submenu selection with audio playing both exit cleanly and keep menu labels populated.
+- The old full regression timeout is probably tied to the long restart preamble, trace overhead, or end-of-demo timing, not a simple "right-click while audio plays" failure.
+
+Active Stop-only command:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;440,16;66,129;wait:900;post-cmd:40317;wait:400;54,188;170,59;profile-reset:active-stop-only;244,346;wait:2500' \
+  '--post-click-wait-ms=500'
+```
+
+Active Stop-only result:
+
+```
+wVis threadHandle: 0
+wVis pluginModule: 0
+wVis timers: none
+audioUnderrunGap.count: 0
+audioLead.maxMs: about 1300ms
+```
+
+Early active Start-after-Stop command:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;66,129;wait:400;post-cmd:40317;wait:200;54,188;170,59;244,346;wait:250;profile-reset:active-start-only-fast;184,346;wait:3000' \
+  '--post-click-wait-ms=200'
+```
+
+Early active Start-after-Stop result:
+
+```
+audioProbe.starts: 55
+audioUnderrunGap.count: 0
+audioLead.maxMs: about 1321ms
+wVis backing: sampledColors=1412, sampledInk=2011
+visualFrames: about 8.1 fps
+```
+
+Plain audio right-click command:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;profile-reset:audio-right-click;66,129;wait:2500;150,205,right;wait:1500' \
+  '--post-click-wait-ms=500'
+```
+
+Plain audio right-click result:
+
+```
+process exit: clean
+audioUnderrunGap.count: 0
+wVis backing: non-gray and still painting
+popup labels: Nullsoft wVis 2, Rendering Options, Normal Scope, Solid Scope, Line Analyzer
+```
+
+Rendering Options submenu command:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;profile-reset:audio-right-click-submenu;66,129;wait:2500;150,205,right;230,137;wait:1500' \
+  '--post-click-wait-ms=500'
+```
+
+Rendering Options submenu result:
+
+```
+process exit: clean
+audioProbe.starts: 160
+audioUnderrunGap.count: 0
+wVis backing: sampledColors=1197, sampledInk=1992
+```
+
+Conclusion:
+
+The simple right-click/submenu path no longer reproduces the timeout, and the focused Stop/Start operations do not underrun audio when run early enough in the demo. The exact full regression was rerun after these isolates:
+
+```
+node test/test-winamp-visualization-web.js
+```
+
+Result:
+
+```
+PASS  Winamp web visualizer started and painted (1310 colors, 2011 ink samples)
+```
+
+No code change is needed for the right-click path unless the timeout returns. If it does return, split the regression into a shorter right-click/submenu test and a separate lifecycle test so long trace logging and natural MP3 end timing do not obscure the behavior being checked.
+
 ## Automated Tests
 
 | Test | What it checks |
