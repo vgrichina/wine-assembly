@@ -62,6 +62,14 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     if (timerMatch) return { timerInterval: true, hwnd: parseIntAuto(timerMatch[1]), intervalMs: parseIntAuto(timerMatch[2]) };
     const guest8Match = s.match(/^guest8:([^,]+),([^,]+)$/i);
     if (guest8Match) return { guest8: true, addr: parseIntAuto(guest8Match[1]), value: parseIntAuto(guest8Match[2]) & 0xff };
+    const clearWorkerCacheMatch = s.match(/^clear-worker-cache:(all|t?\d+)$/i);
+    if (clearWorkerCacheMatch) {
+      const raw = String(clearWorkerCacheMatch[1] || '').toLowerCase();
+      return {
+        clearWorkerCache: true,
+        tid: raw === 'all' ? 0 : parseIntAuto(raw.replace(/^t/, '')),
+      };
+    }
     const traceEipMatch = s.match(/^trace-eip:([^,]+),([^,]+),([^,]+),([^,]+)$/i);
     if (traceEipMatch) {
       const tidRaw = String(traceEipMatch[2] || '').trim().toLowerCase();
@@ -107,7 +115,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.clearWorkerCache || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -1352,6 +1360,30 @@ async function main() {
             value: ${p.value} & 0xff,
             before,
             after,
+          };
+        })()`));
+        continue;
+      }
+      if (p.clearWorkerCache) {
+        progress(`clear worker cache ${p.tid ? 'T' + p.tid : 'all'}`);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const tm = wine && wine.threadManager;
+          const cleared = [];
+          if (tm && typeof tm._clearWorkerCacheSlot === 'function') {
+            const max = tm._maxWorkerThreads || 7;
+            const target = ${p.tid | 0};
+            for (let tid = 1; tid <= max; tid++) {
+              if (target && tid !== target) continue;
+              tm._clearWorkerCacheSlot(tid);
+              cleared.push(tid);
+            }
+          }
+          return {
+            action: 'clear-worker-cache',
+            tid: ${p.tid | 0},
+            cleared,
           };
         })()`));
         continue;

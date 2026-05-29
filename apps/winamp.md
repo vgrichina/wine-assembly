@@ -2240,6 +2240,41 @@ Conclusion:
 
 Changing the plugin's own display/fade options does not bypass the hot scalar render work. `Rendering Options -> None` is useful as a cleaner audio comparison, but it is not a performance fix. The next serious experiment should be below the plugin menu layer: either a dedicated fast path/superinstruction for the sampled render loop or a host-side visualizer replacement that consumes Winamp's spectrum/waveform data directly.
 
+## SESSION 33 - wVis byte-load patch experiment.
+
+ASCII TLDR:
+
+- A temporary guest-byte patch changed several hot-loop `xor reg,reg; mov reg8,[mem]` pairs into `movzx reg32,byte [mem]`.
+- The profiler now has `clear-worker-cache:T<n>|all` so patched guest bytes can force worker decoded-cache misses without restarting the app.
+- The patch made things worse: wVis dropped to about 7.3 fps and audio developed underrun gaps.
+- This rules out a quick guest-byte patch as the optimization path.
+- A production attempt would need a proper threaded-IR superinstruction that preserves exact flags and block shape, or a higher-level native visualizer path.
+
+Patch shape:
+
+```
+guest8:0x4e5810,0x0f; guest8:0x4e5811,0xb6; guest8:0x4e5812,0x02; guest8:0x4e5813,0x90
+...
+clear-worker-cache:all
+profile-reset:wvis-movzx-patch
+```
+
+Measured Chrome result:
+
+```
+wVis visualFrames: about 7.33 fps
+T1 wVis thread time: about 1846ms over 5.2s
+audioProbe.starts: 137
+audioBufferDuration.avg: about 32.2ms
+audioLead.avg/max: about 70ms / 168ms
+audioUnderrunGap.count: 5
+audioUnderrunGap.maxMs: about 154ms
+```
+
+Conclusion:
+
+Replacing byte-load idioms inside the DLL is not a safe or useful shortcut. It reduces some guest instructions on paper, but the actual decoded path performs worse and destabilizes audio. Keep `clear-worker-cache` as profiler infrastructure, but do not carry the byte patch into production.
+
 ## Automated Tests
 
 | Test | What it checks |
