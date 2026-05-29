@@ -2205,6 +2205,41 @@ Next useful work:
 2. Or add a controlled visual-quality mode, such as skipping every other smoothing row/column, and measure whether it looks acceptable.
 3. Keep `audioUnderrunGap` and `audioLead` in every wVis performance profile; no-underrun alone is not enough if the lead grows past about 1s.
 
+## SESSION 32 - wVis menu quality-mode checks.
+
+ASCII TLDR:
+
+- Built-in wVis menu options are not enough to fix the low frame rate.
+- `Line Analyzer` can nudge coalesced visual frames to about 10 fps, but it does not reduce the worker CPU cost enough and can still build high audio lead depending on timing.
+- `Rendering Options -> None` keeps audio scheduling clean, but visual frames remain about 8.6 fps.
+- The expensive path is still the guest render loop, not the selected visual style or fade setting.
+
+Commands:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;66,129;wait:700;150,205,right;200,217;wait:200;profile-reset:wvis-line-analyzer-early;wait:4000' \
+  '--post-click-wait-ms=200'
+
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:900;440,16;66,129;wait:700;150,205,right;230,137;370,258;wait:200;profile-reset:wvis-render-none-early;wait:4000' \
+  '--post-click-wait-ms=200'
+```
+
+Measured Chrome runs:
+
+| Mode | wVis FPS | T1 wVis thread time | Audio starts | Audio buffer avg/max | Audio lead avg/max | Underrun gaps | Decision |
+|------|----------|---------------------|--------------|----------------------|--------------------|---------------|----------|
+| default baseline | 8.31 over 5.5s | 1721ms over 5.5s | 198 | 26.9ms / 130.6ms | 536.8ms / 894.0ms | 0 | current balance |
+| `Line Analyzer` | 10.05 over 4.0s | 1482ms over 4.0s | 53 | 69.5ms / 182.9ms | 858.2ms / 1761.8ms | 0 | not clean enough |
+| `Rendering Options -> None` | 8.62 over 4.0s | 1303ms over 4.0s | 134 | 26.1ms / 26.1ms | 500.2ms / 719.8ms | 0 | no FPS gain |
+
+Conclusion:
+
+Changing the plugin's own display/fade options does not bypass the hot scalar render work. `Rendering Options -> None` is useful as a cleaner audio comparison, but it is not a performance fix. The next serious experiment should be below the plugin menu layer: either a dedicated fast path/superinstruction for the sampled render loop or a host-side visualizer replacement that consumes Winamp's spectrum/waveform data directly.
+
 ## Automated Tests
 
 | Test | What it checks |
