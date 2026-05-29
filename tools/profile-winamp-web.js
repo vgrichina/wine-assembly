@@ -56,6 +56,8 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     if (resetMatch) return { profileReset: resetMatch[1] || 'playback' };
     const waitMatch = s.match(/^wait:(\d+)$/i);
     if (waitMatch) return { wait: parseInt(waitMatch[1], 10) || 0 };
+    const postCmdMatch = s.match(/^post-cmd:(\d+)$/i);
+    if (postCmdMatch) return { postCmd: parseIntAuto(postCmdMatch[1]) };
     const timerMatch = s.match(/^timer-interval:([^,]+),([^,]+)$/i);
     if (timerMatch) return { timerInterval: true, hwnd: parseIntAuto(timerMatch[1]), intervalMs: parseIntAuto(timerMatch[2]) };
     const guest8Match = s.match(/^guest8:([^,]+),([^,]+)$/i);
@@ -105,7 +107,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -1260,6 +1262,36 @@ async function main() {
           return {
             action: 'wait',
             wait: ${p.wait},
+            starts: window.__waAudioProbe && window.__waAudioProbe.starts,
+            currentTime: ac ? +ac.currentTime.toFixed(3) : null,
+            openHandles: shared && shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,
+            pendingWaveDoneCount: shared && (shared.pendingWaveDoneCount || 0),
+            voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
+          };
+        })()`));
+        continue;
+      }
+      if (p.postCmd !== undefined) {
+        progress(`posted WM_COMMAND ${p.postCmd}`);
+        await evalExpr(`(() => {
+          const app = runningApps[0];
+          const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+          if (!e || !e.post_message_q || !e.get_main_hwnd) return 0;
+          e.post_message_q(e.get_main_hwnd(), 0x0111, ${p.postCmd} >>> 0, 0);
+          return e.get_main_hwnd() >>> 0;
+        })()`);
+        await wait(POST_CLICK_WAIT_MS);
+        postClickSnapshots.push(await evalExpr(`(() => {
+          const app = runningApps[0];
+          const wine = app && app.wine;
+          const shared = wine && wine._sharedAudio;
+          const voices = shared && shared.voices;
+          const ac = (voices && voices._ac) || (wine && wine._audioCtx);
+          const e = wine && wine.instance && wine.instance.exports;
+          return {
+            action: 'post-cmd',
+            cmd: ${p.postCmd} >>> 0,
+            mainHwnd: e && e.get_main_hwnd ? (e.get_main_hwnd() >>> 0) : 0,
             starts: window.__waAudioProbe && window.__waAudioProbe.starts,
             currentTime: ac ? +ac.currentTime.toFixed(3) : null,
             openHandles: shared && shared.waveOutOpenHandles && shared.waveOutOpenHandles.size,

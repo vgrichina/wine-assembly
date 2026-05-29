@@ -1975,6 +1975,76 @@ Conclusion:
 
 The current threaded loop is not obviously losing time to too-small JS scheduler slices. `runBudgeted` checks the wall deadline between guest `run(quantumSteps)` calls, so larger quantum sizes create coarser guest runs and can increase audio lead even when there are no underruns. The low wVis frame rate still points at guest CPU in the `vis_w.dll` render/smoothing loop. Scheduler tuning can change the tradeoff, but a production change should not inflate queued audio latency while stop/restart behavior is still fragile.
 
+## SESSION 29 - wVis settings restart and gray state.
+
+ASCII TLDR:
+
+- Start/Stop/Start from the plug-in Preferences page does create a new live wVis thread/window, but with no playback the backing store stays flat gray/black.
+- Starting playback after that restart wakes the same visualizer and it paints non-gray content.
+- Reopening Preferences while playback is active lands on `Options > Visualization`, not `Plug-ins > Visualization`; test automation must reselect `Plug-ins > Visualization` before pressing Stop/Start.
+- Correct active-playback Stop/Start does restart the plug-in, but it causes large audio scheduling stalls. This is now the sharper lifecycle problem.
+
+Commands used:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;244,346;wait:2200;184,346;wait:2200' \
+  '--post-click-wait-ms=1200'
+```
+
+No-playback restart result:
+
+```
+wVis threadHandle: 921602
+wVis timer: hwnd 0x20001, id 4097, interval 100ms
+wVis backing: sampledColors=1, sampledInk=0
+visualFrames: 0 after restart
+stopInProgress: 0
+```
+
+Then close Preferences and start playback:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;244,346;wait:2200;184,346;wait:2200;440,16;profile-reset:restart-then-play;66,129;wait:5000' \
+  '--post-click-wait-ms=1200'
+```
+
+Playback after restart result:
+
+```
+wVis backing: sampledColors=1375, sampledInk=2158
+visualFrames: about 8.1 fps
+stopInProgress: 0
+```
+
+Active playback Stop/Start needs to reselect the plug-in page after reopening Preferences:
+
+```
+node tools/profile-winamp-web.js --progress --profile-summary \
+  '--post-cmd=40317' '--post-wait-ms=3000' \
+  '--post-clicks=54,188;170,59;184,346;wait:2200;440,16;profile-reset:active-plugin-stop-restart;66,129;wait:900;post-cmd:40317;wait:400;54,188;170,59;244,346;wait:900;184,346;wait:2200;440,16;wait:1500' \
+  '--post-click-wait-ms=500'
+```
+
+Active playback Stop/Start result:
+
+```
+old wVis threadHandle: 921600
+new wVis threadHandle: 921604
+wVis backing: sampledColors=661, sampledInk=1178
+stopInProgress: 0
+audioUnderrunGap.count: 2
+audioUnderrunGap.maxMs: about 1376ms
+audioLead.maxMs: about 1753ms
+```
+
+Conclusion:
+
+The visible gray state before playback is not enough to prove restart failure. The plug-in can be alive but waiting for visual data. The active playback restart path is worse: it can restart, but the Stop/Start operation stalls audio scheduling badly. Next useful work is to profile that active restart window directly, especially the long gap around the wVis Stop/Start and how it interacts with the decode/output threads.
+
 ## Automated Tests
 
 | Test | What it checks |
