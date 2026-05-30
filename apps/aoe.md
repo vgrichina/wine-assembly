@@ -5,6 +5,15 @@
 **Entry point:** 0x0051CD60
 **Data files:** `test/binaries/shareware/aoe/aoe_ex/data/` — sounds.drs, graphics.drs, Terrain.drs, Border.drs, Interfac.drs
 **Window:** 640×480 (or 800×600), title "Age of Empires"
+
+**Status (2026-05-29):** Main menu is now visible and clickable.
+
+- Fixed the startup crash caused by a stale/corrupt non-client paint flag synthesizing `WM_NCPAINT` for an invalid HWND. The guard is in `src/10-helpers.wat` and prevents dispatching impossible HWNDs.
+- Fixed the black-menu render by invalidating the host-side RGB-to-8bpp palette-index cache when a DirectDraw palette is mutated in place. AoE repeatedly fades the same palette memory; a stale all-black cache made GDI `TextOutA` on a DDraw surface write palette index 0 for every pixel.
+- Fixed fullscreen input scaling in the renderer. AoE presents an 800x600 DDraw frame into the default 640x480 test canvas, so visible canvas clicks now map back to source-window coordinates before WAT receives `WM_LBUTTON*`.
+- Validation: `--max-batches=1400` reaches the AoE main menu with title art/buttons; `--input=1500:click:320:200` reaches the "Single Player Menu" in the 640x480 test canvas; a second click on Random Map reaches the "RANDOM MAP GAME" information screen.
+- Still not validated: starting an actual random map/game from the Single Player menu and longer in-game simulation.
+
 **Status (2026-04-18):** Splash screen now renders correctly on offscreen surface after two DirectDraw fixes this session:
 1. `IDirectDrawPalette::SetEntries` memcpy args were swapped (copying from pal_wa to caller, same code as GetEntries) — parallel agent fixed.
 2. `IDirectDrawSurface::Blt` COLORFILL path was missing 8bpp case — else-branch used `i32.store` (4 bytes, `* 4` stride) producing stripey fills on all 8bpp surfaces. Added `bps==1` branch using `i32.store8`. This was polluting offscreens and primary with stripe patterns — fixed unlocks the full splash render (confirmed via `--dump-ddraw-surfaces`). Same fix also visually unlocks MARBLES and Abe.

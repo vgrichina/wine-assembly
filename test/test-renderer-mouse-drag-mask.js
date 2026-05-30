@@ -134,4 +134,33 @@ assert.strictEqual(clippedDown.lParam, (70 << 16) | 50, 'ClipCursor should clamp
 assert.strictEqual(clippedMove.lParam, (79 << 16) | 59, 'ClipCursor should clamp mousemove to right/bottom edge');
 assert.strictEqual(clippedUp.lParam, (79 << 16) | 59, 'ClipCursor should clamp mouseup to right/bottom edge');
 
+const exclusiveRenderer = new Win98Renderer({ ...canvas, width: 640, height: 480 });
+exclusiveRenderer._exclusiveTransform = {
+  hwnd: 500,
+  srcX: 0,
+  srcY: 0,
+  srcW: 800,
+  srcH: 600,
+  dstX: 0,
+  dstY: 0,
+  dstW: 640,
+  dstH: 480,
+};
+exclusiveRenderer.windows[500] = {
+  hwnd: 500,
+  visible: true,
+  isChild: false,
+  x: 0,
+  y: 0,
+  w: 800,
+  h: 600,
+  clientRect: { x: 0, y: 0, w: 800, h: 600 },
+  style: 0,
+  zOrder: 1,
+};
+exclusiveRenderer.handleMouseDown(320, 200, 1);
+const exclusiveDown = exclusiveRenderer.inputQueue.find(e => e.msg === 0x0201);
+assert(exclusiveDown, 'exclusive fullscreen click should enqueue WM_LBUTTONDOWN');
+assert.strictEqual(exclusiveDown.lParam, (250 << 16) | 400, 'exclusive fullscreen click should map canvas coords to source coords');
+
 console.log('PASS  renderer mouse drag moves carry button state');
