@@ -1,0 +1,513 @@
+#!/usr/bin/env node
+// Static x86 idiom census for threaded-IR superinstruction candidates.
+//
+// This is intentionally approximate: it linearly decodes executable PE
+// sections and may see data-in-code regions as instructions. The goal is not
+// exact disassembly; it is to find broad, repeated instruction shapes worth
+// profiling before adding threaded handlers.
+
+const fs = require('fs');
+const path = require('path');
+const { disasmAt } = require('./disasm');
+
+const regs32 = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+const regs8 = ['al', 'cl', 'dl', 'bl', 'ah', 'ch', 'dh', 'bh'];
+
+function hex(v, width = 0) {
+  return '0x' + (v >>> 0).toString(16).padStart(width, '0');
+}
+
+function sx8(v) {
+  return (v & 0x80) ? v - 0x100 : v;
+}
+
+function sx32(v) {
+  return v | 0;
+}
+
+function parsePe(file) {
+  const buf = fs.readFileSync(file);
+  const peOff = buf.readUInt32LE(0x3c);
+  const optOff = peOff + 24;
+  const imageBase = buf.readUInt32LE(optOff + 28);
+  const numSections = buf.readUInt16LE(peOff + 6);
+  const sectOff = optOff + buf.readUInt16LE(peOff + 20);
+  const sections = [];
+  for (let i = 0; i < numSections; i++) {
+    const off = sectOff + i * 40;
+    const name = buf.toString('ascii', off, off + 8).replace(/\0.*$/, '');
+    const vsize = buf.readUInt32LE(off + 8);
+    const vaddr = buf.readUInt32LE(off + 12);
+    const rawSize = buf.readUInt32LE(off + 16);
+    const rawOff = buf.readUInt32LE(off + 20);
+    const characteristics = buf.readUInt32LE(off + 36);
+    const executable = !!(characteristics & 0x20000000);
+    const code = !!(characteristics & 0x20);
+    if ((executable || code) && rawSize > 0) {
+      sections.push({
+        name,
+        va: (imageBase + vaddr) >>> 0,
+        rawOff,
+        rawSize: Math.min(rawSize, Math.max(0, buf.length - rawOff)),
+        vsize,
+      });
+    }
+  }
+  return { buf, imageBase, sections };
+}
+
+function fallbackLen(buf, off, va) {
+  try {
+    const line = disasmAt(buf, off, va >>> 0, 1)[0] || '';
+    const m = line.match(/^\s*[0-9a-f]+\s+((?:[0-9a-f]{2}\s+)+)/i);
+    if (m) return Math.max(1, m[1].trim().split(/\s+/).length);
+  } catch (_) {}
+  return 1;
+}
+
+function parseModrm(buf, pos, end) {
+  if (pos >= end) return null;
+  const start = pos;
+  const b = buf[pos++];
+  const mod = b >>> 6;
+  const reg = (b >>> 3) & 7;
+  const rm = b & 7;
+  let mem = null;
+  let rmReg = -1;
+  if (mod === 3) {
+    rmReg = rm;
+  } else if (rm === 4) {
+    if (pos >= end) return null;
+    const sib = buf[pos++];
+    const scale = 1 << (sib >>> 6);
+    const index = (sib >>> 3) & 7;
+    const baseBits = sib & 7;
+    let base = baseBits;
+    let disp = 0;
+    if (mod === 0 && baseBits === 5) {
+      if (pos + 4 > end) return null;
+      base = -1;
+      disp = buf.readUInt32LE(pos) >>> 0;
+      pos += 4;
+    } else if (mod === 1) {
+      if (pos >= end) return null;
+      disp = sx8(buf[pos++]);
+    } else if (mod === 2) {
+      if (pos + 4 > end) return null;
+      disp = sx32(buf.readUInt32LE(pos));
+      pos += 4;
+    }
+    mem = {
+      base,
+      index: index === 4 ? -1 : index,
+      scale,
+      disp,
+    };
+  } else {
+    let base = rm;
+    let disp = 0;
+    if (mod === 0 && rm === 5) {
+      if (pos + 4 > end) return null;
+      base = -1;
+      disp = buf.readUInt32LE(pos) >>> 0;
+      pos += 4;
+    } else if (mod === 1) {
+      if (pos >= end) return null;
+      disp = sx8(buf[pos++]);
+    } else if (mod === 2) {
+      if (pos + 4 > end) return null;
+      disp = sx32(buf.readUInt32LE(pos));
+      pos += 4;
+    }
+    mem = { base, index: -1, scale: 1, disp };
+  }
+  return { mod, reg, rm, rmReg, mem, len: pos - start };
+}
+
+function memText(mem) {
+  if (!mem) return '';
+  const parts = [];
+  if (mem.base >= 0) parts.push(regs32[mem.base]);
+  if (mem.index >= 0) parts.push(regs32[mem.index] + (mem.scale > 1 ? '*' + mem.scale : ''));
+  if (mem.disp) {
+    if (parts.length) parts.push(mem.disp < 0 ? '-' + hex(-mem.disp) : hex(mem.disp));
+    else parts.push(hex(mem.disp));
+  } else if (!parts.length) {
+    parts.push('0x0');
+  }
+  let out = '';
+  for (const part of parts) {
+    if (!out) {
+      out = part;
+    } else if (part[0] === '-') {
+      out += part;
+    } else {
+      out += '+' + part;
+    }
+  }
+  return '[' + out + ']';
+}
+
+function simpleBase(mem) {
+  return !!mem && mem.base >= 0 && mem.index < 0;
+}
+
+function espRelative(mem) {
+  return !!mem && mem.base === 4 && mem.index < 0;
+}
+
+function regName(reg) {
+  return regs32[reg] || ('r' + reg);
+}
+
+function byteLowRegMatchesFull(byteReg, fullReg) {
+  return byteReg === fullReg && fullReg >= 0 && fullReg < 4;
+}
+
+function decodeAt(buf, off, va, end) {
+  const start = off;
+  let pos = off;
+  let p66 = false;
+  let segment = false;
+  while (pos < end) {
+    const p = buf[pos];
+    if (p === 0x66) { p66 = true; pos++; continue; }
+    if (p === 0x26 || p === 0x2e || p === 0x36 || p === 0x3e || p === 0x64 || p === 0x65) {
+      segment = true;
+      pos++;
+      continue;
+    }
+    if (p === 0xf2 || p === 0xf3) { pos++; continue; }
+    break;
+  }
+  if (pos >= end) return null;
+  const opOff = pos;
+  const op = buf[pos++];
+  const mk = (kind, extra = {}) => ({
+    kind,
+    va: va >>> 0,
+    len: pos - start,
+    p66,
+    segment,
+    text: kind,
+    ...extra,
+  });
+
+  if (!p66 && (op === 0x31 || op === 0x33)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    if (m.mod === 3) {
+      const dst = op === 0x33 ? m.reg : m.rmReg;
+      const src = op === 0x33 ? m.rmReg : m.reg;
+      if (dst === src) return mk('xor_zero', { reg: dst, len: pos - start, text: `xor ${regName(dst)}, ${regName(src)}` });
+      return mk('xor_rr', { dst, src, len: pos - start });
+    }
+  }
+
+  if (!p66 && (op === 0x8a || op === 0x88 || op === 0x8b || op === 0x89)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    if (op === 0x8a) {
+      return mk(m.mod === 3 ? 'mov_r8_r8' : 'mov_r8_m8', {
+        dst: m.reg,
+        src: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mem,
+        len: pos - start,
+        text: `mov ${regs8[m.reg]}, ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}`,
+      });
+    }
+    if (op === 0x88) {
+      return mk(m.mod === 3 ? 'mov_r8_r8' : 'mov_m8_r8', {
+        dst: m.mod === 3 ? m.rmReg : -1,
+        src: m.reg,
+        mem: m.mem,
+        len: pos - start,
+        text: `mov ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${regs8[m.reg]}`,
+      });
+    }
+    if (op === 0x8b) {
+      return mk(m.mod === 3 ? 'mov_r32_r32' : 'mov_r32_m32', {
+        dst: m.reg,
+        src: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mem,
+        len: pos - start,
+        text: `mov ${regName(m.reg)}, ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}`,
+      });
+    }
+    return mk(m.mod === 3 ? 'mov_r32_r32' : 'mov_m32_r32', {
+      dst: m.mod === 3 ? m.rmReg : -1,
+      src: m.reg,
+      mem: m.mem,
+      len: pos - start,
+      text: `mov ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}, ${regName(m.reg)}`,
+    });
+  }
+
+  if (!p66 && op === 0x8d) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    return mk('lea', { dst: m.reg, mem: m.mem, len: pos - start, text: `lea ${regName(m.reg)}, ${memText(m.mem)}` });
+  }
+
+  if (!p66 && (op === 0x03 || op === 0x01 || op === 0x2b || op === 0x29 || op === 0x85)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const isReg = m.mod === 3;
+    if (op === 0x03 || op === 0x2b) {
+      return mk(op === 0x03 ? 'add_r32_rm32' : 'sub_r32_rm32', {
+        dst: m.reg,
+        src: isReg ? m.rmReg : -1,
+        mem: isReg ? null : m.mem,
+        len: pos - start,
+      });
+    }
+    if (op === 0x01 || op === 0x29) {
+      return mk(op === 0x01 ? 'add_rm32_r32' : 'sub_rm32_r32', {
+        dst: isReg ? m.rmReg : -1,
+        src: m.reg,
+        mem: isReg ? null : m.mem,
+        len: pos - start,
+      });
+    }
+    return mk(isReg ? 'test_r32_r32' : 'test_m32_r32', {
+      dst: isReg ? m.rmReg : -1,
+      src: m.reg,
+      mem: isReg ? null : m.mem,
+      len: pos - start,
+    });
+  }
+
+  if (!p66 && op === 0x83) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = sx8(buf[pos++]);
+    const names = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    return mk(m.mod === 3 ? 'alu_r32_i8' : 'alu_m32_i8', {
+      alu: m.reg,
+      aluName: names[m.reg],
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      imm,
+      len: pos - start,
+    });
+  }
+
+  if (!p66 && op === 0xc1) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf[pos++];
+    return mk(m.mod === 3 ? 'shift_r32_i8' : 'shift_m32_i8', {
+      shift: m.reg,
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      imm,
+      len: pos - start,
+    });
+  }
+
+  if (!p66 && op >= 0x40 && op <= 0x47) return mk('inc_r32', { reg: op - 0x40 });
+  if (!p66 && op >= 0x48 && op <= 0x4f) return mk('dec_r32', { reg: op - 0x48 });
+  if (!p66 && op >= 0x70 && op <= 0x7f) return mk('jcc8', { cc: op & 0xf, len: Math.min(2, end - start) });
+
+  if (op === 0x0f && pos < end) {
+    const op2 = buf[pos++];
+    if (!p66 && (op2 === 0xb6 || op2 === 0xbe || op2 === 0xb7 || op2 === 0xbf)) {
+      const m = parseModrm(buf, pos, end);
+      if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+      pos += m.len;
+      const sx = op2 === 0xbe || op2 === 0xbf;
+      const bits = op2 === 0xb6 || op2 === 0xbe ? 8 : 16;
+      return mk(`${sx ? 'movsx' : 'movzx'}${bits}`, {
+        dst: m.reg,
+        src: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+      });
+    }
+    if (op2 >= 0x80 && op2 <= 0x8f) {
+      return mk('jcc32', { cc: op2 & 0xf, len: Math.min(6, end - start) });
+    }
+  }
+
+  return mk('unknown', { len: Math.min(fallbackLen(buf, start, va), end - start), op: buf[opOff] });
+}
+
+function addCount(map, key, n = 1) {
+  map[key] = (map[key] || 0) + n;
+}
+
+function addExample(examples, key, item) {
+  if (!examples[key]) examples[key] = [];
+  if (examples[key].length < 5) examples[key].push(item);
+}
+
+function usesRegInLeaMem(mem, reg) {
+  return !!mem && (mem.base === reg || mem.index === reg);
+}
+
+function addUsesReg(ins, reg) {
+  if (!ins) return false;
+  if ((ins.kind === 'add_r32_rm32' || ins.kind === 'sub_r32_rm32') && ins.src === reg) return true;
+  if ((ins.kind === 'add_rm32_r32' || ins.kind === 'sub_rm32_r32') && ins.src === reg) return true;
+  return false;
+}
+
+function scanFile(file) {
+  const pe = parsePe(file);
+  const counts = Object.create(null);
+  const examples = Object.create(null);
+  let instructionCount = 0;
+  const sectionStats = [];
+
+  for (const sec of pe.sections) {
+    const end = sec.rawOff + sec.rawSize;
+    let off = sec.rawOff;
+    let va = sec.va;
+    const ins = [];
+    while (off < end) {
+      const decoded = decodeAt(pe.buf, off, va, end);
+      if (!decoded || decoded.len <= 0) break;
+      ins.push(decoded);
+      off += decoded.len;
+      va = (va + decoded.len) >>> 0;
+    }
+    instructionCount += ins.length;
+    sectionStats.push({ name: sec.name, instructions: ins.length });
+
+    for (let i = 0; i < ins.length; i++) {
+      const a = ins[i];
+      addCount(counts, 'kind.' + a.kind);
+
+      if (a.kind === 'xor_zero') addCount(counts, 'xor-zero');
+      if (a.mem && simpleBase(a.mem)) addCount(counts, 'simple-base-mem-op');
+      if (a.mem && espRelative(a.mem)) addCount(counts, 'esp-relative-mem-op');
+      if (a.kind === 'mov_r32_m32' && espRelative(a.mem)) addCount(counts, 'esp-load32');
+      if (a.kind === 'mov_m32_r32' && espRelative(a.mem)) addCount(counts, 'esp-store32');
+      if (a.kind === 'mov_r8_m8' && espRelative(a.mem)) addCount(counts, 'esp-load8');
+      if (a.kind === 'mov_m8_r8' && espRelative(a.mem)) addCount(counts, 'esp-store8');
+      if ((a.kind === 'add_r32_rm32' || a.kind === 'sub_r32_rm32' || a.kind === 'test_m32_r32') && espRelative(a.mem)) {
+        addCount(counts, 'esp-alu-test');
+      }
+      if (a.kind === 'lea' && a.mem) {
+        if (a.mem.index >= 0) {
+          addCount(counts, 'lea-sib');
+          if (!a.mem.disp) addCount(counts, 'lea-sib-no-disp');
+        } else if (a.mem.base >= 0) {
+          addCount(counts, 'lea-base-disp');
+        }
+      }
+
+      const b = ins[i + 1];
+      const c = ins[i + 2];
+      const d = ins[i + 3];
+      if (a.kind === 'xor_zero' && b && b.kind === 'mov_r8_m8' && byteLowRegMatchesFull(b.dst, a.reg)) {
+        addCount(counts, 'seq.zero-load8');
+        addExample(examples, 'seq.zero-load8', `${hex(a.va, 8)} ${a.text}; ${b.text}`);
+        if (c && addUsesReg(c, a.reg)) {
+          addCount(counts, 'seq.zero-load8-alu');
+          addExample(examples, 'seq.zero-load8-alu', `${hex(a.va, 8)} ${a.text}; ${b.text}; ${c.kind}`);
+        }
+        if (c && c.kind === 'lea' && usesRegInLeaMem(c.mem, a.reg)) {
+          addCount(counts, 'seq.zero-load8-lea');
+          addExample(examples, 'seq.zero-load8-lea', `${hex(a.va, 8)} ${a.text}; ${b.text}; ${c.text}`);
+        }
+      }
+      if (a.kind === 'mov_r8_m8' && b && b.kind === 'mov_m8_r8' && a.dst === b.src) {
+        addCount(counts, 'seq.load8-store8');
+        addExample(examples, 'seq.load8-store8', `${hex(a.va, 8)} ${a.text}; ${b.text}`);
+      }
+      if (a.kind === 'test_r32_r32' && a.dst === a.src &&
+          b && b.kind === 'lea' && b.mem && b.mem.base === a.dst && b.mem.index < 0 && b.mem.disp === -1 &&
+          c && c.kind === 'mov_m32_r32' && c.src === b.dst &&
+          d && (d.kind === 'jcc8' || d.kind === 'jcc32')) {
+        addCount(counts, 'seq.test-lea-store-jcc');
+        addExample(examples, 'seq.test-lea-store-jcc', `${hex(a.va, 8)} test ${regName(a.dst)}, ${regName(a.src)}; ${b.text}; ${c.text}; ${d.kind}`);
+      }
+      if (a.kind === 'mov_r32_m32' && a.mem && espRelative(a.mem) &&
+          b && (b.kind === 'add_r32_rm32' || b.kind === 'sub_r32_rm32' || b.kind === 'alu_r32_i8') && (b.dst === a.dst || b.src === a.dst)) {
+        addCount(counts, 'seq.esp-load-alu');
+        addExample(examples, 'seq.esp-load-alu', `${hex(a.va, 8)} ${a.text}; ${b.kind}`);
+      }
+    }
+  }
+
+  return {
+    file,
+    imageBase: pe.imageBase,
+    sections: sectionStats,
+    instructionCount,
+    counts,
+    examples,
+  };
+}
+
+function pct(part, whole) {
+  if (!whole) return '0.0%';
+  return (100 * part / whole).toFixed(1) + '%';
+}
+
+function lineCount(label, counts, key, total) {
+  const v = counts[key] || 0;
+  const suffix = total ? ` (${pct(v, total)})` : '';
+  return `  ${label.padEnd(28)} ${String(v).padStart(7)}${suffix}`;
+}
+
+function printReport(report) {
+  const c = report.counts;
+  console.log(`\n${path.basename(report.file)} (${report.file})`);
+  console.log(`  image base: ${hex(report.imageBase, 8)}`);
+  console.log(`  decoded executable-section instructions: ${report.instructionCount}`);
+  if (report.sections.length) {
+    console.log('  sections: ' + report.sections.map(s => `${s.name}:${s.instructions}`).join(', '));
+  }
+  console.log('\nCandidate instruction families:');
+  console.log(lineCount('xor zero reg', c, 'xor-zero', report.instructionCount));
+  console.log(lineCount('simple base mem ops', c, 'simple-base-mem-op', report.instructionCount));
+  console.log(lineCount('ESP-relative mem ops', c, 'esp-relative-mem-op', report.instructionCount));
+  console.log(lineCount('ESP load32', c, 'esp-load32', report.instructionCount));
+  console.log(lineCount('ESP store32', c, 'esp-store32', report.instructionCount));
+  console.log(lineCount('LEA SIB', c, 'lea-sib', report.instructionCount));
+  console.log(lineCount('LEA SIB no disp', c, 'lea-sib-no-disp', report.instructionCount));
+
+  console.log('\nAdjacent sequence candidates:');
+  console.log(lineCount('xor; mov low8,[mem]', c, 'seq.zero-load8'));
+  console.log(lineCount('xor; mov low8; alu', c, 'seq.zero-load8-alu'));
+  console.log(lineCount('xor; mov low8; lea', c, 'seq.zero-load8-lea'));
+  console.log(lineCount('mov r8,[mem]; mov [mem],r8', c, 'seq.load8-store8'));
+  console.log(lineCount('test; lea -1; store; jcc', c, 'seq.test-lea-store-jcc'));
+  console.log(lineCount('ESP load32; ALU', c, 'seq.esp-load-alu'));
+
+  for (const key of [
+    'seq.zero-load8',
+    'seq.zero-load8-alu',
+    'seq.zero-load8-lea',
+    'seq.load8-store8',
+    'seq.test-lea-store-jcc',
+  ]) {
+    const ex = report.examples[key] || [];
+    if (!ex.length) continue;
+    console.log(`\nExamples for ${key}:`);
+    for (const line of ex) console.log('  ' + line);
+  }
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const files = args.length ? args : [
+    'test/binaries/plugins/candidates/vis_w.dll',
+    'test/binaries/plugins/in_mp3.dll',
+  ];
+  for (const file of files) {
+    printReport(scanFile(file));
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = { scanFile };

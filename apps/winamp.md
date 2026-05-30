@@ -2275,6 +2275,189 @@ Conclusion:
 
 Replacing byte-load idioms inside the DLL is not a safe or useful shortcut. It reduces some guest instructions on paper, but the actual decoded path performs worse and destabilizes audio. Keep `clear-worker-cache` as profiler infrastructure, but do not carry the byte patch into production.
 
+## SESSION 34 - Superinstruction candidate census.
+
+ASCII TLDR:
+
+- Do not add a one-address visualizer opcode first. The safer plan is a small family of reusable threaded handlers.
+- The best broad candidates are ESP-relative memory handlers and adjacent byte move fusions.
+- The best wVis-specific-but-still-general candidate is `xor r32,r32; mov low8,[mem]`, optionally followed by `add`/`lea`.
+- The risky candidate is `test; lea counter-1; store; jcc`: it hits the hot visualizer loop, but it crosses a block-ending branch and is too shape-specific for a first pass.
+- Added `tools/superinstruction-census.js` to count these patterns across PE code sections.
+
+Command:
+
+```
+node tools/superinstruction-census.js \
+  test/binaries/plugins/candidates/vis_w.dll \
+  test/binaries/plugins/in_mp3.dll \
+  dist/winamp-cd/Winamp_Installer_CD/WINAMP295.EXE \
+  test/binaries/dlls/msvcrt.dll
+```
+
+Static census:
+
+| Candidate | vis_w.dll | in_mp3.dll | WINAMP295.EXE | msvcrt.dll | Notes |
+|-----------|-----------|------------|---------------|------------|-------|
+| Simple `[base+disp]` memory ops | 2270 | 5731 | 1077 | 10298 | Already partly specialized, but still the largest family. |
+| ESP-relative memory ops | 1292 | 1328 | 66 | 807 | Broad target, though single-instruction trials can still regress. |
+| ESP `mov r32,[esp+disp]` | 762 | 772 | 32 | 638 | Strong static count for stack-heavy compiled code. |
+| ESP `mov [esp+disp],r32` | 232 | 455 | 16 | 36 | Pair with stack loads if table slots are added. |
+| `xor r,r; mov low8,[mem]` | 73 | 27 | 0 | 3 | Common in `vis_w` hot byte math; useful only if flags are exact. |
+| `xor; mov low8; add` | 5 | 0 | 0 | 0 | Small static count, but several are in the hot smoothing loop. |
+| `xor; mov low8; lea` | 4 | 0 | 0 | 0 | Also hot-loop weighted; exact flags must remain from XOR. |
+| `mov r8,[mem]; mov [mem],r8` | 29 | 27 | 6 | 77 | Broad, but startup CRT coverage makes it risky and performance-negative in practice. |
+| `test; lea -1; store; jcc` | 4 | 0 | 0 | 0 | Hot visualizer loop counter, but branch fusion is higher risk. |
+
+Ranking:
+
+1. **ESP-relative load/store handlers**: Add `th_load32_esp`, `th_store32_esp`, then maybe byte forms and ALU/test forms. This is not visualizer-specific and should help Winamp and in_mp3. It is low semantic risk because it only replaces `get_reg(ESP)+disp` with `$esp+disp`.
+2. **Byte load+store fusion**: Fuse adjacent `mov r8,[mem]; mov [mem],r8` for simple-base/SIB forms. Exact semantics are manageable: load byte, set the byte register, then store the same value; flags unchanged.
+3. **Zero-load byte fusion**: Fuse `xor r32,r32; mov low8,[mem]` and preserve final XOR flags. A second handler can cover `xor; mov low8; add dst,r` where the final flags are from ADD and the temp register remains the loaded byte.
+4. **LEA SIB specialization**: `vis_w` and `in_mp3` both have many SIB LEAs, especially no-displacement forms. This is broad, but likely smaller than ESP and byte-copy fusions.
+5. **Loop-counter branch fusion**: Defer. It crosses control flow and the static count is tiny; if needed later, implement only after handler-pair profiling shows dispatch overhead dominates this block.
+
+Initial implementation step:
+
+Start with ESP-relative handlers, because they are broad and easy to verify. The decoder already identifies simple-base addressing; when `mr_base == ESP` and `mr_index == -1`, it can emit an ESP-specific handler. After that, profile `vis_w` FPS and in_mp3/audio lead before adding byte sequence fusions.
+
+## SESSION 35 - ESP-relative MOV superinstruction trial.
+
+ASCII TLDR:
+
+- Tried the broad ESP-relative MOV family first: `mov r32,[esp+disp]`, `mov [esp+disp],r32`, `mov r8,[esp+disp]`, and `mov [esp+disp],r8`.
+- Correctness was fine in a targeted x86 test, but Chrome wVis profiling got worse twice.
+- Reverted the WAT implementation. Do not carry this ESP MOV family as a production optimization.
+- The next candidate should be adjacent byte move fusion, not more stack-relative single-instruction handlers.
+
+Temporary implementation shape:
+
+- Added handler slots 307-310 for ESP-relative 32-bit and 8-bit load/store.
+- Routed `$emit_load32`, `$emit_store32`, `$emit_load8`, and `$emit_store8` through those handlers when `mr_base == ESP`.
+- Added targeted `test/test-x86-ops.js` cases for `[esp+disp]` MOV forms.
+
+Checks before revert:
+
+```
+node tools/check-handler-count.js
+node --check tools/superinstruction-census.js
+git diff --check
+node test/test-x86-ops.js
+```
+
+Result:
+
+```
+[check-handler-count] OK handler table=311 elem entries=311 cache guard=311
+39 passed, 0 failed
+```
+
+Profiles:
+
+| Run | wVis FPS | T1 wVis time | T3 decode time | Audio starts | Audio buffer avg/max | Audio lead avg/max | Underrun gaps |
+|-----|----------|--------------|----------------|--------------|----------------------|--------------------|---------------|
+| Prior baseline `10000,4` | 8.31 | about 1721ms | about 1149ms | 198 | 26.9ms / 130.6ms | 536.8ms / 894.0ms | 0 |
+| ESP MOV trial 1 | 7.01 | 2035ms | 1267ms | 121 | 34.5ms / 130.6ms | 65.0ms / 145.1ms | 8 |
+| ESP MOV trial 2 | 6.75 | 2011ms | 1280ms | 122 | 34.0ms / 156.7ms | 75.2ms / 171.2ms | 7 |
+
+Conclusion:
+
+The ESP specialization is broad statically, but it is not a useful threaded-IR superinstruction here. It may perturb the Wasm optimizer or increase table/body pressure enough to outweigh the saved `get_reg(ESP)` path. Since both performance runs dropped wVis FPS and introduced audio gaps, the safe decision is to leave the original generic `[base+disp]` handlers in place.
+
+Next:
+
+Try `mov r8,[mem]; mov [mem],r8` as a real adjacent-instruction fusion. It is still broad across `vis_w`, `in_mp3`, and `msvcrt`, preserves flags exactly, and removes one dispatcher hop plus one byte register read/write round trip.
+
+## SESSION 36 - Adjacent byte load/store fusion trial.
+
+ASCII TLDR:
+
+- Tried a real threaded-IR fusion for `mov r8,[base+disp]; mov [base+disp],r8`.
+- The first implementation exposed a decoder bug: non-fused 8-bit memory loads could be skipped when the lookahead path was not taken, which trapped Winamp in `msvcrt.dll` startup around runtime `0x005017xx`.
+- Fixed the fallback scoping and verified startup recovered, then ran two valid wVis playback profiles.
+- The valid profiles were still negative: lower wVis FPS, higher T1/T3 time, fewer audio starts, and underrun gaps.
+- Reverted the WAT implementation. Keep the census/tooling and do not carry this byte-copy fusion as production code.
+
+Temporary implementation shape:
+
+- Added handler slot 307 for `mov r8,[src_base+src_disp]; mov [dst_base+dst_disp],r8`.
+- Decoder looked ahead from 0x8A memory loads to a following 0x88 memory store with the same byte register.
+- Handler preserved visible order: compute source address, load byte, update the byte register, compute destination address after the byte-reg write, then store the loaded byte.
+- Added x86 tests for the aliasing cases where the byte register changes the destination base.
+
+Checks:
+
+```
+node tools/check-handler-count.js
+node tools/check-parens.js src/07-decoder.wat
+git diff --check
+node test/test-x86-ops.js
+```
+
+Valid profiles after fixing fallback:
+
+| Run | wVis FPS | T1 wVis time | T3 decode time | Audio starts | Audio buffer avg/max | Audio lead avg/max | Underrun gaps |
+|-----|----------|--------------|----------------|--------------|----------------------|--------------------|---------------|
+| Prior baseline `10000,4` | 8.31 | about 1721ms | about 1149ms | 198 | 26.9ms / 130.6ms | 536.8ms / 894.0ms | 0 |
+| Byte load/store trial 1 | 7.39 | 1987ms | 1292ms | 141 | 32.2ms / 182.9ms | 76.4ms / 177.1ms | 5 |
+| Byte load/store trial 2 | 7.62 | 2004ms | 1302ms | 132 | 34.0ms / 130.6ms | 54.2ms / 150.9ms | 11 |
+
+Conclusion:
+
+This fusion is semantically manageable, but it is not a useful optimization in this interpreter shape. It adds decoder complexity and a larger handler body, and the hot profiles show worse scheduling/audio behavior. The more promising next target is a superinstruction that removes multiple hot byte-math operations in one step, especially the `xor; mov low8; add` visualizer pattern where ADD overwrites flags.
+
+## SESSION 37 - Hot `xor; mov low8; add` fusion trial.
+
+ASCII TLDR:
+
+- Tried the more targeted hot-loop superinstruction: `xor tmp,tmp; mov tmp8,[base+disp]; add dst,tmp`.
+- Correctness was fine, including ADD carry flags and aliasing where the load base or add destination is the zeroed temp register.
+- wVis profiling still got worse twice.
+- Reverted the WAT implementation. The issue is not just choosing too-broad memory opcodes; even a hot byte-math fusion can lose in this Wasm/threaded-dispatch shape.
+- Next optimization should measure and change the visualizer algorithm boundary, not add more small threaded handlers blindly.
+
+Temporary implementation shape:
+
+- Added handler slot 307 for `xor tmp,tmp; mov tmp8,[base+disp]; add dst,tmp`.
+- Decoder looked ahead from 32-bit `xor r,r` to a following simple-base `mov r8,[mem]` and `add r32,r`.
+- Handler order was exact:
+  - zero the temp register before computing the load address, so `[tmp+disp]` uses zeroed `tmp`;
+  - load the byte and set the full temp register to the zero-extended byte;
+  - read `dst` after the temp update, so `add tmp,tmp` works;
+  - write `dst` and set flags from ADD.
+
+Checks:
+
+```
+node tools/check-handler-count.js
+node tools/check-parens.js src/07-decoder.wat
+git diff --check
+node test/test-x86-ops.js
+```
+
+Result before revert:
+
+```
+[check-handler-count] OK handler table=308 elem entries=308 cache guard=308
+40 passed, 0 failed
+```
+
+Profiles:
+
+| Run | wVis FPS | T1 wVis time | T3 decode time | Audio starts | Audio buffer avg/max | Audio lead avg/max | Underrun gaps |
+|-----|----------|--------------|----------------|--------------|----------------------|--------------------|---------------|
+| Prior baseline `10000,4` | 8.31 | about 1721ms | about 1149ms | 198 | 26.9ms / 130.6ms | 536.8ms / 894.0ms | 0 |
+| `xor/load8/add` trial 1 | 7.87 | 1983ms | 1331ms | 128 | 32.9ms / 130.6ms | 54.1ms / 142.2ms | 7 |
+| `xor/load8/add` trial 2 | 7.25 | 1993ms | 1337ms | 124 | 34.8ms / 156.7ms | 69.4ms / 171.2ms | 10 |
+
+Conclusion:
+
+This rejected the strongest small-superinstruction candidate from the static census. The repeated pattern does fire in the hot visualizer loop, but the larger Wasm handler and decoder shape still correlate with more T1/T3 wall time and worse audio scheduling. Do not keep adding table-slot micro-fusions without dynamic proof that the replacement body is cheaper on V8/Safari. Better next directions:
+
+1. Add dynamic decoded-handler/eip weighting so candidates are selected by actual runtime hits and measured handler cost, not static PE frequency.
+2. Investigate a higher-level wVis render fast path or host-side visualizer path that consumes the spectrum/waveform buffers directly.
+3. Revisit scheduler/audio balance only after the render path is less CPU-bound; current superinstructions reduce dispatch count on paper but make the wall-clock profile worse.
+
 ## Automated Tests
 
 | Test | What it checks |

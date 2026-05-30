@@ -80,9 +80,9 @@ async function main() {
   function setMem(addr, val) { dv.setUint32(g2w(addr), val, true); }
 
   // Helper: scratch memory addresses
-  const scratch = imageBase + 0x2000;
-  const scratchA = imageBase + 0x2100;
-  const scratchB = imageBase + 0x2104;
+  const scratch = imageBase + 0x8000;
+  const scratchA = imageBase + 0x8100;
+  const scratchB = imageBase + 0x8104;
 
   // ================================================================
   // Basic execution
@@ -193,13 +193,13 @@ async function main() {
   // ================================================================
   // INC/DEC [mem] must preserve CF
   // ================================================================
-  const incAddr = imageBase + 0x2200;
+  const incAddr = imageBase + 0x8200;
   setMem(incAddr, 42);
   runCode([0xF9, 0xFF, 0x05, ...le32(incAddr), 0x83, 0xD0, 0x00], () => e.set_eax(0));
   test('INC [mem] value', memAt(incAddr), 43);
   test('INC preserves CF', e.get_eax(), 1);
 
-  const decAddr = imageBase + 0x2300;
+  const decAddr = imageBase + 0x8300;
   setMem(decAddr, 10);
   runCode([0xF9, 0xFF, 0x0D, ...le32(decAddr), 0x83, 0xD0, 0x00], () => e.set_eax(0));
   test('DEC [mem] value', memAt(decAddr), 9);
@@ -241,9 +241,9 @@ async function main() {
   // ================================================================
   // Bignum multiply pattern (composite test)
   // ================================================================
-  const mulSrc = imageBase + 0x2400;
-  const accumLo = imageBase + 0x2410;
-  const accumHi = imageBase + 0x2414;
+  const mulSrc = imageBase + 0x8400;
+  const accumLo = imageBase + 0x8410;
+  const accumHi = imageBase + 0x8414;
   setMem(mulSrc, 0x7FFFFFFF);
   setMem(accumLo, 0);
   setMem(accumHi, 0);
