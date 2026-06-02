@@ -28,6 +28,16 @@
     ;; Set heap to be above the image
     (global.set $heap_base (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
     (global.set $heap_ptr (global.get $heap_base))
+    (global.set $heap_sparse_ptr (i32.const 0))
+    (global.set $heap_sparse_end (i32.const 0))
+    ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
+    ;; get backing memory through $virtual_map_commit instead of consuming the
+    ;; low HeapAlloc arena.
+    (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
+    (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
+      (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE) (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+      (global.get $VIRTUAL_BACKING_BASE))
 
     ;; Copy DOS+PE headers into guest memory (CRT startup reads MZ signature from image base)
     (call $memcpy (global.get $GUEST_BASE) (global.get $PE_STAGING)
@@ -62,8 +72,12 @@
       (then (call $process_imports (local.get $import_rva))))
 
     (global.set $eip (global.get $entry_point))
-    ;; ESP must be a guest address: GUEST_STACK(WASM) → guest = WASM - GUEST_BASE + image_base
-    (global.set $esp (i32.add (i32.sub (global.get $GUEST_STACK) (global.get $GUEST_BASE)) (global.get $image_base)))
+    ;; ESP must be a guest address. GUEST_STACK is the WASM-space stack base;
+    ;; ESP starts at the top of the 1MB stack region.
+    (global.set $esp (i32.add
+      (i32.sub (i32.add (global.get $GUEST_STACK) (global.get $GUEST_STACK_SIZE))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
     (global.set $eax (i32.const 0)) (global.set $ecx (i32.const 0))
     (global.set $edx (i32.const 0)) (global.set $ebx (i32.const 0))
     (global.set $ebp (i32.const 0)) (global.set $esi (i32.const 0))
@@ -77,8 +91,8 @@
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x18)) (global.get $fs_base))
     ;; TIB+0x04: Stack top
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04)) (global.get $esp))
-    ;; TIB+0x08: Stack bottom (1MB below top)
-    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08)) (i32.sub (global.get $esp) (i32.const 0x100000)))
+    ;; TIB+0x08: Stack bottom
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08)) (i32.sub (global.get $esp) (global.get $GUEST_STACK_SIZE)))
     ;; TIB+0x2c: ThreadLocalStoragePointer — point at our TLS slot array so that
     ;; apps doing direct FS:[0x2c][index*4] reads (bypassing TlsGetValue) see the
     ;; same values our TlsSetValue writes. Eagerly allocate the slot array.

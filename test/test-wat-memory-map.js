@@ -13,7 +13,7 @@ const { WAT_FILES } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
-const WASM_MEMORY_SIZE = 0x08000000;
+const WASM_MEMORY_SIZE = 0x20000000;
 
 function parseConstI32(value) {
   const text = String(value).trim();

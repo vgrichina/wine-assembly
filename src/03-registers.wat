@@ -62,15 +62,33 @@
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32)
+    (local $wa i32) (local $i i32) (local $count i32)
+    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
-    (if (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x8000000))) ;; 128MB (full WASM memory)
-      (then
-        ;; Re-zero the sentinel (in case a prior bad write landed here)
-        (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
-        (return (global.get $NULL_SENTINEL))))
-    (local.get $wa)
+    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
+                (i32.ge_u (local.get $wa) (i32.const 0x8000000)))) ;; direct guest window
+      (then (return (local.get $wa))))
+    ;; Sparse VirtualAlloc mappings live outside the direct image-relative
+    ;; window. Scan only after direct translation failed, keeping normal guest
+    ;; memory accesses on the cheap arithmetic path.
+    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $i (i32.const 0))
+    (block $mapped_done (loop $mapped_scan
+      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $base (i32.load (local.get $rec)))
+      (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+      (if (i32.and
+            (i32.ge_u (local.get $ga) (local.get $base))
+            (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))
+        (then
+          (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mapped_scan)))
+    ;; Re-zero the sentinel (in case a prior bad write landed here).
+    (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
+    (global.get $NULL_SENTINEL)
   )
   (func $gl32 (param $ga i32) (result i32) (i32.load (call $g2w (local.get $ga))))
   (func $gl16 (param $ga i32) (result i32) (i32.load16_u (call $g2w (local.get $ga))))

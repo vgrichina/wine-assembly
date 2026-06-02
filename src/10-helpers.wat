@@ -59,6 +59,199 @@
     (if (local.get $len) (then (memory.copy (local.get $dst) (local.get $src) (local.get $len)))))
   (func $zero_memory (param $ptr i32) (param $len i32)
     (if (local.get $len) (then (memory.fill (local.get $ptr) (i32.const 0) (local.get $len)))))
+
+  ;; Fast path for the MSVC CRT small-block heap descriptor scan:
+  ;;
+  ;;   mov eax,[scan]
+  ;;   cmp eax,ebx
+  ;;   jl  next
+  ;;   cmp [scan+4],ebx
+  ;;   jbe next
+  ;;   ... allocate from page ...
+  ;; next:
+  ;;   add scan,8
+  ;;   add page,0x1000
+  ;;   cmp scan,ebp
+  ;;   jb  loop
+  ;;
+  ;; Several statically linked MSVC apps use this loop in their CRT allocator.
+  ;; Running it one x86 block per descriptor dominates large data-load phases.
+  ;; This recognizes the exact byte pattern with either ESI or EDI as the scan
+  ;; register, skips failing descriptors in WAT, and resumes at the normal x86
+  ;; allocation path or loop exit.
+  (func $fast_msvc_sbh_scan (result i32)
+    (local $wa i32) (local $scan i32) (local $page i32)
+    (local $first i32) (local $mode i32) (local $match i32)
+    (local.set $wa (call $g2w (global.get $eip)))
+    (local.set $mode (i32.const 0))
+
+    ;; ESI scan / EDI page variant.
+    (local.set $match (i32.const 1))
+    (if (i32.ne (i32.load16_u (local.get $wa)) (i32.const 0x068B)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=2 (local.get $wa)) (i32.const 0xC33B)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x1B7C)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=6 (local.get $wa)) (i32.const 0x5E39)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load8_u offset=8 (local.get $wa)) (i32.const 0x04)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=9 (local.get $wa)) (i32.const 0x1676)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=0x21 (local.get $wa)) (i32.const 0xC683)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=0x2C (local.get $wa)) (i32.const 0xD272)) (then (local.set $match (i32.const 0))))
+    (if (local.get $match)
+      (then
+        (local.set $mode (i32.const 1))
+        (local.set $scan (global.get $esi))
+        (local.set $page (global.get $edi))))
+
+    ;; EDI scan / ESI page variant.
+    (local.set $match (i32.eqz (local.get $mode)))
+    (if (i32.ne (i32.load16_u (local.get $wa)) (i32.const 0x078B)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=2 (local.get $wa)) (i32.const 0xC33B)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x1B7C)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=6 (local.get $wa)) (i32.const 0x5F39)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load8_u offset=8 (local.get $wa)) (i32.const 0x04)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=9 (local.get $wa)) (i32.const 0x1676)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=0x21 (local.get $wa)) (i32.const 0xC783)) (then (local.set $match (i32.const 0))))
+    (if (i32.ne (i32.load16_u offset=0x2C (local.get $wa)) (i32.const 0xD272)) (then (local.set $match (i32.const 0))))
+    (if (local.get $match)
+      (then
+        (local.set $mode (i32.const 2))
+        (local.set $scan (global.get $edi))
+        (local.set $page (global.get $esi))))
+
+    (if (i32.eqz (local.get $mode)) (then (return (i32.const 0))))
+
+    (block $done (loop $scan_loop
+      (if (i32.ge_u (local.get $scan) (global.get $ebp))
+        (then
+          (if (i32.eq (local.get $mode) (i32.const 1))
+            (then
+              (global.set $esi (local.get $scan))
+              (global.set $edi (local.get $page)))
+            (else
+              (global.set $edi (local.get $scan))
+              (global.set $esi (local.get $page))))
+          (global.set $eip (i32.add (global.get $eip) (i32.const 0x2E)))
+          (return (i32.const 1))))
+
+      (local.set $first (i32.load (call $g2w (local.get $scan))))
+      (if (i32.and
+            (i32.ge_s (local.get $first) (global.get $ebx))
+            (i32.gt_u (i32.load offset=4 (call $g2w (local.get $scan))) (global.get $ebx)))
+        (then
+          (global.set $eax (local.get $first))
+          (if (i32.eq (local.get $mode) (i32.const 1))
+            (then
+              (global.set $esi (local.get $scan))
+              (global.set $edi (local.get $page)))
+            (else
+              (global.set $edi (local.get $scan))
+              (global.set $esi (local.get $page))))
+          (global.set $eip (i32.add (global.get $eip) (i32.const 0x0B)))
+          (return (i32.const 1))))
+
+      (local.set $scan (i32.add (local.get $scan) (i32.const 8)))
+      (local.set $page (i32.add (local.get $page) (i32.const 0x1000)))
+      (br $scan_loop)))
+    (i32.const 1))
+
+  ;; Back a high guest VirtualAlloc commit with real WASM memory. Entries are
+  ;; coalesced when the guest commits adjacent 64KB chunks in order, which keeps
+  ;; g2w's sparse-map scan short for CRT small-block heap arenas.
+  (func $virtual_map_commit (param $guest i32) (param $size i32) (result i32)
+    (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
+    (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
+    (local $backing i32) (local $map_end i32) (local $backing_end i32)
+    (local.set $guest_end (i32.add (local.get $guest) (local.get $size)))
+    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $backing_ptr (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
+    (if (i32.eqz (local.get $backing_ptr))
+      (then (local.set $backing_ptr (global.get $VIRTUAL_BACKING_BASE))))
+
+    (local.set $i (i32.const 0))
+    (block $scan_done (loop $scan
+      (br_if $scan_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $base (i32.load (local.get $rec)))
+      (local.set $map_size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+      (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+      (local.set $map_end (i32.add (local.get $base) (local.get $map_size)))
+      (local.set $backing_end (i32.add (local.get $backing) (local.get $map_size)))
+      (if (i32.and
+            (i32.ge_u (local.get $guest) (local.get $base))
+            (i32.le_u (local.get $guest_end) (local.get $map_end)))
+        (then (return (local.get $guest))))
+      (if (i32.and
+            (i32.eq (local.get $guest) (local.get $map_end))
+            (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
+        (then
+          (if (i32.gt_u
+                (i32.add (local.get $backing_ptr) (local.get $size))
+                (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
+            (then (return (i32.const 0))))
+          (call $zero_memory (local.get $backing_ptr) (local.get $size))
+          (i32.store (i32.add (local.get $rec) (i32.const 4))
+            (i32.add (local.get $map_size) (local.get $size)))
+          (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+            (i32.add (local.get $backing_ptr) (local.get $size)))
+          (return (local.get $guest))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+
+    (if (i32.ge_u (local.get $count) (global.get $MAX_VIRTUAL_MAPS))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u
+          (i32.add (local.get $backing_ptr) (local.get $size))
+          (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
+      (then (return (i32.const 0))))
+    (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $count) (i32.const 4))))
+    (i32.store (local.get $rec) (local.get $guest))
+    (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $size))
+    (i32.store (i32.add (local.get $rec) (i32.const 8)) (local.get $backing_ptr))
+    (i32.store (i32.add (local.get $rec) (i32.const 12)) (i32.const 0))
+    (call $zero_memory (local.get $backing_ptr) (local.get $size))
+    (i32.store (global.get $VIRTUAL_MAP_STATE) (i32.add (local.get $count) (i32.const 1)))
+    (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+      (i32.add (local.get $backing_ptr) (local.get $size)))
+    (local.get $guest))
+
+  ;; HeapAlloc starts in the low direct guest window for compatibility, then
+  ;; spills to sparse high guest chunks when that window reaches emulator-private
+  ;; memory. This keeps Windows heap pointers valid without moving code caches.
+  (func $heap_sparse_alloc (param $need i32) (result i32)
+    (local $chunk i32) (local $new_top i32) (local $ptr i32)
+    (if (i32.or
+          (i32.eqz (global.get $heap_sparse_ptr))
+          (i32.gt_u
+            (i32.add (global.get $heap_sparse_ptr) (local.get $need))
+            (global.get $heap_sparse_end)))
+      (then
+        (local.set $chunk
+          (i32.and
+            (i32.add (local.get $need) (i32.const 0xFFF))
+            (i32.const 0xFFFFF000)))
+        (if (i32.lt_u (local.get $chunk) (i32.const 0x00100000))
+          (then (local.set $chunk (i32.const 0x00100000))))
+        (local.set $chunk
+          (i32.and
+            (i32.add (local.get $chunk) (i32.const 0xFFFF))
+            (i32.const 0xFFFF0000)))
+        (if (i32.eqz (global.get $virtual_alloc_top))
+          (then (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+        (local.set $new_top
+          (i32.and
+            (i32.sub (global.get $virtual_alloc_top) (local.get $chunk))
+            (i32.const 0xFFFF0000)))
+        (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (call $virtual_map_commit (local.get $new_top) (local.get $chunk)))
+          (then (return (i32.const 0))))
+        (global.set $virtual_alloc_top (local.get $new_top))
+        (global.set $heap_sparse_ptr (local.get $new_top))
+        (global.set $heap_sparse_end (i32.add (local.get $new_top) (local.get $chunk)))))
+    (local.set $ptr (global.get $heap_sparse_ptr))
+    (global.set $heap_sparse_ptr (i32.add (global.get $heap_sparse_ptr) (local.get $need)))
+    (i32.store (call $g2w (local.get $ptr)) (local.get $need))
+    (local.get $ptr))
+
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
   ;; Falls back to bump allocation when no free block fits.
@@ -66,8 +259,13 @@
     (local $need i32) (local $ptr i32)
     (local $prev_w i32) (local $cur i32) (local $cur_w i32)
     (local $bsz i32) (local $rem i32)
+    ;; Refuse huge/overflowing allocations before adding the block header.
+    (if (i32.gt_u (local.get $size) (i32.const 0x7FFFFFF0))
+      (then (return (i32.const 0))))
     ;; need = align8(size + 4 header), minimum 16
     (local.set $need (i32.and (i32.add (i32.add (local.get $size) (i32.const 4)) (i32.const 7)) (i32.const 0xFFFFFFF8)))
+    (if (i32.lt_u (local.get $need) (local.get $size))
+      (then (return (i32.const 0))))
     (if (i32.lt_u (local.get $need) (i32.const 16)) (then (local.set $need (i32.const 16))))
     ;; Walk free list (guest pointers)
     (local.set $prev_w (i32.const 0)) ;; 0 = scanning from head
@@ -100,20 +298,24 @@
       (local.set $cur (i32.load (i32.add (local.get $cur_w) (i32.const 4))))
       (br $fl)))
       ;; No free block found — bump allocate.
-      ;; OOM guard: refuse if the next heap byte would escape WASM linear
-      ;; memory or land in the thunk zone (guest-code-facing thunks for
-      ;; Win32 API imports). Pawn-style chess engines ask for 64 MB
-      ;; transposition tables that could trip this; return 0 so the app
-      ;; handles OOM. Both sides compared in WASM space.
-      ;;
-      ;; The LHS uses g2w so post-PE-load (heap_ptr is a guest address)
-      ;; and pre-PE-load (heap_ptr holds the default guest 0x03D12000)
-      ;; both resolve to the physical WASM offset the next byte will
-      ;; occupy. The RHS THUNK_BASE is already a WASM-space constant.
+      ;; OOM guard: refuse if the next heap byte would escape low guest
+      ;; memory and land in emulator-private decoded-code/cache regions.
+      ;; Pawn-style chess engines ask for 64 MB transposition tables that
+      ;; could trip this; return 0 so the app handles OOM. VirtualAlloc
+      ;; reservations are sparse address-space claims in this emulator and do
+      ;; not cap HeapAlloc growth until they commit into real low memory.
+      (if (i32.lt_u
+            (i32.add (global.get $heap_ptr) (local.get $need))
+            (global.get $heap_ptr))
+        (then
+          (local.set $ptr (call $heap_sparse_alloc (local.get $need)))
+          (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))
       (if (i32.gt_u
             (call $g2w (i32.add (global.get $heap_ptr) (local.get $need)))
-            (global.get $THUNK_BASE))
-        (then (return (i32.const 0))))
+            (global.get $THREAD_CACHE_BASE))
+        (then
+          (local.set $ptr (call $heap_sparse_alloc (local.get $need)))
+          (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))
       (local.set $ptr (global.get $heap_ptr))
       (i32.store (call $g2w (local.get $ptr)) (local.get $need))
       (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need))))

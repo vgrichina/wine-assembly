@@ -536,7 +536,7 @@ class WineAssembly {
     const imports = this.getImports();
 
     // Create shared memory externally
-    this.memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+    this.memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     imports.host.memory = this.memory;
 
     this.instance = await WebAssembly.instantiate(wasmModule, imports);

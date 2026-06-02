@@ -24,7 +24,7 @@ const { Win98Renderer } = require('../lib/renderer');
 async function bootRenderHarness({ extraHostOverrides = {}, width = 640, height = 480 } = {}) {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
-  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const canvas = createCanvas(width, height);
   const renderer = new Win98Renderer(canvas);
   const ctx = {

@@ -5,7 +5,7 @@ const { createHostImports } = require('../lib/host-imports');
 const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
-const { decodeMfcCString } = require('../lib/mem-utils');
+const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
@@ -104,6 +104,7 @@ const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break 
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
 const TRACE_AT_DUMP = getArg('trace-at-dump', null); // --trace-at-dump=0xADDR:LEN[,0xADDR:LEN,...]: hexdump these regions on each --trace-at hit
+const TRACE_AT_MEM = getArg('trace-at-mem', null); // --trace-at-mem=REG+OFF:LEN[,ADDR:LEN]: log memory at each --trace-at hit
 const TRACE_AT_START_BATCH = parseInt(getArg('trace-at-start-batch', '0'), 10) || 0; // delay --trace-at logging until batch N
 const TRACE_AT_LIMIT = parseInt(getArg('trace-at-limit', '0'), 10) || 0; // stop logging after N --trace-at hits (0 = unlimited)
 const BREAK_API = getArg('break-api', null); // --break-api=Name[,Name,...]: break on API call
@@ -205,6 +206,10 @@ const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const addr = /\+/.test(a) ? 0 : (parseInt(a, 16) >>> 0); // resolved later if module-relative
   return { addr, spec: a, len: parseInt(l) || 64, prev: null };
 }) : [];
+const traceAtMem = TRACE_AT_MEM ? TRACE_AT_MEM.split(',').map(s => {
+  const [expr, l] = s.split(':');
+  return { expr: (expr || '').trim(), len: parseInt(l) || 4 };
+}).filter(d => d.expr) : [];
 const traceEipDumps = TRACE_EIP_DUMP ? TRACE_EIP_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
   return { addr: parseInt(a, 16) >>> 0, len: parseInt(l) || 32 };
@@ -675,6 +680,7 @@ async function main() {
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
     sharedAudio: {},  // shared waveOut state across threads
+    g2w: (addr) => ctx.exports ? translateGuest(addr, ctx.exports.get_image_base(), ctx.getMemory()) : addr,
     readFile: (name) => {
       // Try to find file relative to exe directory
       const exeDir = path.dirname(EXE_PATH);
@@ -1177,7 +1183,7 @@ async function main() {
   h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
 
   // Create shared memory externally (WASM module imports it)
-  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 
@@ -1253,6 +1259,7 @@ async function main() {
       audioStatsStride: ctx.audioStatsStride,
       _debugReadFile: TRACE_API,
       sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
+      g2w: (addr) => translateGuest(addr, instance.exports.get_image_base(), memory.buffer),
     };
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;
@@ -1538,8 +1545,7 @@ async function main() {
   };
 
   const g2w = addr => {
-    const imageBase = instance.exports.get_image_base();
-    return addr - imageBase + 0x12000;
+    return translateGuest(addr, instance.exports.get_image_base(), memory.buffer);
   };
 
   const dumpStack = (label, count = 14) => {
@@ -2065,8 +2071,19 @@ async function main() {
         const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
         const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
         const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        let extra = '';
+        if (h && cls === 2 && we.get_edit_text && we.guest_alloc) {
+          const scratchG = we.guest_alloc(512);
+          const n = we.get_edit_text(h, scratchG, 511);
+          const wa = g2w(scratchG);
+          const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, n));
+          extra = ` parent=0x${parent.toString(16)} text=${JSON.stringify(Buffer.from(bytes).toString('latin1'))}`;
+        } else if (parent) {
+          extra = ` parent=0x${parent.toString(16)}`;
+        }
         const tag = ev.label ? ` ${ev.label}` : '';
-        logs.push(`[input] dump-focus${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} at batch ${batch}`);
+        logs.push(`[input] dump-focus${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id}${extra} at batch ${batch}`);
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its
         // filename edit child (ctrl id 0x442), WM_SETTEXT a heap-alloc'd
@@ -3089,7 +3106,61 @@ async function main() {
           if (e.get_flag_res && e.get_flag_op && e.get_flag_a && e.get_flag_b && e.get_flag_sign_shift) {
             flagInfo = ` flags{op=${e.get_flag_op()} a=${hex(e.get_flag_a())} b=${hex(e.get_flag_b())} res=${hex(e.get_flag_res())} sh=${e.get_flag_sign_shift()}}`;
           }
-          console.log(`[TRACE-AT #${traceAtHits}] batch=${batch} ${regs()}${prevInfo}${flagInfo} ${stk}`);
+          let memInfo = '';
+          if (traceAtMem.length) {
+            const regValue = (name) => {
+              switch (String(name || '').toLowerCase()) {
+                case 'eax': return e.get_eax() >>> 0;
+                case 'ecx': return e.get_ecx() >>> 0;
+                case 'edx': return e.get_edx() >>> 0;
+                case 'ebx': return e.get_ebx() >>> 0;
+                case 'esp': return e.get_esp() >>> 0;
+                case 'ebp': return e.get_ebp() >>> 0;
+                case 'esi': return e.get_esi() >>> 0;
+                case 'edi': return e.get_edi() >>> 0;
+                case 'eip': return e.get_eip() >>> 0;
+                default: return null;
+              }
+            };
+            const parseAddrExpr = (expr) => {
+              const s = String(expr || '').replace(/^\[/, '').replace(/\]$/, '').trim();
+              const m = s.match(/^(e(?:ax|bx|cx|dx|sp|bp|si|di|ip))\s*([+-])?\s*(0x[0-9a-fA-F]+|\d+)?$/i);
+              if (m) {
+                const base = regValue(m[1]);
+                if (base === null) return null;
+                const off = m[3] ? parseInt(m[3]) : 0;
+                return ((m[2] === '-') ? (base - off) : (base + off)) >>> 0;
+              }
+              const addr = parseInt(s, 16);
+              return Number.isFinite(addr) ? (addr >>> 0) : null;
+            };
+            const parts = [];
+            for (const d of traceAtMem) {
+              const addr = parseAddrExpr(d.expr);
+              if (addr === null) {
+                parts.push(`${d.expr}=<?>`);
+                continue;
+              }
+              try {
+                const wa = g2w(addr);
+                let val;
+                if (d.len === 1) val = dv.getUint8(wa);
+                else if (d.len === 2) val = dv.getUint16(wa, true);
+                else if (d.len === 4) val = dv.getUint32(wa, true) >>> 0;
+                else {
+                  const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, d.len));
+                  val = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                  parts.push(`${d.expr}@${hex(addr)}=${val}`);
+                  continue;
+                }
+                parts.push(`${d.expr}@${hex(addr)}=${hex(val)}`);
+              } catch (ex) {
+                parts.push(`${d.expr}@${hex(addr)}=<${ex.message}>`);
+              }
+            }
+            memInfo = ` mem{${parts.join(' ')}}`;
+          }
+          console.log(`[TRACE-AT #${traceAtHits}] batch=${batch} ${regs()}${prevInfo}${flagInfo}${memInfo} ${stk}`);
           dumpCallstack('T0', e);
           for (const d of traceAtDumps) {
             if (TRACE_AT_WATCH && d.prev) {
@@ -3334,6 +3405,9 @@ if (VERBOSE) {
     if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
     if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
     if (instance.exports.get_heap_ptr) console.log('heap_ptr:', hex(instance.exports.get_heap_ptr()));
+    if (instance.exports.get_heap_sparse_ptr) console.log('heap_sparse_ptr:', hex(instance.exports.get_heap_sparse_ptr()));
+    if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
+    if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
   }
 

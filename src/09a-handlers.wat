@@ -715,19 +715,47 @@
   )
 
   ;; 38: VirtualAlloc(lpAddr, dwSize, flAllocType, flProtect)
-  ;; Must return page-aligned (0x1000) addresses for reserve/commit
+  ;; NULL reserves return 64KB-granularity bases; commits are page-aligned.
   (func $handle_VirtualAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $size i32)
+    (local $size i32) (local $new_top i32)
+    ;; Round size up to page boundary
+    (local.set $size (i32.and (i32.add (local.get $arg1) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
+    (if (i32.eqz (local.get $size))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (if (local.get $arg0)
-      (then (global.set $eax (local.get $arg0))) ;; MEM_COMMIT at addr, just return it
+      (then
+        (if (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
+          (then
+            ;; Commit into a sparse high guest reserve.
+            (global.set $eax (call $virtual_map_commit (local.get $arg0) (local.get $size))))
+          (else
+            ;; MEM_COMMIT at an existing low address. Refuse commits that would
+            ;; map into emulator-private decoded-code/cache memory.
+            (if (i32.gt_u
+                  (call $g2w (i32.add (local.get $arg0) (local.get $size)))
+                  (global.get $THREAD_CACHE_BASE))
+              (then (global.set $eax (i32.const 0)))
+              (else (global.set $eax (local.get $arg0)))))))
       (else
-        ;; Round size up to page boundary
-        (local.set $size (i32.and (i32.add (local.get $arg1) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
-        ;; Align heap_ptr up to page boundary before allocating
-        (global.set $heap_ptr (i32.and (i32.add (global.get $heap_ptr) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
-        ;; Bump-allocate page-aligned region (no header, VirtualAlloc memory not freed via HeapFree)
-        (global.set $eax (global.get $heap_ptr))
-        (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $size)))))
+        ;; Reserve from a sparse high guest-address arena, separate from
+        ;; HeapAlloc's upward-growing low heap. MEM_RESERVE is address-space
+        ;; bookkeeping; real backing is added only by MEM_COMMIT.
+        (if (i32.eqz (global.get $virtual_alloc_top))
+          (then (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+        (local.set $new_top
+          (i32.and
+            (i32.sub (global.get $virtual_alloc_top) (local.get $size))
+            (i32.const 0xFFFF0000)))
+        (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (global.set $virtual_alloc_top (local.get $new_top))
+            (if (i32.and (local.get $arg2) (i32.const 0x1000))
+              (then (global.set $eax (call $virtual_map_commit (local.get $new_top) (local.get $size))))
+              (else (global.set $eax (local.get $new_top))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 

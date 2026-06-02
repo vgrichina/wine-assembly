@@ -46,9 +46,9 @@ assert(!tm.threads.has(handles[0]), 'reused exited slot should drop old handle b
 
 assert.strictEqual(tm.createThread(0x5000, 0, 0), 0, 'a pending reused slot still counts as occupied');
 
-const fullMemory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+const fullMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const cacheTm = makeThreadManagerWithMemory(fullMemory);
-const worker1CacheIndex = 0x05E52000 + 0x8000;
+const worker1CacheIndex = 0x07152000 + 0x8000;
 const cacheBytes = new Uint8Array(fullMemory.buffer, worker1CacheIndex, 0x8000);
 cacheBytes.fill(0x7f);
 cacheTm._clearWorkerCacheSlot(1);

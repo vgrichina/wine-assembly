@@ -27,7 +27,7 @@ async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
 
   // WAT module imports its memory; create it externally and pass through.
-  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = {
     getMemory: () => memory.buffer,
     renderer: null,

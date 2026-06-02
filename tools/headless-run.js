@@ -38,6 +38,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
+const { g2w: translateGuest } = require('../lib/mem-utils');
 const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 
@@ -133,6 +134,7 @@ async function main() {
     verbose: VERBOSE,
     onExit: () => { stopped = true; },
     trace: new Set(),
+    g2w: (addr) => ctx.exports ? translateGuest(addr, ctx.exports.get_image_base(), ctx.getMemory()) : addr,
     readFile: (name) => {
       const exeDir = path.dirname(EXE_PATH);
       for (const p of [path.join(exeDir, name), path.join(exeDir, path.basename(name)),
@@ -177,7 +179,7 @@ async function main() {
   h.exit = (code) => { stopped = true; };
 
   // Shared memory
-  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   ctx._memory = memory;
   h.memory = memory;
 

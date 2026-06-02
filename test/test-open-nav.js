@@ -31,7 +31,7 @@ try { createCanvas = require('../lib/canvas-compat').createCanvas; } catch (_) {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
 
-  const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const canvas = createCanvas(640, 480);
   const renderer = new Win98Renderer(canvas);
 

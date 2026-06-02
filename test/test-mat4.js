@@ -4,7 +4,7 @@
 const fs = require('fs');
 
 const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
-const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const hostProxy = new Proxy({ memory }, { get: (t, k) => k in t ? t[k] : (() => 0) });
 const imports = { host: hostProxy };
 

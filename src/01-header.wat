@@ -380,7 +380,7 @@
   (import "host" "create_semaphore" (func $host_create_semaphore (param i32 i32) (result i32)))
   (import "host" "release_semaphore" (func $host_release_semaphore (param i32 i32 i32) (result i32)))
 
-  ;; ---- Memory: imported from host, 2048 pages = 128MB initial ----
+  ;; ---- Memory: imported from host, 8192 pages = 512MB initial ----
   ;; Audio output — waveOut bridge to Web Audio API
   (import "host" "wave_out_open" (func $host_wave_out_open (param i32 i32 i32 i32) (result i32)))
   ;; wave_out_open(sampleRate, channels, bitsPerSample, callbackType) → handle
@@ -414,7 +414,7 @@
   (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))
   (import "host" "voice_set_freq" (func $host_voice_set_freq (param i32 i32)))
 
-  (import "host" "memory" (memory 2048 2048 shared))
+  (import "host" "memory" (memory 8192 8192 shared))
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
@@ -570,52 +570,57 @@
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
   ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
-  ;; 0x07F02400  ...     Reserved high WAT-private scratch
+  ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
+  ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
+  ;; 0x07F0A410  ...     Reserved high WAT-private scratch
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
   ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
   ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
-  ;; 0x03C12000  1MB     Guest stack (ESP starts at top)
-  ;; 0x03D12000  1MB     Guest heap
-  ;; 0x03E12000  256KB   IAT thunk zone
-  ;; 0x03E52000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
-  ;; 0x05E52000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
-  ;; 0x05E92000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x06092000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x06092200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
-  ;; 0x06092400  ...     File mapping zone (MapViewOfFile allocations)
-  ;; Total: 2048 pages = 128MB
+  ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
+  ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
+  ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
+  ;; 0x05000000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
+  ;; 0x07012000  1MB     Main guest stack (ESP starts at top 0x07112000)
+  ;; 0x07112000 256KB    IAT thunk zone
+  ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
+  ;; 0x07192000  2MB     PE staging area (supports PEs up to 2MB)
+  ;; 0x07392000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x07392200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07392400  ...     File mapping zone (MapViewOfFile allocations)
+  ;; 0x08000000 384MB    VirtualAlloc backing pool for sparse high guest maps
+  ;; Total: 8192 pages = 512MB
 
   ;; Memory region bases. Fixed regions with a companion *_SIZE global are
   ;; checked by test/test-wat-memory-map.js.
-  (global $PE_STAGING   i32 (i32.const 0x05E92000))
+  (global $PE_STAGING   i32 (i32.const 0x07192000))
   (global $PE_STAGING_SIZE i32 (i32.const 0x00200000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
   (global $GUEST_BASE_SIZE i32 (i32.const 0x03C00000))
-  (global $GUEST_STACK  i32 (i32.const 0x03C12000))
+  (global $GUEST_STACK  i32 (i32.const 0x07012000))
   (global $GUEST_STACK_SIZE i32 (i32.const 0x00100000))
   (global $GUEST_HEAP_BASE i32 (i32.const 0x03D12000))
   (global $GUEST_HEAP_BASE_SIZE i32 (i32.const 0x00100000))
-  (global $THUNK_BASE   i32 (i32.const 0x03E12000))
+  (global $THUNK_BASE   i32 (i32.const 0x07112000))
   (global $THUNK_BASE_SIZE i32 (i32.const 0x00040000))
-  (global $THUNK_END    i32 (i32.const 0x03E52000))
-  (global $THREAD_CACHE_BASE i32 (i32.const 0x03E52000))
+  (global $THUNK_END    i32 (i32.const 0x07152000))
+  (global $THREAD_CACHE_BASE i32 (i32.const 0x05000000))
   (global $THREAD_CACHE_BASE_SIZE i32 (i32.const 0x02000000))
-  (global $CACHE_INDEX_BASE i32 (i32.const 0x05E52000))
+  (global $CACHE_INDEX_BASE i32 (i32.const 0x07152000))
   (global $CACHE_INDEX_BASE_SIZE i32 (i32.const 0x00040000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  (mut i32) (i32.const 0x03E52000))
+  (global $THREAD_BASE  (mut i32) (i32.const 0x05000000))
   ;; THREAD_END = THREAD_BASE + 0x400000. Per-thread partition limit; overflow
   ;; checks use this instead of CACHE_INDEX so main (tid=0) doesn't trample
   ;; T1's thread cache region. Updated in $init_thread per tid.
-  (global $THREAD_END   (mut i32) (i32.const 0x04252000))
-  (global $CACHE_INDEX  (mut i32) (i32.const 0x05E52000))
+  (global $THREAD_END   (mut i32) (i32.const 0x05400000))
+  (global $CACHE_INDEX  (mut i32) (i32.const 0x07152000))
   (global $API_HASH_TABLE i32 (i32.const 0x00004000))
   (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00003000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
@@ -811,6 +816,18 @@
   (global $SYNC_TABLE i32 (i32.const 0x07F01400))
   (global $SYNC_TABLE_SIZE i32 (i32.const 0x00000400))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 64))
+  ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
+  ;; virtual addresses; committed chunks are backed here so they do not collide
+  ;; with the low HeapAlloc arena.
+  (global $VIRTUAL_MAP_STATE i32 (i32.const 0x07F02400))
+  (global $VIRTUAL_MAP_STATE_SIZE i32 (i32.const 0x00000010))
+  (global $VIRTUAL_MAP_TABLE i32 (i32.const 0x07F02410))
+  (global $VIRTUAL_MAP_TABLE_SIZE i32 (i32.const 0x00008000))
+  (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
+  (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
+  (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x18000000))
+  (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
+  (global $VIRTUAL_ALLOC_MIN i32 (i32.const 0x10000000))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
@@ -829,7 +846,7 @@
   (global $generated_code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x03E52000))  ;; = THREAD_BASE
+  (global $thread_alloc (mut i32) (i32.const 0x05000000))  ;; = THREAD_BASE
 
   ;; ============================================================
   ;; CPU STATE
@@ -877,6 +894,12 @@
   ;; Heap
   (global $heap_base (mut i32) (i32.const 0))
   (global $heap_ptr (mut i32) (i32.const 0x03D12000))  ;; heap region: 0x03D12000-0x03E12000 (1MB)
+  (global $heap_sparse_ptr (mut i32) (i32.const 0))
+  (global $heap_sparse_end (mut i32) (i32.const 0))
+  ;; Guest-space top of the downward-growing sparse VirtualAlloc arena. Kept
+  ;; 64KB-aligned to match Win32 allocation granularity for NULL MEM_RESERVE
+  ;; calls.
+  (global $virtual_alloc_top (mut i32) (i32.const 0))
 
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
@@ -943,9 +966,9 @@
   (global $bsearch_thunk   (mut i32) (i32.const 0))  ;; guest addr of CACA000C thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x06092000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (i32.const 0x07392000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
-  (global $DLL_RSRC_TABLE i32 (i32.const 0x06092200))
+  (global $DLL_RSRC_TABLE i32 (i32.const 0x07392200))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.
