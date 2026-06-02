@@ -68,6 +68,22 @@ test('wildcard *.ddv finds only .ddv files', () => {
   assert(names.includes('c.ddv'));
 });
 
+test('relative missing subdir wildcard falls back to current directory', () => {
+  const vfs = makeVFS({ 'c:\\armies_1.cpn': 1, 'c:\\readme.txt': 2, 'c:\\reigno_1.cpn': 3 });
+  const r = vfs.findFirstFile('campaign\\*.cpn');
+  assert(r.handle, 'should find flat campaign files');
+  const names = [r.entry.name];
+  let next;
+  while ((next = vfs.findNextFile(r.handle))) names.push(next.name);
+  assert.deepStrictEqual(names, ['armies_1.cpn', 'reigno_1.cpn']);
+});
+
+test('absolute missing subdir wildcard does not use flat fallback', () => {
+  const vfs = makeVFS({ 'c:\\armies_1.cpn': 1 });
+  const r = vfs.findFirstFile('D:\\campaign\\*.cpn');
+  assert(!r.handle, 'absolute wildcard should not fall back across drives');
+});
+
 test('case insensitive matching', () => {
   const vfs = makeVFS({ 'c:\\readme.txt': 5 });
   const r = vfs.findFirstFile('.\\README.TXT');
