@@ -5673,6 +5673,19 @@
   (func $edit_ctrl_down (result i32)
     (i32.and (call $host_get_async_key_state (i32.const 0x11)) (i32.const 0x8000)))
 
+  (func $edit_notify_change (param $hwnd i32)
+    (local $parent i32) (local $id i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (local.get $parent)
+      (then
+        (local.set $id (call $ctrl_table_get_id (local.get $hwnd)))
+        (drop (call $wnd_send_message
+          (local.get $parent)
+          (i32.const 0x0111)  ;; WM_COMMAND
+          (i32.or (i32.and (local.get $id) (i32.const 0xFFFF))
+                  (i32.const 0x03000000))  ;; EN_CHANGE << 16
+          (local.get $hwnd))))))
+
   (func $edit_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
     (local $name_ptr i32) (local $text_len i32) (local $hdc i32)
@@ -5783,6 +5796,7 @@
         (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x08))
           (then
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
+        (call $edit_notify_change (local.get $hwnd))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -5912,6 +5926,7 @@
                           (i32.sub (local.get $lo) (i32.const 1))
                           (local.get $lo))))))
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
+            (call $edit_notify_change (local.get $hwnd))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
@@ -5923,6 +5938,7 @@
                 (i32.store offset=24 (local.get $state_w)
                   (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
                 (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
+                (call $edit_notify_change (local.get $hwnd))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
@@ -5931,6 +5947,7 @@
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
+        (call $edit_notify_change (local.get $hwnd))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -5975,6 +5992,7 @@
                 (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
                   (then
                     (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+                    (call $edit_notify_change (local.get $hwnd))
                     (call $invalidate_hwnd (local.get $hwnd))))
                 (return (i32.const 0))))
             ;; Ctrl+V (0x56) — paste
@@ -5984,7 +6002,8 @@
                   (then
                     (if (global.get $clipboard_len)
                       (then (call $edit_insert_bytes (local.get $state_w)
-                              (global.get $clipboard_ptr) (global.get $clipboard_len))))
+                              (global.get $clipboard_ptr) (global.get $clipboard_len))
+                            (call $edit_notify_change (local.get $hwnd))))
                     (call $invalidate_hwnd (local.get $hwnd))))
                 (return (i32.const 0))))))
         ;; VK_LEFT 0x25
@@ -6055,6 +6074,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (i32.sub (local.get $cur) (i32.const 1))
                           (local.get $cur))))))
+            (call $edit_notify_change (local.get $hwnd))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_DELETE 0x2E
@@ -6071,6 +6091,7 @@
                   (then (call $edit_delete_range (local.get $state_w)
                           (local.get $cur)
                           (i32.add (local.get $cur) (i32.const 1)))))))
+            (call $edit_notify_change (local.get $hwnd))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_UP 0x26
@@ -6733,6 +6754,7 @@
         (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
           (then
             (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+            (call $edit_notify_change (local.get $hwnd))
             (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
@@ -6745,7 +6767,8 @@
           (then (return (i32.const 0))))
         (if (global.get $clipboard_len)
           (then (call $edit_insert_bytes (local.get $state_w)
-                  (global.get $clipboard_ptr) (global.get $clipboard_len))))
+                  (global.get $clipboard_ptr) (global.get $clipboard_len))
+                (call $edit_notify_change (local.get $hwnd))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -6761,6 +6784,7 @@
         (if (i32.ne (local.get $lo) (local.get $hi))
           (then
             (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
+            (call $edit_notify_change (local.get $hwnd))
             (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
@@ -6807,6 +6831,7 @@
         (i32.store offset=24 (local.get $state_w)
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
+        (call $edit_notify_change (local.get $hwnd))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
