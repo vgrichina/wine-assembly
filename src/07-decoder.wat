@@ -782,12 +782,15 @@
                   (i32.or (i32.eq (local.get $op) (i32.const 0x82)) (i32.eq (local.get $op) (i32.const 0x83))))
         (then
           (call $decode_modrm)
-          ;; imm: 0x81=imm32 (or imm16 with 0x66), others=imm8 sign-extended
+          ;; imm: 0x81=imm32 (or imm16 with 0x66), 0x83=sign-extended imm8.
+          ;; 0x80/0x82 are byte operations; keep the immediate as 0..255.
           (if (i32.eq (local.get $op) (i32.const 0x81))
             (then (if (local.get $prefix_66)
               (then (local.set $imm (call $d_fetch16)))
               (else (local.set $imm (call $d_fetch32)))))
-            (else (local.set $imm (call $sign_ext8 (call $d_fetch8)))))
+            (else (if (i32.eq (local.get $op) (i32.const 0x83))
+              (then (local.set $imm (call $sign_ext8 (call $d_fetch8))))
+              (else (local.set $imm (i32.and (call $d_fetch8) (i32.const 0xFF)))))))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then ;; reg, imm
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))

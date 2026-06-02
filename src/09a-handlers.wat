@@ -2442,6 +2442,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
+  ;; DrawTextExA(hdc, lpString, nCount, lpRect, uFormat, lpDTParams)
+  (func $handle_DrawTextExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_draw_text
+      (local.get $arg0)
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (local.get $arg4)
+      (i32.const 0) ;; isWide = 0
+    ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
+  )
+
   ;; 143: DrawEdge — STUB: unimplemented
   ;; DrawEdge(hdc, qrc, edge, grfFlags) — 4 args stdcall
   (func $handle_DrawEdge (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4881,6 +4894,19 @@
       (i32.const 1) ;; isWide = 1
     ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; DrawTextExW
+  (func $handle_DrawTextExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_draw_text
+      (local.get $arg0)
+      (call $g2w (local.get $arg1))
+      (local.get $arg2)
+      (call $g2w (local.get $arg3))
+      (local.get $arg4)
+      (i32.const 1) ;; isWide = 1
+    ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
   ;; 387: TabbedTextOutW — STUB: unimplemented

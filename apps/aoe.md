@@ -6,6 +6,15 @@
 **Data files:** `test/binaries/shareware/aoe/aoe_ex/data/` — sounds.drs, graphics.drs, Terrain.drs, Border.drs, Interfac.drs
 **Window:** 640×480 (or 800×600), title "Age of Empires"
 
+**Status (2026-06-01):** CPU/API blockers fixed; the full current worktree reaches the in-game map after the briefing OK click.
+
+- Fixed campaign data corruption from overlapping `REP MOVS` copies. WebAssembly `memory.copy` has memmove semantics, but x86 forward `rep movsb`/`rep movsd` propagates reads through the just-written destination when ranges overlap. AoE's `Empires.dat` inflate/load path depends on that behavior.
+- Fixed the post-briefing `ExitProcess(0)`. The decoder sign-extended opcode `0x80` byte immediates, so AoE's `cmp byte [edx], 0xff` over `map.bmp` pixels compared against `0xffffffff`, found no `0xff` markers, left a later divisor at zero, and hit the CRT top-level exit handler. Opcode `0x83` still sign-extends; `0x80`/`0x82` now keep byte immediates as 0..255.
+- Added `DrawTextExA/W` handlers via the existing GDI text draw path; AoE hits `DrawTextExA` while rendering the campaign/player UI.
+- Staged-source validation: `node tools/build-compile-wat.js`, `node test/test-x86-ops.js` (43 passed), and a scripted AoE smoke to 260000 batches that gets past `DrawTextExA` and does not hit the CRT exit wrapper.
+- Full dirty-worktree validation: a scripted AoE run to 320000 batches reaches the playable map. Screenshots at `scratch/aoe-fixed-after-ok-260k.png` and `scratch/aoe-fixed-after-ok-319k.png` show the map. Hit counts: `0x004306cf = 109`, `0x0051cbf0 = 0`.
+- Still not validated: isolating the remaining memory-map/harness changes needed for a clean full-map run, long gameplay, save/load, AI behavior, and browser/audio stability.
+
 **Status (2026-05-29):** Main menu is now visible and clickable.
 
 - Fixed the startup crash caused by a stale/corrupt non-client paint flag synthesizing `WM_NCPAINT` for an invalid HWND. The guard is in `src/10-helpers.wat` and prevents dispatching impossible HWNDs.

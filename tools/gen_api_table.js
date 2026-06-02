@@ -170,6 +170,8 @@ const extra = [
   { name: 'SetMapMode', nargs: 2 },
   { name: 'GetTextMetricsW', nargs: 2 },
   { name: 'CreateFontIndirectW', nargs: 1 },
+  { name: 'DrawTextExA', nargs: 6 },
+  { name: 'DrawTextExW', nargs: 6 },
   { name: 'SetStretchBltMode', nargs: 2 },
   { name: 'GetPixel', nargs: 3 },
   { name: 'SetPixel', nargs: 4 },

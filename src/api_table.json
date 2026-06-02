@@ -11538,5 +11538,19 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3463167992
+  },
+  {
+    "id": 1529,
+    "name": "DrawTextExA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 612066656
+  },
+  {
+    "id": 1530,
+    "name": "DrawTextExW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 981174274
   }
 ]

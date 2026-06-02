@@ -78,6 +78,18 @@ async function main() {
 
   function memAt(addr) { return dv.getUint32(g2w(addr), true); }
   function setMem(addr, val) { dv.setUint32(g2w(addr), val, true); }
+  function setByte(addr, val) { mem[g2w(addr)] = val & 0xFF; }
+  function setBytes(addr, bytes) { mem.set(bytes, g2w(addr)); }
+  function bytesAt(addr, len) { return Array.from(mem.subarray(g2w(addr), g2w(addr) + len)); }
+  function testBytes(name, got, expected) {
+    const ok = got.length === expected.length && got.every((v, i) => v === expected[i]);
+    if (ok) {
+      pass++;
+    } else {
+      console.log(`  FAIL ${name}: got [${got.map(v => '0x' + v.toString(16).padStart(2, '0')).join(', ')}] expected [${expected.map(v => '0x' + v.toString(16).padStart(2, '0')).join(', ')}]`);
+      fail++;
+    }
+  }
 
   // Helper: scratch memory addresses
   const scratch = imageBase + 0x8000;
@@ -204,6 +216,63 @@ async function main() {
   runCode([0xF9, 0xFF, 0x0D, ...le32(decAddr), 0x83, 0xD0, 0x00], () => e.set_eax(0));
   test('DEC [mem] value', memAt(decAddr), 9);
   test('DEC preserves CF', e.get_eax(), 1);
+
+  // ================================================================
+  // CMP r/m8, imm8 — opcode 0x80 must not sign-extend byte immediates
+  // ================================================================
+  const cmpByteAddr = imageBase + 0x8350;
+  setByte(cmpByteAddr, 0xFF);
+  runCode([
+    0x80, 0x3D, ...le32(cmpByteAddr), 0xFF, // cmp byte [addr], 0xff
+    0x75, 0x07,                             // jne fail
+    0xB8, ...le32(1),                       // mov eax, 1
+    0xEB, 0x05,                             // jmp done
+    0xB8, ...le32(2),                       // fail: mov eax, 2
+  ]);
+  test('CMP byte [mem],0xff matches 0xff', e.get_eax(), 1);
+
+  setByte(cmpByteAddr, 0xFE);
+  runCode([
+    0x80, 0x3D, ...le32(cmpByteAddr), 0xFF,
+    0x75, 0x07,
+    0xB8, ...le32(1),
+    0xEB, 0x05,
+    0xB8, ...le32(2),
+  ]);
+  test('CMP byte [mem],0xff rejects 0xfe', e.get_eax(), 2);
+
+  // ================================================================
+  // REP MOVS overlapping forward copies use x86 propagation semantics
+  // ================================================================
+  const movsBytes = imageBase + 0x8500;
+  setBytes(movsBytes, [1, 2, 3, 4, 5, 6, 7, 8]);
+  runCode([
+    0xFC,                         // cld
+    0xBE, ...le32(movsBytes),     // mov esi, src
+    0xBF, ...le32(movsBytes + 1), // mov edi, src+1
+    0xB9, ...le32(6),             // mov ecx, 6
+    0xF3, 0xA4,                   // rep movsb
+  ]);
+  testBytes('REP MOVSB forward overlap propagates bytes', bytesAt(movsBytes, 8), [1, 1, 1, 1, 1, 1, 1, 8]);
+
+  const movsDwords = imageBase + 0x8520;
+  setMem(movsDwords, 0x11111111);
+  setMem(movsDwords + 4, 0x22222222);
+  setMem(movsDwords + 8, 0x33333333);
+  setMem(movsDwords + 12, 0x44444444);
+  setMem(movsDwords + 16, 0x55555555);
+  runCode([
+    0xFC,
+    0xBE, ...le32(movsDwords),
+    0xBF, ...le32(movsDwords + 4),
+    0xB9, ...le32(3),
+    0xF3, 0xA5,                   // rep movsd
+  ]);
+  test('REP MOVSD overlap dword 0', memAt(movsDwords), 0x11111111);
+  test('REP MOVSD overlap dword 1', memAt(movsDwords + 4), 0x11111111);
+  test('REP MOVSD overlap dword 2', memAt(movsDwords + 8), 0x11111111);
+  test('REP MOVSD overlap dword 3', memAt(movsDwords + 12), 0x11111111);
+  test('REP MOVSD overlap dword 4', memAt(movsDwords + 16), 0x55555555);
 
   // ================================================================
   // SAHF/LAHF — flag load/store via AH

@@ -650,7 +650,7 @@
   ;; 52: [addr] OP= imm8  (operand=alu_op, addr+imm in next words)
   (func $th_alu_m8_i8 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
+    (local.set $addr (call $read_addr)) (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFF)))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl8 (local.get $addr)) (local.get $imm)))
     (global.set $flag_sign_shift (i32.const 7))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
