@@ -716,9 +716,11 @@ class WineAssembly {
     let loaded = 0, failed = 0, next = 0;
     const total = urls.length;
     const loadOne = async (item) => {
-      // Accept plain string (flat → c:\basename) or {url, vfsPath} for nested layouts.
+      // Accept plain string (flat -> c:\basename), {url, vfsPath}, or
+      // {url, vfsPaths} when one fetched file needs multiple Win32 aliases.
       const url = (typeof item === 'string') ? item : item.url;
       const explicit = (typeof item === 'object') ? item.vfsPath : null;
+      const explicitPaths = (typeof item === 'object' && Array.isArray(item.vfsPaths)) ? item.vfsPaths : null;
       try {
         const resp = await fetch(url);
         if (!resp.ok) {
@@ -726,9 +728,8 @@ class WineAssembly {
           return;
         }
         const data = new Uint8Array(await resp.arrayBuffer());
-        let vfsPath;
-        if (explicit) {
-          vfsPath = explicit.toLowerCase().replace(/\//g, '\\');
+        const addFile = (rawPath) => {
+          let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
           if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
           // Also register every parent directory so GetFileAttributes(dir) returns FILE_ATTRIBUTE_DIRECTORY.
           let p = vfsPath;
@@ -738,10 +739,15 @@ class WineAssembly {
             p = p.slice(0, idx);
             vfs.dirs.add(p);
           }
+          vfs.files.set(vfsPath, { data, attrs: 0x20 });
+        };
+        if (explicitPaths && explicitPaths.length) {
+          for (const p of explicitPaths) addFile(p);
+        } else if (explicit) {
+          addFile(explicit);
         } else {
-          vfsPath = 'c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase();
+          addFile('c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase());
         }
-        vfs.files.set(vfsPath, { data, attrs: 0x20 });
         loaded++;
       } catch (_) {
         failed++;
