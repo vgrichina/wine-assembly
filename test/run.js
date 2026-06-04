@@ -3670,10 +3670,8 @@ if (VERBOSE) {
     return { mem, surfaces };
   };
 
-  const paintDxSurfaceToCanvas = (canvas, surface, mem) => {
-    const ctx2d = canvas.getContext('2d');
-    const img = ctx2d.createImageData(surface.w, surface.h);
-    const data = img.data;
+  const dxSurfaceToRgba = (surface, mem) => {
+    const data = Buffer.alloc(surface.w * surface.h * 4);
     for (let y = 0; y < surface.h; y++) {
       const srcRow = surface.dib + y * surface.pitch;
       for (let x = 0; x < surface.w; x++) {
@@ -3699,33 +3697,55 @@ if (VERBOSE) {
         data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
       }
     }
-    ctx2d.putImageData(img, 0, 0);
+    return data;
+  };
+
+  const writeRgbaPng = (outPath, width, height, data) => {
+    if (!PNG) throw new Error('pngjs is required for direct PNG capture');
+    const png = new PNG({ width, height });
+    png.data.set(data);
+    const pngBuf = PNG.sync.write(png);
+    fs.writeFileSync(outPath, pngBuf);
+    return pngBuf.length;
   };
 
   if (PNG_OUT && renderer) {
-    if (base.gdi && base.gdi.presentBestDxOffscreen) base.gdi.presentBestDxOffscreen(true);
-    renderer.repaint();
     const { mem, surfaces } = getDxSurfaceManifest();
-    const primary = surfaces.find(s => (s.flags & 1) && s.w === 640 && s.h === 480);
-    const fallback = surfaces.find(s => (s.flags & 4) && s.w === 640 && s.h === 480 && s.firstNonZero >= 0);
-    if (primary && primary.firstNonZero < 0 && fallback) {
-      paintDxSurfaceToCanvas(renderer.canvas, fallback, mem);
-      console.log(`  PNG fallback used offscreen slot ${fallback.slot} because primary slot ${primary.slot} is still zero`);
+    const visiblePrimary = surfaces.find(s => (s.flags & 1) && s.firstNonZero >= 0);
+    const matchingOffscreen = (() => {
+      const prim = surfaces.find(s => (s.flags & 1));
+      if (!prim) return null;
+      return surfaces.find(s =>
+        (s.flags & 4) &&
+        s.w === prim.w &&
+        s.h === prim.h &&
+        s.bpp === prim.bpp &&
+        s.firstNonZero >= 0);
+    })();
+    const fallback = surfaces.find(s => (s.flags & 4) && s.w >= 320 && s.h >= 200 && s.firstNonZero >= 0);
+    const surface = visiblePrimary || matchingOffscreen || fallback;
+    if (surface) {
+      const bytes = writeRgbaPng(PNG_OUT, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
+      console.log(`Wrote ${PNG_OUT} (${bytes} bytes, dx slot ${surface.slot} ${surface.w}x${surface.h})`);
+    } else {
+      renderer.repaint();
+      const w = renderer.canvas.width | 0;
+      const h = renderer.canvas.height | 0;
+      const img = renderer.canvas.getContext('2d').getImageData(0, 0, w, h);
+      const bytes = writeRgbaPng(PNG_OUT, w, h, img.data);
+      console.log(`Wrote ${PNG_OUT} (${bytes} bytes, canvas ${w}x${h})`);
     }
-    const pngBuf = renderer.canvas.toBuffer('image/png');
-    fs.writeFileSync(PNG_OUT, pngBuf);
-    console.log(`Wrote ${PNG_OUT} (${pngBuf.length} bytes)`);
-    // DEBUG: also dump every window's _backCanvas so we can see what's
-    // accumulated independent of the compositor.
-    for (const [hwnd, win] of Object.entries(renderer.windows)) {
-      if (win) {
-        console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
-      }
-      if (win && win._backCanvas) {
-        const back = win._backCanvas.toBuffer('image/png');
-        const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);
-        fs.writeFileSync(out, back);
-        console.log(`  Wrote ${out} (${back.length} bytes, ${win._backW}x${win._backH})`);
+    if (DUMP_BACKCANVAS) {
+      for (const [hwnd, win] of Object.entries(renderer.windows)) {
+        if (win) {
+          console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
+        }
+        if (win && win._backCanvas) {
+          const back = win._backCanvas.toBuffer('image/png');
+          const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);
+          fs.writeFileSync(out, back);
+          console.log(`  Wrote ${out} (${back.length} bytes, ${win._backW}x${win._backH})`);
+        }
       }
     }
   }
