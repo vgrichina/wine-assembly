@@ -1633,8 +1633,16 @@
 
   ;; 97: GetCursorPos
   (func $handle_GetCursorPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg0) (global.get $last_msg_pos_x))
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (global.get $last_msg_pos_y))
+    (local $pos i32)
+    (local $x i32)
+    (local $y i32)
+    (local.set $pos (call $host_get_mouse_position))
+    (local.set $x (i32.and (local.get $pos) (i32.const 0xFFFF)))
+    (local.set $y (i32.and (i32.shr_u (local.get $pos) (i32.const 16)) (i32.const 0xFFFF)))
+    (global.set $last_msg_pos_x (local.get $x))
+    (global.set $last_msg_pos_y (local.get $y))
+    (call $gs32 (local.get $arg0) (local.get $x))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $y))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -3938,7 +3946,13 @@
 
   ;; 302: GetKeyState(nVirtKey) → SHORT — 1 arg stdcall
   (func $handle_GetKeyState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    ;; Return the current high-bit down state without consuming
+    ;; GetAsyncKeyState's one-shot press latch. Toggle-key low bits are not
+    ;; tracked yet.
+    (global.set $eax
+      (i32.and
+        (call $host_get_key_down_state (local.get $arg0))
+        (i32.const 0x8000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3982,14 +3996,15 @@
 
   ;; GetKeyboardState(LPBYTE lpKeyState[256]) → BOOL — 1 arg stdcall.
   ;; SDL polls this every frame to build its keyboard snapshot. Fill the 256-byte
-  ;; buffer from $host_get_async_key_state so currently-held keys show up there.
+  ;; buffer from $host_get_key_down_state so currently-held keys show up there
+  ;; without consuming GetAsyncKeyState's one-shot low press bit.
   (func $handle_GetKeyboardState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $i i32) (local $w i32) (local $s i32)
     (local.set $w (call $g2w (local.get $arg0)))
     (local.set $i (i32.const 0))
     (block $done (loop $loop
       (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-      (local.set $s (call $host_get_async_key_state (local.get $i)))
+      (local.set $s (call $host_get_key_down_state (local.get $i)))
       ;; GetAsyncKeyState returns 0x8000 in high bit if down. Translate to
       ;; GetKeyboardState's high-bit-set byte (0x80) when down, else 0.
       (i32.store8 (i32.add (local.get $w) (local.get $i))
@@ -8038,7 +8053,7 @@
 
   ;; 636: PeekMessageW — same as PeekMessageA
   (func $handle_PeekMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $msg i32) (local $tmp i32)
+    (local $packed i32) (local $msg i32) (local $tmp i32) (local $lparam i32)
     ;; Check posted message queue
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
@@ -8081,12 +8096,18 @@
             (local.set $tmp (call $host_check_input_hwnd))
             (if (i32.eqz (local.get $tmp))
               (then (local.set $tmp (global.get $main_hwnd))))
+            (local.set $lparam (call $host_check_input_lparam))
             (call $gs32 (local.get $arg0) (local.get $tmp))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $msg))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
               (i32.shr_u (local.get $packed) (i32.const 16)))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
-              (call $host_check_input_lparam))
+              (local.get $lparam))
+            (call $msg_store_input_tail
+              (local.get $arg0)
+              (local.get $tmp)
+              (local.get $msg)
+              (local.get $lparam))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)
@@ -8204,7 +8225,7 @@
 
   ;; 647: GetMessageW — same as GetMessageA
   (func $handle_GetMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
+    (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $lparam i32)
     (local.set $msg_ptr (local.get $arg0))
     (if (i32.eqz (local.get $msg_ptr))
       (then
@@ -8338,13 +8359,19 @@
     (local.set $tmp (call $host_check_input_hwnd))
     (if (i32.eqz (local.get $tmp))
     (then (local.set $tmp (global.get $main_hwnd))))
+    (local.set $lparam (call $host_check_input_lparam))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
     (i32.and (local.get $packed) (i32.const 0xFFFF)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
     (i32.shr_u (local.get $packed) (i32.const 16)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-    (call $host_check_input_lparam))
+    (local.get $lparam))
+    (call $msg_store_input_tail
+      (local.get $msg_ptr)
+      (local.get $tmp)
+      (i32.and (local.get $packed) (i32.const 0xFFFF))
+      (local.get $lparam))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No input — deliver WM_PAINT if pending. Match GetMessageA:
@@ -8701,6 +8728,7 @@
 
   ;; 676: SetCursorPos(x, y) → BOOL — 2 args stdcall
   (func $handle_SetCursorPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_set_mouse_position (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

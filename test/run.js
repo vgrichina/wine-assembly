@@ -53,6 +53,8 @@ const TRACE_API_FILTER = (TRACE_API_RAW && TRACE_API_RAW.includes('='))
   : null;
 const TRACE_API_DEDUP = hasFlag('trace-api-dedup'); // --trace-api-dedup: collapse N consecutive identical lines into "(xN)"
 const TRACE_API_COUNTS = hasFlag('trace-api-counts'); // --trace-api-counts: print histogram of API call names at end
+const TRACE_MOUSE_STATE = hasFlag('trace-mouse-state'); // --trace-mouse-state: log renderer mouse state changes seen by host imports
+const TRACE_INPUT_DISPATCH = hasFlag('trace-input-dispatch'); // --trace-input-dispatch: log mouse/key MSGs entering DispatchMessage
 // --trace-stack[=N|=Name1,Name2|=Name:N,...]: walk EBP chain on matched API calls
 const TRACE_STACK_RAW = args.find(a => a === '--trace-stack' || a.startsWith('--trace-stack='));
 const TRACE_STACK = !!TRACE_STACK_RAW;
@@ -738,6 +740,26 @@ async function main() {
     apiCount++;
     if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
 
+    if (TRACE_INPUT_DISPATCH && (t === 'DispatchMessageA' || t === 'DispatchMessageW')) {
+      try {
+        const e = instance.exports;
+        const esp = e.get_esp();
+        const imageBase = e.get_image_base();
+        const dv = new DataView(memory.buffer);
+        const g2w = addr => addr - imageBase + 0x12000;
+        const msgPtr = dv.getUint32(g2w(esp + 4), true);
+        const msgHwnd = dv.getUint32(g2w(msgPtr), true);
+        const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
+        const msgWP = dv.getUint32(g2w(msgPtr + 8), true);
+        const msgLP = dv.getUint32(g2w(msgPtr + 12), true);
+        if ((msgMsg >= 0x0100 && msgMsg <= 0x0108) ||
+            (msgMsg >= 0x0200 && msgMsg <= 0x020D) ||
+            (msgMsg >= 0x00A0 && msgMsg <= 0x00AD)) {
+          logs.push(`[dispatch-input] ${t} hwnd=0x${msgHwnd.toString(16)} msg=0x${msgMsg.toString(16)} wParam=0x${msgWP.toString(16)} lParam=0x${(msgLP >>> 0).toString(16)}`);
+        }
+      } catch (_) {}
+    }
+
     // Check API breakpoints
     if (breakApis.length && breakApis.some(name => t.includes(name))) {
       apiBreakHit = t;
@@ -1154,7 +1176,7 @@ async function main() {
     if (!evt) return 0;
     lastInputEvent = evt;
     const packed = (evt.wParam << 16) | (evt.msg & 0xFFFF);
-    logs.push(`[check_input] msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} packed=0x${packed.toString(16)}`);
+    logs.push(`[check_input] msg=0x${evt.msg.toString(16)} wParam=0x${evt.wParam.toString(16)} lParam=0x${(evt.lParam >>> 0).toString(16)} packed=0x${packed.toString(16)}`);
     return packed;
   };
   // Default hwnd routing: keyboard messages (WM_KEYDOWN..WM_SYSCHAR, 0x100-0x108)
@@ -1179,8 +1201,69 @@ async function main() {
     return 0;
   };
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
+  let lastMouseTracePos = -1;
+  let lastMouseTraceButtons = -1;
+  const lastAsyncMouseTrace = Object.create(null);
+  const traceMouseSnapshot = (reason, force) => {
+    if (!TRACE_MOUSE_STATE || !renderer) return;
+    const pos = renderer.getMousePosition ? (renderer.getMousePosition() >>> 0) : 0;
+    const buttons = renderer.getMouseButtons ? (renderer.getMouseButtons() >>> 0) : 0;
+    if (!force && pos === lastMouseTracePos && buttons === lastMouseTraceButtons) return;
+    lastMouseTracePos = pos;
+    lastMouseTraceButtons = buttons;
+    const x = pos & 0xFFFF;
+    const y = (pos >>> 16) & 0xFFFF;
+    logs.push(`[mouse-state] ${reason} x=${x} y=${y} buttons=${hex(buttons)}`);
+  };
+  const baseGetWindowRect = h.get_window_rect;
+  let lastWindowRectTrace = '';
+  h.get_window_rect = (hwnd, rectPtr) => {
+    baseGetWindowRect(hwnd, rectPtr);
+    if (TRACE_MOUSE_STATE) {
+      const mem = new DataView(ctx.getMemory());
+      const l = mem.getInt32(rectPtr, true);
+      const t = mem.getInt32(rectPtr + 4, true);
+      const r = mem.getInt32(rectPtr + 8, true);
+      const b = mem.getInt32(rectPtr + 12, true);
+      const line = `hwnd=0x${(hwnd >>> 0).toString(16)} rect=${l},${t},${r},${b}`;
+      if (line !== lastWindowRectTrace) {
+        lastWindowRectTrace = line;
+        logs.push(`[mouse-state] GetWindowRect ${line}`);
+      }
+    }
+  };
+  h.get_mouse_position = () => {
+    traceMouseSnapshot('get_mouse_position', false);
+    return renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0;
+  };
+  h.set_mouse_position = (x, y) => {
+    if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y);
+    traceMouseSnapshot(`set_mouse_position ${x | 0},${y | 0}`, true);
+  };
+  h.get_mouse_buttons = () => {
+    traceMouseSnapshot('get_mouse_buttons', false);
+    return renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0;
+  };
   // GetAsyncKeyState backing — delegate to renderer's stateful key map
-  h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
+  h.get_async_key_state = (vKey) => {
+    const value = renderer ? renderer.getAsyncKeyState(vKey) : 0;
+    const key = vKey & 0xFF;
+    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastAsyncMouseTrace[key] !== value) {
+      lastAsyncMouseTrace[key] = value;
+      traceMouseSnapshot(`GetAsyncKeyState(${hex(key)})=${hex(value)}`, true);
+    }
+    return value;
+  };
+  const lastKeyDownMouseTrace = Object.create(null);
+  h.get_key_down_state = (vKey) => {
+    const value = renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vKey) : 0;
+    const key = vKey & 0xFF;
+    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastKeyDownMouseTrace[key] !== value) {
+      lastKeyDownMouseTrace[key] = value;
+      traceMouseSnapshot(`GetKeyDownState(${hex(key)})=${hex(value)}`, true);
+    }
+    return value;
+  };
 
   // Create shared memory externally (WASM module imports it)
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });

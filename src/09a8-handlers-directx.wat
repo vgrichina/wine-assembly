@@ -89,6 +89,7 @@
   ;; DirectInput mouse tracking (for relative dx/dy)
   (global $di_mouse_last_x (mut i32) (i32.const 0))
   (global $di_mouse_last_y (mut i32) (i32.const 0))
+  (global $di_mouse_initialized (mut i32) (i32.const 0))
 
   ;; WASM address of the palette data for the primary surface (256 RGBQUAD entries)
   ;; Set by IDirectDrawSurface::SetPalette
@@ -2580,7 +2581,7 @@
   ;; For mouse: fill DIMOUSESTATE (dx, dy, dz, rgbButtons[4]) = 16 bytes
   (func $handle_IDirectInputDevice_GetDeviceState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $dev_type i32) (local $wa i32) (local $i i32)
-    (local $screen i32) (local $mx i32) (local $my i32)
+    (local $pos i32) (local $mx i32) (local $my i32) (local $dx i32) (local $dy i32) (local $buttons i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (local.set $wa (call $g2w (local.get $arg2)))
@@ -2591,19 +2592,37 @@
         (local.set $i (i32.const 0))
         (block $kbd_done (loop $kbd_lp
           (br_if $kbd_done (i32.ge_u (local.get $i) (i32.const 256)))
-          (if (i32.and (call $host_get_async_key_state (local.get $i)) (i32.const 0x8000))
+          (if (i32.and (call $host_get_key_down_state (local.get $i)) (i32.const 0x8000))
             (then (i32.store8 (i32.add (local.get $wa) (local.get $i)) (i32.const 0x80))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $kbd_lp))))
       (else
         ;; Mouse — DIMOUSESTATE: lX(4), lY(4), lZ(4), rgbButtons[4](4)
-        ;; Get current mouse position from host (packed w|h << 16)
-        (local.set $screen (call $host_get_screen_size))
-        ;; We don't have direct mouse coords from host_get_screen_size.
-        ;; Use host_check_input to poll — but that consumes messages.
-        ;; For now, return 0 relative movement. Real tracking needs
-        ;; the message pump to accumulate dx/dy.
-        ;; TODO: track mouse deltas from WM_MOUSEMOVE in the message loop
+        (local.set $pos (call $host_get_mouse_position))
+        (local.set $mx (i32.and (local.get $pos) (i32.const 0xFFFF)))
+        (local.set $my (i32.and (i32.shr_u (local.get $pos) (i32.const 16)) (i32.const 0xFFFF)))
+        (if (i32.eqz (global.get $di_mouse_initialized))
+          (then
+            (global.set $di_mouse_initialized (i32.const 1))
+            (global.set $di_mouse_last_x (local.get $mx))
+            (global.set $di_mouse_last_y (local.get $my))))
+        (local.set $dx (i32.sub (local.get $mx) (global.get $di_mouse_last_x)))
+        (local.set $dy (i32.sub (local.get $my) (global.get $di_mouse_last_y)))
+        (global.set $di_mouse_last_x (local.get $mx))
+        (global.set $di_mouse_last_y (local.get $my))
+        (local.set $buttons (call $host_get_mouse_buttons))
+        (if (i32.ge_u (local.get $arg1) (i32.const 4))
+          (then (i32.store (local.get $wa) (local.get $dx))))
+        (if (i32.ge_u (local.get $arg1) (i32.const 8))
+          (then (i32.store offset=4 (local.get $wa) (local.get $dy))))
+        (if (i32.ge_u (local.get $arg1) (i32.const 13))
+          (then
+            (if (i32.and (local.get $buttons) (i32.const 0x0001))
+              (then (i32.store8 offset=12 (local.get $wa) (i32.const 0x80))))))
+        (if (i32.ge_u (local.get $arg1) (i32.const 14))
+          (then
+            (if (i32.and (local.get $buttons) (i32.const 0x0002))
+              (then (i32.store8 offset=13 (local.get $wa) (i32.const 0x80))))))
         ))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))

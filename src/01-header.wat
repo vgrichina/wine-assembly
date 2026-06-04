@@ -67,6 +67,12 @@
   ;; check_input_lparam() → lParam of last check_input event
   (import "host" "check_input_hwnd" (func $host_check_input_hwnd (result i32)))
   ;; check_input_hwnd() → hwnd of last check_input event (0 = use main_hwnd)
+  (import "host" "get_mouse_position" (func $host_get_mouse_position (result i32)))
+  ;; get_mouse_position() → packed x | (y << 16), in renderer/source coords
+  (import "host" "set_mouse_position" (func $host_set_mouse_position (param i32 i32)))
+  ;; set_mouse_position(x, y) — update the renderer's virtual cursor
+  (import "host" "get_mouse_buttons" (func $host_get_mouse_buttons (result i32)))
+  ;; get_mouse_buttons() → MK_* style button bitmask (1=left, 2=right)
   (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
   ;; set_window_class(hwnd, class_name_ptr)
   (import "host" "set_parent" (func $host_set_parent (param i32 i32)))
@@ -310,6 +316,7 @@
   ;; get_window_client_size(hwnd) → (clientW | (clientH << 16))
 
   (import "host" "get_async_key_state" (func $host_get_async_key_state (param i32) (result i32)))
+  (import "host" "get_key_down_state" (func $host_get_key_down_state (param i32) (result i32)))
 
   ;; Math host imports (for FPU transcendentals)
   (import "host" "math_sin" (func $host_math_sin (param f64) (result f64)))

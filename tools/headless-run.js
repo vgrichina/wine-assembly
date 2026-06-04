@@ -170,7 +170,11 @@ async function main() {
     return 0;
   };
   h.check_input_lparam = () => (lastEvent ? (lastEvent.lParam || 0) : 0);
+  h.get_mouse_position = () => (renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0);
+  h.set_mouse_position = (x, y) => { if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y); };
+  h.get_mouse_buttons = () => (renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0);
   h.get_async_key_state = (vk) => (renderer ? renderer.getAsyncKeyState(vk) : 0);
+  h.get_key_down_state = (vk) => (renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vk) : 0);
 
   // Deterministic tick derived from batch counter — same approach as run.js.
   const tickState = { batch: 0, callsInBatch: 0 };

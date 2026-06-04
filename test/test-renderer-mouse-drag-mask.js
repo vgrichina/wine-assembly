@@ -33,6 +33,9 @@ r.windows[100] = {
 };
 
 r.handleMouseDown(40, 60, 1);
+assert.strictEqual(r.peekAsyncKeyState(0x01), 0x8000, 'peekAsyncKeyState should report held left mouse without consuming press bit');
+assert.strictEqual(r.getAsyncKeyState(0x01), 0x8001, 'first GetAsyncKeyState after mousedown should include low press bit');
+assert.strictEqual(r.getAsyncKeyState(0x01), 0x8000, 'second GetAsyncKeyState while held should only include high held bit');
 r.handleMouseMove(80, 90);
 
 let move = r.inputQueue.find(e => e.msg === 0x0200);
@@ -40,6 +43,7 @@ assert(move, 'drag should enqueue WM_MOUSEMOVE');
 assert.strictEqual(move.wParam & 0x0001, 0x0001, 'drag move should include MK_LBUTTON');
 
 r.handleMouseUp(80, 90, 1);
+assert.strictEqual(r.getAsyncKeyState(0x01), 0, 'GetAsyncKeyState after consumed mouseup should report not held');
 r.inputQueue.length = 0;
 r.handleMouseMove(90, 100);
 
@@ -98,6 +102,10 @@ const shapedDown = shapedRenderer.inputQueue.find(e => e.msg === 0x0201);
 assert(shapedDown, 'app-drawn shaped caption should receive WM_LBUTTONDOWN');
 assert.strictEqual(shapedDown.hwnd, 300);
 assert.strictEqual(shapedDown.lParam, ((8 & 0xFFFF) << 16) | (15 & 0xFFFF), 'shaped caption lParam should be window-relative');
+shapedRenderer.handleMouseMove(35, 28);
+const shapedMove = shapedRenderer.inputQueue.find(e => e.msg === 0x0200);
+assert(shapedMove, 'app-drawn shaped caption should receive WM_MOUSEMOVE');
+assert.strictEqual(shapedMove.lParam, shapedDown.lParam, 'app-drawn mousemove lParam should use the same origin as mousedown');
 
 const clippedRenderer = new Win98Renderer(canvas);
 const clippedWasm = {
