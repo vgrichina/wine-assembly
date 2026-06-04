@@ -51,6 +51,30 @@ move = r.inputQueue.find(e => e.msg === 0x0200);
 assert(move, 'hover should enqueue WM_MOUSEMOVE');
 assert.strictEqual(move.wParam & 0x0001, 0, 'hover move after mouseup should not include MK_LBUTTON');
 
+const delayedRenderer = new Win98Renderer(canvas);
+delayedRenderer.windows[110] = {
+  hwnd: 110,
+  visible: true,
+  isChild: false,
+  x: 10,
+  y: 10,
+  w: 200,
+  h: 160,
+  hasCaption: false,
+  style: 0,
+  zOrder: 1,
+};
+delayedRenderer.handleMouseDown(40, 60, 1);
+delayedRenderer.handleMouseUp(40, 60, 1);
+const delayedDown = delayedRenderer.checkInput();
+assert.strictEqual(delayedDown.msg, 0x0201, 'queued delayed click should deliver WM_LBUTTONDOWN first');
+assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0x8001, 'queued WM_LBUTTONDOWN should expose held button snapshot even if mouseup is already queued');
+delayedRenderer.setMousePosition(150, 120);
+assert.strictEqual(delayedRenderer.getMousePosition(), (120 << 16) | 150, 'SetCursorPos should supersede any active queued mouse snapshot');
+const delayedUp = delayedRenderer.checkInput();
+assert.strictEqual(delayedUp.msg, 0x0202, 'queued delayed click should deliver WM_LBUTTONUP second');
+assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0, 'queued WM_LBUTTONUP should expose released button snapshot');
+
 const captionRenderer = new Win98Renderer(canvas);
 const captionWasm = {
   exports: {

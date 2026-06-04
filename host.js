@@ -408,6 +408,7 @@ class WineAssembly {
       }
       if (!evt) return 0;
       self._lastInputEvent = evt;
+      self.renderer._activeInputEvent = evt;
       if (evt.msg !== 0x200) {
         self.logToUI('[input] hwnd=0x' + (evt.hwnd >>> 0).toString(16) + ' msg=0x' + evt.msg.toString(16) + ' wParam=0x' + evt.wParam.toString(16));
       }
