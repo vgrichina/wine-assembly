@@ -1168,7 +1168,8 @@
     (if (global.get $main_hwnd) (then
       (call $host_move_window (global.get $main_hwnd)
         (i32.const 0) (i32.const 0)
-        (local.get $arg1) (local.get $arg2) (i32.const 0))))
+        (local.get $arg1) (local.get $arg2) (i32.const 0))
+      (call $defwndproc_do_nccalcsize (global.get $main_hwnd))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
