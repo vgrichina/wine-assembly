@@ -579,7 +579,8 @@
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
-  ;; 0x07F0A410  ...     Reserved high WAT-private scratch
+  ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
+  ;; 0x07F0C040  ...     Reserved high WAT-private scratch
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -704,6 +705,12 @@
   (global $EDIT_LAYOUT_SCRATCH i32 (i32.const 0x07F01800))
   (global $EDIT_LAYOUT_SCRATCH_SIZE i32 (i32.const 0x00000C00))
   (global $EDIT_LAYOUT_MAX i32 (i32.const 384))
+  ;; GDI palette table:
+  ;;   +0x00  4 slots x {handle:i32, count:i32}
+  ;;   +0x20  selected palette index for host DIB_PAL_COLORS resolution
+  ;;   +0x40  4 slots x 256 PALETTEENTRY bytes
+  (global $GDI_PALETTE_TABLE i32 (i32.const 0x07F0B000))
+  (global $GDI_PALETTE_TABLE_SIZE i32 (i32.const 0x00001040))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))

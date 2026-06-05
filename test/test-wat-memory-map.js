@@ -86,6 +86,7 @@ const requiredRegions = [
   'TV_TABLE',
   'SYNC_TABLE',
   'EDIT_LAYOUT_SCRATCH',
+  'GDI_PALETTE_TABLE',
   'D3DIM_MATRICES',
   'DX_OBJECTS',
   'COM_WRAPPERS',
@@ -119,5 +120,16 @@ for (let i = 1; i < regions.length; i++) {
 const treeviewSource = fs.readFileSync(path.join(SRC, '09c2-treeview.wat'), 'utf8');
 assert(!/\(i32\.const\s+0x0*9000\)/i.test(treeviewSource),
   'treeview table must use $TV_TABLE, not a hard-coded 0x9000 base');
+
+const handlersSource = fs.readFileSync(path.join(SRC, '09a-handlers.wat'), 'utf8');
+const hostImportsSource = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
+assert(!/\b0x0*60(?:00|20|40)\b/i.test(`${handlersSource}\n${hostImportsSource}`),
+  'GDI palette storage must use $GDI_PALETTE_TABLE, not the obsolete 0x6000/0x6020/0x6040 low-memory table');
+
+const paletteTable = globals.get('GDI_PALETTE_TABLE');
+const hostPaletteMatch = hostImportsSource.match(/\bconst\s+GDI_PALETTE_TABLE\s*=\s*(0x[0-9a-f]+|\d+)\s*;/i);
+assert(hostPaletteMatch, 'host-imports.js must define GDI_PALETTE_TABLE');
+assert.strictEqual(parseConstI32(hostPaletteMatch[1]), paletteTable.value,
+  'host-imports.js GDI_PALETTE_TABLE must match the WAT global');
 
 console.log(`test-wat-memory-map: ok (${regions.length} fixed regions)`);
