@@ -75,6 +75,27 @@ const delayedUp = delayedRenderer.checkInput();
 assert.strictEqual(delayedUp.msg, 0x0202, 'queued delayed click should deliver WM_LBUTTONUP second');
 assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0, 'queued WM_LBUTTONUP should expose released button snapshot');
 
+const staleRenderer = new Win98Renderer(canvas);
+staleRenderer.windows[120] = {
+  hwnd: 120,
+  visible: true,
+  isChild: false,
+  x: 10,
+  y: 10,
+  w: 200,
+  h: 160,
+  hasCaption: false,
+  style: 0,
+  zOrder: 1,
+};
+staleRenderer.handleMouseMove(70, 80);
+const staleMove = staleRenderer.checkInput();
+assert.strictEqual(staleMove.msg, 0x0200, 'queued move should deliver WM_MOUSEMOVE');
+assert.strictEqual(staleRenderer.getMouseButtons(), 0, 'move snapshot should expose released button state');
+assert.strictEqual(staleRenderer.checkInput(), 0, 'empty input poll should return no message');
+staleRenderer.handleMouseDown(70, 80, 1);
+assert.strictEqual(staleRenderer.getAsyncKeyState(0x01), 0x8001, 'new mouse down should not be masked by stale move snapshot');
+
 const captionRenderer = new Win98Renderer(canvas);
 const captionWasm = {
   exports: {

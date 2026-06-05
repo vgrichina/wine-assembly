@@ -375,6 +375,10 @@ class WineAssembly {
     // --- Input ---
     h.check_input = () => {
       if (!self.renderer) return 0;
+      const clearInactiveInput = () => {
+        self._lastInputEvent = null;
+        self.renderer._activeInputEvent = null;
+      };
       // In multi-app mode, only dequeue events for this app's hwnd range
       let evt;
       if (self._hwndBase && self._multiApp) {
@@ -382,7 +386,10 @@ class WineAssembly {
         const hi = lo + 0x10000;
         const q = self.renderer.inputQueue;
         const idx = q.findIndex(e => !e.hwnd || (e.hwnd >= lo && e.hwnd < hi));
-        if (idx < 0) return 0;
+        if (idx < 0) {
+          if (q.length === 0) clearInactiveInput();
+          return 0;
+        }
         evt = q.splice(idx, 1)[0];
       } else {
         const q = self.renderer.inputQueue;
@@ -393,7 +400,10 @@ class WineAssembly {
           return !win || !win.wasm || win.wasm === ownerInstance;
         };
         const idx = q.findIndex(ownsEvent);
-        if (idx < 0) return 0;
+        if (idx < 0) {
+          if (q.length === 0) clearInactiveInput();
+          return 0;
+        }
         evt = q.splice(idx, 1)[0];
         if (evt && (evt.msg === 0x0100 || evt.msg === 0x0102 || evt.msg === 0x0104)) {
           self.renderer._profileMark && self.renderer._profileMark('input-queue-dispatch', { msg: evt.msg, wParam: evt.wParam });
@@ -406,7 +416,10 @@ class WineAssembly {
           if (self.renderer._asyncKeys) self.renderer._asyncKeys[evt.wParam & 0xFF] = false;
         }
       }
-      if (!evt) return 0;
+      if (!evt) {
+        clearInactiveInput();
+        return 0;
+      }
       self._lastInputEvent = evt;
       self.renderer._activeInputEvent = evt;
       if (evt.msg !== 0x200) {
