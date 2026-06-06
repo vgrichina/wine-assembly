@@ -12,6 +12,8 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 assert(html.includes('touch-action: none'), 'canvas should disable browser touch gestures');
 assert(html.includes('-webkit-user-select: none'), 'canvas should disable iOS text selection');
 assert(html.includes('function eventPointFromClient(clientX, clientY)'), 'touch and mouse should share client-coordinate mapping');
+assert(html.includes('return { x, y };'), 'browser events should pass backing-canvas coords to renderer handlers');
+assert(!html.includes('return renderer.mapCanvasPoint ? renderer.mapCanvasPoint(x, y) : { x, y };'), 'exclusive fullscreen input should not be mapped twice');
 assert(html.includes("canvas.addEventListener('touchstart'"), 'canvas should handle touchstart');
 assert(html.includes("window.addEventListener('touchmove', windowTouchMove, { capture: true, passive: false })"), 'touchmove should be captured and non-passive');
 assert(html.includes("window.addEventListener('touchend', windowTouchEnd, { capture: true, passive: false })"), 'touchend should be captured and non-passive');

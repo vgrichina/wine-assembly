@@ -1376,7 +1376,7 @@ Resource-aware Win98 emulator
         const sx = canvas.width / r.width, sy = canvas.height / r.height;
         const x = Math.floor((clientX - r.left) * sx);
         const y = Math.floor((clientY - r.top) * sy);
-        return renderer.mapCanvasPoint ? renderer.mapCanvasPoint(x, y) : { x, y };
+        return { x, y };
       }
       function eventPoint(e) {
         return eventPointFromClient(e.clientX, e.clientY);
