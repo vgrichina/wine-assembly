@@ -1136,7 +1136,14 @@ class WineAssembly {
             self.renderer.mainWasmMemory = self.memory;
           }
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
+          const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
+          const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          if (pageProfileStart && pageProfile && pageProfile.add) {
+            const dt = performance.now() - pageProfileStart;
+            pageProfile.add('main.runSlice', dt, { steps: activeStepsPerSlice });
+            if (pageProfile.frame) pageProfile.frame('main.runSlice', { dtMs: dt, steps: activeStepsPerSlice });
+          }
           if (runStart && self.renderer && self.renderer._profileMark) {
             self.renderer._profileMark('wasm-run-slice', {
               steps: activeStepsPerSlice,
