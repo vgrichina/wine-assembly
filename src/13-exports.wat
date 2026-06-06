@@ -110,6 +110,8 @@
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
       (global.set $ip (local.get $thread))
+      (if (global.get $handler_hist_enabled)
+        (then (global.set $handler_hist_last (i32.const -1))))
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
@@ -463,6 +465,34 @@
     (i32.load offset=4 (i32.add (global.get $HIT_COUNT_BASE)
                                 (i32.shl (local.get $slot) (i32.const 3)))))
   (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)))
+
+  ;; Threaded-handler histogram. Profiling tools enable this only around a
+  ;; measured window. Counts are stored in WAT-private memory and read by JS.
+  (func (export "set_handler_hist_enabled") (param $flag i32)
+    (global.set $handler_hist_enabled (local.get $flag))
+    (if (local.get $flag)
+      (then (global.set $handler_hist_last (i32.const -1)))))
+  (func (export "reset_handler_hist")
+    (local $ptr i32) (local $end i32)
+    (local.set $ptr (global.get $HANDLER_HIST_COUNTS))
+    (local.set $end (i32.add (global.get $HANDLER_HIST_COUNTS) (global.get $HANDLER_HIST_COUNTS_SIZE)))
+    (block $counts_done (loop $counts
+      (br_if $counts_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $counts)))
+    (local.set $ptr (global.get $HANDLER_PAIR_HIST_COUNTS))
+    (local.set $end (i32.add (global.get $HANDLER_PAIR_HIST_COUNTS) (global.get $HANDLER_PAIR_HIST_COUNTS_SIZE)))
+    (block $pairs_done (loop $pairs
+      (br_if $pairs_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $pairs)))
+    (global.set $handler_hist_last (i32.const -1)))
+  (func (export "get_handler_hist_base") (result i32) (global.get $HANDLER_HIST_COUNTS))
+  (func (export "get_handler_pair_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
+  (func (export "get_handler_hist_count") (result i32) (global.get $HANDLER_HIST_COUNT))
+
   ;; Size-aware load for watchpoint. $watch_size: 1=byte, 2=word, anything else=dword.
   (func $watch_load (param $addr i32) (result i32)
     (if (result i32) (i32.eq (global.get $watch_size) (i32.const 1))

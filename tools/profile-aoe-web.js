@@ -17,15 +17,17 @@ const VIEWPORT_HEIGHT = Math.max(480, parseInt(process.env.VIEWPORT_HEIGHT || '7
 const OUTPUT = process.env.OUTPUT || '/private/tmp/aoe-web-profile.json';
 const SCREENSHOT = process.env.SCREENSHOT || '/private/tmp/aoe-web-profile.png';
 const RUN_SLICE = Math.max(1000, parseInt(process.env.RUN_SLICE || '100000', 10) || 100000);
-const GAMEPLAY_MS = Math.max(1000, parseInt(process.env.GAMEPLAY_MS || '8000', 10) || 8000);
+const GAMEPLAY_MS = Math.max(1000, parseInt(process.env.GAMEPLAY_MS || '10000', 10) || 10000);
 const MENU_WAIT_MS = Math.max(0, parseInt(process.env.MENU_WAIT_MS || '8500', 10) || 0);
 const SINGLE_PLAYER_WAIT_MS = Math.max(0, parseInt(process.env.SINGLE_PLAYER_WAIT_MS || '2500', 10) || 0);
-const RANDOM_MAP_WAIT_MS = Math.max(0, parseInt(process.env.RANDOM_MAP_WAIT_MS || '9000', 10) || 0);
+const CAMPAIGN_MENU_WAIT_MS = Math.max(0, parseInt(process.env.CAMPAIGN_MENU_WAIT_MS || process.env.RANDOM_MAP_WAIT_MS || '9000', 10) || 0);
 const CAMPAIGN_WAIT_MS = Math.max(0, parseInt(process.env.CAMPAIGN_WAIT_MS || '9000', 10) || 0);
 const GAME_LOAD_WAIT_MS = Math.max(0, parseInt(process.env.GAME_LOAD_WAIT_MS || '18000', 10) || 0);
 const PROGRESS = process.env.PROGRESS === '1';
 const PROFILE_PREFIX = '__AOE_PROFILE_JSON__';
 const STAGE_SCREENSHOTS = process.env.STAGE_SCREENSHOTS === '1';
+const CPU_PROFILE = process.env.CPU_PROFILE === '1';
+const CPU_PROFILE_OUTPUT = process.env.CPU_PROFILE_OUTPUT || '/private/tmp/aoe-cpu-profile.json';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -33,6 +35,126 @@ function wait(ms) {
 
 function progress(msg) {
   if (PROGRESS) console.error(`[aoe-profile] ${msg}`);
+}
+
+function round(v) {
+  return +((Number(v) || 0).toFixed(3));
+}
+
+function buildWasmNameMap() {
+  const names = [];
+  try {
+    const { WAT_FILES } = require(path.join(ROOT, 'lib/compile-wat.js'));
+    const imports = [];
+    const funcs = [];
+    for (const file of WAT_FILES) {
+      const src = fs.readFileSync(path.join(ROOT, 'src', file), 'utf8');
+      for (const line of src.split(/\r?\n/)) {
+        const clean = line.replace(/;;.*$/, '');
+        const imp = clean.match(/^\s*\(import\s+"([^"]+)"\s+"([^"]+)"\s+\(func(?:\s+(\$[^\s()]+))?/);
+        if (imp) {
+          imports.push(imp[3] || `$import_${imp[1]}_${imp[2]}`);
+          continue;
+        }
+        const fn = clean.match(/^\s*\(func(?:\s+(\$[^\s()]+))?/);
+        if (fn) funcs.push(fn[1] || `$func_${funcs.length}`);
+      }
+    }
+    imports.concat(funcs).forEach((name, idx) => { names[idx] = name; });
+  } catch (_) {}
+  return names;
+}
+
+function buildHandlerNameList() {
+  const names = [];
+  try {
+    const src = fs.readFileSync(path.join(ROOT, 'src', '02-thread-table.wat'), 'utf8');
+    for (const line of src.split(/\r?\n/)) {
+      const match = line.match(/^\s*(\$[^\s()]+).*;;\s*(\d+)(?::\s*(.*))?$/);
+      if (!match) continue;
+      const idx = parseInt(match[2], 10);
+      if (!Number.isFinite(idx)) continue;
+      const desc = String(match[3] || '').trim();
+      names[idx] = desc ? `${match[1]}: ${desc}` : match[1];
+    }
+  } catch (_) {}
+  return names;
+}
+
+function summarizeCpuProfile(profile) {
+  if (!profile || !Array.isArray(profile.nodes) || !Array.isArray(profile.samples)) return null;
+  const wasmNames = buildWasmNameMap();
+  const nodes = new Map(profile.nodes.map(n => [n.id, n]));
+  const byLabel = new Map();
+  let totalUs = 0;
+  for (let i = 0; i < profile.samples.length; i++) {
+    const node = nodes.get(profile.samples[i]);
+    if (!node) continue;
+    const dtUs = (profile.timeDeltas && Number(profile.timeDeltas[i])) || 0;
+    if (dtUs <= 0) continue;
+    totalUs += dtUs;
+    const cf = node.callFrame || {};
+    const rawName = cf.functionName || '(anonymous)';
+    const wasm = rawName.match(/wasm-function\[(\d+)\]/);
+    const wasmIndex = wasm ? (parseInt(wasm[1], 10) | 0) : -1;
+    const watName = wasmIndex >= 0 ? wasmNames[wasmIndex] : '';
+    const label = watName ? `${rawName} ${watName}` : rawName;
+    const key = `${label}\n${cf.url || ''}`;
+    const entry = byLabel.get(key) || {
+      label,
+      url: cf.url || '',
+      wasmIndex,
+      watName,
+      selfMs: 0,
+      samples: 0,
+    };
+    entry.selfMs += dtUs / 1000;
+    entry.samples++;
+    byLabel.set(key, entry);
+  }
+  const topSelf = Array.from(byLabel.values())
+    .sort((a, b) => b.selfMs - a.selfMs)
+    .slice(0, 40)
+    .map(e => ({
+      label: e.label,
+      url: e.url,
+      wasmIndex: e.wasmIndex,
+      watName: e.watName,
+      selfMs: round(e.selfMs),
+      pct: totalUs ? round((e.selfMs * 100000) / totalUs) : 0,
+      samples: e.samples,
+    }));
+  const wasmSelfMs = Array.from(byLabel.values())
+    .filter(e => e.wasmIndex >= 0)
+    .reduce((sum, e) => sum + e.selfMs, 0);
+  return {
+    totalMs: round(totalUs / 1000),
+    samples: profile.samples.length,
+    wasmSelfMs: round(wasmSelfMs),
+    jsSelfMs: round(totalUs / 1000 - wasmSelfMs),
+    topSelf,
+  };
+}
+
+function deriveRunSliceBreakdown(profile) {
+  const counters = profile && profile.counters;
+  if (!counters || !counters['main.runSlice']) return null;
+  const mainMs = counters['main.runSlice'].totalMs || 0;
+  const hostPrefixes = /^(gdi\.|dx\.|audio\.|voice\.|wave\.|mci\.|midi\.|fs\.|host\.)/;
+  const hostEntries = Object.entries(counters)
+    .filter(([name]) => hostPrefixes.test(name))
+    .map(([name, c]) => ({ name, totalMs: c.totalMs || 0, count: c.count || 0, avgMs: c.avgMs || 0, maxMs: c.maxMs || 0 }))
+    .sort((a, b) => b.totalMs - a.totalMs);
+  const wrappedHostMs = hostEntries.reduce((sum, e) => sum + e.totalMs, 0);
+  const guestOrUnwrappedMs = Math.max(0, mainMs - wrappedHostMs);
+  return {
+    mainRunSliceMs: round(mainMs),
+    wrappedHostImportMs: round(wrappedHostMs),
+    guestOrUnwrappedMs: round(guestOrUnwrappedMs),
+    wrappedHostPct: mainMs ? round(wrappedHostMs * 100 / mainMs) : 0,
+    guestOrUnwrappedPct: mainMs ? round(guestOrUnwrappedMs * 100 / mainMs) : 0,
+    topWrappedHost: hostEntries.slice(0, 16),
+  };
 }
 
 function withTimeout(promise, ms, label) {
@@ -322,14 +444,15 @@ async function main() {
     };
   }
 
-  async function clickCanvas(x, y) {
+  async function clickCanvasButton(x, y, button = 'left') {
     const p = canvasClientPoint(x, y);
+    const buttons = button === 'right' ? 2 : button === 'middle' ? 4 : 1;
     await withTimeout(cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x: p.x,
       y: p.y,
-      button: 'left',
-      buttons: 1,
+      button,
+      buttons,
       clickCount: 1,
     }), 3000, 'mousePressed');
     await wait(40);
@@ -337,10 +460,18 @@ async function main() {
       type: 'mouseReleased',
       x: p.x,
       y: p.y,
-      button: 'left',
+      button,
       buttons: 0,
       clickCount: 1,
     }), 3000, 'mouseReleased');
+  }
+
+  async function clickCanvas(x, y) {
+    await clickCanvasButton(x, y, 'left');
+  }
+
+  async function rightClickCanvas(x, y) {
+    await clickCanvasButton(x, y, 'right');
   }
 
   async function moveCanvas(x, y) {
@@ -364,6 +495,48 @@ async function main() {
       buttons: buttons || 0,
       clickCount: clickCount || 0,
     }).catch(() => {});
+  }
+
+  async function dragCanvas(x1, y1, x2, y2, steps = 12) {
+    let p = canvasClientPoint(x1, y1);
+    await withTimeout(cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: p.x,
+      y: p.y,
+      button: 'none',
+      buttons: 0,
+    }), 3000, 'dragMouseMoved');
+    await wait(40);
+    await withTimeout(cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: p.x,
+      y: p.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    }), 3000, 'dragMousePressed');
+    for (let i = 1; i <= steps; i++) {
+      const x = x1 + (x2 - x1) * i / steps;
+      const y = y1 + (y2 - y1) * i / steps;
+      p = canvasClientPoint(x, y);
+      await withTimeout(cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: p.x,
+        y: p.y,
+        button: 'left',
+        buttons: 1,
+      }), 3000, 'dragMouseMove');
+      await wait(20);
+    }
+    await wait(60);
+    await withTimeout(cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: p.x,
+      y: p.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    }), 3000, 'dragMouseReleased');
   }
 
   async function clickCanvasNoWait(x, y) {
@@ -408,6 +581,7 @@ async function main() {
 
   await evalExpr(`(() => {
     const round = v => +((Number(v) || 0).toFixed(3));
+    const handlerNames = ${JSON.stringify(buildHandlerNameList())};
     const valueStats = values => {
       const nums = (values || []).map(Number).filter(Number.isFinite);
       if (!nums.length) return { count: 0 };
@@ -447,6 +621,70 @@ async function main() {
       stats.droppedAtTarget = intervals.reduce((n, v) => n + Math.max(0, Math.round(v / target) - 1), 0);
       return stats;
     };
+    const addTop = (arr, item, limit) => {
+      arr.push(item);
+      if (arr.length > limit * 4) {
+        arr.sort((a, b) => b.count - a.count);
+        arr.length = limit;
+      }
+    };
+    const snapshotHandlerHistogram = (wine, e) => {
+      if (!wine || !wine.memory || !wine.memory.buffer || !e ||
+          !e.get_handler_hist_base || !e.get_handler_pair_hist_base || !e.get_handler_hist_count) {
+        return null;
+      }
+      const count = e.get_handler_hist_count() | 0;
+      if (count <= 0 || count > 2048) return null;
+      const u32 = new Uint32Array(wine.memory.buffer);
+      const base = (e.get_handler_hist_base() >>> 2) >>> 0;
+      const pairBase = (e.get_handler_pair_hist_base() >>> 2) >>> 0;
+      const topHandlers = [];
+      let totalHandlers = 0;
+      for (let id = 0; id < count; id++) {
+        const n = u32[base + id] >>> 0;
+        totalHandlers += n;
+        if (n) {
+          addTop(topHandlers, {
+            id,
+            name: handlerNames[id] || ('$handler_' + id),
+            count: n,
+          }, 80);
+        }
+      }
+      topHandlers.sort((a, b) => b.count - a.count);
+      topHandlers.length = Math.min(topHandlers.length, 80);
+      for (const h of topHandlers) h.pct = totalHandlers ? round(h.count * 100 / totalHandlers) : 0;
+
+      const topPairs = [];
+      let totalPairs = 0;
+      for (let prev = 0; prev < count; prev++) {
+        const row = pairBase + prev * count;
+        for (let cur = 0; cur < count; cur++) {
+          const n = u32[row + cur] >>> 0;
+          totalPairs += n;
+          if (n) {
+            addTop(topPairs, {
+              prev,
+              cur,
+              prevName: handlerNames[prev] || ('$handler_' + prev),
+              curName: handlerNames[cur] || ('$handler_' + cur),
+              count: n,
+            }, 120);
+          }
+        }
+      }
+      topPairs.sort((a, b) => b.count - a.count);
+      topPairs.length = Math.min(topPairs.length, 120);
+      for (const p of topPairs) p.pct = totalPairs ? round(p.count * 100 / totalPairs) : 0;
+      return {
+        count,
+        totalHandlers,
+        totalPairs,
+        topHandlers,
+        topPairs,
+      };
+    };
+    window.__aoeSnapshotHandlerHistogram = snapshotHandlerHistogram;
       const p = window.__aoeProfile = {
         t0: performance.now(),
         label: 'startup',
@@ -454,6 +692,7 @@ async function main() {
         frames: Object.create(null),
         samples: Object.create(null),
         inputs: [],
+        threads: Object.create(null),
         surfaceDc: null,
         reset(label) {
           this.t0 = performance.now();
@@ -462,6 +701,7 @@ async function main() {
           this.frames = Object.create(null);
           this.samples = Object.create(null);
           this.inputs = [];
+          this.threads = Object.create(null);
           this.surfaceDc = {
             syncIn: 0,
             syncOut: 0,
@@ -532,10 +772,53 @@ async function main() {
             inputLatency: valueStats(inputLatencies),
           },
           surfaceDc,
+          threads: Object.fromEntries(Object.entries(this.threads || {}).map(([tid, t]) => [tid, {
+            tid: t.tid | 0,
+            runs: t.runs | 0,
+            steps: t.steps | 0,
+            totalMs: round(t.totalMs),
+            avgMs: t.runs ? round(t.totalMs / t.runs) : 0,
+            maxMs: round(t.maxMs),
+            sleepYields: t.sleepYields | 0,
+            hotAudioRuns: t.hotAudioRuns | 0,
+            lastEipBefore: t.lastEipBefore >>> 0,
+            lastEipAfter: t.lastEipAfter >>> 0,
+            lastYield: t.lastYield >>> 0,
+          }])),
           inputs: this.inputs.slice(-40),
           samples: this.samples,
         };
       },
+    };
+    window.__waProfileThreadRun = (info) => {
+      const prof = window.__aoeProfile;
+      if (!prof || !info) return;
+      const tid = (info.tid || 0) | 0;
+      const key = String(tid);
+      const t = prof.threads[key] || (prof.threads[key] = {
+        tid,
+        runs: 0,
+        steps: 0,
+        totalMs: 0,
+        maxMs: 0,
+        sleepYields: 0,
+        hotAudioRuns: 0,
+        lastEipBefore: 0,
+        lastEipAfter: 0,
+        lastYield: 0,
+      });
+      const dt = Number(info.elapsedMs) || 0;
+      t.runs++;
+      t.steps += (info.steps || 0) | 0;
+      t.totalMs += dt;
+      if (dt > t.maxMs) t.maxMs = dt;
+      if (info.sleepYielded) t.sleepYields++;
+      if (info.hotAudio) t.hotAudioRuns++;
+      t.lastEipBefore = info.eipBefore >>> 0;
+      t.lastEipAfter = info.eipAfter >>> 0;
+      t.lastYield = info.yieldReason >>> 0;
+      prof.add('thread.runOne', dt, info);
+      prof.add('thread.T' + tid + '.run', dt, info);
     };
     const wrap = (proto, key, name, frameName) => {
       const orig = proto && proto[key];
@@ -778,9 +1061,9 @@ async function main() {
   await wait(SINGLE_PLAYER_WAIT_MS);
   p = gamePoint(384, 226);
   await clickCanvas(p.x, p.y);
-  await stageShot('click-random-map-menu');
-  await wait(RANDOM_MAP_WAIT_MS);
-  await stageShot('random-map-name-waited');
+  await stageShot('click-campaign-menu');
+  await wait(CAMPAIGN_MENU_WAIT_MS);
+  await stageShot('campaign-name-waited');
   await keyPress(65);
   await keyPress(79);
   await keyPress(69);
@@ -799,20 +1082,35 @@ async function main() {
   await wait(2500);
   await refreshCanvasMetrics();
   await refreshGameScale();
+  await stageShot('campaign-gameplay-ready');
 
   await evalExpr(`(() => {
     if (window.__aoeProfile) window.__aoeProfile.reset('gameplay');
+    const appForHist = runningApps && runningApps[0];
+    const wineForHist = appForHist && appForHist.wine;
+    const exForHist = wineForHist && wineForHist.instance && wineForHist.instance.exports;
+    if (exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
+    if (exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
     const buildSnapshot = () => {
       const app = runningApps && runningApps[0];
       const wine = app && app.wine;
       const e = wine && wine.instance && wine.instance.exports;
       const renderer = window.sharedRenderer || (wine && wine.renderer);
+      if (e && e.set_handler_hist_enabled) e.set_handler_hist_enabled(0);
       return {
         runSlice: ${RUN_SLICE},
         app: app ? app.name : '',
         eip: e && e.get_eip ? (e.get_eip() >>> 0) : 0,
         yieldReason: e && e.get_yield_reason ? (e.get_yield_reason() >>> 0) : 0,
         mainHwnd: e && e.get_main_hwnd ? (e.get_main_hwnd() >>> 0) : 0,
+        scenario: {
+          mode: 'campaign',
+          name: 'Bronze Age Art of War',
+          gameplayMs: ${GAMEPLAY_MS},
+          action: 'box-select starting army, then issue right-click move orders to eastern terrain',
+          selectionRect: { x1: 6, y1: 122, x2: 470, y2: 535 },
+          moveTargets: [{ x: 760, y: 220 }, { x: 705, y: 300 }, { x: 805, y: 405 }],
+        },
         canvas: (() => {
           const c = document.getElementById('screen');
           const r = c.getBoundingClientRect();
@@ -827,6 +1125,9 @@ async function main() {
           w: w.w | 0,
           h: w.h | 0,
         })) : [],
+        handlerHistogram: window.__aoeSnapshotHandlerHistogram
+          ? window.__aoeSnapshotHandlerHistogram(wine, e)
+          : null,
         profile: window.__aoeProfile ? window.__aoeProfile.snapshot() : null,
       };
     };
@@ -842,15 +1143,33 @@ async function main() {
   })()`);
   progress('gameplay profile started');
 
+  let cpuProfileStarted = false;
+  if (CPU_PROFILE) {
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 1000 });
+    await cdp.send('Profiler.start');
+    cpuProfileStarted = true;
+    progress('CPU profile started');
+  }
+
   const eventStart = cdp.events.length;
-  for (let i = 0; i < 80; i++) {
-    const gp = gamePoint(90 + (i % 20) * 16, 130 + Math.floor(i / 20) * 35);
-    sendMouseNoWait('mouseMoved', gp.x, gp.y, 'none', 0, 0);
-    if (i === 20) {
-      const cp = gamePoint(105, 150);
-      await clickCanvasNoWait(cp.x, cp.y);
+  const actionStartedAt = Date.now();
+  await dragCanvas(6, 122, 470, 535, 18);
+  await wait(300);
+  await stageShot('selected-starting-army');
+  await rightClickCanvas(760, 220);
+  await wait(1200);
+  await rightClickCanvas(705, 300);
+  await wait(1200);
+  await rightClickCanvas(805, 405);
+  await stageShot('move-orders-issued');
+  const remainingGameplayMs = GAMEPLAY_MS - (Date.now() - actionStartedAt);
+  if (remainingGameplayMs > 0) {
+    const moveCount = Math.max(1, Math.floor(remainingGameplayMs / 250));
+    for (let i = 0; i < moveCount; i++) {
+      sendMouseNoWait('mouseMoved', 675 + (i % 5) * 22, 245 + Math.floor(i % 10) * 18, 'none', 0, 0);
+      await wait(Math.max(25, Math.floor(remainingGameplayMs / moveCount)));
     }
-    await wait(Math.max(10, Math.floor(GAMEPLAY_MS / 80)));
   }
 
   let result = null;
@@ -871,6 +1190,28 @@ async function main() {
   if (!result) {
     throw new Error('AoE profile snapshot did not arrive; console events=' +
       JSON.stringify(cdp.events.slice(-12).map(ev => ev.method)));
+  }
+  if (result.profile) {
+    result.profile.runSliceBreakdown = deriveRunSliceBreakdown(result.profile);
+  }
+
+  if (cpuProfileStarted) {
+    try {
+      const stopped = await withTimeout(cdp.send('Profiler.stop'), 10000, 'Profiler.stop');
+      const cpuProfile = stopped && stopped.profile;
+      if (cpuProfile) {
+        fs.writeFileSync(CPU_PROFILE_OUTPUT, JSON.stringify(cpuProfile, null, 2));
+        result.cpuProfile = {
+          output: CPU_PROFILE_OUTPUT,
+          summary: summarizeCpuProfile(cpuProfile),
+        };
+      }
+      progress('CPU profile stopped');
+    } catch (e) {
+      result.cpuProfile = {
+        error: e && e.message ? e.message : String(e),
+      };
+    }
   }
 
   if (SCREENSHOT) {

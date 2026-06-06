@@ -90,6 +90,8 @@
         (global.set $thread_alloc (global.get $THREAD_BASE))
         (call $clear_cache)
         (return)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $handler_hist_record (local.get $fn))))
     (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
 
   ;; Read next thread i32 and advance $ip
@@ -98,3 +100,24 @@
     (local.set $v (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (local.get $v))
+
+  (func $handler_hist_record (param $fn i32)
+    (local $addr i32) (local $prev i32)
+    (local.set $addr
+      (i32.add (global.get $HANDLER_HIST_COUNTS)
+        (i32.shl (local.get $fn) (i32.const 2))))
+    (i32.store (local.get $addr)
+      (i32.add (i32.load (local.get $addr)) (i32.const 1)))
+    (local.set $prev (global.get $handler_hist_last))
+    (if (i32.ge_s (local.get $prev) (i32.const 0))
+      (then
+        (local.set $addr
+          (i32.add (global.get $HANDLER_PAIR_HIST_COUNTS)
+            (i32.shl
+              (i32.add
+                (i32.mul (local.get $prev) (global.get $HANDLER_HIST_COUNT))
+                (local.get $fn))
+              (i32.const 2))))
+        (i32.store (local.get $addr)
+          (i32.add (i32.load (local.get $addr)) (i32.const 1)))))
+    (global.set $handler_hist_last (local.get $fn)))
