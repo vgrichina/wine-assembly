@@ -195,6 +195,32 @@ profile                                                       main.runSlice   gu
                                                                  6222.6 ms       5842.6 ms
 ```
 
+An even narrower `cmp r32,[base+disp] + signed Jcc` fusion was also tested
+after the exact SIB jump win. It preserved CMP flags, then branched with direct
+signed comparisons for `JL/JGE/JLE/JG`, so it avoided `$do_alu32` and the
+separate Jcc flag-reader path but did not skip lazy flag writes.
+
+```text
+variant                                runSlice mean   runSlice sd   guest mean
+jmp [disp+eax*4] kept baseline             6243.9 ms      10.6 ms     5876.1 ms
+cmp r,[base+disp] + signed Jcc fused       6575.3 ms      36.8 ms     6159.4 ms
+```
+
+Profile files:
+
+```text
+/private/tmp/aoe-repeat-cmpmem-jcc-{1,2,3}.json
+```
+
+Conclusion:
+
+- Do not keep `cmp r32,[base+disp] + signed Jcc` fused handlers.
+- Preserving flags still requires the hot `set_flags_sub` work, and the larger
+  fused handlers/codegen more than erase the saved dispatch and Jcc flag reads.
+- Future branch work needs either proven flag-dead sites or larger trace/block
+  compilation; another small flag-preserving compare/Jcc fusion is unlikely to
+  pay off.
+
 Conclusion:
 
 - Do not keep the current branch-fusion WAT handlers.
