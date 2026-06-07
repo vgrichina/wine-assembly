@@ -8,6 +8,7 @@ Latest AoE campaign gameplay profile:
 - Actions: box-select starting units, issue three move orders, keep mouse active.
 - Profile output: `/private/tmp/aoe-web-profile.json`.
 - Raw CPU profile, when enabled: `/private/tmp/aoe-cpu-profile.json`.
+- Use `HANDLER_HIST=0` for production-style timing after using the histogram to pick candidates.
 
 Timing from the gameplay window:
 
@@ -150,6 +151,35 @@ Implication:
 - A narrower runtime `test r,r -> jz/jnz` fusion was tested in `/private/tmp/aoe-web-profile-test-jznz-fused.json` and regressed: `6539.2 ms` -> `6563.0 ms`.
 - The likely issue is that runtime helpers still add hot-path peeking and generic condition work; they do not get the codegen benefit of purpose-built fused handlers.
 - Next branch work should specialize only the top operand shapes above, starting with `test eax,eax -> jz/jnz` or the top `cmp reg,[base+disp] -> jcc` forms.
+
+### Branch Fusion Probes
+
+Several `test r,r -> jz/jnz` fusion variants were tried after the operand histogram. They reduced dispatch count, but did not produce a durable speedup.
+
+```text
+hist-enabled profile                                         main.runSlice   result
+/private/tmp/aoe-web-profile-branch-operands.json              6539.2 ms     baseline
+/private/tmp/aoe-web-profile-branch-fused.json                 6539.4 ms     flat
+/private/tmp/aoe-web-profile-test-jznz-fused.json              6563.0 ms     slower by 23.8 ms
+/private/tmp/aoe-web-profile-test-jcc-decode-fused.json        6621.9 ms     slower by 82.7 ms
+/private/tmp/aoe-web-profile-test-jcc-specialized-fused.json   6592.3 ms     slower by 53.1 ms
+```
+
+Production-style no-hist timing was slightly more favorable for the shape-specific decode fusion, but too small to justify the code complexity without repeated-run confirmation:
+
+```text
+profile                                                       main.runSlice   guest/unwrapped
+/private/tmp/aoe-web-profile-baseline-nohist.json               6241.8 ms       5865.6 ms
+/private/tmp/aoe-web-profile-test-jcc-specialized-fused-nohist.json
+                                                                 6222.6 ms       5842.6 ms
+```
+
+Conclusion:
+
+- Do not keep the current branch-fusion WAT handlers.
+- Avoid broad generic fused handlers that remove one dispatch but add operand/condition branches.
+- If branch fusion is revisited, prefer generated trace-specific blocks or larger superinstructions that remove several dispatches at once.
+- Measure with handler histograms disabled before keeping any small win.
 
 ## Optimization Ideas
 
@@ -508,9 +538,9 @@ Practical implication for this project:
 ## Suggested Next Order
 
 1. Keep and commit the measured 355-handler specialization set.
-2. Add operand histograms for the hot branch producers: `cmp_r_r`, `test_r_r`, and `alu_r_m32_ro`.
-3. Add narrow `cmp/test -> jcc` fusions based on the operand histogram and measure each group.
-4. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.
+2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
+3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.
+4. Revisit branch fusion only as generated trace-specific blocks or larger multi-op superinstructions.
 5. Revisit SIB only as shape-specific handlers after operand/addressing histograms identify exact forms.
 6. Revisit stack only as batch prolog/epilog or call/ret forms, not as generic direct stack load/store replacement.
 7. Explore triple histograms once pair-driven wins flatten out.

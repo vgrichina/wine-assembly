@@ -28,6 +28,7 @@ const PROFILE_PREFIX = '__AOE_PROFILE_JSON__';
 const STAGE_SCREENSHOTS = process.env.STAGE_SCREENSHOTS === '1';
 const CPU_PROFILE = process.env.CPU_PROFILE === '1';
 const CPU_PROFILE_OUTPUT = process.env.CPU_PROFILE_OUTPUT || '/private/tmp/aoe-cpu-profile.json';
+const HANDLER_HIST = process.env.HANDLER_HIST !== '0';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1154,8 +1155,8 @@ async function main() {
     const appForHist = runningApps && runningApps[0];
     const wineForHist = appForHist && appForHist.wine;
     const exForHist = wineForHist && wineForHist.instance && wineForHist.instance.exports;
-    if (exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
-    if (exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
+    if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
+    if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
     const buildSnapshot = () => {
       const app = runningApps && runningApps[0];
       const wine = app && app.wine;
