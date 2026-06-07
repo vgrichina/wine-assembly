@@ -230,6 +230,134 @@ threaded code, but with a small IR pass after x86 parsing:
 x86 decode -> normalized IR -> local liveness/specialization -> threaded words
 ```
 
+Compiler pipeline sketch:
+
+```text
+guest EIP
+  |
+  v
++-------------------+
+| decode x86 bytes  |
+| op/modrm/sib/imm  |
++-------------------+
+  |
+  v
++-------------------+      examples:
+| normalized IR     | ---> cmp r32,[base+disp]
+| explicit effects  |      test r,r
+| explicit operands |      load32 dst,[base+disp]
++-------------------+      jcc cc,target
+  |
+  v
++------------------------------+
+| local analysis per block     |
+| - flag liveness              |
+| - branch exits               |
+| - concrete reg/base/index    |
+| - hot profile weight         |
++------------------------------+
+  |
+  v
++----------------------------------------+
+| threaded-code selection                |
+|                                        |
+| flags live?  -> existing safe handlers |
+| flags dead?  -> *_jcc_dead primitive   |
+| hot SIB?     -> exact SIB primitive    |
+| generic case -> existing generic path  |
++----------------------------------------+
+  |
+  v
++-------------------------+
+| emitted threaded words  |
+| handler id + operands   |
++-------------------------+
+  |
+  v
+current tail-call threaded interpreter
+```
+
+What the compiler can optimize before emitting threaded words:
+
+```text
+flag-dead branch producers
+  cmp/test result used only by immediate Jcc, both exits overwrite flags first
+  => skip set_flags_sub/set_flags_logic and branch directly
+
+operand-specific memory ops
+  [base+disp], [disp+eax*4], common SIB shapes
+  => avoid generic EA helpers and sentinel paths only for measured hot shapes
+
+dispatch reduction
+  combine multiple IR ops only when the fused primitive removes real helper work
+  => avoid one-dispatch fusions that just make bigger slower handlers
+
+profile-directed selection
+  hot block histogram chooses which primitives are worth adding
+  => no broad "optimize every possible shape" handler bloat
+```
+
+RISC-like micro-IR model:
+
+```text
+x86 instruction:
+  cmp edx, [ebx+0x8]
+  jl target
+
+micro-IR:
+  t0 = add ebx, 0x8
+  t1 = load32 t0
+  t2 = sub edx, t1        ; produces virtual flags
+  br_lt t2, target, fall
+
+threaded output choices:
+  if flags live:
+    th_alu_r_m32_ro(cmp edx,[ebx+8])
+    th_jcc_l(fall,target)
+
+  if flags dead:
+    th_cmp_r_m32_ro_jl_dead(edx, ebx, 8, fall, target)
+```
+
+Important constraint:
+
+```text
+Do not execute every micro-op as its own threaded handler.
+That would increase dispatch count and likely regress.
+
+Use micro-ops to reason, then pack them back into coarse threaded primitives.
+```
+
+Useful micro-IR nodes:
+
+```text
+EA(base,index,scale,disp)     address calculation, no memory side effects
+LOAD(width, ea)               memory read
+STORE(width, ea, value)       memory write
+ALU(op, width, a, b)          arithmetic/logical value op
+FLAGS(op, width, a, b, res)   virtual flags, can be dead
+BR(cc, flags, fall, target)   conditional branch
+MOV(dst, src)                 register transfer
+CALL/JMP/RET/YIELD            hard block boundaries
+```
+
+What this buys:
+
+```text
+flag SSA/liveness
+  flags become virtual values, not mandatory global writes.
+  dead flags can disappear before threaded-code emission.
+
+address specialization
+  EA shape is explicit, so [base+disp] and [disp+eax*4] are easy to match.
+
+primitive packing
+  many x86 forms map to the same IR, then choose one measured threaded handler.
+
+profile-guided code size
+  only hot IR shapes get new primitives; cold shapes stay generic.
+```
+
 The report command now supports optional hot-block weighting:
 
 ```sh
