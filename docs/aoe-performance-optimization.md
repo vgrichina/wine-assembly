@@ -32,6 +32,17 @@ This writes `/private/tmp/aoe-repeat-<label>-{1,2,3}.json` plus a summary JSON
 and prints mean/min/max/stddev. Use the histogram profiles to choose candidates,
 then use this repeated no-hist timing before keeping a small optimization.
 
+Hot-loop report command:
+
+```sh
+node tools/aoe-hot-block-report.js --top=8 --disasm=3
+```
+
+This reads the newest nonempty AoE handler-histogram profile in `/private/tmp`,
+prints top handlers/pairs/SIB consumers/branch operands, clusters hot guest VAs,
+and disassembles the hottest blocks from `Empires.exe`. Pass an explicit profile
+path as the first argument when comparing older histogram runs.
+
 ## Measured Experiments
 
 Single-run Chrome campaign profiles are noisy, but the direction has been consistent enough to prune several ideas:
