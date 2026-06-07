@@ -221,6 +221,69 @@ Conclusion:
   compilation; another small flag-preserving compare/Jcc fusion is unlikely to
   pay off.
 
+### Threaded IR Liveness Report
+
+This is not a generated-Wasm direction. The scalable path is still generated
+threaded code, but with a small IR pass after x86 parsing:
+
+```text
+x86 decode -> normalized IR -> local liveness/specialization -> threaded words
+```
+
+The report command now supports optional hot-block weighting:
+
+```sh
+node tools/superinstruction-census.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --hot-limit=120 \
+  test/binaries/shareware/aoe/aoe_ex/Empires.exe
+```
+
+Static executable-wide result:
+
+```text
+cmp r,[mem]; jcc                  919 sites
+cmp r,[base+disp]; jcc            858 sites
+cmp r,[mem]; signed jcc           457 sites
+cmp r,[mem]; jcc flags dead       296 sites
+cmp r,[base]; signed dead         159 sites
+test r,r; jcc                    9027 sites
+test r,r; jcc flags dead         1190 sites
+test r,r self; dead              1187 sites
+```
+
+Hot-block weighted result from the 10s profile, top 120 hot block entries:
+
+```text
+covered block entries:        37,475,452 / 66,254,912 = 56.6%
+cmp r,[mem]; jcc               6,569,930   17.5% of covered
+cmp r,[base+disp]; jcc         5,216,641   13.9% of covered
+cmp r,[mem]; signed jcc        6,089,436   16.2% of covered
+cmp r,[mem]; jcc flags dead    1,252,947    3.3% of covered
+test r,r; jcc                  2,068,774    5.5% of covered
+test r,r; jcc flags dead         283,500    0.8% of covered
+```
+
+ASCII TLDR:
+
+```text
+Do not make more flag-preserving branch fusions.
+Do make decode-time IR/liveness decide when flags are dead.
+Best next primitive: cmp r32,[base+disp] + signed Jcc, flag-dead only.
+Second primitive: test r,r + Jcc, flag-dead only.
+Keep output as threaded code, not generated Wasm.
+```
+
+Threaded primitive direction:
+
+- Add an IR node for parsed branch producers with explicit flag effects.
+- Compute whether both branch exits overwrite flags before reading them.
+- Emit normal existing threaded handlers if flags might be live.
+- Emit a special `*_jcc_dead` threaded primitive only when flags are proven dead.
+- The primitive should branch directly and skip `set_flags_sub`/`set_flags_logic`.
+- Keep the primitive operand-specific enough to avoid the generic helper cost
+  that made the flag-preserving fusion regress.
+
 Conclusion:
 
 - Do not keep the current branch-fusion WAT handlers.

@@ -12,6 +12,7 @@ const { disasmAt } = require('./disasm');
 
 const regs32 = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
 const regs8 = ['al', 'cl', 'dl', 'bl', 'ah', 'ch', 'dh', 'bh'];
+const ccNames = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
 
 function hex(v, width = 0) {
   return '0x' + (v >>> 0).toString(16).padStart(width, '0');
@@ -252,11 +253,29 @@ function decodeAt(buf, off, va, end) {
     return mk('lea', { dst: m.reg, mem: m.mem, len: pos - start, text: `lea ${regName(m.reg)}, ${memText(m.mem)}` });
   }
 
-  if (!p66 && (op === 0x03 || op === 0x01 || op === 0x2b || op === 0x29 || op === 0x85)) {
+  if (!p66 && (op === 0x03 || op === 0x01 || op === 0x2b || op === 0x29 || op === 0x39 || op === 0x3b || op === 0x85)) {
     const m = parseModrm(buf, pos, end);
     if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
     pos += m.len;
     const isReg = m.mod === 3;
+    if (op === 0x39 || op === 0x3b) {
+      if (op === 0x3b) {
+        return mk(isReg ? 'cmp_r32_r32' : 'cmp_r32_m32', {
+          dst: m.reg,
+          src: isReg ? m.rmReg : -1,
+          mem: isReg ? null : m.mem,
+          len: pos - start,
+          text: `cmp ${regName(m.reg)}, ${isReg ? regName(m.rmReg) : memText(m.mem)}`,
+        });
+      }
+      return mk(isReg ? 'cmp_r32_r32' : 'cmp_m32_r32', {
+        dst: isReg ? m.rmReg : -1,
+        src: m.reg,
+        mem: isReg ? null : m.mem,
+        len: pos - start,
+        text: `cmp ${isReg ? regName(m.rmReg) : memText(m.mem)}, ${regName(m.reg)}`,
+      });
+    }
     if (op === 0x03 || op === 0x2b) {
       return mk(op === 0x03 ? 'add_r32_rm32' : 'sub_r32_rm32', {
         dst: m.reg,
@@ -313,7 +332,17 @@ function decodeAt(buf, off, va, end) {
 
   if (!p66 && op >= 0x40 && op <= 0x47) return mk('inc_r32', { reg: op - 0x40 });
   if (!p66 && op >= 0x48 && op <= 0x4f) return mk('dec_r32', { reg: op - 0x48 });
-  if (!p66 && op >= 0x70 && op <= 0x7f) return mk('jcc8', { cc: op & 0xf, len: Math.min(2, end - start) });
+  if (!p66 && op >= 0x70 && op <= 0x7f) {
+    const disp = pos < end ? sx8(buf[pos]) : 0;
+    const len = Math.min(2, end - start);
+    return mk('jcc8', {
+      cc: op & 0xf,
+      len,
+      fall: (va + len) >>> 0,
+      target: (va + 2 + disp) >>> 0,
+      text: `j${ccNames[op & 0xf]} ${hex((va + 2 + disp) >>> 0, 8)}`,
+    });
+  }
 
   if (op === 0x0f && pos < end) {
     const op2 = buf[pos++];
@@ -331,7 +360,15 @@ function decodeAt(buf, off, va, end) {
       });
     }
     if (op2 >= 0x80 && op2 <= 0x8f) {
-      return mk('jcc32', { cc: op2 & 0xf, len: Math.min(6, end - start) });
+      const disp = pos + 4 <= end ? sx32(buf.readUInt32LE(pos)) : 0;
+      const len = Math.min(6, end - start);
+      return mk('jcc32', {
+        cc: op2 & 0xf,
+        len,
+        fall: (va + len) >>> 0,
+        target: (va + 6 + disp) >>> 0,
+        text: `j${ccNames[op2 & 0xf]} ${hex((va + 6 + disp) >>> 0, 8)}`,
+      });
     }
   }
 
@@ -347,6 +384,11 @@ function addExample(examples, key, item) {
   if (examples[key].length < 5) examples[key].push(item);
 }
 
+function addHotCount(hot, key, weight) {
+  hot.counts[key] = (hot.counts[key] || 0) + weight;
+  hot.sites[key] = (hot.sites[key] || 0) + 1;
+}
+
 function usesRegInLeaMem(mem, reg) {
   return !!mem && (mem.base === reg || mem.index === reg);
 }
@@ -358,12 +400,166 @@ function addUsesReg(ins, reg) {
   return false;
 }
 
-function scanFile(file) {
+function isJcc(ins) {
+  return !!ins && (ins.kind === 'jcc8' || ins.kind === 'jcc32');
+}
+
+function isSignedJcc(ins) {
+  return isJcc(ins) && ins.cc >= 12 && ins.cc <= 15;
+}
+
+function fullFlagWriter(ins) {
+  if (!ins) return false;
+  if (ins.kind === 'cmp_r32_r32' || ins.kind === 'cmp_r32_m32' || ins.kind === 'cmp_m32_r32') return true;
+  if (ins.kind === 'test_r32_r32' || ins.kind === 'test_m32_r32') return true;
+  if (ins.kind === 'xor_zero' || ins.kind === 'xor_rr') return true;
+  if (ins.kind === 'add_r32_rm32' || ins.kind === 'add_rm32_r32') return true;
+  if (ins.kind === 'sub_r32_rm32' || ins.kind === 'sub_rm32_r32') return true;
+  if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
+  return false;
+}
+
+function flagReaderBeforeWrite(ins) {
+  if (!ins) return false;
+  if (isJcc(ins)) return true;
+  if ((ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  return false;
+}
+
+function isControlBoundary(ins) {
+  return !ins || isJcc(ins) || ins.kind === 'unknown';
+}
+
+function flagPathState(ins, startIndex, maxInsns = 8) {
+  if (startIndex < 0 || startIndex >= ins.length) return 'unknown';
+  for (let i = startIndex; i < ins.length && i < startIndex + maxInsns; i++) {
+    const cur = ins[i];
+    if (flagReaderBeforeWrite(cur)) return 'read';
+    if (fullFlagWriter(cur)) return 'dead';
+    if (isControlBoundary(cur)) return 'unknown';
+  }
+  return 'unknown';
+}
+
+function classifyFlagPair(ins, i, byVa) {
+  const b = ins[i + 1];
+  const fallState = flagPathState(ins, i + 2);
+  const targetIndex = byVa.has(b.target) ? byVa.get(b.target) : -1;
+  const targetState = flagPathState(ins, targetIndex);
+  return {
+    fallState,
+    targetState,
+    flagsDead: fallState === 'dead' && targetState === 'dead',
+  };
+}
+
+function addCmpMemJccCount(counts, examples, a, b, ins, i, byVa) {
+  addCount(counts, 'seq.cmp-r-mem-jcc');
+  if (simpleBase(a.mem)) addCount(counts, 'seq.cmp-r-mem-jcc-simple-base');
+  if (isSignedJcc(b)) addCount(counts, 'seq.cmp-r-mem-signed-jcc');
+  const cls = classifyFlagPair(ins, i, byVa);
+  if (cls.flagsDead) {
+    addCount(counts, 'seq.cmp-r-mem-jcc-flag-dead');
+    if (simpleBase(a.mem) && isSignedJcc(b)) addCount(counts, 'seq.cmp-r-mem-signed-jcc-simple-base-flag-dead');
+  }
+  addExample(
+    examples,
+    'seq.cmp-r-mem-jcc',
+    `${hex(a.va, 8)} ${a.text}; ${b.text}; fall=${cls.fallState} target=${cls.targetState}`
+  );
+}
+
+function addTestRegJccCount(counts, examples, a, b, ins, i, byVa) {
+  addCount(counts, 'seq.test-r-r-jcc');
+  if (a.dst === a.src) addCount(counts, 'seq.test-r-self-jcc');
+  const cls = classifyFlagPair(ins, i, byVa);
+  if (cls.flagsDead) {
+    addCount(counts, 'seq.test-r-r-jcc-flag-dead');
+    if (a.dst === a.src) addCount(counts, 'seq.test-r-self-jcc-flag-dead');
+  }
+  addExample(
+    examples,
+    'seq.test-r-r-jcc',
+    `${hex(a.va, 8)} test ${regName(a.dst)},${regName(a.src)}; ${b.text}; fall=${cls.fallState} target=${cls.targetState}`
+  );
+}
+
+function analyzeHotBlocks(profile, allIns, byVa, examples, limit) {
+  const top = profile && profile.handlerHistogram && profile.handlerHistogram.hotBlocks
+    ? profile.handlerHistogram.hotBlocks.top || []
+    : [];
+  const totalBlocks = profile && profile.handlerHistogram && profile.handlerHistogram.hotBlocks
+    ? profile.handlerHistogram.hotBlocks.totalBlocks || 0
+    : 0;
+  const hot = {
+    profileFile: profile && profile.__file || '',
+    totalBlocks,
+    inputBlocks: top.length,
+    usedBlocks: 0,
+    skippedBlocks: 0,
+    coveredWeight: 0,
+    counts: Object.create(null),
+    sites: Object.create(null),
+    examples: Object.create(null),
+  };
+  for (const row of top.slice(0, limit)) {
+    const va = row.addr >>> 0;
+    if (!byVa.has(va)) {
+      hot.skippedBlocks++;
+      continue;
+    }
+    hot.usedBlocks++;
+    hot.coveredWeight += row.count || 0;
+    const start = byVa.get(va);
+    for (let i = start; i < allIns.length && i < start + 48; i++) {
+      const a = allIns[i];
+      const b = allIns[i + 1];
+      if (!a) break;
+      if (a.kind === 'cmp_r32_m32' && isJcc(b)) {
+        const cls = classifyFlagPair(allIns, i, byVa);
+        addHotCount(hot, 'cmp-r-mem-jcc', row.count || 0);
+        if (simpleBase(a.mem)) addHotCount(hot, 'cmp-r-mem-jcc-simple-base', row.count || 0);
+        if (isSignedJcc(b)) addHotCount(hot, 'cmp-r-mem-signed-jcc', row.count || 0);
+        if (cls.flagsDead) {
+          addHotCount(hot, 'cmp-r-mem-jcc-flag-dead', row.count || 0);
+          if (simpleBase(a.mem) && isSignedJcc(b)) addHotCount(hot, 'cmp-r-mem-signed-jcc-simple-base-flag-dead', row.count || 0);
+        }
+        addExample(
+          hot.examples,
+          'cmp-r-mem-jcc',
+          `${hex(a.va, 8)} weight=${row.count} ${a.text}; ${b.text}; fall=${cls.fallState} target=${cls.targetState}`
+        );
+      }
+      if (a.kind === 'test_r32_r32' && isJcc(b)) {
+        const cls = classifyFlagPair(allIns, i, byVa);
+        addHotCount(hot, 'test-r-r-jcc', row.count || 0);
+        if (a.dst === a.src) addHotCount(hot, 'test-r-self-jcc', row.count || 0);
+        if (cls.flagsDead) {
+          addHotCount(hot, 'test-r-r-jcc-flag-dead', row.count || 0);
+          if (a.dst === a.src) addHotCount(hot, 'test-r-self-jcc-flag-dead', row.count || 0);
+        }
+        addExample(
+          hot.examples,
+          'test-r-r-jcc',
+          `${hex(a.va, 8)} weight=${row.count} test ${regName(a.dst)},${regName(a.src)}; ${b.text}; fall=${cls.fallState} target=${cls.targetState}`
+        );
+      }
+      if (isControlBoundary(a)) break;
+    }
+  }
+  return hot;
+}
+
+function scanFile(file, opts = {}) {
   const pe = parsePe(file);
   const counts = Object.create(null);
   const examples = Object.create(null);
   let instructionCount = 0;
   const sectionStats = [];
+  const allIns = [];
+  const allByVa = new Map();
 
   for (const sec of pe.sections) {
     const end = sec.rawOff + sec.rawSize;
@@ -374,11 +570,14 @@ function scanFile(file) {
       const decoded = decodeAt(pe.buf, off, va, end);
       if (!decoded || decoded.len <= 0) break;
       ins.push(decoded);
+      allByVa.set(decoded.va, allIns.length);
+      allIns.push(decoded);
       off += decoded.len;
       va = (va + decoded.len) >>> 0;
     }
     instructionCount += ins.length;
     sectionStats.push({ name: sec.name, instructions: ins.length });
+    const byVa = new Map(ins.map((decoded, index) => [decoded.va, index]));
 
     for (let i = 0; i < ins.length; i++) {
       const a = ins[i];
@@ -434,6 +633,12 @@ function scanFile(file) {
         addCount(counts, 'seq.esp-load-alu');
         addExample(examples, 'seq.esp-load-alu', `${hex(a.va, 8)} ${a.text}; ${b.kind}`);
       }
+      if (a.kind === 'cmp_r32_m32' && b && isJcc(b)) {
+        addCmpMemJccCount(counts, examples, a, b, ins, i, byVa);
+      }
+      if (a.kind === 'test_r32_r32' && b && isJcc(b)) {
+        addTestRegJccCount(counts, examples, a, b, ins, i, byVa);
+      }
     }
   }
 
@@ -444,6 +649,7 @@ function scanFile(file) {
     instructionCount,
     counts,
     examples,
+    hot: opts.profile ? analyzeHotBlocks(opts.profile, allIns, allByVa, examples, opts.hotLimit || 120) : null,
   };
 }
 
@@ -456,6 +662,13 @@ function lineCount(label, counts, key, total) {
   const v = counts[key] || 0;
   const suffix = total ? ` (${pct(v, total)})` : '';
   return `  ${label.padEnd(28)} ${String(v).padStart(7)}${suffix}`;
+}
+
+function hotLine(label, hot, key) {
+  const v = hot.counts[key] || 0;
+  const sites = hot.sites[key] || 0;
+  const share = hot.coveredWeight ? ` (${pct(v, hot.coveredWeight)} of covered)` : '';
+  return `  ${label.padEnd(34)} ${String(Math.round(v)).padStart(10)}  sites=${String(sites).padStart(4)}${share}`;
 }
 
 function printReport(report) {
@@ -482,6 +695,14 @@ function printReport(report) {
   console.log(lineCount('mov r8,[mem]; mov [mem],r8', c, 'seq.load8-store8'));
   console.log(lineCount('test; lea -1; store; jcc', c, 'seq.test-lea-store-jcc'));
   console.log(lineCount('ESP load32; ALU', c, 'seq.esp-load-alu'));
+  console.log(lineCount('cmp r,[mem]; jcc', c, 'seq.cmp-r-mem-jcc'));
+  console.log(lineCount('cmp r,[base+disp]; jcc', c, 'seq.cmp-r-mem-jcc-simple-base'));
+  console.log(lineCount('cmp r,[mem]; signed jcc', c, 'seq.cmp-r-mem-signed-jcc'));
+  console.log(lineCount('cmp r,[mem]; jcc flags dead', c, 'seq.cmp-r-mem-jcc-flag-dead'));
+  console.log(lineCount('cmp r,[base]; signed dead', c, 'seq.cmp-r-mem-signed-jcc-simple-base-flag-dead'));
+  console.log(lineCount('test r,r; jcc', c, 'seq.test-r-r-jcc'));
+  console.log(lineCount('test r,r; jcc flags dead', c, 'seq.test-r-r-jcc-flag-dead'));
+  console.log(lineCount('test r,r self; dead', c, 'seq.test-r-self-jcc-flag-dead'));
 
   for (const key of [
     'seq.zero-load8',
@@ -489,22 +710,69 @@ function printReport(report) {
     'seq.zero-load8-lea',
     'seq.load8-store8',
     'seq.test-lea-store-jcc',
+    'seq.cmp-r-mem-jcc',
+    'seq.test-r-r-jcc',
   ]) {
     const ex = report.examples[key] || [];
     if (!ex.length) continue;
     console.log(`\nExamples for ${key}:`);
     for (const line of ex) console.log('  ' + line);
   }
+
+  if (report.hot) {
+    const h = report.hot;
+    console.log('\nHot-block weighted threaded-IR candidates:');
+    console.log(`  profile: ${h.profileFile}`);
+    console.log(`  hot blocks used: ${h.usedBlocks}/${h.inputBlocks}, skipped=${h.skippedBlocks}`);
+    console.log(`  covered block entries: ${Math.round(h.coveredWeight)} of ${h.totalBlocks} (${pct(h.coveredWeight, h.totalBlocks)})`);
+    console.log(hotLine('cmp r,[mem]; jcc', h, 'cmp-r-mem-jcc'));
+    console.log(hotLine('cmp r,[base+disp]; jcc', h, 'cmp-r-mem-jcc-simple-base'));
+    console.log(hotLine('cmp r,[mem]; signed jcc', h, 'cmp-r-mem-signed-jcc'));
+    console.log(hotLine('cmp r,[mem]; jcc flags dead', h, 'cmp-r-mem-jcc-flag-dead'));
+    console.log(hotLine('cmp r,[base]; signed dead', h, 'cmp-r-mem-signed-jcc-simple-base-flag-dead'));
+    console.log(hotLine('test r,r; jcc', h, 'test-r-r-jcc'));
+    console.log(hotLine('test r,r; jcc flags dead', h, 'test-r-r-jcc-flag-dead'));
+    console.log(hotLine('test r,r self; dead', h, 'test-r-self-jcc-flag-dead'));
+    for (const key of ['cmp-r-mem-jcc', 'test-r-r-jcc']) {
+      const ex = h.examples[key] || [];
+      if (!ex.length) continue;
+      console.log(`\nHot examples for ${key}:`);
+      for (const line of ex) console.log('  ' + line);
+    }
+  }
 }
 
 function main() {
   const args = process.argv.slice(2);
-  const files = args.length ? args : [
+  const files = [];
+  let profile = null;
+  let hotLimit = 120;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith('--profile=')) {
+      const file = arg.slice('--profile='.length);
+      profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+      profile.__file = file;
+      continue;
+    }
+    if (arg === '--profile' && i + 1 < args.length) {
+      const file = args[++i];
+      profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+      profile.__file = file;
+      continue;
+    }
+    if (arg.startsWith('--hot-limit=')) {
+      hotLimit = parseInt(arg.slice('--hot-limit='.length), 10) || hotLimit;
+      continue;
+    }
+    files.push(arg);
+  }
+  const targets = files.length ? files : [
     'test/binaries/plugins/candidates/vis_w.dll',
     'test/binaries/plugins/in_mp3.dll',
   ];
-  for (const file of files) {
-    printReport(scanFile(file));
+  for (const file of targets) {
+    printReport(scanFile(file, { profile, hotLimit }));
   }
 }
 
