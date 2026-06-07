@@ -358,6 +358,134 @@ profile-guided code size
   only hot IR shapes get new primitives; cold shapes stay generic.
 ```
 
+Register global-write estimate:
+
+The same IR idea applies to general registers, not just flags. Flags are often
+consumed by the immediate Jcc, while general registers are visible machine state
+at block exits. A block compiler can still keep register values virtual inside a
+block and flush each changed register once at exit.
+
+Toy estimator command:
+
+```sh
+node tools/aoe-reg-liveness-estimate.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --hot-limit=120
+```
+
+The estimator is offline only. It decodes hot block entries from the existing
+profile, excludes ESP by default, treats all non-ESP registers as live at block
+exit, and counts current full-register writes versus final block-exit flushes.
+
+10s profile result:
+
+```text
+covered block entries:        37,475,452 / 66,254,912 = 56.6%
+full register writes seen:    80,851,296
+final block-exit flushes:     57,942,555
+avoidable global writes:      22,908,741   28.3% of seen writes
+avoidable vs dispatch count:        6.2%
+identity writes:               2,072,787    2.6% of seen writes, 0.6% of dispatches
+dead overwritten writes:               0
+```
+
+Naive timing scale from the same profile:
+
+```text
+main.runSlice:                          6,559.7 ms
+guest/unwrapped:                        6,226.0 ms
+block-compiler saved-write upper scale:   404.3 ms, 6.2% of runSlice
+identity-write-only scale:                 36.6 ms, 0.6% of runSlice
+```
+
+This is not a benchmark. The scale assumes a saved register write is comparable
+to one average handler-dispatch share, which is only a rough yardstick. The
+useful conclusion is relative:
+
+```text
+identity-only handlers are small:       about 0.5-0.6%
+true block-local virtual regs are real: about 6-7% dispatch-scale opportunity
+trivial dead overwritten writes:        basically absent in the top AoE blocks
+```
+
+Example hot block:
+
+```text
+0x00535e08 count=747,413
+  mov edx, edi
+  add edx, ecx
+  dec edx
+  cmp edx, [ebx+0x8]
+  jl 0x00535e7c
+
+current threaded handlers write EDX three times.
+block-local virtual-reg output writes EDX once at exit or side exit.
+```
+
+Toy block compiler printer:
+
+```sh
+node tools/aoe-block-compiler-printer.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --addr=0x00535e08
+```
+
+This prints original instructions, approximate current threaded handlers, and a
+block-local virtual-register/virtual-flag lowering. It is not executable code;
+it is a shape report before runtime compiler work.
+
+Example output shape:
+
+```text
+0x00535e08
+  original:
+    mov edx, edi
+    add edx, ecx
+    dec edx
+    cmp edx, [ebx+0x8]
+    jl 0x00535e7c
+
+  current:
+    5 threaded dispatches
+    3 EDX global writes
+    1 g2w call
+
+  toy optimized:
+    v_edx = edi
+    v_edx = edi + ecx
+    v_edx = edi + ecx - 1
+    wa0 = g2w(ebx + 0x8)
+    branch jl using sub(v_edx, load32(wa0))
+    exit flush: edx
+    flag exits: fall=dead target=dead, skip flag global write
+```
+
+Top hot blocks show two different classes:
+
+```text
+compare/Jcc-only blocks
+  no register-write savings, but flag-dead direct branch is useful.
+
+multi-op blocks like 0x00535e08
+  register writes coalesce well inside a block.
+
+stack/setup blocks
+  often need register flushes and do not benefit much from block-local
+  virtual registers unless we also model ESP/stack effects.
+```
+
+Another register-write example:
+
+```text
+0x00535aa0
+  mov edi, [esi+eax*4]
+  or edi, edi
+  jz 0x005362e0
+
+`or edi,edi` is an identity register write. It only needs flags, so it can be
+selected as a flag-only/test-like primitive without a register global write.
+```
+
 The report command now supports optional hot-block weighting:
 
 ```sh
@@ -373,23 +501,24 @@ Static executable-wide result:
 cmp r,[mem]; jcc                  919 sites
 cmp r,[base+disp]; jcc            858 sites
 cmp r,[mem]; signed jcc           457 sites
-cmp r,[mem]; jcc flags dead       296 sites
-cmp r,[base]; signed dead         159 sites
+cmp r,[mem]; jcc flags dead       384 sites
+cmp r,[base]; signed dead         226 sites
 test r,r; jcc                    9027 sites
-test r,r; jcc flags dead         1190 sites
-test r,r self; dead              1187 sites
+test r,r; jcc flags dead         1557 sites
+test r,r self; dead              1553 sites
 ```
 
 Hot-block weighted result from the 10s profile, top 120 hot block entries:
 
 ```text
 covered block entries:        37,475,452 / 66,254,912 = 56.6%
-cmp r,[mem]; jcc               6,569,930   17.5% of covered
-cmp r,[base+disp]; jcc         5,216,641   13.9% of covered
-cmp r,[mem]; signed jcc        6,089,436   16.2% of covered
-cmp r,[mem]; jcc flags dead    1,252,947    3.3% of covered
-test r,r; jcc                  2,068,774    5.5% of covered
-test r,r; jcc flags dead         283,500    0.8% of covered
+cmp r,[mem]; jcc               8,301,249   22.2% of covered
+cmp r,[base+disp]; jcc         6,772,778   18.1% of covered
+cmp r,[mem]; signed jcc        7,820,755   20.9% of covered
+cmp r,[mem]; jcc flags dead    3,782,436   10.1% of covered
+cmp r,[base]; signed dead      3,434,177    9.2% of covered
+test r,r; jcc                  2,932,946    7.8% of covered
+test r,r; jcc flags dead         420,900    1.1% of covered
 ```
 
 ASCII TLDR:

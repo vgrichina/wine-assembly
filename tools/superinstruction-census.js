@@ -204,6 +204,7 @@ function decodeAt(buf, off, va, end) {
       if (dst === src) return mk('xor_zero', { reg: dst, len: pos - start, text: `xor ${regName(dst)}, ${regName(src)}` });
       return mk('xor_rr', { dst, src, len: pos - start });
     }
+    pos = opOff + 1;
   }
 
   if (!p66 && (op === 0x8a || op === 0x88 || op === 0x8b || op === 0x89)) {
@@ -253,13 +254,31 @@ function decodeAt(buf, off, va, end) {
     return mk('lea', { dst: m.reg, mem: m.mem, len: pos - start, text: `lea ${regName(m.reg)}, ${memText(m.mem)}` });
   }
 
-  if (!p66 && (op === 0x03 || op === 0x01 || op === 0x2b || op === 0x29 || op === 0x39 || op === 0x3b || op === 0x85)) {
+  if (!p66 && op === 0x85) {
     const m = parseModrm(buf, pos, end);
     if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
     pos += m.len;
     const isReg = m.mod === 3;
-    if (op === 0x39 || op === 0x3b) {
-      if (op === 0x3b) {
+    return mk(isReg ? 'test_r32_r32' : 'test_m32_r32', {
+      dst: isReg ? m.rmReg : -1,
+      src: m.reg,
+      mem: isReg ? null : m.mem,
+      len: pos - start,
+      text: `test ${isReg ? regName(m.rmReg) : memText(m.mem)}, ${regName(m.reg)}`,
+    });
+  }
+
+  if (!p66 && op <= 0x3f && ((op & 7) === 1 || (op & 7) === 3)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const isReg = m.mod === 3;
+    const alu = op >>> 3;
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    const dstText = (op & 7) === 3 ? regName(m.reg) : (isReg ? regName(m.rmReg) : memText(m.mem));
+    const srcText = (op & 7) === 3 ? (isReg ? regName(m.rmReg) : memText(m.mem)) : regName(m.reg);
+    if (alu === 7) {
+      if ((op & 7) === 3) {
         return mk(isReg ? 'cmp_r32_r32' : 'cmp_r32_m32', {
           dst: m.reg,
           src: isReg ? m.rmReg : -1,
@@ -276,29 +295,55 @@ function decodeAt(buf, off, va, end) {
         text: `cmp ${isReg ? regName(m.rmReg) : memText(m.mem)}, ${regName(m.reg)}`,
       });
     }
-    if (op === 0x03 || op === 0x2b) {
-      return mk(op === 0x03 ? 'add_r32_rm32' : 'sub_r32_rm32', {
-        dst: m.reg,
-        src: isReg ? m.rmReg : -1,
+    if (alu === 0 || alu === 5) {
+      return mk((op & 7) === 3 ? (alu === 0 ? 'add_r32_rm32' : 'sub_r32_rm32') : (alu === 0 ? 'add_rm32_r32' : 'sub_rm32_r32'), {
+        alu,
+        aluName: aluNames[alu],
+        dst: (op & 7) === 3 ? m.reg : (isReg ? m.rmReg : -1),
+        src: (op & 7) === 3 ? (isReg ? m.rmReg : -1) : m.reg,
         mem: isReg ? null : m.mem,
         len: pos - start,
+        text: `${aluNames[alu]} ${dstText}, ${srcText}`,
       });
     }
-    if (op === 0x01 || op === 0x29) {
-      return mk(op === 0x01 ? 'add_rm32_r32' : 'sub_rm32_r32', {
-        dst: isReg ? m.rmReg : -1,
-        src: m.reg,
-        mem: isReg ? null : m.mem,
-        len: pos - start,
-      });
-    }
-    return mk(isReg ? 'test_r32_r32' : 'test_m32_r32', {
-      dst: isReg ? m.rmReg : -1,
-      src: m.reg,
+    return mk((op & 7) === 3 ? (isReg ? 'alu_r32_r32' : 'alu_r32_m32') : (isReg ? 'alu_r32_r32' : 'alu_m32_r32'), {
+      alu,
+      aluName: aluNames[alu],
+      dst: (op & 7) === 3 ? m.reg : (isReg ? m.rmReg : -1),
+      src: (op & 7) === 3 ? (isReg ? m.rmReg : -1) : m.reg,
       mem: isReg ? null : m.mem,
       len: pos - start,
+      text: `${aluNames[alu]} ${dstText}, ${srcText}`,
     });
   }
+
+  if (!p66 && (op === 0xa1 || op === 0xa3)) {
+    if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const addr = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    return mk(op === 0xa1 ? 'mov_eax_moffs32' : 'mov_moffs32_eax', {
+      dst: op === 0xa1 ? 0 : -1,
+      src: op === 0xa3 ? 0 : -1,
+      mem: { base: -1, index: -1, scale: 1, disp: addr },
+      len: pos - start,
+      text: op === 0xa1 ? `mov eax, [${hex(addr)}]` : `mov [${hex(addr)}], eax`,
+    });
+  }
+
+  if (!p66 && op >= 0xb8 && op <= 0xbf) {
+    if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const imm = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    return mk('mov_r32_i32', {
+      dst: op - 0xb8,
+      imm,
+      len: pos - start,
+      text: `mov ${regName(op - 0xb8)}, ${hex(imm)}`,
+    });
+  }
+
+  if (!p66 && op >= 0x50 && op <= 0x57) return mk('push_r32', { reg: op - 0x50, text: `push ${regName(op - 0x50)}` });
+  if (!p66 && op >= 0x58 && op <= 0x5f) return mk('pop_r32', { reg: op - 0x58, text: `pop ${regName(op - 0x58)}` });
 
   if (!p66 && op === 0x83) {
     const m = parseModrm(buf, pos, end);
@@ -397,6 +442,7 @@ function addUsesReg(ins, reg) {
   if (!ins) return false;
   if ((ins.kind === 'add_r32_rm32' || ins.kind === 'sub_r32_rm32') && ins.src === reg) return true;
   if ((ins.kind === 'add_rm32_r32' || ins.kind === 'sub_rm32_r32') && ins.src === reg) return true;
+  if ((ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') && ins.src === reg) return true;
   return false;
 }
 
@@ -415,6 +461,9 @@ function fullFlagWriter(ins) {
   if (ins.kind === 'xor_zero' || ins.kind === 'xor_rr') return true;
   if (ins.kind === 'add_r32_rm32' || ins.kind === 'add_rm32_r32') return true;
   if (ins.kind === 'sub_r32_rm32' || ins.kind === 'sub_rm32_r32') return true;
+  if (ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
   if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') {
     return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
   }
@@ -424,6 +473,7 @@ function fullFlagWriter(ins) {
 function flagReaderBeforeWrite(ins) {
   if (!ins) return false;
   if (isJcc(ins)) return true;
+  if ((ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') && (ins.alu === 2 || ins.alu === 3)) return true;
   if ((ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
   return false;
 }
@@ -642,7 +692,7 @@ function scanFile(file, opts = {}) {
     }
   }
 
-  return {
+  const report = {
     file,
     imageBase: pe.imageBase,
     sections: sectionStats,
@@ -651,6 +701,11 @@ function scanFile(file, opts = {}) {
     examples,
     hot: opts.profile ? analyzeHotBlocks(opts.profile, allIns, allByVa, examples, opts.hotLimit || 120) : null,
   };
+  if (opts.includeInstructions) {
+    report.instructions = allIns;
+    report.byVa = allByVa;
+  }
+  return report;
 }
 
 function pct(part, whole) {
