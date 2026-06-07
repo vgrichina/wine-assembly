@@ -181,6 +181,70 @@ Conclusion:
 - If branch fusion is revisited, prefer generated trace-specific blocks or larger superinstructions that remove several dispatches at once.
 - Measure with handler histograms disabled before keeping any small win.
 
+## Hot Block And SIB Consumer Histograms
+
+The handler histogram now also records guest block-entry EIPs and the concrete consumer of `$th_compute_ea_sib`. This helps separate "which emulator handlers are hot" from "which AoE routines and SIB shapes are hot."
+
+Profile outputs:
+
+```text
+/private/tmp/aoe-web-profile-hot-blocks-32k.json   10s hot-block exploration
+/private/tmp/aoe-web-profile-sib-fixed3.json       1s SIB consumer validation
+```
+
+Hot-block 32K table result:
+
+```text
+block entries:    66,254,912
+occupied slots:        8,071
+collisions:       1,145,088   1.73%
+```
+
+Top hot block entries from the 10s run:
+
+```text
+857,843  0x00535b56  rva 0x00135b56
+850,107  0x0049dd20  rva 0x0009dd20
+~846K    0x0049dd33..0x0049dd7e cluster
+830,965  0x00536420  rva 0x00136420
+```
+
+Disassembly read:
+
+- `0x0049dd20` is a small branch-heavy range/list update routine.
+- `0x00535b4d..0x005362e0` is a linked-list/bounds loop in `THIS_COD`.
+- `0x004c5fa0` is a small linear search loop over about `0x28` entries.
+- `0x0045c280` is a compact bitfield/tile-state update path.
+
+SIB consumer validation from the 1s run:
+
+```text
+recorded SIB events:  1,523,029
+table total:          1,504,774
+occupied keys:              202
+collisions/lost:         18,255   1.20%
+```
+
+Top SIB consumer shapes:
+
+```text
+149,324  jmp_ind   op=0x0  [none+eax*4+disp]
+113,781  load32    op=0x7  [esi+eax*4+disp]
+ 89,552  load32    op=0x0  [eax+edx*4+disp]
+ 63,834  load32    op=0x3  [edi+eax*1+disp]
+ 62,488  load8     op=0x3  [ecx+eax*8+disp]
+ 62,350  alu_r_m32 op=0x71 [edi+edx*4+disp]
+ 58,718  load32    op=0x6  [eax+ecx*4+disp]
+ 54,015  mov_r16_m16 op=0x0 [esi+ebx*4+disp]
+```
+
+Implication:
+
+- The broad generic SIB-fused handler experiment was too large and regressed, but the shape histogram shows narrower candidates.
+- The highest SIB payoff is not just `compute_ea_sib -> load32`; `jmp_ind`, `load8`, `alu_r_m32`, and 16-bit memory load shapes are material too.
+- Next SIB work should specialize one or two exact shapes, then verify with `HANDLER_HIST=0`.
+- The hot-block data suggests bigger block-local or trace-local work may be more valuable than adding one more small fused handler.
+
 ## Optimization Ideas
 
 ### 1. Specialize Jcc
@@ -365,13 +429,13 @@ Use a bounded top-K hash table instead of a dense matrix for triples.
 
 ### Guest EIP Hot Blocks
 
-Handler-level data tells what kind of emulator work is hot, not which AoE guest routines are hot.
+Handler-level data tells what kind of emulator work is hot; hot-block data now shows which AoE guest routines drive it.
 
 Next measurements:
 
-- Enable EIP/block hit counters for hot game ranges.
-- Correlate hot guest blocks with handler sequences.
-- Use that to decide whether local block compilation would pay off.
+- Add a compact per-hot-block handler-sequence sample so EIP clusters can be tied to concrete threaded op streams.
+- Disassemble the top EIP clusters automatically into profile output.
+- Use those sequences to decide whether local block compilation would pay off.
 
 ### Block-Local Native-ish Compilation
 

@@ -585,7 +585,9 @@
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F92000 4KB      BRANCH_TEST_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
-  ;; 0x07F9B000  ...     Reserved high WAT-private scratch
+  ;; 0x07F9B000 256KB    HOT_BLOCK_HIST (32768 entries x {eip,count})
+  ;; 0x07FDB000 64KB     SIB_CONSUMER_HIST (8192 entries x {key,count})
+  ;; 0x07FEB000  ...     Reserved high WAT-private scratch
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -729,6 +731,15 @@
   (global $BRANCH_TEST_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_ALU_M32_RO_JCC_HIST i32 (i32.const 0x07F93000))
   (global $BRANCH_ALU_M32_RO_JCC_HIST_SIZE i32 (i32.const 0x00008000))
+  (global $HOT_BLOCK_HIST i32 (i32.const 0x07F9B000))
+  (global $HOT_BLOCK_HIST_SIZE i32 (i32.const 0x00040000))
+  (global $HOT_BLOCK_HIST_COUNT i32 (i32.const 32768))
+  (global $hot_block_hist_collisions (mut i32) (i32.const 0))
+  (global $SIB_CONSUMER_HIST i32 (i32.const 0x07FDB000))
+  (global $SIB_CONSUMER_HIST_SIZE i32 (i32.const 0x00010000))
+  (global $SIB_CONSUMER_HIST_COUNT i32 (i32.const 8192))
+  (global $sib_consumer_hist_collisions (mut i32) (i32.const 0))
+  (global $sib_consumer_hist_total (mut i32) (i32.const 0))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))

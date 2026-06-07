@@ -582,6 +582,7 @@ async function main() {
 
   await evalExpr(`(() => {
     const round = v => +((Number(v) || 0).toFixed(3));
+    const hex32 = v => '0x' + ((v >>> 0).toString(16).padStart(8, '0'));
     const handlerNames = ${JSON.stringify(buildHandlerNameList())};
     const regNames = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
     const ccNames = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
@@ -693,6 +694,100 @@ async function main() {
         aluM32RoJcc: readTop((e.get_branch_alu_m32_ro_jcc_hist_base() >>> 2) >>> 0, 512, 'aluM32RoJcc', 120),
       };
     };
+    const snapshotHotBlockHist = (u32, e) => {
+      if (!e.get_hot_block_hist_base || !e.get_hot_block_hist_count) return null;
+      const count = e.get_hot_block_hist_count() | 0;
+      if (count <= 0 || count > 65536) return null;
+      const base = (e.get_hot_block_hist_base() >>> 2) >>> 0;
+      const imageBase = e.get_image_base ? (e.get_image_base() >>> 0) : 0;
+      const codeStart = e.get_code_start ? (e.get_code_start() >>> 0) : 0;
+      const codeEnd = e.get_code_end ? (e.get_code_end() >>> 0) : 0;
+      const top = [];
+      let occupied = 0;
+      let totalBlocks = 0;
+      for (let i = 0; i < count; i++) {
+        const addr = u32[base + i * 2] >>> 0;
+        const n = u32[base + i * 2 + 1] >>> 0;
+        if (!addr || !n) continue;
+        occupied++;
+        totalBlocks += n;
+        const rva = imageBase ? ((addr - imageBase) >>> 0) : 0;
+        addTop(top, {
+          addr,
+          addrHex: hex32(addr),
+          rva: imageBase ? rva : null,
+          rvaHex: imageBase ? hex32(rva) : null,
+          inCode: codeStart && codeEnd ? (addr >= codeStart && addr < codeEnd) : null,
+          count: n,
+        }, 120);
+      }
+      top.sort((a, b) => b.count - a.count);
+      top.length = Math.min(top.length, 120);
+      for (const row of top) row.pct = totalBlocks ? round(row.count * 100 / totalBlocks) : 0;
+      return {
+        count,
+        occupied,
+        totalBlocks,
+        collisions: e.get_hot_block_hist_collisions ? (e.get_hot_block_hist_collisions() >>> 0) : 0,
+        imageBase,
+        imageBaseHex: hex32(imageBase),
+        codeStart,
+        codeStartHex: hex32(codeStart),
+        codeEnd,
+        codeEndHex: hex32(codeEnd),
+        top,
+      };
+    };
+    const snapshotSibConsumerHist = (u32, e) => {
+      if (!e.get_sib_consumer_hist_base || !e.get_sib_consumer_hist_count) return null;
+      const count = e.get_sib_consumer_hist_count() | 0;
+      if (count <= 0 || count > 65536) return null;
+      const baseWords = (e.get_sib_consumer_hist_base() >>> 2) >>> 0;
+      const top = [];
+      let occupied = 0;
+      let total = 0;
+      const regName = v => v === 15 ? 'none' : (regNames[v] || String(v));
+      for (let i = 0; i < count; i++) {
+        const key = u32[baseWords + i * 2] >>> 0;
+        const n = u32[baseWords + i * 2 + 1] >>> 0;
+        if (!key || !n) continue;
+        occupied++;
+        total += n;
+        const consumer = (key >>> 23) & 0x1FF;
+        const op = (key >>> 14) & 0x1FF;
+        const sibBase = (key >>> 10) & 0xF;
+        const index = (key >>> 6) & 0xF;
+        const scale = (key >>> 4) & 0x3;
+        const consumerName = handlerNames[consumer] || ('$handler_' + consumer);
+        addTop(top, {
+          key,
+          consumer,
+          consumerName,
+          op,
+          opHex: '0x' + op.toString(16),
+          base: sibBase,
+          baseName: regName(sibBase),
+          index,
+          indexName: regName(index),
+          scale,
+          scaleValue: 1 << scale,
+          count: n,
+          label: consumerName + ' op=' + ('0x' + op.toString(16)) +
+            ' [' + regName(sibBase) + '+' + regName(index) + '*' + (1 << scale) + '+disp]',
+        }, 120);
+      }
+      top.sort((a, b) => b.count - a.count);
+      top.length = Math.min(top.length, 120);
+      for (const row of top) row.pct = total ? round(row.count * 100 / total) : 0;
+      return {
+        count,
+        occupied,
+        total,
+        recordedTotal: e.get_sib_consumer_hist_total ? (e.get_sib_consumer_hist_total() >>> 0) : 0,
+        collisions: e.get_sib_consumer_hist_collisions ? (e.get_sib_consumer_hist_collisions() >>> 0) : 0,
+        top,
+      };
+    };
     const snapshotHandlerHistogram = (wine, e) => {
       if (!wine || !wine.memory || !wine.memory.buffer || !e ||
           !e.get_handler_hist_base || !e.get_handler_pair_hist_base || !e.get_handler_hist_count) {
@@ -747,6 +842,8 @@ async function main() {
         totalPairs,
         topHandlers,
         topPairs,
+        hotBlocks: snapshotHotBlockHist(u32, e),
+        sibConsumers: snapshotSibConsumerHist(u32, e),
         branchOperands: snapshotBranchOperandHist(u32, e),
       };
     };

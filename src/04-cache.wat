@@ -128,6 +128,90 @@
       (then (global.set $branch_hist_kind (i32.const 0))))
     (global.set $handler_hist_last (local.get $fn)))
 
+  (func $hot_block_hist_record (param $addr i32)
+    (local $slot i32) (local $ptr i32) (local $i i32) (local $cur i32)
+    ;; Four-way direct bucket keyed by block-entry EIP.
+    (local.set $slot
+      (i32.and
+        (i32.shr_u (local.get $addr) (i32.const 2))
+        (i32.const 0x7FFC)))
+    (local.set $ptr
+      (i32.add (global.get $HOT_BLOCK_HIST)
+        (i32.shl (local.get $slot) (i32.const 3))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $probe
+      (local.set $cur (i32.load (local.get $ptr)))
+      (if (i32.or
+            (i32.eq (local.get $cur) (local.get $addr))
+            (i32.eqz (local.get $cur)))
+        (then
+          (if (i32.eqz (local.get $cur))
+            (then (i32.store (local.get $ptr) (local.get $addr))))
+          (i32.store offset=4 (local.get $ptr)
+            (i32.add (i32.load offset=4 (local.get $ptr)) (i32.const 1)))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))
+      (br $probe)))
+    (if (i32.ge_u (local.get $i) (i32.const 4))
+      (then
+        (global.set $hot_block_hist_collisions
+          (i32.add (global.get $hot_block_hist_collisions) (i32.const 1))))))
+
+  (func $sib_consumer_hist_record (param $fn i32) (param $op i32) (param $info i32)
+    (local $key i32) (local $slot i32) (local $ptr i32) (local $i i32) (local $cur i32)
+    (global.set $sib_consumer_hist_total
+      (i32.add (global.get $sib_consumer_hist_total) (i32.const 1)))
+    ;; key: fn:9 | op:9 | base:4 | index:4 | scale:2 | low marker bit
+    (local.set $key (i32.const 1))
+    (local.set $key
+      (i32.or (local.get $key)
+        (i32.shl (i32.and (local.get $fn) (i32.const 0x1FF)) (i32.const 23))))
+    (local.set $key
+      (i32.or (local.get $key)
+        (i32.shl (i32.and (local.get $op) (i32.const 0x1FF)) (i32.const 14))))
+    (local.set $key
+      (i32.or (local.get $key)
+        (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 10))))
+    (local.set $key
+      (i32.or (local.get $key)
+        (i32.shl
+          (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF))
+          (i32.const 6))))
+    (local.set $key
+      (i32.or (local.get $key)
+        (i32.shl
+          (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3))
+          (i32.const 4))))
+    (local.set $slot
+      (i32.and
+        (i32.xor (local.get $key) (i32.shr_u (local.get $key) (i32.const 16)))
+        (i32.const 0x1FFC)))
+    (local.set $ptr
+      (i32.add (global.get $SIB_CONSUMER_HIST)
+        (i32.shl (local.get $slot) (i32.const 3))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $probe
+      (local.set $cur (i32.load (local.get $ptr)))
+      (if (i32.or
+            (i32.eq (local.get $cur) (local.get $key))
+            (i32.eqz (local.get $cur)))
+        (then
+          (if (i32.eqz (local.get $cur))
+            (then (i32.store (local.get $ptr) (local.get $key))))
+          (i32.store offset=4 (local.get $ptr)
+            (i32.add (i32.load offset=4 (local.get $ptr)) (i32.const 1)))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))
+      (br $probe)))
+    (if (i32.ge_u (local.get $i) (i32.const 4))
+      (then
+        (global.set $sib_consumer_hist_collisions
+          (i32.add (global.get $sib_consumer_hist_collisions) (i32.const 1))))))
+
   (func $branch_hist_set (param $kind i32) (param $operand i32)
     (if (global.get $handler_hist_enabled)
       (then

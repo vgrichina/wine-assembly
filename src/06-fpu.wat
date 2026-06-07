@@ -1012,6 +1012,12 @@
     (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
     (local.set $info (call $read_thread_word))
     (local.set $disp (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then
+        (call $sib_consumer_hist_record
+          (i32.load (global.get $ip))
+          (i32.load offset=4 (global.get $ip))
+          (local.get $info))))
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (call $get_reg (i32.and (local.get $info) (i32.const 0xF))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
