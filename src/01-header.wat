@@ -581,7 +581,7 @@
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (307 x 307 i32 counters)
+  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (355 x 355 i32 counters)
   ;; 0x07F91000  ...     Reserved high WAT-private scratch
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
@@ -719,7 +719,7 @@
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 307))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 355))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))

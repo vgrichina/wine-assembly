@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 307 funcref)
+  (table $handlers 355 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -359,4 +359,55 @@
     $th_bts_m16_r16        ;; 304: BTS [addr], r16
     $th_btr_m16_r16        ;; 305: BTR [addr], r16
     $th_btc_m16_r16        ;; 306: BTC [addr], r16
+    ;; -- Specialized Jcc (same payload as 44: fall-through, target) --
+    $th_jcc_o              ;; 307: JO
+    $th_jcc_no             ;; 308: JNO
+    $th_jcc_b              ;; 309: JB/JC/JNAE
+    $th_jcc_ae             ;; 310: JAE/JNB/JNC
+    $th_jcc_z              ;; 311: JZ/JE
+    $th_jcc_nz             ;; 312: JNZ/JNE
+    $th_jcc_be             ;; 313: JBE/JNA
+    $th_jcc_a              ;; 314: JA/JNBE
+    $th_jcc_s              ;; 315: JS
+    $th_jcc_ns             ;; 316: JNS
+    $th_jcc_p              ;; 317: JP/JPE
+    $th_jcc_np             ;; 318: JNP/JPO
+    $th_jcc_l              ;; 319: JL/JNGE
+    $th_jcc_ge             ;; 320: JGE/JNL
+    $th_jcc_le             ;; 321: JLE/JNG
+    $th_jcc_g              ;; 322: JG/JNLE
+    ;; -- Specialized PUSH/POP r32 --
+    $th_push_eax           ;; 323
+    $th_push_ecx           ;; 324
+    $th_push_edx           ;; 325
+    $th_push_ebx           ;; 326
+    $th_push_esp           ;; 327
+    $th_push_ebp           ;; 328
+    $th_push_esi           ;; 329
+    $th_push_edi           ;; 330
+    $th_pop_eax            ;; 331
+    $th_pop_ecx            ;; 332
+    $th_pop_edx            ;; 333
+    $th_pop_ebx            ;; 334
+    $th_pop_esp            ;; 335
+    $th_pop_ebp            ;; 336
+    $th_pop_esi            ;; 337
+    $th_pop_edi            ;; 338
+    ;; -- Specialized MOV r32, [base+disp] / MOV [base+disp], r32 --
+    $th_load32_ro_base_eax  ;; 339
+    $th_load32_ro_base_ecx  ;; 340
+    $th_load32_ro_base_edx  ;; 341
+    $th_load32_ro_base_ebx  ;; 342
+    $th_load32_ro_base_esp  ;; 343
+    $th_load32_ro_base_ebp  ;; 344
+    $th_load32_ro_base_esi  ;; 345
+    $th_load32_ro_base_edi  ;; 346
+    $th_store32_ro_base_eax ;; 347
+    $th_store32_ro_base_ecx ;; 348
+    $th_store32_ro_base_edx ;; 349
+    $th_store32_ro_base_ebx ;; 350
+    $th_store32_ro_base_esp ;; 351
+    $th_store32_ro_base_ebp ;; 352
+    $th_store32_ro_base_esi ;; 353
+    $th_store32_ro_base_edi ;; 354
   )

@@ -21,6 +21,29 @@ present fps:              21.5
 
 The bottleneck is the WAT x86 interpreter, not canvas repaint and not mostly DIB conversion.
 
+## Measured Experiments
+
+Single-run Chrome campaign profiles are noisy, but the direction has been consistent enough to prune several ideas:
+
+```text
+experiment                         profile file                                           main.runSlice   delta vs baseline
+baseline                           /private/tmp/aoe-web-profile.json                          6580.6 ms      0.0%
+Jcc specialized                    /private/tmp/aoe-web-profile-jcc-specialized.json          6571.9 ms     -0.1%
+Jcc + push/pop specialized         /private/tmp/aoe-web-profile-jcc-pushpop.json              6562.3 ms     -0.3%
+Jcc + push/pop + base load/store   /private/tmp/aoe-web-profile-jcc-pushpop-loadstorebase.json 6524.4 ms     -0.9%
+br_table register helpers          /private/tmp/aoe-web-profile-reg-brtable.json              6618.1 ms     +0.6%
+broad SIB fused handlers           /private/tmp/aoe-web-profile-sib-fused.json                6593.9 ms     +0.2%
+direct stack load/store handlers   /private/tmp/aoe-web-profile-stackfast.json                6571.6 ms     -0.1%
+```
+
+Disposition:
+
+- Keep the 355-handler specialization set: Jcc, push/pop r32, and simple base load/store r32.
+- Revert `br_table` register helpers. WASM still needs nested block labels for `br_table`, and this workload was slower in Chrome.
+- Revert broad SIB fused handlers. They reduced handler dispatch count, but larger/slower handlers lost more time than dispatch removal saved.
+- Revert direct stack load/store handlers. Skipping `gs32/gl32` wrappers did not help this profile; guest time increased versus the 355-handler run.
+- Keep the `PUSH ESP` correctness fix: x86 pushes the original ESP value, not the decremented value.
+
 ## Handler Histogram
 
 The handler histogram is enabled only during the gameplay measurement window. Pair counts reset at decoded-block boundaries, so pair data is useful for superinstruction selection.
@@ -117,10 +140,21 @@ Expected benefit:
 - Avoids `$ea_temp` and sentinel checks.
 - Directly attacks a clear top pair.
 
+Measured result:
+
+- A broad `load32_sib`, `store32_sib`, and `jmp_ind_sib` experiment reduced total handler count from about 371M to about 361M, but `main.runSlice` worsened from `6524.4 ms` to `6593.9 ms`.
+- The likely issue is handler bloat/codegen: fewer dispatches did not beat a larger SIB EA path inside hot handlers.
+
 Risk:
 
 - More handler table entries.
 - Need careful coverage for absolute/SIB/no-base forms.
+
+Next version, if revisited:
+
+- Use operand histograms first.
+- Specialize only the most common SIB shapes, such as fixed base/index/scale combinations, rather than one generic SIB fused helper.
+- Compare against the current `compute_ea_sib + consumer` path after each small addition.
 
 ### 3. Stack Fast Paths
 
@@ -143,6 +177,12 @@ Risk:
 - `pop esp` has special semantics and must remain correct.
 - Stack fast paths must not hide real self-modifying-code writes outside stack memory.
 
+Measured result:
+
+- Direct `i32.store/load (g2w esp)` in specialized push/pop regressed versus the current 355-handler run: `6524.4 ms` -> `6571.6 ms`.
+- Skipping the store invalidation helper is not enough by itself, and the larger handler bodies appear to hurt Chrome.
+- This is still worth revisiting for `call`, `ret`, `push imm`, `pushfd`, and batch push/pop shapes, but only with a narrower measurement.
+
 ### 4. Register Specialization
 
 CPU sampling shows `$get_reg` and `$set_reg` are expensive. Handler histogram confirms generic register-heavy handlers dominate.
@@ -162,6 +202,11 @@ Risk:
 
 - Handler-table growth.
 - More code to maintain.
+
+Measured result:
+
+- Replacing `get_reg/set_reg` chains with `br_table` helpers was slower in the AoE Chrome profile.
+- Register-specific handlers are still viable; `br_table` helper replacement is not currently justified.
 
 ### 5. Memory Translation Fast Paths
 
@@ -407,9 +452,10 @@ Practical implication for this project:
 
 ## Suggested Next Order
 
-1. Add specialized Jcc handlers and measure.
-2. Add `cmp/test -> jcc` fusions and measure.
-3. Add `compute_ea_sib -> load/store/jmp` fusions and measure.
-4. Add stack fast paths for push/pop and measure.
-5. Add register specialization or `br_table` helpers if get/set reg remains hot.
-6. Explore triple histograms once pair-driven wins flatten out.
+1. Keep and commit the measured 355-handler specialization set.
+2. Add operand histograms for the hot branch producers: `cmp_r_r`, `test_r_r`, and `alu_r_m32_ro`.
+3. Add narrow `cmp/test -> jcc` fusions based on the operand histogram and measure each group.
+4. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.
+5. Revisit SIB only as shape-specific handlers after operand/addressing histograms identify exact forms.
+6. Revisit stack only as batch prolog/epilog or call/ret forms, not as generic direct stack load/store replacement.
+7. Explore triple histograms once pair-driven wins flatten out.

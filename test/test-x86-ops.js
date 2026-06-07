@@ -105,6 +105,9 @@ async function main() {
   runCode([0x31, 0xC0]); // xor eax, eax
   test('xor eax, eax', e.get_eax(), 0);
 
+  runCode([0x54, 0x58]); // push esp; pop eax
+  test('PUSH ESP stores original ESP', e.get_eax(), imageBase + 0xD00000);
+
   // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply
   // ================================================================
