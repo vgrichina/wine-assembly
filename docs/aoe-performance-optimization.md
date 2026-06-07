@@ -147,7 +147,8 @@ Implication:
 
 - The next fusion should target branch producers, not generic SIB or stack paths.
 - A generic runtime `producer -> Jcc` fusion was tested in `/private/tmp/aoe-web-profile-branch-fused.json` and was effectively flat: `6539.2 ms` -> `6539.4 ms` in the hist-enabled profile.
-- The likely issue is that the runtime helper still adds hot-path peeking and generic condition evaluation; it does not get the codegen benefit of a purpose-built fused handler.
+- A narrower runtime `test r,r -> jz/jnz` fusion was tested in `/private/tmp/aoe-web-profile-test-jznz-fused.json` and regressed: `6539.2 ms` -> `6563.0 ms`.
+- The likely issue is that runtime helpers still add hot-path peeking and generic condition work; they do not get the codegen benefit of purpose-built fused handlers.
 - Next branch work should specialize only the top operand shapes above, starting with `test eax,eax -> jz/jnz` or the top `cmp reg,[base+disp] -> jcc` forms.
 
 ## Optimization Ideas
