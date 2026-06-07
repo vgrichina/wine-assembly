@@ -470,6 +470,7 @@
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
     (global.set $handler_hist_enabled (local.get $flag))
+    (global.set $branch_hist_kind (i32.const 0))
     (if (local.get $flag)
       (then (global.set $handler_hist_last (i32.const -1)))))
   (func (export "reset_handler_hist")
@@ -488,10 +489,35 @@
       (i32.store (local.get $ptr) (i32.const 0))
       (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
       (br $pairs)))
+    (local.set $ptr (global.get $BRANCH_CMP_JCC_HIST))
+    (local.set $end (i32.add (global.get $BRANCH_CMP_JCC_HIST) (global.get $BRANCH_CMP_JCC_HIST_SIZE)))
+    (block $cmp_branch_done (loop $cmp_branch
+      (br_if $cmp_branch_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $cmp_branch)))
+    (local.set $ptr (global.get $BRANCH_TEST_JCC_HIST))
+    (local.set $end (i32.add (global.get $BRANCH_TEST_JCC_HIST) (global.get $BRANCH_TEST_JCC_HIST_SIZE)))
+    (block $test_branch_done (loop $test_branch
+      (br_if $test_branch_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $test_branch)))
+    (local.set $ptr (global.get $BRANCH_ALU_M32_RO_JCC_HIST))
+    (local.set $end (i32.add (global.get $BRANCH_ALU_M32_RO_JCC_HIST) (global.get $BRANCH_ALU_M32_RO_JCC_HIST_SIZE)))
+    (block $alu_branch_done (loop $alu_branch
+      (br_if $alu_branch_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $alu_branch)))
+    (global.set $branch_hist_kind (i32.const 0))
     (global.set $handler_hist_last (i32.const -1)))
   (func (export "get_handler_hist_base") (result i32) (global.get $HANDLER_HIST_COUNTS))
   (func (export "get_handler_pair_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
   (func (export "get_handler_hist_count") (result i32) (global.get $HANDLER_HIST_COUNT))
+  (func (export "get_branch_cmp_jcc_hist_base") (result i32) (global.get $BRANCH_CMP_JCC_HIST))
+  (func (export "get_branch_test_jcc_hist_base") (result i32) (global.get $BRANCH_TEST_JCC_HIST))
+  (func (export "get_branch_alu_m32_ro_jcc_hist_base") (result i32) (global.get $BRANCH_ALU_M32_RO_JCC_HIST))
 
   ;; Size-aware load for watchpoint. $watch_size: 1=byte, 2=word, anything else=dword.
   (func $watch_load (param $addr i32) (result i32)

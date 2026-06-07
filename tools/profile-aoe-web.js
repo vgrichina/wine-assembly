@@ -582,6 +582,9 @@ async function main() {
   await evalExpr(`(() => {
     const round = v => +((Number(v) || 0).toFixed(3));
     const handlerNames = ${JSON.stringify(buildHandlerNameList())};
+    const regNames = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+    const ccNames = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
     const valueStats = values => {
       const nums = (values || []).map(Number).filter(Number.isFinite);
       if (!nums.length) return { count: 0 };
@@ -627,6 +630,67 @@ async function main() {
         arr.sort((a, b) => b.count - a.count);
         arr.length = limit;
       }
+    };
+    const snapshotBranchOperandHist = (u32, e) => {
+      if (!e.get_branch_cmp_jcc_hist_base ||
+          !e.get_branch_test_jcc_hist_base ||
+          !e.get_branch_alu_m32_ro_jcc_hist_base) {
+        return null;
+      }
+      const readTop = (baseWords, stride, kind, limit) => {
+        const top = [];
+        let total = 0;
+        for (let cc = 0; cc < 16; cc++) {
+          const row = baseWords + cc * stride;
+          for (let operand = 0; operand < stride; operand++) {
+            const n = u32[row + operand] >>> 0;
+            total += n;
+            if (!n) continue;
+            let decoded = {};
+            if (kind === 'aluM32RoJcc') {
+              const alu = (operand >>> 6) & 7;
+              const reg = (operand >>> 3) & 7;
+              const base = operand & 7;
+              decoded = {
+                alu,
+                aluName: aluNames[alu],
+                reg,
+                regName: regNames[reg],
+                base,
+                baseName: regNames[base],
+                label: aluNames[alu] + ' ' + regNames[reg] + ',[' + regNames[base] + '+disp] -> j' + ccNames[cc],
+              };
+            } else {
+              const dst = (operand >>> 3) & 7;
+              const src = operand & 7;
+              decoded = {
+                dst,
+                dstName: regNames[dst],
+                src,
+                srcName: regNames[src],
+                label: kind.replace('Jcc', '') + ' ' + regNames[dst] + ',' + regNames[src] + ' -> j' + ccNames[cc],
+              };
+            }
+            addTop(top, {
+              kind,
+              cc,
+              ccName: ccNames[cc],
+              operand,
+              count: n,
+              ...decoded,
+            }, limit);
+          }
+        }
+        top.sort((a, b) => b.count - a.count);
+        top.length = Math.min(top.length, limit);
+        for (const row of top) row.pct = total ? round(row.count * 100 / total) : 0;
+        return { total, top };
+      };
+      return {
+        cmpJcc: readTop((e.get_branch_cmp_jcc_hist_base() >>> 2) >>> 0, 64, 'cmpJcc', 80),
+        testJcc: readTop((e.get_branch_test_jcc_hist_base() >>> 2) >>> 0, 64, 'testJcc', 80),
+        aluM32RoJcc: readTop((e.get_branch_alu_m32_ro_jcc_hist_base() >>> 2) >>> 0, 512, 'aluM32RoJcc', 120),
+      };
     };
     const snapshotHandlerHistogram = (wine, e) => {
       if (!wine || !wine.memory || !wine.memory.buffer || !e ||
@@ -682,6 +746,7 @@ async function main() {
         totalPairs,
         topHandlers,
         topPairs,
+        branchOperands: snapshotBranchOperandHist(u32, e),
       };
     };
     window.__aoeSnapshotHandlerHistogram = snapshotHandlerHistogram;

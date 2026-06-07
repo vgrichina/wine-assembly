@@ -582,7 +582,10 @@
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (355 x 355 i32 counters)
-  ;; 0x07F91000  ...     Reserved high WAT-private scratch
+  ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
+  ;; 0x07F92000 4KB      BRANCH_TEST_JCC_HIST (16 cc x 64 reg-pair counters)
+  ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
+  ;; 0x07F9B000  ...     Reserved high WAT-private scratch
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -720,6 +723,12 @@
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
   (global $HANDLER_HIST_COUNT i32 (i32.const 355))
+  (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
+  (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
+  (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
+  (global $BRANCH_TEST_JCC_HIST_SIZE i32 (i32.const 0x00001000))
+  (global $BRANCH_ALU_M32_RO_JCC_HIST i32 (i32.const 0x07F93000))
+  (global $BRANCH_ALU_M32_RO_JCC_HIST_SIZE i32 (i32.const 0x00008000))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
@@ -910,6 +919,8 @@
   (global $steps (mut i32) (i32.const 0))
   (global $handler_hist_enabled (mut i32) (i32.const 0))
   (global $handler_hist_last (mut i32) (i32.const -1))
+  (global $branch_hist_kind (mut i32) (i32.const 0))
+  (global $branch_hist_operand (mut i32) (i32.const 0))
 
   ;; PE info
   (global $image_base   (mut i32) (i32.const 0))

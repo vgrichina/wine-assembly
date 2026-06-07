@@ -96,6 +96,60 @@ FPU:                 ~3%
 
 Categories overlap because a handler can be both ALU and RO, or load/store and RO.
 
+## Branch Operand Histogram
+
+Profile output: `/private/tmp/aoe-web-profile-branch-operands.json`.
+
+The branch operand histogram records producer operands only when the next threaded handler is a Jcc. This is more useful for choosing fusions than raw handler-pair counts.
+
+```text
+cmp_r_r -> Jcc total:          11,398,509
+test_r_r -> Jcc total:          6,372,538
+alu_r_m32_ro -> Jcc total:      9,373,017
+```
+
+Top `cmp_r_r -> Jcc` shapes:
+
+```text
+889,989  cmp ebp,ecx -> jl
+876,525  cmp eax,ecx -> jge
+847,520  cmp eax,edx -> jg
+847,409  cmp ebp,edx -> jle
+844,095  cmp eax,ebp -> jle
+746,196  cmp ebx,ebp -> jl
+461,092  cmp ecx,eax -> jg
+446,390  cmp edi,ecx -> jl
+```
+
+Top `test_r_r -> Jcc` shapes:
+
+```text
+1,277,128  test eax,eax -> jz
+  951,533  test eax,eax -> jnz
+  857,627  test ebx,ebx -> jnz
+  572,725  test esi,esi -> jz
+  342,707  test edx,edx -> jge
+  293,793  test eax,eax -> jl
+```
+
+Top `alu_r_m32_ro -> Jcc` shapes are all CMP forms:
+
+```text
+1,208,861  cmp ecx,[edi+disp] -> jl
+1,190,395  cmp edx,[edi+disp] -> jle
+  874,012  cmp eax,[ebp+disp] -> jl
+  862,752  cmp edi,[esi+disp] -> jg
+  842,302  cmp edi,[esi+disp] -> jl
+  798,429  cmp edx,[ebx+disp] -> jl
+```
+
+Implication:
+
+- The next fusion should target branch producers, not generic SIB or stack paths.
+- A generic runtime `producer -> Jcc` fusion was tested in `/private/tmp/aoe-web-profile-branch-fused.json` and was effectively flat: `6539.2 ms` -> `6539.4 ms` in the hist-enabled profile.
+- The likely issue is that the runtime helper still adds hot-path peeking and generic condition evaluation; it does not get the codegen benefit of a purpose-built fused handler.
+- Next branch work should specialize only the top operand shapes above, starting with `test eax,eax -> jz/jnz` or the top `cmp reg,[base+disp] -> jcc` forms.
+
 ## Optimization Ideas
 
 ### 1. Specialize Jcc

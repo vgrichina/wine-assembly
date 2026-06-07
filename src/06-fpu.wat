@@ -1040,6 +1040,14 @@
   ;; 128: reg32 OP= [base+disp]. operand = alu_op<<8 | reg<<4 | base.
   (func $th_alu_r_m32_ro (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (if (global.get $handler_hist_enabled)
+      (then
+        (call $branch_hist_set (i32.const 3)
+          (i32.or
+            (i32.shl (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 7)) (i32.const 6))
+            (i32.or
+              (i32.shl (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)) (i32.const 3))
+              (i32.and (local.get $op) (i32.const 7)))))))
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
@@ -1266,4 +1274,3 @@
 
             (func $th_emms (param $op i32)
             (global.set $fpu_tag (i32.const 0)) (return_call $next))
-

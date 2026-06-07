@@ -120,4 +120,49 @@
               (i32.const 2))))
         (i32.store (local.get $addr)
           (i32.add (i32.load (local.get $addr)) (i32.const 1)))))
+    (if (i32.and
+          (i32.ne (local.get $fn) (i32.const 44))
+          (i32.or
+            (i32.lt_u (local.get $fn) (i32.const 307))
+            (i32.gt_u (local.get $fn) (i32.const 322))))
+      (then (global.set $branch_hist_kind (i32.const 0))))
     (global.set $handler_hist_last (local.get $fn)))
+
+  (func $branch_hist_set (param $kind i32) (param $operand i32)
+    (if (global.get $handler_hist_enabled)
+      (then
+        (global.set $branch_hist_kind (local.get $kind))
+        (global.set $branch_hist_operand (local.get $operand)))))
+
+  (func $branch_hist_record_jcc (param $cc i32)
+    (local $base i32) (local $idx i32) (local $kind i32)
+    (if (i32.eqz (global.get $handler_hist_enabled))
+      (then (return)))
+    (local.set $kind (global.get $branch_hist_kind))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $base (global.get $BRANCH_CMP_JCC_HIST))
+        (local.set $idx
+          (i32.add
+            (i32.shl (i32.and (local.get $cc) (i32.const 0xF)) (i32.const 6))
+            (i32.and (global.get $branch_hist_operand) (i32.const 0x3F))))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (local.set $base (global.get $BRANCH_TEST_JCC_HIST))
+        (local.set $idx
+          (i32.add
+            (i32.shl (i32.and (local.get $cc) (i32.const 0xF)) (i32.const 6))
+            (i32.and (global.get $branch_hist_operand) (i32.const 0x3F))))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then
+        (local.set $base (global.get $BRANCH_ALU_M32_RO_JCC_HIST))
+        (local.set $idx
+          (i32.add
+            (i32.shl (i32.and (local.get $cc) (i32.const 0xF)) (i32.const 9))
+            (i32.and (global.get $branch_hist_operand) (i32.const 0x1FF))))))
+    (if (local.get $base)
+      (then
+        (local.set $base (i32.add (local.get $base) (i32.shl (local.get $idx) (i32.const 2))))
+        (i32.store (local.get $base)
+          (i32.add (i32.load (local.get $base)) (i32.const 1)))))
+    (global.set $branch_hist_kind (i32.const 0)))
