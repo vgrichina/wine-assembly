@@ -486,6 +486,68 @@ Another register-write example:
 selected as a flag-only/test-like primitive without a register global write.
 ```
 
+Block-shape classifier:
+
+```sh
+node tools/aoe-block-shape-census.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --hot-limit=120 \
+  --top-rows=10
+```
+
+This aggregates the printer/estimator view across hot blocks. It reports
+primary buckets, overlapping optimization signals, exact branch candidates,
+register-coalescing block signatures, and EA/g2w access shapes.
+
+10s hot-block result:
+
+```text
+covered block entries:            37,475,452 / 66,254,912 = 56.6%
+current dispatches in covered:   180,833,002   48.7% vs all handlers
+branch fusion dispatch saves:     25,821,011    6.9% vs all handlers
+flag-dead branch opportunities:   12,337,847   32.9% of covered blocks
+coalescible register writes:      22,908,741    6.2% vs all handlers
+identity register writes:          2,072,787    0.6% vs all handlers
+```
+
+EA/g2w result:
+
+```text
+blocks with any EA/g2w access:        27,905,410   74.5% of covered blocks
+blocks with multiple EA/g2w accesses: 11,813,270   31.5% of covered blocks
+blocks with repeated same EA/g2w:      1,326,604    3.5% of covered blocks
+current g2w-like memory accesses:     61,093,519   16.4% vs all handlers
+repeated-EA g2w saves in block:        2,227,338    0.6% vs all handlers
+```
+
+Interpretation:
+
+```text
+repeated same-EA reuse is small on its own.
+all EA/g2w access is large enough to keep high priority.
+best g2w work is likely fast-path mapping or exact memory primitives,
+not only common-subexpression reuse inside a block.
+```
+
+Top EA/g2w access shapes:
+
+```text
+13,153,396  [esi+disp]
+12,118,926  [esp+disp]
+ 9,479,384  [disp]
+ 4,250,660  [ebp+disp]
+ 3,049,812  [edi+disp]
+```
+
+Current priority from the classifier:
+
+```text
+1. exact flag-dead cmp/test/identity-ALU + Jcc selection
+2. block-local virtual registers for multi-op hot blocks
+3. EA/g2w fast-path or exact memory primitives, because total surface is large
+4. repeated same-EA reuse only after the broader g2w path is understood
+```
+
 The report command now supports optional hot-block weighting:
 
 ```sh
