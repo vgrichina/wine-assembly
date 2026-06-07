@@ -1217,6 +1217,22 @@
         (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
         (return)))
     (global.set $eip (local.get $target)))
+  ;; 355: jmp [disp+eax*4]. Hot AoE blitter command-table dispatch.
+  (func $th_jmp_ind_sib_eax4_abs (param $op i32)
+    (local $disp i32) (local $target i32) (local $ret_addr i32)
+    (local.set $disp (call $read_thread_word))
+    (local.set $target
+      (call $gl32
+        (i32.add (local.get $disp)
+          (i32.shl (global.get $eax) (i32.const 2)))))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+      (then
+        (local.set $ret_addr (call $gl32 (global.get $esp)))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
+        (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
+        (return)))
+    (global.set $eip (local.get $target)))
   ;; 142: push [base+disp]. op=base, disp in word.
   (func $th_push_m32_ro (param $op i32)
     (local $addr i32)

@@ -238,11 +238,96 @@ Top SIB consumer shapes:
  54,015  mov_r16_m16 op=0x0 [esi+ebx*4+disp]
 ```
 
+Hot-loop split from the 10s hot-block run:
+
+```text
+profile:              /private/tmp/aoe-web-profile-hot-blocks-32k.json
+elapsed:              10019 ms
+main.runSlice:         6559.7 ms
+wrapped host imports:   333.7 ms
+guest/unwrapped:       6226.0 ms
+```
+
+The split below is block-count based, not exact wall-clock time. It is still
+useful because the top 120 recorded hot block entries cover 56.6% of all guest
+block entries in the sample.
+
+```text
+bucket                    guest block share   est. runSlice time
+span/region builder              20.8%              1363 ms
+blitter command decoder          19.7%              1292 ms
+tile bitfield updates             2.2%               145 ms
+entity render glue                2.0%               134 ms
+40-slot linear search             1.8%               116 ms
+x87 float->int helper             1.2%                77 ms
+negative-id lookup                0.9%                62 ms
+other top-120 blocks              8.0%               522 ms
+long tail / not top-120          43.4%              2846 ms
+```
+
+Disassembly interpretation of the two largest buckets:
+
+- `0x0049dd20` and callers around `0x0043d048` build/clamp horizontal
+  span ranges across rows and maintain per-row linked lists. This is branchy,
+  pointer-heavy dirty/visibility/coverage bookkeeping.
+- `0x005359a0`, `0x00535c20`, `0x00535e00`, and `0x00536420` are AoE's
+  software blitter/command decoder. They walk span lists, decode byte commands,
+  use jump tables, clip runs, and write pixels.
+
+### Exact SIB Jump Probe
+
+An exact handler for the hottest SIB shape was tested:
+
+```text
+candidate: jmp [disp+eax*4]
+profile:   /private/tmp/aoe-web-profile-jmp-sib-eax4-1s.json
+```
+
+The handler worked mechanically. In the 1s hist-enabled profile it ran 167,340
+times, and the old generic SIB/jump path dropped accordingly:
+
+```text
+metric                         previous 1s      exact-SIB 1s
+compute_ea_sib count             1,523,029        1,355,298
+jmp_ind count                      210,392           74,394
+new exact handler count                  0          167,340
+```
+
+A single no-hist run was misleading, so the timing comparison was repeated with
+three full 10s gameplay profiles per variant:
+
+```text
+variant          runSlice mean   runSlice sd   guest mean   present fps mean
+baseline             6312.8 ms      48.6 ms     5940.6 ms          22.45
+jmp [disp+eax*4]     6243.9 ms      10.6 ms     5876.1 ms          23.01
+jmp + load SIB       6242.0 ms       1.3 ms     5874.6 ms          23.08
+```
+
+Profile files:
+
+```text
+/private/tmp/aoe-repeat-baseline-{1,2,3}.json
+/private/tmp/aoe-repeat-jmp-sib-eax4-{1,2,3}.json
+/private/tmp/aoe-repeat-jmp-load-sib-{1,2,3}.json
+```
+
+Conclusion:
+
+- Keep the exact `jmp [disp+eax*4]` handler. It reduces `main.runSlice` by
+  about 68.9 ms over the 10s gameplay window, or about 1.09%.
+- Do not keep the exact `edi = [esi+eax*4+disp]` load handler. Adding it on top
+  of the jump handler improves the mean by only 1.9 ms, about 0.03%, which is
+  not enough to justify the extra handler.
+- Repeated no-hist runs are required for small interpreter changes. The earlier
+  single-run exact-SIB conclusion was wrong because it overfit one noisy run.
+- Bigger block-local or trace-local work is still more promising than piling on
+  many isolated single-op SIB fusions.
+
 Implication:
 
 - The broad generic SIB-fused handler experiment was too large and regressed, but the shape histogram shows narrower candidates.
 - The highest SIB payoff is not just `compute_ea_sib -> load32`; `jmp_ind`, `load8`, `alu_r_m32`, and 16-bit memory load shapes are material too.
-- Next SIB work should specialize one or two exact shapes, then verify with `HANDLER_HIST=0`.
+- Next SIB work should require repeated no-hist wins before keeping code; the exact jump-table handler passed that bar, but the exact load handler did not.
 - The hot-block data suggests bigger block-local or trace-local work may be more valuable than adding one more small fused handler.
 
 ## Optimization Ideas

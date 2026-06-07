@@ -476,6 +476,14 @@
     (if (call $mr_simple_base)
       (then (call $te (i32.const 141) (i32.const 0))
             (call $te_raw (global.get $mr_base)) (call $te_raw (global.get $mr_disp)) (return)))
+    (if (i32.and
+          (i32.and (i32.eq (global.get $mr_base) (i32.const -1))
+                   (i32.eq (global.get $mr_index) (i32.const 0)))
+          (i32.eq (global.get $mr_scale) (i32.const 2)))
+      (then
+        (call $te (i32.const 355) (i32.const 0))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 125) (i32.const 0))
     (call $te_raw (local.get $a)))
