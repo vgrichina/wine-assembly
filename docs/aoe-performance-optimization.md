@@ -22,6 +22,16 @@ present fps:              21.5
 
 The bottleneck is the WAT x86 interpreter, not canvas repaint and not mostly DIB conversion.
 
+Repeat timing command:
+
+```sh
+LABEL=baseline RUNS=3 HANDLER_HIST=0 node tools/profile-aoe-repeat.js
+```
+
+This writes `/private/tmp/aoe-repeat-<label>-{1,2,3}.json` plus a summary JSON
+and prints mean/min/max/stddev. Use the histogram profiles to choose candidates,
+then use this repeated no-hist timing before keeping a small optimization.
+
 ## Measured Experiments
 
 Single-run Chrome campaign profiles are noisy, but the direction has been consistent enough to prune several ideas:
