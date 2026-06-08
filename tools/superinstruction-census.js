@@ -11,6 +11,7 @@ const path = require('path');
 const { disasmAt } = require('./disasm');
 
 const regs32 = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+const regs16 = ['ax', 'cx', 'dx', 'bx', 'sp', 'bp', 'si', 'di'];
 const regs8 = ['al', 'cl', 'dl', 'bl', 'ah', 'ch', 'dh', 'bh'];
 const ccNames = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
 
@@ -170,6 +171,7 @@ function decodeAt(buf, off, va, end) {
   let pos = off;
   let p66 = false;
   let segment = false;
+  let rep = 0;
   while (pos < end) {
     const p = buf[pos];
     if (p === 0x66) { p66 = true; pos++; continue; }
@@ -178,7 +180,7 @@ function decodeAt(buf, off, va, end) {
       pos++;
       continue;
     }
-    if (p === 0xf2 || p === 0xf3) { pos++; continue; }
+    if (p === 0xf2 || p === 0xf3) { rep = p; pos++; continue; }
     break;
   }
   if (pos >= end) return null;
@@ -190,6 +192,7 @@ function decodeAt(buf, off, va, end) {
     len: pos - start,
     p66,
     segment,
+    rep,
     text: kind,
     ...extra,
   });
@@ -247,11 +250,47 @@ function decodeAt(buf, off, va, end) {
     });
   }
 
+  if (p66 && (op === 0x8b || op === 0x89)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    if (op === 0x8b) {
+      return mk(m.mod === 3 ? 'mov_r16_r16' : 'mov_r16_m16', {
+        dst: m.reg,
+        src: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `mov ${regs16[m.reg]}, ${m.mod === 3 ? regs16[m.rmReg] : memText(m.mem)}`,
+      });
+    }
+    return mk(m.mod === 3 ? 'mov_r16_r16' : 'mov_m16_r16', {
+      dst: m.mod === 3 ? m.rmReg : -1,
+      src: m.reg,
+      mem: m.mod === 3 ? null : m.mem,
+      len: pos - start,
+      text: `mov ${m.mod === 3 ? regs16[m.rmReg] : memText(m.mem)}, ${regs16[m.reg]}`,
+    });
+  }
+
   if (!p66 && op === 0x8d) {
     const m = parseModrm(buf, pos, end);
     if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
     pos += m.len;
     return mk('lea', { dst: m.reg, mem: m.mem, len: pos - start, text: `lea ${regName(m.reg)}, ${memText(m.mem)}` });
+  }
+
+  if (!p66 && op === 0x84) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const isReg = m.mod === 3;
+    return mk(isReg ? 'test_r8_r8' : 'test_m8_r8', {
+      dst: isReg ? m.rmReg : -1,
+      src: m.reg,
+      mem: isReg ? null : m.mem,
+      len: pos - start,
+      text: `test ${isReg ? regs8[m.rmReg] : memText(m.mem)}, ${regs8[m.reg]}`,
+    });
   }
 
   if (!p66 && op === 0x85) {
@@ -317,6 +356,96 @@ function decodeAt(buf, off, va, end) {
     });
   }
 
+  if (!p66 && op <= 0x3f && ((op & 7) === 0 || (op & 7) === 2)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const isReg = m.mod === 3;
+    const alu = op >>> 3;
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    const left = (op & 7) === 2 ? regs8[m.reg] : (isReg ? regs8[m.rmReg] : memText(m.mem));
+    const right = (op & 7) === 2 ? (isReg ? regs8[m.rmReg] : memText(m.mem)) : regs8[m.reg];
+    return mk((op & 7) === 2 ? (isReg ? 'alu_r8_r8' : 'alu_r8_m8') : (isReg ? 'alu_r8_r8' : 'alu_m8_r8'), {
+      alu,
+      aluName: aluNames[alu],
+      dst: (op & 7) === 2 ? m.reg : (isReg ? m.rmReg : -1),
+      src: (op & 7) === 2 ? (isReg ? m.rmReg : -1) : m.reg,
+      mem: isReg ? null : m.mem,
+      len: pos - start,
+      text: `${aluNames[alu]} ${left}, ${right}`,
+    });
+  }
+
+  if (p66 && op <= 0x3f && ((op & 7) === 1 || (op & 7) === 3)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const isReg = m.mod === 3;
+    const alu = op >>> 3;
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    return mk((op & 7) === 3 ? (isReg ? 'alu_r16_r16' : 'alu_r16_m16') : (isReg ? 'alu_r16_r16' : 'alu_m16_r16'), {
+      alu,
+      aluName: aluNames[alu],
+      dst: (op & 7) === 3 ? m.reg : (isReg ? m.rmReg : -1),
+      src: (op & 7) === 3 ? (isReg ? m.rmReg : -1) : m.reg,
+      mem: isReg ? null : m.mem,
+      len: pos - start,
+      text: `${aluNames[alu]} ${(op & 7) === 3 ? regs16[m.reg] : (isReg ? regs16[m.rmReg] : memText(m.mem))}, ${(op & 7) === 3 ? (isReg ? regs16[m.rmReg] : memText(m.mem)) : regs16[m.reg]}`,
+    });
+  }
+
+  if (!p66 && op <= 0x3f && (op & 7) === 4) {
+    if (pos >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const alu = op >>> 3;
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    const imm = buf[pos++];
+    return mk('alu_al_i8', {
+      alu,
+      aluName: aluNames[alu],
+      dst: 0,
+      imm,
+      len: pos - start,
+      text: `${aluNames[alu]} al, ${hex(imm, 0)}`,
+    });
+  }
+
+  if (!p66 && op <= 0x3f && (op & 7) === 5) {
+    if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const alu = op >>> 3;
+    const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    const imm = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    return mk('alu_eax_i32', {
+      alu,
+      aluName: aluNames[alu],
+      dst: 0,
+      imm,
+      len: pos - start,
+      text: `${aluNames[alu]} eax, ${hex(imm)}`,
+    });
+  }
+
+  if (!p66 && op === 0xa9) {
+    if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const imm = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    return mk('test_eax_i32', {
+      dst: 0,
+      imm,
+      len: pos - start,
+      text: `test eax, ${hex(imm)}`,
+    });
+  }
+
+  if (!p66 && (op === 0xa4 || op === 0xa5)) {
+    const width = op === 0xa4 ? 'b' : 'd';
+    const prefix = rep === 0xf3 ? 'rep_' : '';
+    return mk(`${prefix}string_movs${width}`, {
+      len: pos - start,
+      text: `${rep === 0xf3 ? 'rep ' : ''}movs${width}`,
+    });
+  }
+
   if (!p66 && (op === 0xa1 || op === 0xa3)) {
     if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
     const addr = buf.readUInt32LE(pos) >>> 0;
@@ -342,6 +471,18 @@ function decodeAt(buf, off, va, end) {
     });
   }
 
+  if (!p66 && (op === 0x68 || op === 0x6a)) {
+    if (op === 0x68) {
+      if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+      const imm = buf.readUInt32LE(pos) >>> 0;
+      pos += 4;
+      return mk('push_i32', { imm, len: pos - start, text: `push ${hex(imm)}` });
+    }
+    if (pos >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const imm = sx8(buf[pos++]);
+    return mk('push_i8', { imm, len: pos - start, text: `push ${imm}` });
+  }
+
   if (!p66 && op >= 0x50 && op <= 0x57) return mk('push_r32', { reg: op - 0x50, text: `push ${regName(op - 0x50)}` });
   if (!p66 && op >= 0x58 && op <= 0x5f) return mk('pop_r32', { reg: op - 0x58, text: `pop ${regName(op - 0x58)}` });
 
@@ -361,6 +502,101 @@ function decodeAt(buf, off, va, end) {
     });
   }
 
+  if (!p66 && op === 0x80) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf[pos++];
+    const names = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    return mk(m.mod === 3 ? 'alu_r8_i8' : 'alu_m8_i8', {
+      alu: m.reg,
+      aluName: names[m.reg],
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      imm,
+      len: pos - start,
+      text: `${names[m.reg]} ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${hex(imm, 0)}`,
+    });
+  }
+
+  if (!p66 && op === 0xf6) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf[pos++];
+    if (m.reg === 0) {
+      return mk(m.mod === 3 ? 'test_r8_i8' : 'test_m8_i8', {
+        dst: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        imm,
+        len: pos - start,
+        text: `test ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${hex(imm, 0)}`,
+      });
+    }
+  }
+
+  if (!p66 && op === 0xf7) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    if (m.reg === 0) {
+      return mk(m.mod === 3 ? 'test_r32_i32' : 'test_m32_i32', {
+        dst: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        imm,
+        len: pos - start,
+        text: `test ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}, ${hex(imm)}`,
+      });
+    }
+  }
+
+  if (!p66 && op === 0x81) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf.readUInt32LE(pos) >>> 0;
+    pos += 4;
+    const names = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+    return mk(m.mod === 3 ? 'alu_r32_i32' : 'alu_m32_i32', {
+      alu: m.reg,
+      aluName: names[m.reg],
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      imm,
+      len: pos - start,
+      text: `${names[m.reg]} ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}, ${hex(imm)}`,
+    });
+  }
+
+  if (!p66 && (op === 0xc6 || op === 0xc7)) {
+    const m = parseModrm(buf, pos, end);
+    const immBytes = op === 0xc6 ? 1 : 4;
+    if (!m || pos + m.len + immBytes > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    if (m.reg === 0) {
+      const imm = op === 0xc6 ? buf[pos++] : buf.readUInt32LE(pos) >>> 0;
+      if (op === 0xc7) pos += 4;
+      if (op === 0xc6) {
+        return mk(m.mod === 3 ? 'mov_r8_i8' : 'mov_m8_i8', {
+          dst: m.mod === 3 ? m.rmReg : -1,
+          mem: m.mod === 3 ? null : m.mem,
+          imm,
+          len: pos - start,
+          text: `mov ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${hex(imm, 0)}`,
+        });
+      }
+      return mk(m.mod === 3 ? 'mov_r32_i32' : 'mov_m32_i32', {
+        dst: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        imm,
+        len: pos - start,
+        text: `mov ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}, ${hex(imm)}`,
+      });
+    }
+  }
+
   if (!p66 && op === 0xc1) {
     const m = parseModrm(buf, pos, end);
     if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
@@ -375,8 +611,142 @@ function decodeAt(buf, off, va, end) {
     });
   }
 
+  if (!p66 && op === 0xc0) {
+    const m = parseModrm(buf, pos, end);
+    if (!m || pos + m.len >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    const imm = buf[pos++];
+    return mk(m.mod === 3 ? 'shift_r8_i8' : 'shift_m8_i8', {
+      shift: m.reg,
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      imm,
+      len: pos - start,
+      text: `shift8 ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${imm}`,
+    });
+  }
+
+  if (!p66 && (op === 0xd0 || op === 0xd2)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    return mk(m.mod === 3 ? (op === 0xd2 ? 'shift_r8_cl' : 'shift_r8_1') : (op === 0xd2 ? 'shift_m8_cl' : 'shift_m8_1'), {
+      shift: m.reg,
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      len: pos - start,
+      text: `shift8 ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}, ${op === 0xd2 ? 'cl' : '1'}`,
+    });
+  }
+
+  if (!p66 && (op === 0xd1 || op === 0xd3)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    return mk(m.mod === 3 ? (op === 0xd3 ? 'shift_r32_cl' : 'shift_r32_1') : (op === 0xd3 ? 'shift_m32_cl' : 'shift_m32_1'), {
+      shift: m.reg,
+      dst: m.mod === 3 ? m.rmReg : -1,
+      mem: m.mod === 3 ? null : m.mem,
+      len: pos - start,
+      text: `shift32 ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}, ${op === 0xd3 ? 'cl' : '1'}`,
+    });
+  }
+
+  if (!p66 && (op === 0xfe || op === 0xff)) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    if (m.reg === 0 || m.reg === 1) {
+      const inc = m.reg === 0;
+      if (op === 0xfe) {
+        return mk(m.mod === 3 ? (inc ? 'inc_r8' : 'dec_r8') : (inc ? 'inc_m8' : 'dec_m8'), {
+          reg: m.mod === 3 ? m.rmReg : -1,
+          mem: m.mod === 3 ? null : m.mem,
+          len: pos - start,
+          text: `${inc ? 'inc' : 'dec'} ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}`,
+        });
+      }
+      return mk(m.mod === 3 ? (inc ? 'inc_r32' : 'dec_r32') : (inc ? 'inc_m32' : 'dec_m32'), {
+        reg: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `${inc ? 'inc' : 'dec'} ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}`,
+      });
+    }
+    if (op === 0xff && (m.reg === 2 || m.reg === 4)) {
+      const call = m.reg === 2;
+      return mk(call ? 'call_rm32' : 'jmp_rm32', {
+        reg: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `${call ? 'call' : 'jmp'} ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}`,
+      });
+    }
+    if (op === 0xff && m.reg === 6) {
+      return mk(m.mod === 3 ? 'push_r32' : 'push_m32', {
+        reg: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `push ${m.mod === 3 ? regName(m.rmReg) : memText(m.mem)}`,
+      });
+    }
+  }
+
   if (!p66 && op >= 0x40 && op <= 0x47) return mk('inc_r32', { reg: op - 0x40 });
   if (!p66 && op >= 0x48 && op <= 0x4f) return mk('dec_r32', { reg: op - 0x48 });
+
+  if (!p66 && op === 0x9b) {
+    return mk('fpu_wait', { text: 'fwait' });
+  }
+
+  if (!p66 && op === 0xd9) {
+    const m = parseModrm(buf, pos, end);
+    if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    pos += m.len;
+    return mk(m.reg === 7 && m.mod !== 3 ? 'fpu_fnstcw_m16' : 'fpu_d9', {
+      mem: m.mod === 3 ? null : m.mem,
+      len: pos - start,
+      text: m.reg === 7 && m.mod !== 3 ? `fnstcw ${memText(m.mem)}` : 'fpu_d9',
+    });
+  }
+
+  if (!p66 && (op === 0xe8 || op === 0xe9)) {
+    if (pos + 4 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const disp = sx32(buf.readUInt32LE(pos));
+    pos += 4;
+    const len = pos - start;
+    return mk(op === 0xe8 ? 'call_rel32' : 'jmp_rel32', {
+      target: (va + len + disp) >>> 0,
+      len,
+      text: `${op === 0xe8 ? 'call' : 'jmp'} ${hex((va + len + disp) >>> 0, 8)}`,
+    });
+  }
+
+  if (!p66 && op === 0xeb) {
+    if (pos >= end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+    const disp = sx8(buf[pos++]);
+    const len = pos - start;
+    return mk('jmp_rel8', {
+      target: (va + len + disp) >>> 0,
+      len,
+      text: `jmp ${hex((va + len + disp) >>> 0, 8)}`,
+    });
+  }
+
+  if (!p66 && (op === 0xc2 || op === 0xc3)) {
+    let imm = 0;
+    if (op === 0xc2) {
+      if (pos + 2 > end) return mk('unknown', { len: fallbackLen(buf, start, va) });
+      imm = buf.readUInt16LE(pos);
+      pos += 2;
+    }
+    return mk(op === 0xc2 ? 'ret_i16' : 'ret', {
+      imm,
+      len: pos - start,
+      text: op === 0xc2 ? `ret ${hex(imm, 0)}` : 'ret',
+    });
+  }
+
   if (!p66 && op >= 0x70 && op <= 0x7f) {
     const disp = pos < end ? sx8(buf[pos]) : 0;
     const len = Math.min(2, end - start);
@@ -402,6 +772,30 @@ function decodeAt(buf, off, va, end) {
         src: m.mod === 3 ? m.rmReg : -1,
         mem: m.mod === 3 ? null : m.mem,
         len: pos - start,
+      });
+    }
+    if (!p66 && op2 >= 0x90 && op2 <= 0x9f) {
+      const m = parseModrm(buf, pos, end);
+      if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+      pos += m.len;
+      return mk(m.mod === 3 ? 'setcc_r8' : 'setcc_m8', {
+        cc: op2 & 0xf,
+        dst: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `set${ccNames[op2 & 0xf]} ${m.mod === 3 ? regs8[m.rmReg] : memText(m.mem)}`,
+      });
+    }
+    if (p66 && op2 === 0xaf) {
+      const m = parseModrm(buf, pos, end);
+      if (!m) return mk('unknown', { len: fallbackLen(buf, start, va) });
+      pos += m.len;
+      return mk(m.mod === 3 ? 'imul_r16_r16' : 'imul_r16_m16', {
+        dst: m.reg,
+        src: m.mod === 3 ? m.rmReg : -1,
+        mem: m.mod === 3 ? null : m.mem,
+        len: pos - start,
+        text: `imul ${regs16[m.reg]}, ${m.mod === 3 ? regs16[m.rmReg] : memText(m.mem)}`,
       });
     }
     if (op2 >= 0x80 && op2 <= 0x8f) {
@@ -450,6 +844,10 @@ function isJcc(ins) {
   return !!ins && (ins.kind === 'jcc8' || ins.kind === 'jcc32');
 }
 
+function isControl(ins) {
+  return !!ins && /^(call_|jmp_|ret)/.test(ins.kind);
+}
+
 function isSignedJcc(ins) {
   return isJcc(ins) && ins.cc >= 12 && ins.cc <= 15;
 }
@@ -457,7 +855,7 @@ function isSignedJcc(ins) {
 function fullFlagWriter(ins) {
   if (!ins) return false;
   if (ins.kind === 'cmp_r32_r32' || ins.kind === 'cmp_r32_m32' || ins.kind === 'cmp_m32_r32') return true;
-  if (ins.kind === 'test_r32_r32' || ins.kind === 'test_m32_r32') return true;
+  if (ins.kind === 'test_r32_r32' || ins.kind === 'test_m32_r32' || ins.kind === 'test_eax_i32' || ins.kind === 'test_r8_i8' || ins.kind === 'test_m8_i8' || ins.kind === 'test_r8_r8' || ins.kind === 'test_m8_r8' || ins.kind === 'test_r32_i32' || ins.kind === 'test_m32_i32') return true;
   if (ins.kind === 'xor_zero' || ins.kind === 'xor_rr') return true;
   if (ins.kind === 'add_r32_rm32' || ins.kind === 'add_rm32_r32') return true;
   if (ins.kind === 'sub_r32_rm32' || ins.kind === 'sub_rm32_r32') return true;
@@ -467,6 +865,20 @@ function fullFlagWriter(ins) {
   if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') {
     return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
   }
+  if (ins.kind === 'alu_r32_i32' || ins.kind === 'alu_m32_i32' || ins.kind === 'alu_eax_i32') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
+  if (ins.kind === 'alu_r8_r8' || ins.kind === 'alu_r8_m8' || ins.kind === 'alu_m8_r8' || ins.kind === 'alu_al_i8') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
+  if (ins.kind === 'alu_r8_i8' || ins.kind === 'alu_m8_i8') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
+  if (ins.kind === 'alu_r16_r16' || ins.kind === 'alu_r16_m16' || ins.kind === 'alu_m16_r16') {
+    return ins.alu !== 2 && ins.alu !== 3; // ADC/SBB read CF before writing flags.
+  }
+  if (ins.kind === 'shift_r32_i8' || ins.kind === 'shift_m32_i8' || ins.kind === 'shift_r32_1' || ins.kind === 'shift_r32_cl' || ins.kind === 'shift_m32_1' || ins.kind === 'shift_m32_cl') return true;
+  if (ins.kind === 'shift_r8_i8' || ins.kind === 'shift_m8_i8' || ins.kind === 'shift_r8_1' || ins.kind === 'shift_r8_cl' || ins.kind === 'shift_m8_1' || ins.kind === 'shift_m8_cl') return true;
   return false;
 }
 
@@ -475,11 +887,16 @@ function flagReaderBeforeWrite(ins) {
   if (isJcc(ins)) return true;
   if ((ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') && (ins.alu === 2 || ins.alu === 3)) return true;
   if ((ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r32_i32' || ins.kind === 'alu_m32_i32' || ins.kind === 'alu_eax_i32') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r8_r8' || ins.kind === 'alu_r8_m8' || ins.kind === 'alu_m8_r8' || ins.kind === 'alu_al_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r8_i8' || ins.kind === 'alu_m8_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r16_r16' || ins.kind === 'alu_r16_m16' || ins.kind === 'alu_m16_r16') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if (ins.kind === 'setcc_r8' || ins.kind === 'setcc_m8') return true;
   return false;
 }
 
 function isControlBoundary(ins) {
-  return !ins || isJcc(ins) || ins.kind === 'unknown';
+  return !ins || isJcc(ins) || isControl(ins) || ins.kind === 'unknown' || /^fpu_/.test(ins.kind) || /string_/.test(ins.kind);
 }
 
 function flagPathState(ins, startIndex, maxInsns = 8) {

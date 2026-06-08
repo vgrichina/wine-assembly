@@ -22,14 +22,24 @@ const {
   formatRegs,
   hex,
   intArg,
+  isControl,
   isJcc,
   pct,
 } = require('./aoe-reg-liveness-estimate');
 
 const CC_NAMES = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
+const BYTE_REGS = ['al', 'cl', 'dl', 'bl', 'ah', 'ch', 'dh', 'bh'];
 
 function regName(reg) {
   return REGS[reg] || `r${reg}`;
+}
+
+function byteRegName(reg) {
+  return BYTE_REGS[reg] || `b${reg}`;
+}
+
+function aluName(ins) {
+  return ins.aluName || ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'][ins.alu] || ins.kind;
 }
 
 function add(map, key, weight, siteKey) {
@@ -42,6 +52,13 @@ function add(map, key, weight, siteKey) {
 function sortedRows(map, limit) {
   return Array.from(map.values())
     .sort((a, b) => b.weight - a.weight)
+    .slice(0, limit);
+}
+
+function sortedCombinedRows(rows, limit) {
+  return rows
+    .slice()
+    .sort((a, b) => b.weightedScore - a.weightedScore || b.weight - a.weight)
     .slice(0, limit);
 }
 
@@ -145,7 +162,22 @@ function stabilityDefs(ins) {
       break;
     case 'mov_r8_r8':
     case 'mov_r8_m8':
+    case 'mov_r8_i8':
+    case 'mov_r16_r16':
+    case 'mov_r16_m16':
+    case 'alu_r8_r8':
+    case 'alu_r8_m8':
+    case 'alu_r8_i8':
+    case 'shift_r8_i8':
+    case 'shift_r8_1':
+    case 'shift_r8_cl':
+    case 'inc_r8':
+    case 'dec_r8':
+    case 'setcc_r8':
       addByte(ins.dst);
+      break;
+    case 'alu_al_i8':
+      if (ins.alu !== 7) add(0);
       break;
     case 'add_rm32_r32':
     case 'sub_rm32_r32':
@@ -153,13 +185,28 @@ function stabilityDefs(ins) {
       add(ins.dst);
       break;
     case 'alu_r32_i8':
+    case 'alu_r32_i32':
+    case 'alu_eax_i32':
       if (ins.alu !== 7) add(ins.dst);
+      break;
+    case 'shift_r32_1':
+    case 'shift_r32_cl':
+      add(ins.dst);
+      break;
+    case 'alu_r16_r16':
+    case 'alu_r16_m16':
+    case 'imul_r16_r16':
+    case 'imul_r16_m16':
+      add(ins.dst);
       break;
     case 'inc_r32':
     case 'dec_r32':
       add(ins.reg);
       break;
     case 'push_r32':
+    case 'push_i8':
+    case 'push_i32':
+    case 'push_m32':
       add(4);
       break;
     case 'pop_r32':
@@ -168,6 +215,14 @@ function stabilityDefs(ins) {
       break;
     case 'unknown':
       for (let i = 0; i < REGS.length; i++) add(i);
+      break;
+    case 'string_movsb':
+    case 'string_movsd':
+    case 'rep_string_movsb':
+    case 'rep_string_movsd':
+      add(1);
+      add(6);
+      add(7);
       break;
   }
 
@@ -267,6 +322,144 @@ function memAccessKind(info) {
   return 'mem';
 }
 
+function blockFeatureTags(insns, infos) {
+  const tags = new Set();
+  for (let i = 0; i < insns.length; i++) {
+    const ins = insns[i];
+    const info = infos[i];
+    if (!ins || ins.kind === 'unknown') tags.add('unknown');
+    if (isJcc(ins)) tags.add('branch');
+    if (ins.kind.startsWith('push_') || ins.kind === 'pop_r32') tags.add('stack');
+    if (/fpu/i.test(ins.kind)) tags.add('fpu');
+    if (/string|rep_/i.test(ins.kind)) tags.add('string');
+    if (isByteWidthKind(ins.kind)) tags.add('byte');
+    if (isWordWidthKind(ins.kind)) tags.add('word');
+    if (/movsx|movzx/.test(ins.kind)) tags.add('extend');
+    if (ins.kind === 'inc_r32' || ins.kind === 'dec_r32') tags.add('partial-flags');
+    if ((ins.alu === 2 || ins.alu === 3) && /alu_/.test(ins.kind)) tags.add('carry-flags');
+    if (/shift/.test(ins.kind)) tags.add('shift');
+    if (ins.kind === 'lea') tags.add('lea');
+    if (/call|ret|jmp/.test(ins.kind) && !isJcc(ins)) tags.add('control');
+    if (ins.mem && (info.memoryRead || info.memoryWrite)) {
+      tags.add('memory');
+      if (info.memoryRead) tags.add('load');
+      if (info.memoryWrite) tags.add('store');
+      if (info.memoryRead && info.memoryWrite) tags.add('mem-rw');
+      if (ins.mem.base === 4) tags.add('stack');
+      if (ins.mem.index >= 0) tags.add('sib');
+      if (ins.mem.base < 0 && ins.mem.index < 0) tags.add('absolute');
+      if (ins.mem.base >= 0 && ins.mem.index < 0) tags.add('base-disp');
+    }
+  }
+  return tags;
+}
+
+function compilerBucket(tags) {
+  if (tags.has('unknown')) return 'blocked: unknown decode boundary';
+  if (tags.has('fpu')) return 'blocked: FPU model';
+  if (tags.has('string')) return 'blocked: string/rep model';
+  if (tags.has('control')) return 'blocked: non-Jcc control';
+  if (tags.has('stack')) return 'needs stack/ESP model';
+  if (tags.has('byte') || tags.has('word') || tags.has('extend')) return 'needs partial-width model';
+  if (!tags.has('memory')) return 'clean scalar/branch';
+  if (tags.has('store') || tags.has('mem-rw')) return 'clean 32-bit memory writes';
+  if (tags.has('sib')) return 'clean 32-bit SIB memory';
+  if (tags.has('absolute')) return 'clean 32-bit absolute memory';
+  return 'clean 32-bit base+disp memory';
+}
+
+function isByteWidthKind(kind) {
+  return /(^|_)r8(_|$)/.test(kind) ||
+    /(^|_)m8(_|$)/.test(kind) ||
+    /(^|_)load8(_|$)/.test(kind) ||
+    /(^|_)store8(_|$)/.test(kind) ||
+    kind === 'alu_al_i8' ||
+    kind === 'movsx8' ||
+    kind === 'movzx8';
+}
+
+function isWordWidthKind(kind) {
+  return /(^|_)r16(_|$)/.test(kind) ||
+    /(^|_)m16(_|$)/.test(kind) ||
+    /(^|_)load16(_|$)/.test(kind) ||
+    /(^|_)store16(_|$)/.test(kind) ||
+    kind === 'movsx16' ||
+    kind === 'movzx16';
+}
+
+function memoryOpShape(ins, info) {
+  if (!ins.mem || !(info.memoryRead || info.memoryWrite)) return '';
+  const mem = memRawShape(ins.mem, false);
+  switch (ins.kind) {
+    case 'mov_r32_m32':
+      return `load32 ${regName(ins.dst)} <- ${mem}`;
+    case 'mov_eax_moffs32':
+      return `load32 eax <- ${mem}`;
+    case 'mov_r8_m8':
+      return `load8 ${byteRegName(ins.dst)} <- ${mem}`;
+    case 'mov_r16_m16':
+      return `load16 ${regName(ins.dst)} <- ${mem}`;
+    case 'movzx8':
+      return `movzx8 ${regName(ins.dst)} <- ${mem}`;
+    case 'movsx8':
+      return `movsx8 ${regName(ins.dst)} <- ${mem}`;
+    case 'movzx16':
+      return `movzx16 ${regName(ins.dst)} <- ${mem}`;
+    case 'movsx16':
+      return `movsx16 ${regName(ins.dst)} <- ${mem}`;
+    case 'mov_m32_r32':
+      return `store32 ${mem} <- ${regName(ins.src)}`;
+    case 'mov_m32_i32':
+      return `store32 ${mem} <- i32`;
+    case 'mov_moffs32_eax':
+      return `store32 ${mem} <- eax`;
+    case 'mov_m8_r8':
+      return `store8 ${mem} <- ${byteRegName(ins.src)}`;
+    case 'mov_m8_i8':
+      return `store8 ${mem} <- i8`;
+    case 'mov_m16_r16':
+      return `store16 ${mem} <- ${regName(ins.src)}`;
+    case 'cmp_r32_m32':
+      return `cmp ${regName(ins.dst)},${mem}`;
+    case 'cmp_m32_r32':
+      return `cmp ${mem},${regName(ins.src)}`;
+    case 'test_m32_r32':
+      return `test ${mem},${regName(ins.src)}`;
+    case 'test_m8_r8':
+      return `test8 ${mem},${byteRegName(ins.src)}`;
+    case 'test_m8_i8':
+      return `test8 ${mem},i8`;
+    case 'test_m32_i32':
+      return `test32 ${mem},i32`;
+    case 'add_r32_rm32':
+    case 'sub_r32_rm32':
+    case 'alu_r32_m32':
+      return `${aluName(ins)} ${regName(ins.dst)},${mem}`;
+    case 'add_rm32_r32':
+    case 'sub_rm32_r32':
+    case 'alu_m32_r32':
+      return `${aluName(ins)} ${mem},${regName(ins.src)}`;
+    case 'alu_m32_i8':
+      return `${aluName(ins)} ${mem},i8`;
+    case 'alu_m8_i8':
+      return `${aluName(ins)}8 ${mem},i8`;
+    case 'shift_m32_i8':
+      return `shift ${mem},i8`;
+    case 'shift_m8_i8':
+      return `shift8 ${mem},i8`;
+    case 'jmp_rm32':
+      return `jmp ${mem}`;
+    case 'call_rm32':
+      return `call ${mem}`;
+    case 'setcc_m8':
+      return `setcc ${mem}`;
+    case 'fpu_fnstcw_m16':
+      return `fnstcw ${mem}`;
+    default:
+      return `${memAccessKind(info)} ${ins.kind} ${mem}`;
+  }
+}
+
 function consecutiveSameBaseInfo(insns, infos, pageSize) {
   const pairs = [];
   for (let i = 0; i + 1 < insns.length; i++) {
@@ -312,13 +505,17 @@ function isSignedJcc(ins) {
 function fullFlagWriter(ins) {
   if (!ins) return false;
   if (ins.kind === 'cmp_r32_r32' || ins.kind === 'cmp_r32_m32' || ins.kind === 'cmp_m32_r32') return true;
-  if (ins.kind === 'test_r32_r32' || ins.kind === 'test_m32_r32') return true;
+  if (ins.kind === 'test_r32_r32' || ins.kind === 'test_m32_r32' || ins.kind === 'test_eax_i32' || ins.kind === 'test_r8_i8' || ins.kind === 'test_m8_i8' || ins.kind === 'test_r8_r8' || ins.kind === 'test_m8_r8' || ins.kind === 'test_r32_i32' || ins.kind === 'test_m32_i32') return true;
   if (ins.kind === 'xor_zero' || ins.kind === 'xor_rr') return true;
   if (ins.kind === 'add_r32_rm32' || ins.kind === 'add_rm32_r32') return true;
   if (ins.kind === 'sub_r32_rm32' || ins.kind === 'sub_rm32_r32') return true;
   if (ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') return ins.alu !== 2 && ins.alu !== 3;
-  if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') return ins.alu !== 2 && ins.alu !== 3;
-  if (ins.kind === 'shift_r32_i8' || ins.kind === 'shift_m32_i8') return true;
+  if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8' || ins.kind === 'alu_r32_i32' || ins.kind === 'alu_m32_i32' || ins.kind === 'alu_eax_i32') return ins.alu !== 2 && ins.alu !== 3;
+  if (ins.kind === 'alu_r8_r8' || ins.kind === 'alu_r8_m8' || ins.kind === 'alu_m8_r8' || ins.kind === 'alu_al_i8') return ins.alu !== 2 && ins.alu !== 3;
+  if (ins.kind === 'alu_r8_i8' || ins.kind === 'alu_m8_i8') return ins.alu !== 2 && ins.alu !== 3;
+  if (ins.kind === 'alu_r16_r16' || ins.kind === 'alu_r16_m16' || ins.kind === 'alu_m16_r16') return ins.alu !== 2 && ins.alu !== 3;
+  if (ins.kind === 'shift_r32_i8' || ins.kind === 'shift_m32_i8' || ins.kind === 'shift_r32_1' || ins.kind === 'shift_r32_cl' || ins.kind === 'shift_m32_1' || ins.kind === 'shift_m32_cl') return true;
+  if (ins.kind === 'shift_r8_i8' || ins.kind === 'shift_m8_i8' || ins.kind === 'shift_r8_1' || ins.kind === 'shift_r8_cl' || ins.kind === 'shift_m8_1' || ins.kind === 'shift_m8_cl') return true;
   return false;
 }
 
@@ -326,7 +523,11 @@ function flagReaderBeforeWrite(ins) {
   if (!ins) return false;
   if (isJcc(ins)) return true;
   if ((ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') && (ins.alu === 2 || ins.alu === 3)) return true;
-  if ((ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8' || ins.kind === 'alu_r32_i32' || ins.kind === 'alu_m32_i32' || ins.kind === 'alu_eax_i32') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r8_r8' || ins.kind === 'alu_r8_m8' || ins.kind === 'alu_m8_r8' || ins.kind === 'alu_al_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r8_i8' || ins.kind === 'alu_m8_i8') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if ((ins.kind === 'alu_r16_r16' || ins.kind === 'alu_r16_m16' || ins.kind === 'alu_m16_r16') && (ins.alu === 2 || ins.alu === 3)) return true;
+  if (ins.kind === 'setcc_r8' || ins.kind === 'setcc_m8') return true;
   return false;
 }
 
@@ -336,7 +537,7 @@ function flagPathState(report, startIndex, maxInsns = 8) {
     const ins = report.instructions[i];
     if (flagReaderBeforeWrite(ins)) return 'read';
     if (fullFlagWriter(ins)) return 'dead';
-    if (!ins || ins.kind === 'unknown') return 'unknown';
+    if (!ins || ins.kind === 'unknown' || isControl(ins) || /^fpu_/.test(ins.kind) || /string_/.test(ins.kind)) return 'unknown';
   }
   return 'unknown';
 }
@@ -408,12 +609,28 @@ function blockSignature(insns) {
   }).join(' ; ');
 }
 
+function unknownBoundaryShape(insns) {
+  const index = insns.findIndex(ins => !ins || ins.kind === 'unknown');
+  if (index < 0) return '';
+  const ins = insns[index] || {};
+  const before = insns
+    .slice(Math.max(0, index - 5), index)
+    .map(prev => {
+      if (isJcc(prev)) return `j${CC_NAMES[prev.cc] || prev.cc}`;
+      if (prev.mem) return `${prev.kind}:${memRawShape(prev.mem, false)}`;
+      return prev.kind;
+    })
+    .join(' ; ');
+  const op = Number.isFinite(ins.op) ? ` op=${hex(ins.op, 2)}` : '';
+  return `${hex(ins.va || 0)}${op}${before ? ` after ${before}` : ' at block start'}`;
+}
+
 function primaryBucket(insns, analysis, infos, report) {
   const branch = insns[insns.length - 1];
   const producer = branchProducer(insns);
   const flagExit = branchFlagExit(report, branch);
   const hasUnknown = insns.some(ins => ins.kind === 'unknown');
-  const hasStack = insns.some(ins => ins.kind === 'push_r32' || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4));
+  const hasStack = insns.some(ins => ins.kind.startsWith('push_') || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4));
   if (producer && isJcc(branch) && flagExit && flagExit.flagsDead && insns.length <= 2) return 'branch-only flag-dead';
   if (analysis.blockCompilerSavedWrites > 0) return 'reg-coalescing block';
   if (analysis.identityWrites > 0) return 'identity-write block';
@@ -465,20 +682,28 @@ function analyzeProfile(profileFile, exeFile, opts) {
     consecutiveSameBasePageBlocks: 0,
     consecutiveSameBasePagePairs: 0,
     unknownWeight: 0,
+    combinedWeightedScore: 0,
   };
   const primary = new Map();
   const signals = new Map();
+  const compilerBuckets = new Map();
+  const compilerScoreBuckets = new Map();
+  const compilerFeatureTags = new Map();
+  const compilerFeatureScoreTags = new Map();
   const signatures = new Map();
   const branchNorm = new Map();
   const branchExact = new Map();
   const regFlushShapes = new Map();
   const eaShapes = new Map();
+  const memoryOpShapes = new Map();
   const relatedEaFamilies = new Map();
   const relatedEaDeltas = new Map();
   const sameBaseFamilies = new Map();
   const sameBasePageFamilies = new Map();
   const consecutiveSameBasePairs = new Map();
   const consecutiveSameBaseKinds = new Map();
+  const unknownBoundaries = new Map();
+  const combinedCandidates = [];
 
   for (const row of hot.top.slice(0, opts.hotLimit)) {
     const weight = row.count || 0;
@@ -502,6 +727,12 @@ function analyzeProfile(profileFile, exeFile, opts) {
     const branch = insns[insns.length - 1];
     const producer = branchProducer(insns);
     const flagExit = branchFlagExit(report, branch);
+    const flagDeadProducer = !!(producer && isJcc(branch) && flagExit && flagExit.flagsDead && fullFlagWriter(producer));
+    const blockSavedG2W = Math.max(0, currentG2W - optimizedG2W);
+    const blockSameBasePageG2WSaves = Math.max(0, sameBase.pageAccessCount - sameBase.pageGroups.length);
+    const featureTags = blockFeatureTags(insns, infos);
+    const compilerKind = compilerBucket(featureTags);
+    const unknownShape = unknownBoundaryShape(insns);
 
     totals.usedBlocks++;
     totals.coveredWeight += weight;
@@ -509,10 +740,10 @@ function analyzeProfile(profileFile, exeFile, opts) {
     totals.currentDispatches += currentDispatches * weight;
     totals.currentG2W += currentG2W * weight;
     totals.optimizedG2W += optimizedG2W * weight;
-    totals.savedG2W += Math.max(0, currentG2W - optimizedG2W) * weight;
+    totals.savedG2W += blockSavedG2W * weight;
     if (currentG2W > 0) totals.memoryAccessBlocks += weight;
     if (currentG2W >= 2) totals.multiG2WBlocks += weight;
-    if (Math.max(0, currentG2W - optimizedG2W) > 0) totals.repeatedEaBlocks += weight;
+    if (blockSavedG2W > 0) totals.repeatedEaBlocks += weight;
     if (related.groups.length) totals.relatedEaBlocks += weight;
     totals.relatedEaAccesses += related.accessCount * weight;
     totals.relatedEaAdjacentPairs += related.adjacentPairs * weight;
@@ -524,7 +755,7 @@ function analyzeProfile(profileFile, exeFile, opts) {
     totals.sameBasePageGroups += sameBase.pageGroups.length * weight;
     totals.sameBaseAccesses += sameBase.accessCount * weight;
     totals.sameBasePageAccesses += sameBase.pageAccessCount * weight;
-    totals.sameBasePageG2WSaves += Math.max(0, sameBase.pageAccessCount - sameBase.pageGroups.length) * weight;
+    totals.sameBasePageG2WSaves += blockSameBasePageG2WSaves * weight;
     if (consecutiveSameBase.pairs.length) totals.consecutiveSameBaseBlocks += weight;
     if (consecutiveSameBase.pagePairs.length) totals.consecutiveSameBasePageBlocks += weight;
     totals.consecutiveSameBasePairs += consecutiveSameBase.pairs.length * weight;
@@ -534,6 +765,35 @@ function analyzeProfile(profileFile, exeFile, opts) {
     totals.savedRegWrites += analysis.blockCompilerSavedWrites * weight;
     totals.identityWrites += analysis.identityWrites * weight;
     if (insns.some(ins => ins.kind === 'unknown')) totals.unknownWeight += weight;
+    if (unknownShape) add(unknownBoundaries, unknownShape, weight, addr);
+
+    const combinedScore =
+      analysis.blockCompilerSavedWrites +
+      (flagDeadProducer ? 1 : 0) +
+      blockSameBasePageG2WSaves;
+    totals.combinedWeightedScore += combinedScore * weight;
+    add(compilerBuckets, compilerKind, weight, addr);
+    if (combinedScore > 0) add(compilerScoreBuckets, compilerKind, combinedScore * weight, addr);
+    for (const tag of featureTags) {
+      add(compilerFeatureTags, tag, weight, addr);
+      if (combinedScore > 0) add(compilerFeatureScoreTags, tag, combinedScore * weight, addr);
+    }
+    if (combinedScore > 0) {
+      combinedCandidates.push({
+        addr,
+        weight,
+        weightedScore: combinedScore * weight,
+        score: combinedScore,
+        currentDispatches,
+        savedRegWrites: analysis.blockCompilerSavedWrites,
+        flagDeadProducer: flagDeadProducer ? 1 : 0,
+        sameBasePageG2WSaves: blockSameBasePageG2WSaves,
+        repeatedEaG2WSaves: blockSavedG2W,
+        unknown: insns.some(ins => ins.kind === 'unknown'),
+        stack: insns.some(ins => ins.kind.startsWith('push_') || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4)),
+        signature: blockSignature(insns),
+      });
+    }
 
     if (producer && isJcc(branch)) {
       totals.branchFusionSaves += weight;
@@ -551,7 +811,7 @@ function analyzeProfile(profileFile, exeFile, opts) {
     if (analysis.identityWrites > 0) add(signals, 'identity register write', weight, addr);
     if (currentG2W > 0) add(signals, 'has EA/g2w memory access', weight, addr);
     if (currentG2W >= 2) add(signals, 'multiple EA/g2w accesses', weight, addr);
-    if (Math.max(0, currentG2W - optimizedG2W) > 0) add(signals, 'repeated same-EA/g2w in block', weight, addr);
+    if (blockSavedG2W > 0) add(signals, 'repeated same-EA/g2w in block', weight, addr);
     if (related.groups.length) add(signals, 'related EA family in block', weight, addr);
     if (related.delta4Pairs > 0) add(signals, 'related EA delta 4', weight * related.delta4Pairs, addr);
     if (related.smallDeltaPairs > 0) add(signals, 'related EA delta <=16', weight * related.smallDeltaPairs, addr);
@@ -559,7 +819,7 @@ function analyzeProfile(profileFile, exeFile, opts) {
     if (sameBase.pageGroups.length) add(signals, 'stable same base, page-range disps', weight, addr);
     if (consecutiveSameBase.pagePairs.length) add(signals, 'consecutive stable same-base pair', weight * consecutiveSameBase.pagePairs.length, addr);
     if (accesses.some(mem => mem.index >= 0)) add(signals, 'SIB memory access', weight, addr);
-    if (insns.some(ins => ins.kind === 'push_r32' || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4))) add(signals, 'stack/setup access', weight, addr);
+    if (insns.some(ins => ins.kind.startsWith('push_') || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4))) add(signals, 'stack/setup access', weight, addr);
     if (insns.some(ins => ins.kind === 'unknown')) add(signals, 'unknown decode boundary', weight, addr);
 
     if (analysis.blockCompilerSavedWrites > 0) {
@@ -567,6 +827,10 @@ function analyzeProfile(profileFile, exeFile, opts) {
     }
     for (const mem of accesses) {
       add(eaShapes, memRawShape(mem, false), weight, addr);
+    }
+    for (let i = 0; i < insns.length; i++) {
+      const shape = memoryOpShape(insns[i], infos[i]);
+      if (shape) add(memoryOpShapes, shape, weight, addr);
     }
     for (const group of related.groups) {
       const disps = group.disps.slice(0, 8).map(dispText).join(',');
@@ -602,17 +866,24 @@ function analyzeProfile(profileFile, exeFile, opts) {
     totals,
     primary,
     signals,
+    compilerBuckets,
+    compilerScoreBuckets,
+    compilerFeatureTags,
+    compilerFeatureScoreTags,
     signatures,
     branchNorm,
     branchExact,
     regFlushShapes,
     eaShapes,
+    memoryOpShapes,
     relatedEaFamilies,
     relatedEaDeltas,
     sameBaseFamilies,
     sameBasePageFamilies,
     consecutiveSameBasePairs,
     consecutiveSameBaseKinds,
+    unknownBoundaries,
+    combinedCandidates,
   };
 }
 
@@ -658,16 +929,47 @@ function printReport(result) {
 
   printWeightedRows('Primary buckets:', sortedRows(result.primary, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Overlapping signals:', sortedRows(result.signals, opts.topRows), totals.coveredWeight, opts.topRows);
+  printWeightedRows('Compiler feature buckets:', sortedRows(result.compilerBuckets, opts.topRows), totals.coveredWeight, opts.topRows);
+  printWeightedRows('Compiler score buckets:', sortedRows(result.compilerScoreBuckets, opts.topRows), totals.combinedWeightedScore, opts.topRows);
+  printWeightedRows('Compiler feature tags by weight:', sortedRows(result.compilerFeatureTags, opts.topRows), totals.coveredWeight, opts.topRows);
+  printWeightedRows('Compiler feature tags by score:', sortedRows(result.compilerFeatureScoreTags, opts.topRows), totals.combinedWeightedScore, opts.topRows);
   printWeightedRows('Top normalized branch candidates:', sortedRows(result.branchNorm, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Top exact branch candidates:', sortedRows(result.branchExact, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Top register-coalescing block signatures:', sortedRows(result.regFlushShapes, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Top EA/g2w access shapes:', sortedRows(result.eaShapes, opts.topRows), totals.currentG2W, opts.topRows);
+  printWeightedRows('Top memory op shapes:', sortedRows(result.memoryOpShapes, opts.topRows), totals.currentG2W, opts.topRows);
   printWeightedRows('Top related EA families:', sortedRows(result.relatedEaFamilies, opts.topRows), totals.relatedEaBlocks || totals.coveredWeight, opts.topRows);
   printWeightedRows('Top related EA deltas:', sortedRows(result.relatedEaDeltas, opts.topRows), totals.relatedEaAdjacentPairs || totals.coveredWeight, opts.topRows);
   printWeightedRows('Top stable same-base EA families:', sortedRows(result.sameBaseFamilies, opts.topRows), totals.sameBaseBlocks || totals.coveredWeight, opts.topRows);
   printWeightedRows('Top stable same-base page-range families:', sortedRows(result.sameBasePageFamilies, opts.topRows), totals.sameBasePageBlocks || totals.coveredWeight, opts.topRows);
   printWeightedRows('Consecutive stable same-base pair kinds:', sortedRows(result.consecutiveSameBaseKinds, opts.topRows), totals.consecutiveSameBasePagePairs || totals.coveredWeight, opts.topRows);
   printWeightedRows('Top consecutive stable same-base pairs:', sortedRows(result.consecutiveSameBasePairs, opts.topRows), totals.consecutiveSameBasePagePairs || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Top unknown block boundaries:', sortedRows(result.unknownBoundaries, opts.topRows), totals.unknownWeight || totals.coveredWeight, opts.topRows);
+
+  const combined = sortedCombinedRows(result.combinedCandidates, opts.topRows);
+  if (combined.length) {
+    console.log('');
+    console.log('Top block-local compiler candidates:');
+    for (const row of combined) {
+      const tags = [
+        row.unknown ? 'unknown' : '',
+        row.stack ? 'stack' : '',
+      ].filter(Boolean).join(',');
+      console.log(
+        `  ${hex(row.addr)} weight=${String(Math.round(row.weight)).padStart(8)}` +
+        ` score=${String(row.score).padStart(2)}` +
+        ` weighted=${String(Math.round(row.weightedScore)).padStart(10)}` +
+        ` dispatches=${String(row.currentDispatches).padStart(2)}` +
+        ` reg-save=${row.savedRegWrites}` +
+        ` branch-pack=${row.flagDeadProducer}` +
+        ` page-g2w-save=${row.sameBasePageG2WSaves}` +
+        ` repeat-g2w-save=${row.repeatedEaG2WSaves}` +
+        (tags ? ` tags=${tags}` : '') +
+        `  ${row.signature}`
+      );
+    }
+  }
+
   printWeightedRows('Top block signatures:', sortedRows(result.signatures, opts.topRows), totals.coveredWeight, opts.topRows);
 }
 

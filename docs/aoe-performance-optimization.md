@@ -241,35 +241,37 @@ flag-preserving fusion probes above.
 10s hot-block result:
 
 ```text
-branch-tail hot block entries:             25,821,011   6.9% vs all handlers
-flag-dead branch entries:                   7,153,633   19.1% of covered blocks
-fusable flag-dead producer entries:         6,683,909    1.8% vs all handlers
-conservative branch-dispatch saves:         6,683,909    1.8% vs all handlers
-producer flag writes skipped:               6,683,909    1.8% vs all handlers
+branch-tail hot block entries:             28,425,669   7.6% vs all handlers
+flag-dead branch entries:                  15,917,674   42.5% of covered blocks
+fusable flag-dead producer entries:        13,871,998    3.7% vs all handlers
+conservative branch-dispatch saves:        13,871,998    3.7% vs all handlers
+producer flag writes skipped:              13,871,998    3.7% vs all handlers
 
-both exits overwrite flags immediately:       934,982   14.0% of fusable
-both exits overwrite flags within 2 insns:  3,815,851   57.1% of fusable
-both exits overwrite flags within 4 insns:  5,660,256   84.7% of fusable
+both exits overwrite flags immediately:       934,982    6.7% of fusable
+both exits overwrite flags within 2 insns:  5,025,218   36.2% of fusable
+both exits overwrite flags within 4 insns: 11,056,989   79.7% of fusable
 
-cmp r32,r32 signed dead:                    3,147,472    0.8% vs all handlers
-cmp r32,[base+disp] signed dead:            1,996,884    0.5% vs all handlers
+cmp r32,r32 signed dead:                    4,362,163    1.2% vs all handlers
+cmp r32,[base+disp] signed dead:            4,243,248    1.1% vs all handlers
 cmp r32,[base+disp] immediate-dead:           133,086    0.0% vs all handlers
-test r32,r32 dead:                            143,420    0.0% vs all handlers
+test r32,r32 dead:                          1,078,046    0.3% vs all handlers
+test r32,r32 self dead:                       938,172    0.3% vs all handlers
 ```
 
 Implications:
 
 - `INC`/`DEC` must not prove flags dead because they preserve CF. Earlier counts
   that treated them as full flag overwrites were optimistic.
-- A one-next-instruction liveness proof is too weak. It covers only 14.0% of
-  fusable flag-dead branch sites and none of the hot `cmp r32,r32` signed bucket.
-- A conservative local scan up to four instructions captures 84.7% of the
+- A one-next-instruction liveness proof is too weak. It covers only 6.7% of
+  fusable flag-dead branch sites and misses most of the hot signed-compare
+  surface.
+- A conservative local scan up to four instructions captures 79.7% of the
   fusable flag-dead surface in this profile.
-- Best standalone candidate remains `cmp r32,r32 + signed Jcc`, flag-dead only,
-  but its dispatch surface is only 0.8% of handlers after the conservative fix.
-- Next candidate is `cmp r32,[base+disp] + signed Jcc`, flag-dead only. It is
-  more interesting as part of a compiler-local memory/branch lowering pass than
-  as another one-off handler.
+- `cmp r32,r32 + signed Jcc` and `cmp r32,[base+disp] + signed Jcc` are now
+  roughly equal standalone surfaces, about 1.1-1.2% of handlers each.
+- Earlier standalone runtime prototypes still did not produce durable wins, so
+  branch packing should be implemented inside the broader block-local compiler
+  where it can combine with register and memory savings.
 
 Runtime prototype, not kept:
 
@@ -291,6 +293,39 @@ The safe prototype did not produce a durable win. Keep the selector, but do not
 keep this runtime peephole. Future work should use the same liveness data inside
 a broader threaded-IR/block-local compiler stage where it can also remove
 register writes and reuse memory address work.
+
+Second runtime prototype, also not kept:
+
+- Temporarily added handler 356:
+  `mov dst,srcA; add dst,srcB; dec dst; cmp dst,[base+disp]; signed Jcc`.
+- Decode-time peephole emitted it only when both branch exits proved flags dead.
+- 1s hist smoke reached gameplay and counted handler 356 at 118,683 executions,
+  0.33% of handler dispatches.
+- 10s no-hist repeat, three runs, same session:
+
+```text
+variant                                  runSlice mean   runSlice sd   guest mean
+block-local prototype disabled control       6301.7 ms      24.6 ms      5925.2 ms
+mov/add/dec/cmp/Jcc dead prototype           6281.7 ms      22.3 ms      5918.3 ms
+delta                                         -20.1 ms                    -6.9 ms
+```
+
+Profile files:
+
+```text
+/private/tmp/aoe-repeat-blocklocal-disabled-control-{1,2,3}.json
+/private/tmp/aoe-repeat-blocklocal-mov-add-dec-cmp-jcc-{1,2,3}.json
+```
+
+Conclusion:
+
+```text
+do not keep this standalone runtime handler.
+it is mechanically valid, but the measured CPU delta is below browser noise.
+the block has real local savings, but one exact shape only covers 0.33%.
+the next implementation should be a compiler-selected block-local lowering,
+not another hand-added exact peephole.
+```
 
 ### Threaded IR Liveness Report
 
@@ -452,11 +487,12 @@ exit, and counts current full-register writes versus final block-exit flushes.
 
 ```text
 covered block entries:        37,475,452 / 66,254,912 = 56.6%
-full register writes seen:    80,851,296
-final block-exit flushes:     57,942,555
-avoidable global writes:      22,908,741   28.3% of seen writes
-avoidable vs dispatch count:        6.2%
-identity writes:               2,072,787    2.6% of seen writes, 0.6% of dispatches
+full register writes seen:    90,064,148
+final block-exit flushes:     63,194,255
+avoidable global writes:      26,869,893   29.8% of seen writes
+avoidable vs dispatch count:        7.2%
+identity writes:               2,072,787    2.3% of seen writes, 0.6% of dispatches
+partial-byte writes ignored:  13,779,133
 dead overwritten writes:               0
 ```
 
@@ -465,7 +501,7 @@ Naive timing scale from the same profile:
 ```text
 main.runSlice:                          6,559.7 ms
 guest/unwrapped:                        6,226.0 ms
-block-compiler saved-write upper scale:   404.3 ms, 6.2% of runSlice
+block-compiler saved-write upper scale:   474.3 ms, 7.2% of runSlice
 identity-write-only scale:                 36.6 ms, 0.6% of runSlice
 ```
 
@@ -475,7 +511,7 @@ useful conclusion is relative:
 
 ```text
 identity-only handlers are small:       about 0.5-0.6%
-true block-local virtual regs are real: about 6-7% dispatch-scale opportunity
+true block-local virtual regs are real: about 7% dispatch-scale opportunity
 trivial dead overwritten writes:        basically absent in the top AoE blocks
 ```
 
@@ -569,40 +605,67 @@ node tools/aoe-block-shape-census.js \
 
 This aggregates the printer/estimator view across hot blocks. It reports
 primary buckets, overlapping optimization signals, exact branch candidates,
-register-coalescing block signatures, and EA/g2w access shapes.
+register-coalescing block signatures, EA/g2w access shapes, concrete memory op
+shapes, and combined block-local candidates.
 
 10s hot-block result:
 
 ```text
 covered block entries:            37,475,452 / 66,254,912 = 56.6%
-current dispatches in covered:   180,833,002   48.7% vs all handlers
-branch fusion dispatch saves:     25,821,011    6.9% vs all handlers
-flag-dead branch opportunities:   11,540,827   30.8% of covered blocks
-coalescible register writes:      22,908,741    6.2% vs all handlers
+current dispatches in covered:   208,333,276   56.1% vs all handlers
+branch fusion dispatch saves:     28,425,669    7.6% vs all handlers
+flag-dead branch opportunities:   14,881,722   39.7% of covered blocks
+coalescible register writes:      26,869,893    7.2% vs all handlers
 identity register writes:          2,072,787    0.6% vs all handlers
+unknown decode boundary weight:            0    0.0% of covered blocks
+```
+
+Compiler feature buckets after the decoder-coverage pass:
+
+```text
+10,268,028  27.4%  clean 32-bit base+disp memory
+ 8,129,020  21.7%  blocked: non-Jcc control
+ 7,308,294  19.5%  needs stack/ESP model
+ 5,160,909  13.8%  clean scalar/branch
+ 1,898,077   5.1%  clean 32-bit SIB memory
+ 1,433,003   3.8%  needs partial-width model
+ 1,347,163   3.6%  clean 32-bit memory writes
+ 1,010,195   2.7%  clean 32-bit absolute memory
+   772,956   2.1%  blocked: FPU model
+   147,807   0.4%  blocked: string/rep model
+```
+
+Decoder coverage note:
+
+```text
+top-120 hot-block unknown decode boundary is now zero.
+earlier "unknown-heavy" buckets were mostly control, FPU/string, byte/word ops,
+and immediate forms that the offline decoder did not model yet.
+the next compiler work is no longer blocked by decoder visibility for this
+profile; it is blocked by choosing which explicit buckets to support first.
 ```
 
 EA/g2w result:
 
 ```text
-blocks with any EA/g2w access:        27,905,410   74.5% of covered blocks
-blocks with multiple EA/g2w accesses: 11,813,270   31.5% of covered blocks
+blocks with any EA/g2w access:        28,865,060   77.0% of covered blocks
+blocks with multiple EA/g2w accesses: 15,230,200   40.6% of covered blocks
 blocks with repeated same EA/g2w:      1,326,604    3.5% of covered blocks
-blocks with related EA families:       7,206,299   19.2% of covered blocks
-current g2w-like memory accesses:     61,093,519   16.4% vs all handlers
+blocks with related EA families:       8,486,979   22.6% of covered blocks
+current g2w-like memory accesses:     72,938,433   19.6% vs all handlers
 repeated-EA g2w saves in block:        2,227,338    0.6% vs all handlers
-related-EA memory accesses:           24,393,499   39.9% of current g2w accesses
-related-EA adjacent pairs:            15,005,785    4.0% vs all handlers
-related-EA delta 4 pairs:              8,875,574    2.4% vs all handlers
-related-EA delta <=16 pairs:          11,467,923    3.1% vs all handlers
-stable same-base multi-disp blocks:    5,191,649   13.9% of covered blocks
-stable same-base accesses:            18,656,045   30.5% of current g2w accesses
-stable same-base page-range blocks:    5,191,649   13.9% of covered blocks
-stable same-base page-range groups:    5,851,756
-stable same-base page-range accesses: 18,656,045   30.5% of current g2w accesses
-stable same-base page g2w saves:      12,804,289    3.4% vs all handlers
-consecutive same-base page blocks:     4,688,157   12.5% of covered blocks
-consecutive same-base page pairs:      7,110,263    1.9% vs all handlers
+related-EA memory accesses:           30,321,764   41.6% of current g2w accesses
+related-EA adjacent pairs:            19,023,392    5.1% vs all handlers
+related-EA delta 4 pairs:              9,395,000    2.5% vs all handlers
+related-EA delta <=16 pairs:          14,513,678    3.9% vs all handlers
+stable same-base multi-disp blocks:    5,639,724   15.0% of covered blocks
+stable same-base accesses:            19,552,195   26.8% of current g2w accesses
+stable same-base page-range blocks:    5,639,724   15.0% of covered blocks
+stable same-base page-range groups:    6,299,831
+stable same-base page-range accesses: 19,552,195   26.8% of current g2w accesses
+stable same-base page g2w saves:      13,252,364    3.6% vs all handlers
+consecutive same-base page blocks:     4,821,243   12.9% of covered blocks
+consecutive same-base page pairs:      7,243,349    1.9% vs all handlers
 ```
 
 Interpretation:
@@ -610,7 +673,7 @@ Interpretation:
 ```text
 repeated same-EA reuse is small on its own.
 stable same-base small-window reuse is much larger.
-one page-window translation per stable group is a 12.8M g2w-save estimate,
+one page-window translation per stable group is a 13.3M g2w-save estimate,
 about 5.7x the exact repeated-EA CSE estimate.
 all EA/g2w access is large enough to keep high priority.
 best g2w work is likely fast-path mapping or base-window prechecks,
@@ -620,11 +683,59 @@ not only exact common-subexpression reuse inside a block.
 Top EA/g2w access shapes:
 
 ```text
+13,827,370  [disp]
 13,153,396  [esi+disp]
-12,118,926  [esp+disp]
- 9,479,384  [disp]
- 4,250,660  [ebp+disp]
- 3,049,812  [edi+disp]
+12,481,226  [esp+disp]
+ 5,307,449  [ebp+disp]
+ 3,525,440  [edi+disp]
+```
+
+Top concrete memory op shapes:
+
+```text
+3,086,374  load32 edx <- [esi+disp]
+3,058,963  load32 eax <- [esi+disp]
+2,833,582  load32 ecx <- [esi+disp]
+2,596,363  load32 ecx <- [esp+disp]
+2,592,216  load32 edx <- [esp+disp]
+2,416,002  load32 eax <- [esp+disp]
+2,027,562  load32 eax <- [ebp+disp]
+2,018,750  load8  al  <- [esi]
+1,972,275  store32 [disp] <- eax
+1,967,088  load32 esi <- [disp]
+1,892,237  jmp [eax*4+disp]
+1,699,793  cmp edi,[esi+disp]
+```
+
+Destination+base load probe, not kept:
+
+```text
+prototype handlers:
+  load32 eax/ecx/edx <- [esi+disp]
+  load32 eax/ecx/edx <- [esp+disp]
+
+1s hist smoke:
+  new handlers total: 2,627,688 / 33,246,383 dispatches = 7.90%
+```
+
+10s no-hist timing:
+
+```text
+variant                                  runSlice mean   runSlice sd   guest mean
+dst+base load prototype                      6796.0 ms      92.2 ms      6375.4 ms
+dst+base load disabled control               7330.1 ms      85.5 ms      6861.5 ms
+normal 356-handler reference band            ~6280 ms       ~20 ms       ~5920 ms
+```
+
+Conclusion:
+
+```text
+do not keep the destination+base load handlers.
+they have real surface, but this session did not produce a safe win.
+removing only set_reg from many loads is still too small or too sensitive to
+code layout/browser state.
+memory work should stay tied to the block-local compiler path, where the same
+address/value can be reused across several instructions.
 ```
 
 Top stable same-base page-range families:
@@ -638,6 +749,28 @@ Top stable same-base page-range families:
 380,359  [esi+disp] range=0x10 disps=+0x3c,+0x40,+0x44,+0x48,+0x4c
 355,685  [esp+disp] range=0x4  disps=+0x18,+0x1c
 327,536  [esi+disp] range=0xa4 disps=+0x28,+0x30,+0xcc
+```
+
+Top combined block-local compiler candidates:
+
+```text
+addr        weight   score dispatch reg-save branch-pack page-g2w-save repeat-g2w-save
+0x0049d9d1  480,494     13       18        7           0             6               2
+0x0049dd92  380,359     11       25        4           0             7               0
+0x005086c4  139,874     26       31       16           0            10               0
+0x00535b13  314,989      9       20        7           1             1               0
+0x00535e08  747,413      3        5        2           1             0               0
+```
+
+Read:
+
+```text
+0x00535e08 was the narrow prototype and is too small alone.
+0x0049d9d1 is the better clean block-compiler target:
+18 current dispatches, 7 saved register writes, and 6 same-page g2w saves.
+0x005086c4 has the highest per-block score but is stack-heavy.
+0x00535b13 became visible after partial-width decode coverage and is now a
+good branch+register+memory mixed target, but it needs 16-bit register support.
 ```
 
 Potential base-window primitive:
@@ -760,11 +893,11 @@ branches to every fused handler.
 Current priority from the classifier:
 
 ```text
-1. threaded-IR/block-local selection using exact flag-dead branch data
-2. block-local virtual registers for multi-op hot blocks
-3. compiler-local grouped memory lowering for simple [base+disp] groups
-4. broader EA/g2w fast-path or exact memory primitives
-5. repeated same-EA reuse only after the broader g2w path is understood
+1. implement a block-local threaded-IR compiler skeleton for clean scalar/memory blocks
+2. use exact flag-dead branch data inside that compiler, not standalone peepholes
+3. keep non-ESP registers virtual inside a block and flush once at exits
+4. add compiler-local grouped memory lowering for stable [base+disp] groups
+5. add partial-width/stack models after clean 32-bit blocks prove a win
 ```
 
 The report command now supports optional hot-block weighting:
@@ -782,24 +915,24 @@ Static executable-wide result:
 cmp r,[mem]; jcc                  919 sites
 cmp r,[base+disp]; jcc            858 sites
 cmp r,[mem]; signed jcc           457 sites
-cmp r,[mem]; jcc flags dead       384 sites
-cmp r,[base]; signed dead         226 sites
+cmp r,[mem]; jcc flags dead       475 sites
+cmp r,[base]; signed dead         267 sites
 test r,r; jcc                    9027 sites
-test r,r; jcc flags dead         1557 sites
-test r,r self; dead              1553 sites
+test r,r; jcc flags dead         2350 sites
+test r,r self; dead              2343 sites
 ```
 
 Hot-block weighted result from the 10s profile, top 120 hot block entries:
 
 ```text
 covered block entries:        37,475,452 / 66,254,912 = 56.6%
-cmp r,[mem]; jcc               8,301,249   22.2% of covered
-cmp r,[base+disp]; jcc         6,772,778   18.1% of covered
-cmp r,[mem]; signed jcc        7,820,755   20.9% of covered
-cmp r,[mem]; jcc flags dead    3,782,436   10.1% of covered
-cmp r,[base]; signed dead      3,434,177    9.2% of covered
+cmp r,[mem]; jcc               8,776,877   23.4% of covered
+cmp r,[base+disp]; jcc         7,248,406   19.3% of covered
+cmp r,[mem]; signed jcc        8,296,383   22.1% of covered
+cmp r,[mem]; jcc flags dead    4,305,364   11.5% of covered
+cmp r,[base]; signed dead      3,957,105   10.6% of covered
 test r,r; jcc                  2,932,946    7.8% of covered
-test r,r; jcc flags dead         420,900    1.1% of covered
+test r,r; jcc flags dead         700,595    1.9% of covered
 ```
 
 ASCII TLDR:

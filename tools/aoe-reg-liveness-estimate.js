@@ -83,8 +83,12 @@ function isJcc(ins) {
   return !!ins && (ins.kind === 'jcc8' || ins.kind === 'jcc32');
 }
 
+function isControl(ins) {
+  return !!ins && /^(call_|jmp_|ret)/.test(ins.kind);
+}
+
 function isBoundary(ins) {
-  return !ins || ins.kind === 'unknown' || isJcc(ins);
+  return !ins || ins.kind === 'unknown' || isJcc(ins) || isControl(ins) || /^fpu_/.test(ins.kind) || /string_/.test(ins.kind);
 }
 
 function accessInfo(ins, optRegs) {
@@ -148,6 +152,18 @@ function accessInfo(ins, optRegs) {
     case 'mov_r32_i32':
       def(ins.dst, 'mov');
       break;
+    case 'mov_m32_i32':
+      useMem(ins.mem);
+      memoryWrite = true;
+      break;
+    case 'mov_r8_i8':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      partialWrite = true;
+      break;
+    case 'mov_m8_i8':
+      useMem(ins.mem);
+      memoryWrite = true;
+      break;
     case 'mov_r8_r8':
       addPartialRegUse(uses, ins.src, optRegs);
       addPartialRegUse(uses, ins.dst, optRegs);
@@ -163,6 +179,74 @@ function accessInfo(ins, optRegs) {
       useMem(ins.mem);
       addPartialRegUse(uses, ins.src, optRegs);
       memoryWrite = true;
+      break;
+    case 'mov_r16_r16':
+      addPartialRegUse(uses, ins.src, optRegs);
+      addPartialRegUse(uses, ins.dst, optRegs);
+      partialWrite = true;
+      break;
+    case 'mov_r16_m16':
+      useMem(ins.mem);
+      addPartialRegUse(uses, ins.dst, optRegs);
+      memoryRead = true;
+      partialWrite = true;
+      break;
+    case 'mov_m16_r16':
+      useMem(ins.mem);
+      addPartialRegUse(uses, ins.src, optRegs);
+      memoryWrite = true;
+      break;
+    case 'alu_r16_r16':
+    case 'alu_r16_m16':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      if (ins.src >= 0) addPartialRegUse(uses, ins.src, optRegs);
+      else {
+        useMem(ins.mem);
+        memoryRead = true;
+      }
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      partialWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_m16_r16':
+      useMem(ins.mem);
+      addPartialRegUse(uses, ins.src, optRegs);
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      memoryRead = true;
+      memoryWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_r8_r8':
+    case 'alu_r8_m8':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      if (ins.src >= 0) addPartialRegUse(uses, ins.src, optRegs);
+      else {
+        useMem(ins.mem);
+        memoryRead = true;
+      }
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      partialWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_m8_r8':
+      useMem(ins.mem);
+      addPartialRegUse(uses, ins.src, optRegs);
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      memoryRead = true;
+      memoryWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_al_i8':
+      addPartialRegUse(uses, 0, optRegs);
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      partialWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_r8_i8':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      partialWrite = ins.alu !== 7;
+      flagsWrite = true;
       break;
     case 'movzx8':
     case 'movsx8':
@@ -218,6 +302,39 @@ function accessInfo(ins, optRegs) {
       memoryRead = true;
       flagsWrite = true;
       break;
+    case 'test_eax_i32':
+      use(0);
+      flagsWrite = true;
+      break;
+    case 'test_r8_i8':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      flagsWrite = true;
+      break;
+    case 'test_r8_r8':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      addPartialRegUse(uses, ins.src, optRegs);
+      flagsWrite = true;
+      break;
+    case 'test_m8_i8':
+      useMem(ins.mem);
+      memoryRead = true;
+      flagsWrite = true;
+      break;
+    case 'test_m8_r8':
+      useMem(ins.mem);
+      addPartialRegUse(uses, ins.src, optRegs);
+      memoryRead = true;
+      flagsWrite = true;
+      break;
+    case 'test_r32_i32':
+      use(ins.dst);
+      flagsWrite = true;
+      break;
+    case 'test_m32_i32':
+      useMem(ins.mem);
+      memoryRead = true;
+      flagsWrite = true;
+      break;
     case 'cmp_r32_r32':
       use(ins.dst);
       use(ins.src);
@@ -236,6 +353,8 @@ function accessInfo(ins, optRegs) {
       flagsWrite = true;
       break;
     case 'alu_r32_i8':
+    case 'alu_r32_i32':
+    case 'alu_eax_i32':
       use(ins.dst);
       if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
       if (ins.alu !== 7) {
@@ -248,6 +367,14 @@ function accessInfo(ins, optRegs) {
       flagsWrite = true;
       break;
     case 'alu_m32_i8':
+    case 'alu_m32_i32':
+      useMem(ins.mem);
+      if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
+      memoryRead = true;
+      memoryWrite = ins.alu !== 7;
+      flagsWrite = true;
+      break;
+    case 'alu_m8_i8':
       useMem(ins.mem);
       if (ins.alu === 2 || ins.alu === 3) flagsRead = true;
       memoryRead = true;
@@ -255,12 +382,35 @@ function accessInfo(ins, optRegs) {
       flagsWrite = true;
       break;
     case 'shift_r32_i8':
+    case 'shift_r32_1':
+    case 'shift_r32_cl':
       use(ins.dst);
+      if (ins.kind === 'shift_r32_cl') addPartialRegUse(uses, 1, optRegs);
       def(ins.dst, 'shift');
       flagsWrite = true;
       break;
     case 'shift_m32_i8':
+    case 'shift_m32_1':
+    case 'shift_m32_cl':
       useMem(ins.mem);
+      if (ins.kind === 'shift_m32_cl') addPartialRegUse(uses, 1, optRegs);
+      memoryRead = true;
+      memoryWrite = true;
+      flagsWrite = true;
+      break;
+    case 'shift_r8_i8':
+    case 'shift_r8_1':
+    case 'shift_r8_cl':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      if (ins.kind === 'shift_r8_cl') addPartialRegUse(uses, 1, optRegs);
+      partialWrite = true;
+      flagsWrite = true;
+      break;
+    case 'shift_m8_i8':
+    case 'shift_m8_1':
+    case 'shift_m8_cl':
+      useMem(ins.mem);
+      if (ins.kind === 'shift_m8_cl') addPartialRegUse(uses, 1, optRegs);
       memoryRead = true;
       memoryWrite = true;
       flagsWrite = true;
@@ -271,6 +421,21 @@ function accessInfo(ins, optRegs) {
       def(ins.reg, 'incdec');
       flagsWrite = true;
       break;
+    case 'inc_r8':
+    case 'dec_r8':
+      addPartialRegUse(uses, ins.reg, optRegs);
+      partialWrite = true;
+      flagsWrite = true;
+      break;
+    case 'inc_m8':
+    case 'dec_m8':
+    case 'inc_m32':
+    case 'dec_m32':
+      useMem(ins.mem);
+      memoryRead = true;
+      memoryWrite = true;
+      flagsWrite = true;
+      break;
     case 'push_r32':
       use(ins.reg);
       memoryWrite = true;
@@ -278,6 +443,69 @@ function accessInfo(ins, optRegs) {
     case 'pop_r32':
       memoryRead = true;
       def(ins.reg, 'pop');
+      break;
+    case 'push_i8':
+    case 'push_i32':
+      memoryWrite = true;
+      break;
+    case 'push_m32':
+      useMem(ins.mem);
+      memoryRead = true;
+      memoryWrite = true;
+      break;
+    case 'call_rm32':
+    case 'jmp_rm32':
+      if (ins.reg >= 0) use(ins.reg);
+      else {
+        useMem(ins.mem);
+        memoryRead = true;
+      }
+      break;
+    case 'call_rel32':
+    case 'jmp_rel32':
+    case 'jmp_rel8':
+      break;
+    case 'ret':
+    case 'ret_i16':
+      memoryRead = true;
+      break;
+    case 'fpu_fnstcw_m16':
+      useMem(ins.mem);
+      memoryWrite = true;
+      break;
+    case 'fpu_wait':
+    case 'fpu_d9':
+      break;
+    case 'string_movsb':
+    case 'string_movsd':
+    case 'rep_string_movsb':
+    case 'rep_string_movsd':
+      use(6);
+      use(7);
+      if (ins.kind.startsWith('rep_')) use(1);
+      memoryRead = true;
+      memoryWrite = true;
+      break;
+    case 'setcc_r8':
+      flagsRead = true;
+      addPartialRegUse(uses, ins.dst, optRegs);
+      partialWrite = true;
+      break;
+    case 'setcc_m8':
+      flagsRead = true;
+      useMem(ins.mem);
+      memoryWrite = true;
+      break;
+    case 'imul_r16_r16':
+    case 'imul_r16_m16':
+      addPartialRegUse(uses, ins.dst, optRegs);
+      if (ins.src >= 0) addPartialRegUse(uses, ins.src, optRegs);
+      else {
+        useMem(ins.mem);
+        memoryRead = true;
+      }
+      partialWrite = true;
+      flagsWrite = true;
       break;
     case 'jcc8':
     case 'jcc32':
@@ -550,6 +778,7 @@ module.exports = {
   hex,
   intArg,
   isBoundary,
+  isControl,
   isJcc,
   pct,
 };

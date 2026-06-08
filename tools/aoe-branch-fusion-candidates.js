@@ -129,7 +129,7 @@ function flagPathInfo(report, startIndex, maxInsns = 8) {
     const distance = i - startIndex;
     if (flagReaderBeforeWrite(ins)) return { state: 'read', distance, kind: ins.kind, va: ins.va >>> 0 };
     if (fullFlagWriter(ins)) return { state: 'dead', distance, kind: ins.kind, va: ins.va >>> 0 };
-    if (partialFlagWriter(ins)) return { state: 'partial', distance, kind: ins.kind, va: ins.va >>> 0 };
+    if (partialFlagWriter(ins)) continue;
     if (!ins || ins.kind === 'unknown') return { state: 'unknown', distance, kind: ins ? ins.kind : '', va: ins ? ins.va >>> 0 : 0 };
   }
   return { state: 'unknown', distance: -1, kind: '', va: 0 };

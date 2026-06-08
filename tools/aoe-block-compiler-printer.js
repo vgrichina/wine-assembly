@@ -89,13 +89,30 @@ function maybeInternEa(state, mem, opt) {
   return rec;
 }
 
+function loadMem(state, mem, width, opt) {
+  const rec = maybeInternEa(state, mem, opt);
+  const key = `${width}:${rec.wa}`;
+  let value = state.memValues.get(key);
+  opt.loads++;
+  if (!value) {
+    value = `m${state.nextValue++}`;
+    opt.lines.push(`${value} = load${width}(${rec.wa})`);
+    state.memValues.set(key, value);
+  }
+  return value;
+}
+
+function storeMem(state, mem, width, value, opt) {
+  const rec = maybeInternEa(state, mem, opt);
+  opt.stores++;
+  opt.lines.push(`store${width}(${rec.wa}, ${value})`);
+  state.memValues.clear();
+  if (width === 32) state.memValues.set(`${width}:${rec.wa}`, value);
+}
+
 function operandExpr(ins, state) {
   if (ins.src >= 0) return state.regs[ins.src];
-  if (ins.mem) {
-    const rec = maybeInternEa(state, ins.mem, state.opt);
-    state.opt.loads++;
-    return `load32(${rec.wa})`;
-  }
+  if (ins.mem) return loadMem(state, ins.mem, 32, state.opt);
   return '?';
 }
 
@@ -275,36 +292,28 @@ function lowerInstruction(ins, state, opt) {
       break;
     case 'mov_r32_m32':
     case 'mov_eax_moffs32': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.loads++;
-      assignReg(state, ins.dst, `load32(${rec.wa})`, opt);
+      assignReg(state, ins.dst, loadMem(state, ins.mem, 32, opt), opt);
       break;
     }
     case 'mov_m32_r32':
     case 'mov_moffs32_eax': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.stores++;
-      opt.lines.push(`store32(${rec.wa}, ${state.regs[ins.src]})`);
+      storeMem(state, ins.mem, 32, state.regs[ins.src], opt);
       break;
     }
     case 'mov_r32_i32':
       assignReg(state, ins.dst, hex(ins.imm, 0), opt);
       break;
     case 'mov_r8_m8': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.loads++;
       const full = ins.dst < 4 ? ins.dst : ins.dst - 4;
       const lane = ins.dst < 4 ? 'low8' : 'high8';
-      assignReg(state, full, `set_${lane}(${state.regs[full]}, load8(${rec.wa}))`, opt);
+      assignReg(state, full, `set_${lane}(${state.regs[full]}, ${loadMem(state, ins.mem, 8, opt)})`, opt);
       opt.partialWrites++;
       break;
     }
     case 'mov_m8_r8': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.stores++;
       const full = ins.src < 4 ? ins.src : ins.src - 4;
       const lane = ins.src < 4 ? 'low8' : 'high8';
-      opt.lines.push(`store8(${rec.wa}, ${lane}(${state.regs[full]}))`);
+      storeMem(state, ins.mem, 8, `${lane}(${state.regs[full]})`, opt);
       break;
     }
     case 'add_r32_rm32':
@@ -377,16 +386,12 @@ function lowerInstruction(ins, state, opt) {
       opt.lines.push(`flags = ${opt.flags}`);
       break;
     case 'cmp_r32_m32': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.loads++;
-      opt.flags = `sub(${state.regs[ins.dst]}, load32(${rec.wa}))`;
+      opt.flags = `sub(${state.regs[ins.dst]}, ${loadMem(state, ins.mem, 32, opt)})`;
       opt.lines.push(`flags = ${opt.flags}`);
       break;
     }
     case 'cmp_m32_r32': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.loads++;
-      opt.flags = `sub(load32(${rec.wa}), ${state.regs[ins.src]})`;
+      opt.flags = `sub(${loadMem(state, ins.mem, 32, opt)}, ${state.regs[ins.src]})`;
       opt.lines.push(`flags = ${opt.flags}`);
       break;
     }
@@ -395,9 +400,7 @@ function lowerInstruction(ins, state, opt) {
       opt.lines.push(`flags = ${opt.flags}`);
       break;
     case 'test_m32_r32': {
-      const rec = maybeInternEa(state, ins.mem, opt);
-      opt.loads++;
-      opt.flags = `logic(load32(${rec.wa}) & ${state.regs[ins.src]})`;
+      opt.flags = `logic(${loadMem(state, ins.mem, 32, opt)} & ${state.regs[ins.src]})`;
       opt.lines.push(`flags = ${opt.flags}`);
       break;
     }
@@ -452,8 +455,10 @@ function printBlock(report, row, opts) {
     regs: REGS.slice(),
     changed: new Set(),
     eaCache: new Map(),
+    memValues: new Map(),
     nextEa: 0,
     nextWa: 0,
+    nextValue: 0,
     opt: null,
   };
   const opt = {
@@ -507,7 +512,11 @@ function printBlock(report, row, opts) {
 }
 
 function profileRows(profile, addr, top) {
-  if (addr) return [{ addr, count: 0, pct: 'manual' }];
+  if (addr) {
+    const hot = profile.handlerHistogram && profile.handlerHistogram.hotBlocks;
+    const row = hot && hot.top && hot.top.find(entry => (entry.addr >>> 0) === (addr >>> 0));
+    return row ? [{ ...row, pct: row.pct || 'manual' }] : [{ addr, count: 0, pct: 'manual' }];
+  }
   const hot = profile.handlerHistogram && profile.handlerHistogram.hotBlocks;
   if (!hot || !hot.top) throw new Error('profile has no hotBlocks.top');
   return hot.top.slice(0, top);
