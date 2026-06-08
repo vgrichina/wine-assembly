@@ -318,7 +318,6 @@ function fullFlagWriter(ins) {
   if (ins.kind === 'sub_r32_rm32' || ins.kind === 'sub_rm32_r32') return true;
   if (ins.kind === 'alu_r32_r32' || ins.kind === 'alu_r32_m32' || ins.kind === 'alu_m32_r32') return ins.alu !== 2 && ins.alu !== 3;
   if (ins.kind === 'alu_r32_i8' || ins.kind === 'alu_m32_i8') return ins.alu !== 2 && ins.alu !== 3;
-  if (ins.kind === 'inc_r32' || ins.kind === 'dec_r32') return true;
   if (ins.kind === 'shift_r32_i8' || ins.kind === 'shift_m32_i8') return true;
   return false;
 }

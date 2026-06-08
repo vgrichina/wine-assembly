@@ -171,7 +171,9 @@ Implication:
 - A generic runtime `producer -> Jcc` fusion was tested in `/private/tmp/aoe-web-profile-branch-fused.json` and was effectively flat: `6539.2 ms` -> `6539.4 ms` in the hist-enabled profile.
 - A narrower runtime `test r,r -> jz/jnz` fusion was tested in `/private/tmp/aoe-web-profile-test-jznz-fused.json` and regressed: `6539.2 ms` -> `6563.0 ms`.
 - The likely issue is that runtime helpers still add hot-path peeking and generic condition work; they do not get the codegen benefit of purpose-built fused handlers.
-- Next branch work should specialize only the top operand shapes above, starting with `test eax,eax -> jz/jnz` or the top `cmp reg,[base+disp] -> jcc` forms.
+- Next branch work should specialize only proven flag-dead operand shapes, but
+  the later selector/prototype shows standalone branch peepholes are too marginal
+  unless they are part of a broader threaded-IR pass.
 
 ### Branch Fusion Probes
 
@@ -220,6 +222,75 @@ Conclusion:
 - Future branch work needs either proven flag-dead sites or larger trace/block
   compilation; another small flag-preserving compare/Jcc fusion is unlikely to
   pay off.
+
+### Flag-Dead Branch Selector
+
+Tool:
+
+```sh
+node tools/aoe-branch-fusion-candidates.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --hot-limit=160 \
+  --top-rows=8
+```
+
+This ranks only hot producer/Jcc tails where both branch exits overwrite flags
+before reading them. That is the missing condition from the failed
+flag-preserving fusion probes above.
+
+10s hot-block result:
+
+```text
+branch-tail hot block entries:             25,821,011   6.9% vs all handlers
+flag-dead branch entries:                   7,153,633   19.1% of covered blocks
+fusable flag-dead producer entries:         6,683,909    1.8% vs all handlers
+conservative branch-dispatch saves:         6,683,909    1.8% vs all handlers
+producer flag writes skipped:               6,683,909    1.8% vs all handlers
+
+both exits overwrite flags immediately:       934,982   14.0% of fusable
+both exits overwrite flags within 2 insns:  3,815,851   57.1% of fusable
+both exits overwrite flags within 4 insns:  5,660,256   84.7% of fusable
+
+cmp r32,r32 signed dead:                    3,147,472    0.8% vs all handlers
+cmp r32,[base+disp] signed dead:            1,996,884    0.5% vs all handlers
+cmp r32,[base+disp] immediate-dead:           133,086    0.0% vs all handlers
+test r32,r32 dead:                            143,420    0.0% vs all handlers
+```
+
+Implications:
+
+- `INC`/`DEC` must not prove flags dead because they preserve CF. Earlier counts
+  that treated them as full flag overwrites were optimistic.
+- A one-next-instruction liveness proof is too weak. It covers only 14.0% of
+  fusable flag-dead branch sites and none of the hot `cmp r32,r32` signed bucket.
+- A conservative local scan up to four instructions captures 84.7% of the
+  fusable flag-dead surface in this profile.
+- Best standalone candidate remains `cmp r32,r32 + signed Jcc`, flag-dead only,
+  but its dispatch surface is only 0.8% of handlers after the conservative fix.
+- Next candidate is `cmp r32,[base+disp] + signed Jcc`, flag-dead only. It is
+  more interesting as part of a compiler-local memory/branch lowering pass than
+  as another one-off handler.
+
+Runtime prototype, not kept:
+
+- Temporarily added handler 356: `cmp r32,r32 + signed Jcc`, flag-dead only.
+- Decode-time peephole consumed CMP followed by signed short/near Jcc only when
+  both exits passed the conservative flag-dead scan.
+- 1s hist smoke reached gameplay and counted handler 356 at 274,754 executions
+  = 0.79% of handlers.
+- 10s no-hist repeat, three runs, same session:
+
+```text
+variant                         runSlice mean   runSlice sd   guest mean
+cmp-rr safe disabled control        6527.2 ms     105.5 ms      6112.4 ms
+cmp-rr signed dead safe fused       6538.8 ms      34.3 ms      6130.4 ms
+delta                                +11.6 ms                   +18.0 ms
+```
+
+The safe prototype did not produce a durable win. Keep the selector, but do not
+keep this runtime peephole. Future work should use the same liveness data inside
+a broader threaded-IR/block-local compiler stage where it can also remove
+register writes and reuse memory address work.
 
 ### Threaded IR Liveness Report
 
@@ -506,7 +577,7 @@ register-coalescing block signatures, and EA/g2w access shapes.
 covered block entries:            37,475,452 / 66,254,912 = 56.6%
 current dispatches in covered:   180,833,002   48.7% vs all handlers
 branch fusion dispatch saves:     25,821,011    6.9% vs all handlers
-flag-dead branch opportunities:   12,337,847   32.9% of covered blocks
+flag-dead branch opportunities:   11,540,827   30.8% of covered blocks
 coalescible register writes:      22,908,741    6.2% vs all handlers
 identity register writes:          2,072,787    0.6% vs all handlers
 ```
@@ -689,7 +760,7 @@ branches to every fused handler.
 Current priority from the classifier:
 
 ```text
-1. exact flag-dead cmp/test/identity-ALU + Jcc selection
+1. threaded-IR/block-local selection using exact flag-dead branch data
 2. block-local virtual registers for multi-op hot blocks
 3. compiler-local grouped memory lowering for simple [base+disp] groups
 4. broader EA/g2w fast-path or exact memory primitives
@@ -736,8 +807,10 @@ ASCII TLDR:
 ```text
 Do not make more flag-preserving branch fusions.
 Do make decode-time IR/liveness decide when flags are dead.
-Best next primitive: cmp r32,[base+disp] + signed Jcc, flag-dead only.
-Second primitive: test r,r + Jcc, flag-dead only.
+Standalone cmp r32,r32 + signed Jcc peephole was safe but not measurably faster.
+Next useful path: block-local threaded IR, then flag-dead branch packing.
+Memory branch packing should include [base+disp] page/prework reuse.
+Use a local flag-dead scan, not one-instruction lookahead.
 Keep output as threaded code, not generated Wasm.
 ```
 
@@ -750,6 +823,8 @@ Threaded primitive direction:
 - The primitive should branch directly and skip `set_flags_sub`/`set_flags_logic`.
 - Keep the primitive operand-specific enough to avoid the generic helper cost
   that made the flag-preserving fusion regress.
+- `cmp r32,r32 + signed Jcc` was safe but not measurably faster as a standalone
+  peephole; add branch packing next only inside the broader IR/block-local path.
 
 Conclusion:
 
