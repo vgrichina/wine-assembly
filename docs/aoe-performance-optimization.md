@@ -541,6 +541,41 @@ This prints original instructions, approximate current threaded handlers, and a
 block-local virtual-register/virtual-flag lowering. It is not executable code;
 it is a shape report before runtime compiler work.
 
+Stack-packet compiler printer:
+
+```sh
+node tools/aoe-stack-packet-compiler.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --top=20 \
+  --details=5
+```
+
+This is the first offline compiler artifact for the Wasm-friendly stack-packet
+backend described in `docs/wasm-stack-threaded-code.md`. It still emits no
+runtime code. It accepts conservative clean 32-bit blocks, prints packet ops,
+exit flushes, flag policy, EA/g2w grouping, and weighted bailout reasons.
+
+10s hot-block top-20 result:
+
+```text
+rows compiled:                14/20
+block-entry coverage:         10,843,970 / 66,254,912 = 16.4%
+current-dispatch estimate:    37,289,326 = 10.0% vs all handlers
+packet op estimate:          156,445,731
+register writes saved:         4,407,901 = 28.2% of compiled current reg writes
+flag writes skipped:          10,398,327 = 65.9% of compiled flag writes
+virtual flag ops skipped:      4,923,677
+exact EA reuses:                 706,030
+page-window g2w save est:        689,248
+```
+
+For the larger clean candidate `0x0049d9d1`, the packet plan estimates 18
+current dispatches, 92 packet micro-ops, register writes `11 -> 4`, flag writes
+`5 -> 1`, four skipped virtual flag ops, one exact EA reuse, and five
+page-window g2w saves across a six-access `[esi+disp]` memory group. This is a
+better compiler target than one-off branch or pair fusions because several
+savings stack in the same block.
+
 Example output shape:
 
 ```text

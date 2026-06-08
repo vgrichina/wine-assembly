@@ -419,6 +419,63 @@ Exit criteria:
 - The printer can explain at least the known examples like `0x00535e08` and
   the larger combined candidates such as `0x0049d9d1`.
 
+Initial tool:
+
+```sh
+node tools/aoe-stack-packet-compiler.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --top=20 \
+  --details=5
+```
+
+This is offline only. It accepts a conservative clean 32-bit subset, emits a
+stack-packet plan, and reports bailout reasons for blocks that still need the
+normal threaded path.
+
+First top-20 result from the 10s hot-block profile:
+
+```text
+rows compiled:                14/20
+block-entry coverage:         10,843,970 / 66,254,912 = 16.4%
+current-dispatch estimate:    37,289,326 = 10.0% vs all handlers
+packet op estimate:          156,445,731
+register writes saved:         4,407,901 = 28.2% of compiled current reg writes
+flag writes skipped:          10,398,327 = 65.9% of compiled flag writes
+virtual flag ops skipped:      4,923,677
+exact EA reuses:                 706,030
+page-window g2w save est:        689,248
+```
+
+The packet op count is intentionally not compared directly to threaded
+dispatches. Packet ops are compiler/backend micro-ops, not current `$next`
+handler calls. The useful signal is whether one eventual packet invocation can
+remove global register writes, lazy-flag materialization, and repeated address
+work.
+
+Known larger candidate:
+
+```sh
+node tools/aoe-stack-packet-compiler.js \
+  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
+  --addr=0x0049d9d1
+```
+
+```text
+current dispatch estimate:    18
+packet op estimate:           92
+register writes:              11 -> 4
+flag writes:                   5 -> 1
+virtual flag ops skipped:      4
+g2w calls in packet:            9
+exact EA reuse:                 1
+page-window g2w save est:       5
+memory group:                  [esi+disp], 6 accesses, range 0x20
+```
+
+This is the kind of block that justifies a packet backend better than the
+earlier one-off fusions: it combines register coalescing, flag reduction, and
+same-base memory grouping in one place.
+
 ### Milestone 1: Static WAT Packet Interpreter, Disabled By Default
 
 Add one static handler conceptually like `th_stack_block`, but keep it behind a
