@@ -492,7 +492,8 @@ Block-shape classifier:
 node tools/aoe-block-shape-census.js \
   --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
   --hot-limit=120 \
-  --top-rows=10
+  --top-rows=10 \
+  --page-size=4096
 ```
 
 This aggregates the printer/estimator view across hot blocks. It reports
@@ -516,17 +517,33 @@ EA/g2w result:
 blocks with any EA/g2w access:        27,905,410   74.5% of covered blocks
 blocks with multiple EA/g2w accesses: 11,813,270   31.5% of covered blocks
 blocks with repeated same EA/g2w:      1,326,604    3.5% of covered blocks
+blocks with related EA families:       7,206,299   19.2% of covered blocks
 current g2w-like memory accesses:     61,093,519   16.4% vs all handlers
 repeated-EA g2w saves in block:        2,227,338    0.6% vs all handlers
+related-EA memory accesses:           24,393,499   39.9% of current g2w accesses
+related-EA adjacent pairs:            15,005,785    4.0% vs all handlers
+related-EA delta 4 pairs:              8,875,574    2.4% vs all handlers
+related-EA delta <=16 pairs:          11,467,923    3.1% vs all handlers
+stable same-base multi-disp blocks:    5,191,649   13.9% of covered blocks
+stable same-base accesses:            18,656,045   30.5% of current g2w accesses
+stable same-base page-range blocks:    5,191,649   13.9% of covered blocks
+stable same-base page-range groups:    5,851,756
+stable same-base page-range accesses: 18,656,045   30.5% of current g2w accesses
+stable same-base page g2w saves:      12,804,289    3.4% vs all handlers
+consecutive same-base page blocks:     4,688,157   12.5% of covered blocks
+consecutive same-base page pairs:      7,110,263    1.9% vs all handlers
 ```
 
 Interpretation:
 
 ```text
 repeated same-EA reuse is small on its own.
+stable same-base small-window reuse is much larger.
+one page-window translation per stable group is a 12.8M g2w-save estimate,
+about 5.7x the exact repeated-EA CSE estimate.
 all EA/g2w access is large enough to keep high priority.
-best g2w work is likely fast-path mapping or exact memory primitives,
-not only common-subexpression reuse inside a block.
+best g2w work is likely fast-path mapping or base-window prechecks,
+not only exact common-subexpression reuse inside a block.
 ```
 
 Top EA/g2w access shapes:
@@ -539,13 +556,144 @@ Top EA/g2w access shapes:
  3,049,812  [edi+disp]
 ```
 
+Top stable same-base page-range families:
+
+```text
+874,688  [esp+disp] range=0x4  disps=+0x4,+0x8
+849,566  [esp+disp] range=0x4  disps=+0x14,+0x18
+480,494  [esi+disp] range=0x20 disps=+0x0,+0x4,+0x14,+0x18,+0x20
+468,091  [esi+disp] range=0x4  disps=+0x40,+0x44
+380,359  [eax+disp] range=0xc  disps=+0x0,+0x4,+0x8,+0xc
+380,359  [esi+disp] range=0x10 disps=+0x3c,+0x40,+0x44,+0x48,+0x4c
+355,685  [esp+disp] range=0x4  disps=+0x18,+0x1c
+327,536  [esi+disp] range=0xa4 disps=+0x28,+0x30,+0xcc
+```
+
+Potential base-window primitive:
+
+```text
+block has a stable base register feeding [base+d0], [base+d1], ...
+and max(d) - min(d) < 4096
+
+guest_min = base + min_disp
+guest_max = base + max_disp + access_width - 1
+
+if guest_min and guest_max are in the same mapped/direct page:
+  wasm_base = g2w_page_base(guest_min)
+  access wasm_base + page_offset(guest_min) + (disp - min_disp)
+else:
+  fallback to normal per-access g2w
+```
+
+Important caveat:
+
+```text
+offset range < page size is not enough by itself.
+the base value must stay unchanged between the grouped accesses.
+base + min_disp can still straddle a guest page or sparse allocation boundary.
+the fast path needs a runtime same-page/contiguous-mapping guard.
+```
+
+Broad g2w page-cache probe:
+
+```text
+variant                    runSlice mean   guest mean   result
+baseline no-hist             6243.9 ms     5876.1 ms   prior measured baseline
+g2w page cache                6598.9 ms     6208.8 ms   slower by 355.0 ms
+```
+
+Profile files:
+
+```text
+/private/tmp/aoe-repeat-g2w-page-cache-{1,2,3}.json
+/private/tmp/aoe-repeat-g2w-page-cache-summary.json
+```
+
+Conclusion:
+
+```text
+do not add a generic g2w page cache.
+the added branch/global traffic in every g2w call costs more than it saves.
+same-base page-window work still needs compiler-selected grouped primitives,
+not a broad cache inside every memory translation.
+```
+
+Top consecutive same-base page pairs:
+
+```text
+pair kind totals:
+4,925,238  load->load
+1,564,657  store->store
+  480,494  load->store
+  139,874  store->load
+
+849,566  load->load  [esp+disp] +0x18 -> +0x14 delta=-0x4
+731,268  load->load  [esp+disp] +0x8  -> +0x4  delta=-0x4
+480,494  load->load  [esi+disp] +0x18 -> +0x14 delta=-0x4
+480,494  load->load  [esi+disp] +0x14 -> +0x0  delta=-0x14
+480,494  load->store [esi+disp] +0x4  -> +0x18 delta=+0x14
+468,091  load->load  [esi+disp] +0x44 -> +0x40 delta=-0x4
+380,359  store->store [eax+disp] +0x4 -> +0x0  delta=-0x4
+380,359  store->store [eax+disp] +0x0 -> +0x8  delta=+0x8
+```
+
+Interpretation:
+
+```text
+a tiny consecutive pair primitive has a 7.1M-pair surface, about 1.9%.
+that is smaller than full stable grouped reuse, but easier to emit.
+the obvious adjacent load->load handler was tested and did not win.
+future work should target compiler-local memory lowering, not a generic pair op.
+```
+
+Runtime load-pair probes:
+
+```text
+variant                    runSlice mean   guest mean   result
+baseline no-hist             6243.9 ms     5876.1 ms   prior measured baseline
+loadpair page/direct guard    n/a           n/a         run1 6744.9 ms, later run hit drag timeout
+loadpair direct guard         6555.5 ms     6150.7 ms   slower by 311.6 ms runSlice
+loadpair dispatch-only        6248.0 ms     5869.0 ms   neutral, +4.1 ms runSlice
+```
+
+Profile files:
+
+```text
+/private/tmp/aoe-repeat-loadpair-1.json
+/private/tmp/aoe-repeat-loadpair-direct-{1,2,3}.json
+/private/tmp/aoe-repeat-loadpair-direct-summary.json
+/private/tmp/aoe-repeat-loadpair-dispatch-{1,2,3}.json
+/private/tmp/aoe-repeat-loadpair-dispatch-summary.json
+/private/tmp/aoe-web-profile-loadpair-hist-smoke.json
+```
+
+Histogram confirmation:
+
+```text
+1s gameplay with handler histogram:
+handler 356 load32_pair_ro_samebase count=650,741
+handler 356 share=1.932% of 33,690,499 handler dispatches
+```
+
+Conclusion:
+
+```text
+simple adjacent load-pair fusion has real surface but no measured speedup.
+direct-window guards inside the fused handler are actively bad.
+dispatch-only fusion proves removing about 1.9% of dispatches is not enough.
+memory optimization needs a compiler stage that keeps base/address temporaries
+live across several ops and avoids repeated get/set/g2w work without adding
+branches to every fused handler.
+```
+
 Current priority from the classifier:
 
 ```text
 1. exact flag-dead cmp/test/identity-ALU + Jcc selection
 2. block-local virtual registers for multi-op hot blocks
-3. EA/g2w fast-path or exact memory primitives, because total surface is large
-4. repeated same-EA reuse only after the broader g2w path is understood
+3. compiler-local grouped memory lowering for simple [base+disp] groups
+4. broader EA/g2w fast-path or exact memory primitives
+5. repeated same-EA reuse only after the broader g2w path is understood
 ```
 
 The report command now supports optional hot-block weighting:

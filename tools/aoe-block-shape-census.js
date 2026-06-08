@@ -4,7 +4,8 @@
 // This is an offline classifier. It reads an existing hot-block profile,
 // decodes block entries, and summarizes which compiler-stage optimizations are
 // most common: flag-dead branches, register-write coalescing, identity writes,
-// repeated EA/g2w opportunities, SIB shapes, and stack/setup-heavy blocks.
+// related/stable EA/g2w opportunities, SIB shapes, and stack/setup-heavy
+// blocks.
 
 const fs = require('fs');
 const path = require('path');
@@ -78,6 +79,25 @@ function memKey(mem) {
   return `${mem.base}|${mem.index}|${mem.scale}|${mem.disp}`;
 }
 
+function memFamilyKey(mem) {
+  if (!mem) return '';
+  return `${mem.base}|${mem.index}|${mem.scale}`;
+}
+
+function memFamilyShape(mem) {
+  if (!mem) return 'none';
+  const parts = [];
+  if (mem.base >= 0) parts.push(regName(mem.base));
+  if (mem.index >= 0) parts.push(mem.scale > 1 ? `${regName(mem.index)}*${mem.scale}` : regName(mem.index));
+  parts.push('disp');
+  return `[${parts.join('+')}]`;
+}
+
+function dispText(v) {
+  if (v < 0) return `-${hex(-v, 0)}`;
+  return `+${hex(v, 0)}`;
+}
+
 function memAccesses(insns, infos) {
   const out = [];
   for (let i = 0; i < insns.length; i++) {
@@ -86,6 +106,197 @@ function memAccesses(insns, infos) {
     if (ins.mem && (info.memoryRead || info.memoryWrite)) out.push(ins.mem);
   }
   return out;
+}
+
+function byteRegFull(reg) {
+  if (reg < 0) return -1;
+  return reg < 4 ? reg : reg - 4;
+}
+
+function stabilityDefs(ins) {
+  const out = new Set();
+  const add = reg => {
+    if (reg >= 0) out.add(reg);
+  };
+  const addByte = reg => add(byteRegFull(reg));
+
+  switch (ins.kind) {
+    case 'xor_zero':
+      add(ins.reg);
+      break;
+    case 'xor_rr':
+    case 'mov_r32_r32':
+    case 'mov_r32_m32':
+    case 'mov_r32_i32':
+    case 'movzx8':
+    case 'movsx8':
+    case 'movzx16':
+    case 'movsx16':
+    case 'lea':
+    case 'add_r32_rm32':
+    case 'sub_r32_rm32':
+    case 'alu_r32_r32':
+    case 'alu_r32_m32':
+    case 'shift_r32_i8':
+      add(ins.dst);
+      break;
+    case 'mov_eax_moffs32':
+      add(0);
+      break;
+    case 'mov_r8_r8':
+    case 'mov_r8_m8':
+      addByte(ins.dst);
+      break;
+    case 'add_rm32_r32':
+    case 'sub_rm32_r32':
+    case 'alu_m32_r32':
+      add(ins.dst);
+      break;
+    case 'alu_r32_i8':
+      if (ins.alu !== 7) add(ins.dst);
+      break;
+    case 'inc_r32':
+    case 'dec_r32':
+      add(ins.reg);
+      break;
+    case 'push_r32':
+      add(4);
+      break;
+    case 'pop_r32':
+      add(4);
+      add(ins.reg);
+      break;
+    case 'unknown':
+      for (let i = 0; i < REGS.length; i++) add(i);
+      break;
+  }
+
+  return out;
+}
+
+function relatedEaInfo(accesses) {
+  const byFamily = new Map();
+  for (const mem of accesses) {
+    const key = memFamilyKey(mem);
+    const row = byFamily.get(key) || {
+      key,
+      shape: memFamilyShape(mem),
+      disps: new Map(),
+      accessCount: 0,
+    };
+    row.accessCount++;
+    row.disps.set(mem.disp || 0, (row.disps.get(mem.disp || 0) || 0) + 1);
+    byFamily.set(key, row);
+  }
+
+  const groups = [];
+  for (const row of byFamily.values()) {
+    if (row.disps.size < 2) continue;
+    const disps = Array.from(row.disps.keys()).sort((a, b) => a - b);
+    const deltas = [];
+    for (let i = 1; i < disps.length; i++) {
+      deltas.push(disps[i] - disps[i - 1]);
+    }
+    groups.push({ ...row, disps, deltas });
+  }
+
+  return {
+    groups,
+    accessCount: groups.reduce((sum, row) => sum + row.accessCount, 0),
+    adjacentPairs: groups.reduce((sum, row) => sum + row.deltas.length, 0),
+    delta4Pairs: groups.reduce((sum, row) => sum + row.deltas.filter(delta => Math.abs(delta) === 4).length, 0),
+    smallDeltaPairs: groups.reduce((sum, row) => sum + row.deltas.filter(delta => Math.abs(delta) <= 16).length, 0),
+  };
+}
+
+function emptySameBaseRun(base) {
+  return {
+    base,
+    shape: `[${regName(base)}+disp]`,
+    disps: new Map(),
+    accessCount: 0,
+  };
+}
+
+function addSameBaseRun(groups, run) {
+  if (!run || run.disps.size < 2) return;
+  const disps = Array.from(run.disps.keys()).sort((a, b) => a - b);
+  const range = disps[disps.length - 1] - disps[0];
+  groups.push({ ...run, disps, range });
+}
+
+function sameBaseInfo(insns, infos, pageSize) {
+  const groups = [];
+  const active = new Map();
+  for (let i = 0; i < insns.length; i++) {
+    const ins = insns[i];
+    const info = infos[i];
+    const mem = ins.mem;
+    if (mem && (info.memoryRead || info.memoryWrite) && mem.base >= 0 && mem.index < 0) {
+      let run = active.get(mem.base);
+      if (!run) {
+        run = emptySameBaseRun(mem.base);
+        active.set(mem.base, run);
+      }
+      run.accessCount++;
+      run.disps.set(mem.disp || 0, (run.disps.get(mem.disp || 0) || 0) + 1);
+    }
+
+    for (const reg of stabilityDefs(ins)) {
+      addSameBaseRun(groups, active.get(reg));
+      active.delete(reg);
+    }
+  }
+
+  for (const run of active.values()) addSameBaseRun(groups, run);
+
+  const pageGroups = groups.filter(group => group.range >= 0 && group.range < pageSize);
+
+  return {
+    groups,
+    pageGroups,
+    accessCount: groups.reduce((sum, row) => sum + row.accessCount, 0),
+    pageAccessCount: pageGroups.reduce((sum, row) => sum + row.accessCount, 0),
+  };
+}
+
+function memAccessKind(info) {
+  if (info.memoryRead && info.memoryWrite) return 'rw';
+  if (info.memoryRead) return 'load';
+  if (info.memoryWrite) return 'store';
+  return 'mem';
+}
+
+function consecutiveSameBaseInfo(insns, infos, pageSize) {
+  const pairs = [];
+  for (let i = 0; i + 1 < insns.length; i++) {
+    const a = insns[i];
+    const b = insns[i + 1];
+    const ai = infos[i];
+    const bi = infos[i + 1];
+    if (!a.mem || !b.mem) continue;
+    if (!(ai.memoryRead || ai.memoryWrite) || !(bi.memoryRead || bi.memoryWrite)) continue;
+    if (a.mem.base < 0 || b.mem.base < 0) continue;
+    if (a.mem.index >= 0 || b.mem.index >= 0) continue;
+    if (a.mem.base !== b.mem.base) continue;
+    if (stabilityDefs(a).has(a.mem.base)) continue;
+    const range = Math.abs((b.mem.disp || 0) - (a.mem.disp || 0));
+    pairs.push({
+      base: a.mem.base,
+      shape: `[${regName(a.mem.base)}+disp]`,
+      aDisp: a.mem.disp || 0,
+      bDisp: b.mem.disp || 0,
+      range,
+      pageRange: range < pageSize,
+      kind: `${memAccessKind(ai)}->${memAccessKind(bi)}`,
+    });
+  }
+
+  const pagePairs = pairs.filter(pair => pair.pageRange);
+  return {
+    pairs,
+    pagePairs,
+  };
 }
 
 function dispatchCost(ins) {
@@ -238,6 +449,22 @@ function analyzeProfile(profileFile, exeFile, opts) {
     memoryAccessBlocks: 0,
     multiG2WBlocks: 0,
     repeatedEaBlocks: 0,
+    relatedEaBlocks: 0,
+    relatedEaAccesses: 0,
+    relatedEaAdjacentPairs: 0,
+    relatedEaDelta4Pairs: 0,
+    relatedEaSmallDeltaPairs: 0,
+    sameBaseBlocks: 0,
+    sameBaseGroups: 0,
+    sameBaseAccesses: 0,
+    sameBasePageBlocks: 0,
+    sameBasePageGroups: 0,
+    sameBasePageAccesses: 0,
+    sameBasePageG2WSaves: 0,
+    consecutiveSameBaseBlocks: 0,
+    consecutiveSameBasePairs: 0,
+    consecutiveSameBasePageBlocks: 0,
+    consecutiveSameBasePagePairs: 0,
     unknownWeight: 0,
   };
   const primary = new Map();
@@ -247,6 +474,12 @@ function analyzeProfile(profileFile, exeFile, opts) {
   const branchExact = new Map();
   const regFlushShapes = new Map();
   const eaShapes = new Map();
+  const relatedEaFamilies = new Map();
+  const relatedEaDeltas = new Map();
+  const sameBaseFamilies = new Map();
+  const sameBasePageFamilies = new Map();
+  const consecutiveSameBasePairs = new Map();
+  const consecutiveSameBaseKinds = new Map();
 
   for (const row of hot.top.slice(0, opts.hotLimit)) {
     const weight = row.count || 0;
@@ -261,6 +494,9 @@ function analyzeProfile(profileFile, exeFile, opts) {
     const analysis = analyzeBlock(insns, DEFAULT_OPT_REGS);
     const accesses = memAccesses(insns, infos);
     const distinctEa = new Set(accesses.map(memKey));
+    const related = relatedEaInfo(accesses);
+    const sameBase = sameBaseInfo(insns, infos, opts.pageSize);
+    const consecutiveSameBase = consecutiveSameBaseInfo(insns, infos, opts.pageSize);
     const currentDispatches = insns.reduce((sum, ins) => sum + dispatchCost(ins), 0);
     const currentG2W = accesses.length;
     const optimizedG2W = distinctEa.size;
@@ -278,6 +514,22 @@ function analyzeProfile(profileFile, exeFile, opts) {
     if (currentG2W > 0) totals.memoryAccessBlocks += weight;
     if (currentG2W >= 2) totals.multiG2WBlocks += weight;
     if (Math.max(0, currentG2W - optimizedG2W) > 0) totals.repeatedEaBlocks += weight;
+    if (related.groups.length) totals.relatedEaBlocks += weight;
+    totals.relatedEaAccesses += related.accessCount * weight;
+    totals.relatedEaAdjacentPairs += related.adjacentPairs * weight;
+    totals.relatedEaDelta4Pairs += related.delta4Pairs * weight;
+    totals.relatedEaSmallDeltaPairs += related.smallDeltaPairs * weight;
+    if (sameBase.groups.length) totals.sameBaseBlocks += weight;
+    if (sameBase.pageGroups.length) totals.sameBasePageBlocks += weight;
+    totals.sameBaseGroups += sameBase.groups.length * weight;
+    totals.sameBasePageGroups += sameBase.pageGroups.length * weight;
+    totals.sameBaseAccesses += sameBase.accessCount * weight;
+    totals.sameBasePageAccesses += sameBase.pageAccessCount * weight;
+    totals.sameBasePageG2WSaves += Math.max(0, sameBase.pageAccessCount - sameBase.pageGroups.length) * weight;
+    if (consecutiveSameBase.pairs.length) totals.consecutiveSameBaseBlocks += weight;
+    if (consecutiveSameBase.pagePairs.length) totals.consecutiveSameBasePageBlocks += weight;
+    totals.consecutiveSameBasePairs += consecutiveSameBase.pairs.length * weight;
+    totals.consecutiveSameBasePagePairs += consecutiveSameBase.pagePairs.length * weight;
     totals.regWrites += analysis.candidateDefs * weight;
     totals.exitFlushes += analysis.finalFlushes * weight;
     totals.savedRegWrites += analysis.blockCompilerSavedWrites * weight;
@@ -301,6 +553,12 @@ function analyzeProfile(profileFile, exeFile, opts) {
     if (currentG2W > 0) add(signals, 'has EA/g2w memory access', weight, addr);
     if (currentG2W >= 2) add(signals, 'multiple EA/g2w accesses', weight, addr);
     if (Math.max(0, currentG2W - optimizedG2W) > 0) add(signals, 'repeated same-EA/g2w in block', weight, addr);
+    if (related.groups.length) add(signals, 'related EA family in block', weight, addr);
+    if (related.delta4Pairs > 0) add(signals, 'related EA delta 4', weight * related.delta4Pairs, addr);
+    if (related.smallDeltaPairs > 0) add(signals, 'related EA delta <=16', weight * related.smallDeltaPairs, addr);
+    if (sameBase.groups.length) add(signals, 'stable same base, multiple disps', weight, addr);
+    if (sameBase.pageGroups.length) add(signals, 'stable same base, page-range disps', weight, addr);
+    if (consecutiveSameBase.pagePairs.length) add(signals, 'consecutive stable same-base pair', weight * consecutiveSameBase.pagePairs.length, addr);
     if (accesses.some(mem => mem.index >= 0)) add(signals, 'SIB memory access', weight, addr);
     if (insns.some(ins => ins.kind === 'push_r32' || ins.kind === 'pop_r32' || (ins.mem && ins.mem.base === 4))) add(signals, 'stack/setup access', weight, addr);
     if (insns.some(ins => ins.kind === 'unknown')) add(signals, 'unknown decode boundary', weight, addr);
@@ -310,6 +568,28 @@ function analyzeProfile(profileFile, exeFile, opts) {
     }
     for (const mem of accesses) {
       add(eaShapes, memRawShape(mem, false), weight, addr);
+    }
+    for (const group of related.groups) {
+      const disps = group.disps.slice(0, 8).map(dispText).join(',');
+      const suffix = group.disps.length > 8 ? ',...' : '';
+      add(relatedEaFamilies, `${group.shape} disps=${disps}${suffix}`, weight, addr);
+      for (const delta of group.deltas) {
+        add(relatedEaDeltas, `${group.shape} adjacent-delta=${dispText(delta)}`, weight, addr);
+      }
+    }
+    for (const group of sameBase.groups) {
+      const disps = group.disps.slice(0, 8).map(dispText).join(',');
+      const suffix = group.disps.length > 8 ? ',...' : '';
+      add(sameBaseFamilies, `${group.shape} range=${hex(group.range, 0)} disps=${disps}${suffix}`, weight, addr);
+    }
+    for (const group of sameBase.pageGroups) {
+      const disps = group.disps.slice(0, 8).map(dispText).join(',');
+      const suffix = group.disps.length > 8 ? ',...' : '';
+      add(sameBasePageFamilies, `${group.shape} range=${hex(group.range, 0)} disps=${disps}${suffix}`, weight, addr);
+    }
+    for (const pair of consecutiveSameBase.pagePairs) {
+      add(consecutiveSameBaseKinds, pair.kind, weight, addr);
+      add(consecutiveSameBasePairs, `${pair.kind} ${pair.shape} ${dispText(pair.aDisp)} -> ${dispText(pair.bDisp)} delta=${dispText(pair.bDisp - pair.aDisp)}`, weight, addr);
     }
   }
 
@@ -328,6 +608,12 @@ function analyzeProfile(profileFile, exeFile, opts) {
     branchExact,
     regFlushShapes,
     eaShapes,
+    relatedEaFamilies,
+    relatedEaDeltas,
+    sameBaseFamilies,
+    sameBasePageFamilies,
+    consecutiveSameBasePairs,
+    consecutiveSameBaseKinds,
   };
 }
 
@@ -354,8 +640,21 @@ function printReport(result) {
   console.log(`  blocks with any EA/g2w access:        ${Math.round(totals.memoryAccessBlocks)} (${pct(totals.memoryAccessBlocks, totals.coveredWeight)} of covered blocks)`);
   console.log(`  blocks with multiple EA/g2w accesses: ${Math.round(totals.multiG2WBlocks)} (${pct(totals.multiG2WBlocks, totals.coveredWeight)} of covered blocks)`);
   console.log(`  blocks with repeated same EA/g2w:      ${Math.round(totals.repeatedEaBlocks)} (${pct(totals.repeatedEaBlocks, totals.coveredWeight)} of covered blocks)`);
+  console.log(`  blocks with related EA families:       ${Math.round(totals.relatedEaBlocks)} (${pct(totals.relatedEaBlocks, totals.coveredWeight)} of covered blocks)`);
   console.log(`  current g2w-like memory accesses:     ${Math.round(totals.currentG2W)} (${pct(totals.currentG2W, totalHandlers)} vs all handlers, ${(totals.currentG2W / Math.max(1, totals.coveredWeight)).toFixed(3)} per covered block)`);
   console.log(`  repeated-EA g2w saves in block:       ${Math.round(totals.savedG2W)} (${pct(totals.savedG2W, totalHandlers)} vs all handlers)`);
+  console.log(`  related-EA memory accesses:           ${Math.round(totals.relatedEaAccesses)} (${pct(totals.relatedEaAccesses, totals.currentG2W)} of current g2w accesses)`);
+  console.log(`  related-EA adjacent pairs:            ${Math.round(totals.relatedEaAdjacentPairs)} (${pct(totals.relatedEaAdjacentPairs, totalHandlers)} vs all handlers)`);
+  console.log(`  related-EA delta 4 pairs:             ${Math.round(totals.relatedEaDelta4Pairs)} (${pct(totals.relatedEaDelta4Pairs, totalHandlers)} vs all handlers)`);
+  console.log(`  related-EA delta <=16 pairs:          ${Math.round(totals.relatedEaSmallDeltaPairs)} (${pct(totals.relatedEaSmallDeltaPairs, totalHandlers)} vs all handlers)`);
+  console.log(`  stable same-base multi-disp blocks:   ${Math.round(totals.sameBaseBlocks)} (${pct(totals.sameBaseBlocks, totals.coveredWeight)} of covered blocks)`);
+  console.log(`  stable same-base accesses:            ${Math.round(totals.sameBaseAccesses)} (${pct(totals.sameBaseAccesses, totals.currentG2W)} of current g2w accesses)`);
+  console.log(`  stable same-base page-range blocks:   ${Math.round(totals.sameBasePageBlocks)} (${pct(totals.sameBasePageBlocks, totals.coveredWeight)} of covered blocks, page=${hex(opts.pageSize, 0)})`);
+  console.log(`  stable same-base page-range groups:   ${Math.round(totals.sameBasePageGroups)}`);
+  console.log(`  stable same-base page-range accesses: ${Math.round(totals.sameBasePageAccesses)} (${pct(totals.sameBasePageAccesses, totals.currentG2W)} of current g2w accesses)`);
+  console.log(`  stable same-base page g2w saves:      ${Math.round(totals.sameBasePageG2WSaves)} (${pct(totals.sameBasePageG2WSaves, totalHandlers)} vs all handlers)`);
+  console.log(`  consecutive same-base page blocks:    ${Math.round(totals.consecutiveSameBasePageBlocks)} (${pct(totals.consecutiveSameBasePageBlocks, totals.coveredWeight)} of covered blocks)`);
+  console.log(`  consecutive same-base page pairs:     ${Math.round(totals.consecutiveSameBasePagePairs)} (${pct(totals.consecutiveSameBasePagePairs, totalHandlers)} vs all handlers)`);
   console.log(`  unknown decode boundary weight:       ${Math.round(totals.unknownWeight)} (${pct(totals.unknownWeight, totals.coveredWeight)} of covered blocks)`);
 
   printWeightedRows('Primary buckets:', sortedRows(result.primary, opts.topRows), totals.coveredWeight, opts.topRows);
@@ -364,6 +663,12 @@ function printReport(result) {
   printWeightedRows('Top exact branch candidates:', sortedRows(result.branchExact, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Top register-coalescing block signatures:', sortedRows(result.regFlushShapes, opts.topRows), totals.coveredWeight, opts.topRows);
   printWeightedRows('Top EA/g2w access shapes:', sortedRows(result.eaShapes, opts.topRows), totals.currentG2W, opts.topRows);
+  printWeightedRows('Top related EA families:', sortedRows(result.relatedEaFamilies, opts.topRows), totals.relatedEaBlocks || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Top related EA deltas:', sortedRows(result.relatedEaDeltas, opts.topRows), totals.relatedEaAdjacentPairs || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Top stable same-base EA families:', sortedRows(result.sameBaseFamilies, opts.topRows), totals.sameBaseBlocks || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Top stable same-base page-range families:', sortedRows(result.sameBasePageFamilies, opts.topRows), totals.sameBasePageBlocks || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Consecutive stable same-base pair kinds:', sortedRows(result.consecutiveSameBaseKinds, opts.topRows), totals.consecutiveSameBasePagePairs || totals.coveredWeight, opts.topRows);
+  printWeightedRows('Top consecutive stable same-base pairs:', sortedRows(result.consecutiveSameBasePairs, opts.topRows), totals.consecutiveSameBasePagePairs || totals.coveredWeight, opts.topRows);
   printWeightedRows('Top block signatures:', sortedRows(result.signatures, opts.topRows), totals.coveredWeight, opts.topRows);
 }
 
@@ -375,6 +680,7 @@ function main() {
     hotLimit: intArg('hot-limit', 120),
     blockInsns: intArg('block-insns', 64),
     topRows: intArg('top-rows', 12),
+    pageSize: intArg('page-size', 4096),
   };
   printReport(analyzeProfile(profileFile, exeFile, opts));
 }
