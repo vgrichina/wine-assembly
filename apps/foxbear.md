@@ -4,6 +4,10 @@
 
 DirectDraw sample from the DX5 SDK: animated fox-and-bear sprite demo using color-keyed BltFast against a primary+back buffer pair.
 
+Current status: **PASS** in `test/test-all-exes.js` with `maxBatches: 1800`.
+The default 80-batch smoke budget only catches the art-loader preview blits,
+which look like a tiny sprite in the top-left corner and trip the blank gate.
+
 ## History
 
 - **2026-04-21 early** — stuck at 93 API calls: EIP=0 right after `SetDisplayMode`. Two back-to-back fixes:

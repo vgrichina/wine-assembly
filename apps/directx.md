@@ -309,13 +309,15 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | ddex4 | **PASS** (82 colors, 3D donuts on checkerboard) | |
 | flip2d | **PASS** (632 colors, spinning cube + FPS) | |
 | flip3dtl | **PASS** (628 colors, HAL-marked cube) | DDSURF2 vtable (18e2278) + back-face culling (f5162f6) |
-| palette / stretch / boids | **PASS** | |
+| stretch / boids | **PASS** | |
+| palette | warn | Known broken visual in harness |
 | Donut | **PASS** (56 colors, red torus) | Primary-resize (e8e579f) |
 | Donuts | **PASS** (Space Donuts splash + menu) | |
-| Wormhole | **PASS** (3D wireframe tunnel) | |
-| tunnel / twist | warn (2 colors) | Hit D3D loadtex error path early |
-| Globe / Viewer / Bellhop | warn (blank) | D3DIM render loop runs but output stays black |
-| FoxBear | **FAIL** at bsearch | Reaches art-file load; stops at unimplemented C-runtime `bsearch` (see `foxbear.md`) |
+| Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
+| tunnel / twist | **PASS** | |
+| Viewer / Bellhop | **PASS** | |
+| Globe | warn (blank) | Guest D3DRM path creates a window/surfaces but does not emit scene geometry yet |
+| FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
 
 ### Recent changes (2026-04-21)
 

@@ -164,7 +164,9 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts' },
   { exe: 'test/binaries/dx-sdk/bin/flip3dtl.exe', name: 'DX5 D3DIM Flip3DTL' },
   { exe: 'test/binaries/dx-sdk/bin/wormhole.exe', name: 'DX5 D3DIM Wormhole' },
-  { exe: 'test/binaries/dx-sdk/foxbear/foxbear.exe', name: 'DX5 FoxBear (DDraw sprite demo)' },
+  { exe: 'test/binaries/dx-sdk/foxbear/foxbear.exe', name: 'DX5 FoxBear (DDraw sprite demo)',
+    // Loads hundreds of art-file sprites before the full scene appears.
+    maxBatches: 1800, extraArgs: ['--no-close'], timeoutMs: 30000 },
   // Plus! 98 screensavers — pure GDI
   { exe: 'test/binaries/screensavers/CATHY.SCR', name: 'Cathy (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)', extraArgs: ['--args=/s'] },
