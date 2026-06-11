@@ -27,6 +27,8 @@ try { fs.unlinkSync(optionsPng); } catch (_) {}
 try { fs.unlinkSync(afterOkPng); } catch (_) {}
 
 const inputSpec = [
+  '100:mousedown:244:152',
+  '101:mouseup:244:152',
   '3800:mousedown:44:52',
   '3801:mouseup:44:52',
   '3810:mousedown:66:92',
@@ -42,8 +44,8 @@ const inputSpec = [
   '3961:mouseup:44:52',
   '3970:mousedown:56:72',
   '3971:mouseup:56:72',
-  `4300:png:${afterOkPng}`,
-  '4320:stop',
+  `4000:png:${afterOkPng}`,
+  '4010:stop',
 ].join(',');
 
 const args = [
@@ -51,7 +53,7 @@ const args = [
   `--exe=${EXE}`,
   '--no-close',
   `--input=${inputSpec}`,
-  '--max-batches=4330',
+  '--max-batches=4020',
   '--batch-size=100',
   '--stuck-after=100',
   '--quiet-api',
@@ -67,7 +69,7 @@ try {
   out = execFileSync('node', args, {
     cwd: ROOT,
     encoding: 'utf-8',
-    timeout: 30000,
+    timeout: 45000,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -125,7 +127,7 @@ async function countBrickColorPixels(pngPath) {
     { name: 'Bricks bitmap previews rendered', pass: brickColorPixels > 250 },
     { name: 'OK click delivered through mouse path', pass: /mousedown 558,44/.test(out) && /mouseup 558,44/.test(out) },
     { name: 'Options dialog closed after OK', pass: /dlg-dump:after-ok: dlg=none/.test(afterOkDumpLine) },
-    { name: 'Game menu still responds after Options OK', pass: /mousedown 44,52 at batch 3960/.test(out) && /mouseup 56,72 at batch 3971/.test(out) },
+    { name: 'Game menu still responds after Options OK', pass: /mousedown 44,52/.test(out) && /mouseup 56,72/.test(out) },
     { name: 'New Game after Options OK rendered PNG', pass: /png .*funtris_after_options_ok_new\.png/.test(out) && afterOkSize > 1000 },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];

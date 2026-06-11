@@ -483,6 +483,9 @@
   (data (i32.const 0x2F0) "FPU_UNIMPL\00")
   ;; CRT exports that should stay host-dispatched even when msvcrt.dll is loaded.
   (data (i32.const 0x300) "ceil\00sqrt\00sin\00pow\00_CIpow\00")
+  ;; Import-hint correction strings. Funtris has a stale USER32 import name
+  ;; ("GetMessageA") with the MessageBoxA export hint.
+  (data (i32.const 0x319) "MessageBoxA\00USER32.dll\00GetMessageA\00")
   ;; MessageBox button labels — referenced by $create_msgbox_dialog.
   (data (i32.const 0x340) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
   (data (i32.const 0x346) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL

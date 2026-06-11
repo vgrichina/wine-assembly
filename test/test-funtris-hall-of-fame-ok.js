@@ -19,6 +19,8 @@ if (!fs.existsSync(EXE)) {
 }
 
 const inputSpec = [
+  '100:mousedown:244:152',
+  '101:mouseup:244:152',
   '3800:0x111:40005',
   '3900:wait-title:Hall_of_Fame:1000',
   '3910:dlg-dump:hall',

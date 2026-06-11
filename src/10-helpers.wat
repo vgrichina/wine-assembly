@@ -28,6 +28,22 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0xFFFF))
+
+  ;; Some Win9x-era binaries carry stale import-name strings but correct
+  ;; export hints. Funtris imports USER32 hint 446 (MessageBoxA) with the
+  ;; name string "GetMessageA"; resolving only by name sends its startup
+  ;; message box through the message pump.
+  (func $import_hint_override_api_id (param $dll_name_ga i32) (param $hint_name_wa i32) (result i32)
+    (local $name_wa i32)
+    (local.set $name_wa (i32.add (local.get $hint_name_wa) (i32.const 2)))
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load16_u (local.get $hint_name_wa)) (i32.const 446))
+            (call $str_eq (local.get $name_wa) (i32.const 0x330)))
+          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x325)))
+      (then (return (call $lookup_api_id (i32.const 0x319)))))
+    (i32.const -1))
+
   ;; Apply segment override to an address. FS=5 adds fs_base. GS=6 traps
   ;; (no Win32 use of GS in this emulator). Other segments treated flat.
   (func $seg_adj (param $addr i32) (param $seg i32) (result i32)

@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '156';
+  static SOURCE_VERSION = '159';
 
   constructor() {
     this.instance = null;
@@ -191,8 +191,9 @@ class WineAssembly {
         } catch (_) {}
         return null;
       },
-      onTopLevelWindowDestroyed: (hwnd) => {
+      onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
+        if (destroyed && destroyed.isDialog) return;
         const lo = self._hwndBase;
         const hi = lo + 0x10000;
         if (hwnd < lo || hwnd >= hi) return;

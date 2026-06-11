@@ -255,7 +255,7 @@
     (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
     (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32) (local $thunk_addr i32)
     (local $dll_name_rva i32) (local $dll_name_ptr i32)
-    (local $resolved_dll i32) (local $resolved_addr i32)
+    (local $resolved_dll i32) (local $resolved_addr i32) (local $api_id i32)
     (local.set $desc_ptr (call $g2w (i32.add (local.get $load_addr) (local.get $import_rva))))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
@@ -293,13 +293,41 @@
             (i32.store (local.get $iat_ptr) (local.get $thunk_addr))
             (if (i32.eqz (i32.and (local.get $entry) (i32.const 0x80000000)))
               (then
-                ;; Name import: store name RVA relative to guest base
-                ;; The name is at load_addr + entry, but thunk expects RVA from image_base
-                ;; Compute: (load_addr + entry) - image_base = RVA for thunk
-                (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-                  (i32.sub (i32.add (local.get $load_addr) (local.get $entry)) (global.get $image_base)))
-                (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-                  (call $lookup_api_id (call $g2w (i32.add (local.get $load_addr) (i32.add (local.get $entry) (i32.const 2)))))))
+                (local.set $api_id (call $import_hint_override_api_id
+                  (local.get $dll_name_ptr)
+                  (call $g2w (i32.add (local.get $load_addr) (local.get $entry)))))
+                (if (i32.ne (local.get $api_id) (i32.const -1))
+                  (then
+                    (i32.store
+                      (i32.add (global.get $THUNK_BASE)
+                        (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.or (i32.const 0x80000000)
+                        (i32.load16_u
+                          (call $g2w (i32.add (local.get $load_addr) (local.get $entry))))))
+                    (i32.store
+                      (i32.add
+                        (i32.add (global.get $THUNK_BASE)
+                          (i32.mul (global.get $num_thunks) (i32.const 8)))
+                        (i32.const 4))
+                      (local.get $api_id)))
+                  (else
+                    ;; Name import: store name RVA relative to guest base.
+                    ;; The name is at load_addr + entry, but thunk expects RVA
+                    ;; from image_base.
+                    (i32.store
+                      (i32.add (global.get $THUNK_BASE)
+                        (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.sub (i32.add (local.get $load_addr) (local.get $entry))
+                        (global.get $image_base)))
+                    (i32.store
+                      (i32.add
+                        (i32.add (global.get $THUNK_BASE)
+                          (i32.mul (global.get $num_thunks) (i32.const 8)))
+                        (i32.const 4))
+                      (call $lookup_api_id
+                        (call $g2w
+                          (i32.add (local.get $load_addr)
+                            (i32.add (local.get $entry) (i32.const 2)))))))))
               (else
                 ;; Ordinal import from system DLL — store marker + real ordinal.
                 ;; $win32_dispatch catches the marker and reports a clear

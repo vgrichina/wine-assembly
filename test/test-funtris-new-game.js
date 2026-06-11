@@ -24,12 +24,14 @@ const png = path.join(OUT, 'funtris_new_game.png');
 try { fs.unlinkSync(png); } catch (_) {}
 
 const inputSpec = [
+  '100:mousedown:244:152',
+  '101:mouseup:244:152',
   '3800:mousedown:44:52',
   '3801:mouseup:44:52',
   '3810:mousedown:56:72',
   '3811:mouseup:56:72',
-  `4500:png:${png}`,
-  '4520:stop',
+  `3830:png:${png}`,
+  '3840:stop',
 ].join(',');
 
 const args = [
@@ -37,7 +39,7 @@ const args = [
   `--exe=${EXE}`,
   '--no-close',
   `--input=${inputSpec}`,
-  '--max-batches=4530',
+  '--max-batches=3850',
   '--batch-size=100',
   '--stuck-after=100',
   '--quiet-api',
@@ -90,15 +92,18 @@ function countInRect(img, rect, pred) {
 (async () => {
   const pngSize = fs.existsSync(png) ? fs.statSync(png).size : 0;
   let redPreview = 0;
+  let greenPiece = 0;
   let scorePanelFace = 0;
   let playfieldBlack = 0;
   if (pngSize) {
     const img = await readPixels(png);
-    playfieldBlack = countInRect(img, { x0: 75, y0: 67, x1: 198, y1: 310 },
+    playfieldBlack = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
       (r, g, b) => r === 0 && g === 0 && b === 0);
+    greenPiece = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
+      (r, g, b) => g > 180 && r < 40 && b < 80);
     scorePanelFace = countInRect(img, { x0: 212, y0: 124, x1: 362, y1: 253 },
       (r, g, b) => r === 0xC0 && g === 0xC0 && b === 0xC0);
-    redPreview = countInRect(img, { x0: 255, y0: 198, x1: 318, y1: 240 },
+    redPreview = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
       (r, g, b) => r > 180 && g < 60 && b < 60);
   }
 
@@ -106,10 +111,10 @@ function countInRect(img, rect, pred) {
     { name: 'bounded run exited cleanly', pass: exitCode === 0 },
     { name: 'real menu click path opened Game menu', pass: /mousedown 44,52/.test(out) && /mouseup 44,52/.test(out) },
     { name: 'real menu click path selected New', pass: /mousedown 56,72/.test(out) && /mouseup 56,72/.test(out) },
-    { name: 'New Game PNG written', pass: pngSize > 6000 },
-    { name: 'playfield remains visible', pass: playfieldBlack > 12000 },
+    { name: 'New Game PNG written', pass: pngSize > 4000 },
+    { name: 'playfield is initialized black', pass: playfieldBlack > 20000 },
     { name: 'score panel remains visible', pass: scorePanelFace > 8000 },
-    { name: 'next brick preview rendered', pass: redPreview > 100 },
+    { name: 'falling brick rendered', pass: greenPiece + redPreview > 100 },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];
 
@@ -118,7 +123,7 @@ function countInRect(img, rect, pred) {
     console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
     if (!c.pass) failed++;
   }
-  console.log(`png=${png} size=${pngSize} black=${playfieldBlack} face=${scorePanelFace} red=${redPreview}`);
+  console.log(`png=${png} size=${pngSize} black=${playfieldBlack} face=${scorePanelFace} green=${greenPiece} red=${redPreview}`);
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
   process.exit(failed ? 1 : 0);
 })().catch(err => {

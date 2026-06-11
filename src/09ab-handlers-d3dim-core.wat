@@ -34,11 +34,12 @@
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
-  ;; WAT-private scratch area so they cannot collide with low system strings.
-  (data (i32.const 0x07F02400) "D3DIM:Execute opcode\00")
-  (data (i32.const 0x07F02420) "D3DIM:DrawPrimitive vtx/prim\00")
-  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07F02400))
-  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x07F02420))
+  ;; WAT-private scratch area so they cannot collide with low system strings
+  ;; or sparse VirtualAlloc map state.
+  (data (i32.const 0x07FEB000) "D3DIM:Execute opcode\00")
+  (data (i32.const 0x07FEB020) "D3DIM:DrawPrimitive vtx/prim\00")
+  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07FEB000))
+  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x07FEB020))
 
   ;; ── QueryInterface upgrade routing ────────────────────────────
   ;; Recognizes versioned IIDs by their first DWORD and writes the matching

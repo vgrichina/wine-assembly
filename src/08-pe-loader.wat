@@ -109,6 +109,7 @@
   (func $process_imports (param $import_rva i32)
     (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
     (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32) (local $thunk_addr i32)
+    (local $api_id i32)
     (local.set $desc_ptr (i32.add (global.get $GUEST_BASE) (local.get $import_rva)))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
@@ -128,10 +129,39 @@
         (i32.store (local.get $iat_ptr) (local.get $thunk_addr))
         (if (i32.eqz (i32.and (local.get $entry) (i32.const 0x80000000)))
           (then
-            (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))
-            ;; Lookup and store API ID in thunk+4
-            (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-              (call $lookup_api_id (i32.add (global.get $GUEST_BASE) (i32.add (local.get $entry) (i32.const 2))))))
+            (local.set $api_id (call $import_hint_override_api_id
+              (i32.add (global.get $image_base)
+                (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+              (i32.add (global.get $GUEST_BASE) (local.get $entry))))
+            (if (i32.ne (local.get $api_id) (i32.const -1))
+              (then
+                ;; Treat hint-corrected imports like resolved ordinals for
+                ;; logging, so traces show the canonical API name from api_id.
+                (i32.store
+                  (i32.add (global.get $THUNK_BASE)
+                    (i32.mul (global.get $num_thunks) (i32.const 8)))
+                  (i32.or (i32.const 0x80000000)
+                    (i32.load16_u (i32.add (global.get $GUEST_BASE) (local.get $entry)))))
+                (i32.store
+                  (i32.add
+                    (i32.add (global.get $THUNK_BASE)
+                      (i32.mul (global.get $num_thunks) (i32.const 8)))
+                    (i32.const 4))
+                  (local.get $api_id)))
+              (else
+                (i32.store
+                  (i32.add (global.get $THUNK_BASE)
+                    (i32.mul (global.get $num_thunks) (i32.const 8)))
+                  (local.get $entry))
+                ;; Lookup and store API ID in thunk+4
+                (i32.store
+                  (i32.add
+                    (i32.add (global.get $THUNK_BASE)
+                      (i32.mul (global.get $num_thunks) (i32.const 8)))
+                    (i32.const 4))
+                  (call $lookup_api_id
+                    (i32.add (global.get $GUEST_BASE)
+                      (i32.add (local.get $entry) (i32.const 2))))))))
           (else
             ;; Ordinal import: bit 31 set, low 16 bits = ordinal number
             ;; Store ordinal as name RVA marker, resolve API ID via host

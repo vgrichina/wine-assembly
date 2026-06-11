@@ -144,6 +144,15 @@
     (i32.store (i32.add (local.get $addr) (i32.const 12)) (i32.const 0)) ;; ex_style
   )
 
+  ;; Clear per-slot WAT control metadata when WND_RECORDS reuses a slot.
+  (func $ctrl_table_reset_slot (param $slot i32)
+    (local $addr i32)
+    (local.set $addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+    (i64.store (local.get $addr) (i64.const 0))
+    (i64.store offset=8 (local.get $addr) (i64.const 0))
+    (local.set $addr (i32.add (global.get $CONTROL_GEOM) (i32.mul (local.get $slot) (i32.const 8))))
+    (i64.store (local.get $addr) (i64.const 0)))
+
   ;; Per-control WS_EX_* flags. Stored in CONTROL_TABLE+12 by $dlg_load
   ;; so static_wndproc / button_wndproc can render WS_EX_CLIENTEDGE etc.
   (func $ctrl_set_ex_style (param $hwnd i32) (param $ex i32)

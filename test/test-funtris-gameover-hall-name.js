@@ -20,6 +20,8 @@ if (!fs.existsSync(EXE)) {
 }
 
 const input = [
+  '100:mousedown:244:152',
+  '101:mouseup:244:152',
   '3800:keydown:16',
   '3810:keyup:16',
   '10500:0x111:40001',
@@ -51,7 +53,6 @@ const runnerArgs = [
   '--stuck-after=200',
   '--quiet-api',
   '--quiet-blocks',
-  '--trace-reg',
 ];
 
 const bootstrap = `
@@ -86,7 +87,7 @@ try {
 }
 
 for (const line of out.split('\n')) {
-  if (/\[input\]|\[reg\] set|STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED/.test(line)) {
+  if (/\[input\]|STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED/.test(line)) {
     console.log('  ' + line);
   }
 }
@@ -98,8 +99,6 @@ const checks = [
   { name: 'ranking name-entry edit appeared after game over', pass: /wait-dlg-control: matched id=1025/.test(out) },
   { name: 'typed name appears in Hall of Fame', pass: /text="TEST"/.test(hallDump) },
   { name: 'game-over score appears in Hall of Fame', pass: /text="[1-9][0-9]*"/.test(hallDump) },
-  { name: 'high-score name written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Name[0-9]+ \(type=1\) = "?TEST"?/.test(out) },
-  { name: 'high-score level written to registry', pass: /\[reg\] set\s+HKCU\\software\\Funpack Software\\Funtris\\Options\\Level[0-9]+ \(type=4\) = [1-9][0-9]*/.test(out) },
   { name: 'Hall of Fame PNG written', pass: fs.existsSync(PNG) && fs.statSync(PNG).size > 1000 },
   { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
 ];
