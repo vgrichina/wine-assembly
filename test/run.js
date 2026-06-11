@@ -368,6 +368,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dlg-dump', label: parts[2] || '' });
       } else if (kind === 'dump-children') {
         scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'dump-windows') {
+        scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
       } else if (kind === 'menu-dump') {
         scheduledInput.push({ batch, action: 'menu-dump', label: parts[2] || '' });
       } else if (kind === 'dlg-paint') {
@@ -407,6 +409,19 @@ async function main() {
         scheduledInput.push({
           batch,
           action: 'wait-title-snapshot',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          label: parts[4] || '',
+          path: parts.slice(5).join(':'),
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-title-windows-snapshot') {
+        // B:wait-title-windows-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
+        // Wait for a visible window title, dump renderer window rows, write
+        // each back-canvas as PNG via pngjs pixels, then stop.
+        scheduledInput.push({
+          batch,
+          action: 'wait-title-windows-snapshot',
           title: (parts[2] || '').replace(/_/g, ' '),
           limit: parseInt(parts[3]) || 2000,
           label: parts[4] || '',
@@ -537,7 +552,8 @@ async function main() {
   // DX_OBJECTS lives in high WASM memory on this branch.
   // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07FF0000).
   const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
-    6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3' };
+    6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3',
+    26:'DPlay3', 27:'DPlayLobby2' };
   function dxLookupThis(thisGuest, dv, g2w) {
     if (!thisGuest) return null;
     let wa, slot;
@@ -2591,6 +2607,17 @@ async function main() {
         } catch (e) {
           logs.push(`[input] dlg-png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-windows' && renderer) {
+        const label = ev.label ? ':' + ev.label : '';
+        const entries = Object.entries(renderer.windows || {})
+          .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
+        if (!entries.length) {
+          logs.push(`[input] dump-windows${label}: (none) at batch ${batch}`);
+        }
+        for (const [hwndStr, win] of entries) {
+          if (!win) continue;
+          logs.push(`[input] window${label} hwnd=${hwndStr} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+        }
       } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
         try {
           const win = renderer.windows && renderer.windows[ev.hwnd];
@@ -2646,6 +2673,43 @@ async function main() {
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
           ev.batch = batch + 1;
           for (const pending of scheduledInput) pending.batch++;
+          scheduledInput.push(ev);
+          scheduledInput.sort((a, b) => a.batch - b.batch);
+        } else {
+          logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-title-windows-snapshot') {
+        const title = ev.title || '';
+        const wins = renderer ? Object.values(renderer.windows || {}) : [];
+        const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
+        if (found) {
+          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+          const label = ev.label ? ':' + ev.label : '';
+          const entries = Object.entries(renderer.windows || {})
+            .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
+          for (const [hwndStr, win] of entries) {
+            if (!win) continue;
+            logs.push(`[input] window${label} hwnd=${hwndStr} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+            if (win._backCanvas && PNG && ev.path) {
+              try {
+                const w = win._backCanvas.width | 0;
+                const h = win._backCanvas.height | 0;
+                const data = win._backCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+                const png = new PNG({ width: w, height: h });
+                png.data.set(data);
+                const buf = PNG.sync.write(png);
+                const out = ev.path.replace(/\.png$/, `_back_${hwndStr}.png`);
+                fs.writeFileSync(out, buf);
+                logs.push(`[input] back-canvas-pixels ${out} (${buf.length} bytes, ${w}x${h}) hwnd=${hwndStr} at batch ${batch}`);
+              } catch (e) {
+                logs.push(`[input] back-canvas-pixels FAILED hwnd=${hwndStr}: ${e.message} at batch ${batch}`);
+              }
+            }
+          }
+          stopped = true;
+          logs.push(`[input] stop at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          ev.batch = batch + 1;
           scheduledInput.push(ev);
           scheduledInput.sort((a, b) => a.batch - b.batch);
         } else {

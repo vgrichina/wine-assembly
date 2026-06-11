@@ -7697,6 +7697,10 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (call $ctrl_geom_sync (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
     ;; Refresh CLIENT_RECT now (MFC's AfxWndProc may not forward NCCALCSIZE to
     ;; DefWindowProc, so queuing the message alone doesn't update our table),
     ;; and queue a paint so the moved child redraws.

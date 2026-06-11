@@ -65,6 +65,8 @@ const comInterfaces = [
   { prefix: 'IDirectSoundBuffer',   global: 'DX_VTBL_DSBUF' },
   { prefix: 'IDirectInput',         global: 'DX_VTBL_DINPUT' },
   { prefix: 'IDirectInputDevice',   global: 'DX_VTBL_DIDEV' },
+  { prefix: 'IDirectPlay3',         global: 'DX_VTBL_DPLAY3' },
+  { prefix: 'IDirectPlayLobby2',    global: 'DX_VTBL_DPLAYLOBBY2' },
   { prefix: 'IDirect3D',            global: 'DX_VTBL_D3D' },
   { prefix: 'IDirect3D3',           global: 'DX_VTBL_D3D3' },
   { prefix: 'IDirectDrawFactory',   global: 'DX_VTBL_DDFACTORY' },

@@ -583,6 +583,38 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    ;; CLSID_DirectPlay {D1EB6D20-8923-11D0-9D97-00A0C90A43CB}. Bellhop
+    ;; asks for IID_IDirectPlay3A and treats E_NOINTERFACE as fatal even
+    ;; though it only needs local/no-network DirectPlay setup.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0xD1EB6D20))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; CLSID_DirectPlayLobby {2FE8F810-B2A5-11D0-A787-0000F803ABFC}.
+    ;; Bellhop requests IID_IDirectPlayLobby2A and aborts startup if the
+    ;; lobby object cannot be created.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0x2FE8F810))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (local.set $hr (call $host_com_create_instance
       (call $g2w (local.get $arg0))   ;; rclsid → WASM addr
       (local.get $arg1)               ;; pUnkOuter (guest addr, usually NULL)
@@ -1535,7 +1567,16 @@
     (global.set $eax (i32.const 0x80004005))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_DirectPlayLobbyCreateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (local $obj_guest i32)
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+        (global.set $eax (i32.const 0x80004005))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $obj_guest))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   ;; DirectSoundEnumerateA(cb, ctx) → DS_OK; no devices reported, caller
   ;; falls back to no-audio or default device creation.

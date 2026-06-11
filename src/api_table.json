@@ -11552,5 +11552,439 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 981174274
+  },
+  {
+    "id": 1531,
+    "name": "IDirectPlay3_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 460816370
+  },
+  {
+    "id": 1532,
+    "name": "IDirectPlay3_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1511343625
+  },
+  {
+    "id": 1533,
+    "name": "IDirectPlay3_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2639681150
+  },
+  {
+    "id": 1534,
+    "name": "IDirectPlay3_AddPlayerToGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 359669339
+  },
+  {
+    "id": 1535,
+    "name": "IDirectPlay3_Close",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3110642467
+  },
+  {
+    "id": 1536,
+    "name": "IDirectPlay3_CreateGroup",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 4277643428
+  },
+  {
+    "id": 1537,
+    "name": "IDirectPlay3_CreatePlayer",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2311827832
+  },
+  {
+    "id": 1538,
+    "name": "IDirectPlay3_DeletePlayerFromGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1911639494
+  },
+  {
+    "id": 1539,
+    "name": "IDirectPlay3_DestroyGroup",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4183786668
+  },
+  {
+    "id": 1540,
+    "name": "IDirectPlay3_DestroyPlayer",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2538594720
+  },
+  {
+    "id": 1541,
+    "name": "IDirectPlay3_EnumGroupPlayers",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 821330771
+  },
+  {
+    "id": 1542,
+    "name": "IDirectPlay3_EnumGroups",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2971539792
+  },
+  {
+    "id": 1543,
+    "name": "IDirectPlay3_EnumPlayers",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1525854802
+  },
+  {
+    "id": 1544,
+    "name": "IDirectPlay3_EnumSessions",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2085587693
+  },
+  {
+    "id": 1545,
+    "name": "IDirectPlay3_GetCaps",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2422106226
+  },
+  {
+    "id": 1546,
+    "name": "IDirectPlay3_GetGroupData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 556814910
+  },
+  {
+    "id": 1547,
+    "name": "IDirectPlay3_GetGroupName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1818851069
+  },
+  {
+    "id": 1548,
+    "name": "IDirectPlay3_GetMessageCount",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3912331941
+  },
+  {
+    "id": 1549,
+    "name": "IDirectPlay3_GetPlayerAddress",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2787170270
+  },
+  {
+    "id": 1550,
+    "name": "IDirectPlay3_GetPlayerCaps",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4246491271
+  },
+  {
+    "id": 1551,
+    "name": "IDirectPlay3_GetPlayerData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 793812662
+  },
+  {
+    "id": 1552,
+    "name": "IDirectPlay3_GetPlayerName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2424288117
+  },
+  {
+    "id": 1553,
+    "name": "IDirectPlay3_GetSessionDesc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3217102764
+  },
+  {
+    "id": 1554,
+    "name": "IDirectPlay3_Initialize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 961597003
+  },
+  {
+    "id": 1555,
+    "name": "IDirectPlay3_Open",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 760003785
+  },
+  {
+    "id": 1556,
+    "name": "IDirectPlay3_Receive",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2331471266
+  },
+  {
+    "id": 1557,
+    "name": "IDirectPlay3_Send",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3427778735
+  },
+  {
+    "id": 1558,
+    "name": "IDirectPlay3_SetGroupData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4137504810
+  },
+  {
+    "id": 1559,
+    "name": "IDirectPlay3_SetGroupName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1085338913
+  },
+  {
+    "id": 1560,
+    "name": "IDirectPlay3_SetPlayerData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 492705474
+  },
+  {
+    "id": 1561,
+    "name": "IDirectPlay3_SetPlayerName",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2396303833
+  },
+  {
+    "id": 1562,
+    "name": "IDirectPlay3_SetSessionDesc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 591863112
+  },
+  {
+    "id": 1563,
+    "name": "IDirectPlay3_AddGroupToGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2888959685
+  },
+  {
+    "id": 1564,
+    "name": "IDirectPlay3_CreateGroupInGroup",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3401940242
+  },
+  {
+    "id": 1565,
+    "name": "IDirectPlay3_DeleteGroupFromGroup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2997692340
+  },
+  {
+    "id": 1566,
+    "name": "IDirectPlay3_EnumConnections",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2261619281
+  },
+  {
+    "id": 1567,
+    "name": "IDirectPlay3_EnumGroupsInGroup",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 283507382
+  },
+  {
+    "id": 1568,
+    "name": "IDirectPlay3_GetGroupConnectionSettings",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4120056575
+  },
+  {
+    "id": 1569,
+    "name": "IDirectPlay3_InitializeConnection",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 272267867
+  },
+  {
+    "id": 1570,
+    "name": "IDirectPlay3_SecureOpen",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1612232184
+  },
+  {
+    "id": 1571,
+    "name": "IDirectPlay3_SendChatMessage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1806577480
+  },
+  {
+    "id": 1572,
+    "name": "IDirectPlay3_SetGroupConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2765428331
+  },
+  {
+    "id": 1573,
+    "name": "IDirectPlay3_StartSession",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3530707433
+  },
+  {
+    "id": 1574,
+    "name": "IDirectPlay3_GetGroupFlags",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2626060505
+  },
+  {
+    "id": 1575,
+    "name": "IDirectPlay3_GetGroupParent",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4012312686
+  },
+  {
+    "id": 1576,
+    "name": "IDirectPlay3_GetPlayerAccount",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4135615913
+  },
+  {
+    "id": 1577,
+    "name": "IDirectPlay3_GetPlayerFlags",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 122898065
+  },
+  {
+    "id": 1578,
+    "name": "IDirectPlayLobby2_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2101520277
+  },
+  {
+    "id": 1579,
+    "name": "IDirectPlayLobby2_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2853561022
+  },
+  {
+    "id": 1580,
+    "name": "IDirectPlayLobby2_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1201154899
+  },
+  {
+    "id": 1581,
+    "name": "IDirectPlayLobby2_Connect",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2231147408
+  },
+  {
+    "id": 1582,
+    "name": "IDirectPlayLobby2_CreateAddress",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 52383982
+  },
+  {
+    "id": 1583,
+    "name": "IDirectPlayLobby2_EnumAddress",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 858040145
+  },
+  {
+    "id": 1584,
+    "name": "IDirectPlayLobby2_EnumAddressTypes",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1816863006
+  },
+  {
+    "id": 1585,
+    "name": "IDirectPlayLobby2_EnumLocalApplications",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2018734345
+  },
+  {
+    "id": 1586,
+    "name": "IDirectPlayLobby2_GetConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3713423679
+  },
+  {
+    "id": 1587,
+    "name": "IDirectPlayLobby2_ReceiveLobbyMessage",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2094263588
+  },
+  {
+    "id": 1588,
+    "name": "IDirectPlayLobby2_RunApplication",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1322036275
+  },
+  {
+    "id": 1589,
+    "name": "IDirectPlayLobby2_SendLobbyMessage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1124648207
+  },
+  {
+    "id": 1590,
+    "name": "IDirectPlayLobby2_SetConnectionSettings",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 571736307
+  },
+  {
+    "id": 1591,
+    "name": "IDirectPlayLobby2_SetLobbyMessageEvent",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 728718515
+  },
+  {
+    "id": 1592,
+    "name": "IDirectPlayLobby2_CreateCompoundAddress",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 948803865
   }
 ]
