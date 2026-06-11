@@ -581,7 +581,7 @@
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (356 x 356 i32 counters)
+  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F92000 4KB      BRANCH_TEST_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
@@ -724,7 +724,7 @@
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 356))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 357))
   (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
   (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
@@ -932,6 +932,19 @@
   (global $handler_hist_last (mut i32) (i32.const -1))
   (global $branch_hist_kind (mut i32) (i32.const 0))
   (global $branch_hist_operand (mut i32) (i32.const 0))
+  ;; Disabled-by-default compiled packet prototype. The decoder only emits
+  ;; handler 356 for exact AoE block/trace addresses implemented by
+  ;; $th_stack_packet.
+  (global $stack_packet_enabled (mut i32) (i32.const 0))
+  (global $stack_packet_addr (mut i32) (i32.const 0x0049D9D1))
+  (global $stack_packet_count_enabled (mut i32) (i32.const 1))
+  (global $stack_packet_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049d9d1_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049dd20_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049dd20_empty_inline_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049dd20_to_dd8b_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049dd20_to_ddc7_entries (mut i32) (i32.const 0))
+  (global $stack_packet_0049dd20_to_e0ad_entries (mut i32) (i32.const 0))
 
   ;; PE info
   (global $image_base   (mut i32) (i32.const 0))

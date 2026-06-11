@@ -2904,3 +2904,318 @@
       (i32.and (global.get $eax) (i32.const 0xFFFF00FF))
       (i32.shl (local.get $ah) (i32.const 8))))
     (return_call $next))
+
+  ;; 356: stack-packet prototype.
+  ;;   op=1 executes AoE block 0x0049d9d1.
+  ;;   op=2 executes the AoE span-builder prefix at 0x0049dd20.
+  ;; This is deliberately behind $stack_packet_enabled and decode allowlisting.
+  (func $th_stack_packet (param $op i32)
+    (local $m0 i32) (local $m1 i32) (local $m2 i32) (local $m4 i32)
+    (local $m6 i32) (local $m9 i32) (local $m10 i32)
+    (local $t3 i32) (local $t5 i32) (local $t7 i32) (local $t8 i32)
+    (local $old_esp i32) (local $this i32) (local $row i32)
+    (local $x0 i32) (local $x1 i32)
+    (local $min_row i32) (local $max_row i32)
+    (local $min_x i32) (local $max_x i32)
+    (local $row_base i32) (local $row_head i32)
+    (local $esp_wa i32) (local $this_wa i32)
+    (local $node i32) (local $node_wa i32) (local $arr_wa i32)
+    (local $count_ptr i32) (local $count_old i32) (local $ret_eip i32)
+
+    (if (i32.eq (local.get $op) (i32.const 1))
+      (then
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_entries
+              (i32.add (global.get $stack_packet_entries) (i32.const 1)))
+            (global.set $stack_packet_0049d9d1_entries
+              (i32.add (global.get $stack_packet_0049d9d1_entries) (i32.const 1)))))
+
+        ;; 0x0049d9d1:
+        ;;   mov ecx,[esi+18]; mov edx,[esi+14]; mov eax,[esi]
+        ;;   mov edi,ecx; shl edi,4; mov eax,[eax+edx*4]; add eax,edi
+        ;;   mov edi,[esi+20]; dec edi; inc ecx
+        ;;   mov [esi+20],edi; mov [ebp-4],edi
+        ;;   mov edi,[esi+4]; mov [esi+18],ecx
+        ;;   cmp ecx,[edi+edx*4]; jnz 0x0049da1a
+        (local.set $m0 (call $gl32 (i32.add (global.get $esi) (i32.const 0x18))))
+        (local.set $m1 (call $gl32 (i32.add (global.get $esi) (i32.const 0x14))))
+        (local.set $m2 (call $gl32 (global.get $esi)))
+        (local.set $t3 (i32.shl (local.get $m0) (i32.const 4)))
+        (local.set $m4
+          (call $gl32
+            (i32.add (local.get $m2) (i32.shl (local.get $m1) (i32.const 2)))))
+        (local.set $t5 (i32.add (local.get $m4) (local.get $t3)))
+        (local.set $m6 (call $gl32 (i32.add (global.get $esi) (i32.const 0x20))))
+        (local.set $t7 (i32.sub (local.get $m6) (i32.const 1)))
+        (local.set $t8 (i32.add (local.get $m0) (i32.const 1)))
+        (call $gs32 (i32.add (global.get $esi) (i32.const 0x20)) (local.get $t7))
+        (call $gs32 (i32.add (global.get $ebp) (i32.const -4)) (local.get $t7))
+        (local.set $m9 (call $gl32 (i32.add (global.get $esi) (i32.const 4))))
+        (call $gs32 (i32.add (global.get $esi) (i32.const 0x18)) (local.get $t8))
+        (local.set $m10
+          (call $gl32
+            (i32.add (local.get $m9) (i32.shl (local.get $m1) (i32.const 2)))))
+
+        ;; Flush virtual register state once at the block exit.
+        (global.set $eax (local.get $t5))
+        (global.set $ecx (local.get $t8))
+        (global.set $edx (local.get $m1))
+        (global.set $edi (local.get $m9))
+
+        ;; Preserve lazy flags for the final CMP because one exit may read them.
+        (call $set_flags_sub
+          (local.get $t8)
+          (local.get $m10)
+          (i32.sub (local.get $t8) (local.get $m10)))
+        (if (i32.ne (local.get $t8) (local.get $m10))
+          (then (global.set $eip (i32.const 0x0049DA1A)))
+          (else (global.set $eip (i32.const 0x0049D9F9))))
+        (return)))
+
+    (if (i32.ne (local.get $op) (i32.const 2))
+      (then
+        (call $host_log_i32 (i32.const 0xCA5A0BAD))
+        (global.set $eip (global.get $stack_packet_addr))
+        (return)))
+
+    (if (global.get $stack_packet_count_enabled)
+      (then
+        (global.set $stack_packet_entries
+          (i32.add (global.get $stack_packet_entries) (i32.const 1)))
+        (global.set $stack_packet_0049dd20_entries
+          (i32.add (global.get $stack_packet_0049dd20_entries) (i32.const 1)))))
+
+    ;; 0x0049dd20 prefix:
+    ;;   push ebx; push ebp; push esi; mov esi,ecx; push edi
+    ;;   sort and clip x0/x1 against [this+58]/[this+5c]
+    ;;   load row list head from [ [this+3c] + row*4 ]
+    ;; Side exits land at existing block boundaries so the generic threaded
+    ;; code still handles the allocator/list mutation paths.
+    (local.set $old_esp (global.get $esp))
+    (local.set $esp_wa (call $g2w (i32.sub (local.get $old_esp) (i32.const 16))))
+    (i32.store offset=12 (local.get $esp_wa) (global.get $ebx))
+    (i32.store offset=8 (local.get $esp_wa) (global.get $ebp))
+    (i32.store offset=4 (local.get $esp_wa) (global.get $esi))
+    (i32.store (local.get $esp_wa) (global.get $edi))
+    (global.set $esp (i32.sub (local.get $old_esp) (i32.const 16)))
+    (local.set $this (global.get $ecx))
+    (local.set $this_wa (call $g2w (local.get $this)))
+    (global.set $esi (local.get $this))
+    (local.set $row (i32.load offset=28 (local.get $esp_wa)))
+    (global.set $edi (local.get $row))
+
+    (local.set $min_row (i32.load offset=0x60 (local.get $this_wa)))
+    (if (i32.lt_s (local.get $row) (local.get $min_row))
+      (then
+        (call $set_flags_sub
+          (local.get $row)
+          (local.get $min_row)
+          (i32.sub (local.get $row) (local.get $min_row)))
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_to_e0ad_entries
+              (i32.add (global.get $stack_packet_0049dd20_to_e0ad_entries) (i32.const 1)))))
+        (global.set $eip (i32.const 0x0049E0AD))
+        (return)))
+
+    (local.set $max_row (i32.load offset=0x64 (local.get $this_wa)))
+    (if (i32.gt_s (local.get $row) (local.get $max_row))
+      (then
+        (call $set_flags_sub
+          (local.get $row)
+          (local.get $max_row)
+          (i32.sub (local.get $row) (local.get $max_row)))
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_to_e0ad_entries
+              (i32.add (global.get $stack_packet_0049dd20_to_e0ad_entries) (i32.const 1)))))
+        (global.set $eip (i32.const 0x0049E0AD))
+        (return)))
+
+    (local.set $x1 (i32.load offset=24 (local.get $esp_wa)))
+    (local.set $x0 (i32.load offset=20 (local.get $esp_wa)))
+    (if (i32.gt_s (local.get $x0) (local.get $x1))
+      (then
+        (i32.store offset=24 (local.get $esp_wa) (local.get $x0))
+        (i32.store offset=20 (local.get $esp_wa) (local.get $x1))
+        (local.set $t3 (local.get $x0))
+        (local.set $x0 (local.get $x1))
+        (local.set $x1 (local.get $t3))))
+
+    (local.set $min_x (i32.load offset=0x58 (local.get $this_wa)))
+    (if (i32.lt_s (local.get $x1) (local.get $min_x))
+      (then
+        (global.set $eax (local.get $x0))
+        (global.set $ebp (local.get $x1))
+        (global.set $ecx (local.get $min_x))
+        (call $set_flags_sub
+          (local.get $x1)
+          (local.get $min_x)
+          (i32.sub (local.get $x1) (local.get $min_x)))
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_to_e0ad_entries
+              (i32.add (global.get $stack_packet_0049dd20_to_e0ad_entries) (i32.const 1)))))
+        (global.set $eip (i32.const 0x0049E0AD))
+        (return)))
+
+    (local.set $max_x (i32.load offset=0x5c (local.get $this_wa)))
+    (if (i32.gt_s (local.get $x0) (local.get $max_x))
+      (then
+        (global.set $eax (local.get $x0))
+        (global.set $ebp (local.get $x1))
+        (global.set $ecx (local.get $min_x))
+        (global.set $edx (local.get $max_x))
+        (call $set_flags_sub
+          (local.get $x0)
+          (local.get $max_x)
+          (i32.sub (local.get $x0) (local.get $max_x)))
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_to_e0ad_entries
+              (i32.add (global.get $stack_packet_0049dd20_to_e0ad_entries) (i32.const 1)))))
+        (global.set $eip (i32.const 0x0049E0AD))
+        (return)))
+
+    (if (i32.lt_s (local.get $x0) (local.get $min_x))
+      (then
+        (i32.store offset=20 (local.get $esp_wa) (local.get $min_x))
+        (local.set $x0 (local.get $min_x))))
+
+    (if (i32.gt_s (local.get $x1) (local.get $max_x))
+      (then
+        (i32.store offset=24 (local.get $esp_wa) (local.get $max_x))
+        (local.set $x1 (local.get $max_x))))
+
+    (local.set $row_base (i32.load offset=0x3c (local.get $this_wa)))
+    (local.set $row (i32.shl (local.get $row) (i32.const 2)))
+    (local.set $row_head
+      (i32.load (call $g2w (i32.add (local.get $row_base) (local.get $row)))))
+    (global.set $eax (local.get $row_base))
+    (global.set $ecx (local.get $min_x))
+    (global.set $edx (local.get $max_x))
+    (global.set $edi (local.get $row))
+    (global.set $ebp (local.get $x1))
+    (global.set $ebx (local.get $row_head))
+    (call $set_flags_logic (local.get $row_head))
+    (if (local.get $row_head)
+      (then
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_to_ddc7_entries
+              (i32.add (global.get $stack_packet_0049dd20_to_ddc7_entries) (i32.const 1)))))
+        (global.set $eip (i32.const 0x0049DDC7)))
+      (else
+        ;; Inline the empty-row insertion path when the node allocator does
+        ;; not need to grow its backing chunk table.
+        (local.set $m6 (i32.load offset=0x20 (local.get $this_wa)))
+        (if (i32.eqz (local.get $m6))
+          (then
+            (if (global.get $stack_packet_count_enabled)
+              (then
+                (global.set $stack_packet_0049dd20_to_dd8b_entries
+                  (i32.add (global.get $stack_packet_0049dd20_to_dd8b_entries) (i32.const 1)))))
+            (global.set $eip (i32.const 0x0049DD8B))
+            (return)))
+
+        (local.set $node (i32.load offset=0x10 (local.get $this_wa)))
+        (if (local.get $node)
+          (then
+            ;; 0x49d9a0 free-list allocator fast path.
+            (local.set $node_wa (call $g2w (local.get $node)))
+            (i32.store offset=0x10 (local.get $this_wa)
+              (i32.load (local.get $node_wa)))
+            (i32.store offset=0x20 (local.get $this_wa)
+              (i32.sub (local.get $m6) (i32.const 1))))
+          (else
+            ;; 0x49d9d1 chunk allocator path, excluding the rare int3 case.
+            (local.set $m0 (i32.load offset=0x18 (local.get $this_wa)))
+            (local.set $m1 (i32.load offset=0x14 (local.get $this_wa)))
+            (local.set $m2 (i32.load (local.get $this_wa)))
+            (local.set $m4
+              (i32.load (call $g2w
+                (i32.add (local.get $m2) (i32.shl (local.get $m1) (i32.const 2))))))
+            (local.set $node
+              (i32.add (local.get $m4) (i32.shl (local.get $m0) (i32.const 4))))
+            (local.set $node_wa (call $g2w (local.get $node)))
+            (local.set $m6 (i32.sub (local.get $m6) (i32.const 1)))
+            (local.set $t8 (i32.add (local.get $m0) (i32.const 1)))
+            (local.set $m9 (i32.load offset=0x04 (local.get $this_wa)))
+            (local.set $m10
+              (i32.load (call $g2w
+                (i32.add (local.get $m9) (i32.shl (local.get $m1) (i32.const 2))))))
+            (if (i32.and
+                  (i32.eq (local.get $t8) (local.get $m10))
+                  (i32.and
+                    (i32.eq
+                      (i32.add (local.get $m1) (i32.const 1))
+                      (i32.load offset=0x08 (local.get $this_wa)))
+                    (i32.gt_s (local.get $m6) (i32.const 0))))
+              (then
+                (if (global.get $stack_packet_count_enabled)
+                  (then
+                    (global.set $stack_packet_0049dd20_to_dd8b_entries
+                      (i32.add (global.get $stack_packet_0049dd20_to_dd8b_entries) (i32.const 1)))))
+                (global.set $eip (i32.const 0x0049DD8B))
+                (return)))
+            (i32.store offset=0x20 (local.get $this_wa) (local.get $m6))
+            (i32.store offset=0x18 (local.get $this_wa) (local.get $t8))
+            (if (i32.eq (local.get $t8) (local.get $m10))
+              (then
+                (local.set $t7 (i32.add (local.get $m1) (i32.const 1)))
+                (i32.store offset=0x14 (local.get $this_wa) (local.get $t7))
+                (i32.store offset=0x18 (local.get $this_wa) (i32.const 0))
+                (if (i32.eq (local.get $t7) (i32.load offset=0x08 (local.get $this_wa)))
+                  (then
+                    (i32.store offset=0x14 (local.get $this_wa) (i32.const -1))))))))
+
+        ;; 0x49dd92..0x49ddbe: initialize first node for the empty row.
+        (i32.store offset=0x04 (local.get $node_wa) (i32.const 0))
+        (i32.store (local.get $node_wa) (i32.const 0))
+        (i32.store offset=0x08 (local.get $node_wa)
+          (i32.load offset=20 (local.get $esp_wa)))
+        (i32.store offset=0x0c (local.get $node_wa) (local.get $x1))
+
+        (local.set $arr_wa (call $g2w (i32.add (local.get $row_base) (local.get $row))))
+        (i32.store (local.get $arr_wa) (local.get $node))
+
+        (local.set $t7 (i32.load offset=0x40 (local.get $this_wa)))
+        (i32.store (call $g2w (i32.add (local.get $t7) (local.get $row))) (local.get $node))
+
+        (local.set $t5 (i32.load offset=0x44 (local.get $this_wa)))
+        (i32.store (call $g2w (i32.add (local.get $t5) (local.get $row)))
+          (i32.load offset=20 (local.get $esp_wa)))
+
+        (local.set $t8 (i32.load offset=0x48 (local.get $this_wa)))
+        (i32.store (call $g2w (i32.add (local.get $t8) (local.get $row))) (local.get $x1))
+
+        (local.set $m10 (i32.load offset=0x4c (local.get $this_wa)))
+        (local.set $count_ptr (i32.add (local.get $m10) (local.get $row)))
+        (local.set $arr_wa (call $g2w (local.get $count_ptr)))
+        (local.set $count_old (i32.load (local.get $arr_wa)))
+        (i32.store (local.get $arr_wa) (i32.add (local.get $count_old) (i32.const 1)))
+        (call $set_flags_add
+          (local.get $row)
+          (local.get $m10)
+          (local.get $count_ptr))
+        (call $set_flags_inc
+          (local.get $count_old)
+          (i32.add (local.get $count_old) (i32.const 1)))
+
+        (if (global.get $stack_packet_count_enabled)
+          (then
+            (global.set $stack_packet_0049dd20_empty_inline_entries
+              (i32.add (global.get $stack_packet_0049dd20_empty_inline_entries) (i32.const 1)))))
+
+        (local.set $ret_eip (i32.load offset=16 (local.get $esp_wa)))
+        (global.set $eax (local.get $t5))
+        (global.set $ecx (local.get $t8))
+        (global.set $edx (local.get $m10))
+        (global.set $edi (i32.load (local.get $esp_wa)))
+        (global.set $esi (i32.load offset=4 (local.get $esp_wa)))
+        (global.set $ebp (i32.load offset=8 (local.get $esp_wa)))
+        (global.set $ebx (i32.load offset=12 (local.get $esp_wa)))
+        (global.set $esp (i32.add (local.get $old_esp) (i32.const 16)))
+        (global.set $eip (local.get $ret_eip))
+        (return))))

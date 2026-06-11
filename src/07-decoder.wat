@@ -611,6 +611,21 @@
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
 
+    (if (i32.and
+          (global.get $stack_packet_enabled)
+          (i32.eq (local.get $start_eip) (global.get $stack_packet_addr)))
+      (then
+        (if (i32.eq (local.get $start_eip) (i32.const 0x0049D9D1))
+          (then
+            (call $te (i32.const 356) (i32.const 1))
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
+          (then
+            (call $te (i32.const 356) (i32.const 2))
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 

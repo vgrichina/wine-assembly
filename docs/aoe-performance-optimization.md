@@ -66,6 +66,140 @@ Disposition:
 - Revert direct stack load/store handlers. Skipping `gs32/gl32` wrappers did not help this profile; guest time increased versus the 355-handler run.
 - Keep the `PUSH ESP` correctness fix: x86 pushes the original ESP value, not the decremented value.
 
+## Current Stack-Packet Prototype
+
+There are disabled-by-default executable packets for exact AoE hot addresses.
+They are intentionally narrow:
+
+```text
+src/07-decoder.wat emits handler 356 only when all are true:
+  stack_packet_enabled != 0
+  start_eip == stack_packet_addr
+  start_eip is one of the hardcoded packet addresses
+
+src/05-alu.wat:$th_stack_packet op=1:
+  executes the whole block in Wasm locals
+  flushes EAX/ECX/EDX/EDI once at the exit
+  preserves lazy CMP flags for the block tail
+  sets EIP to 0x0049d9f9 or 0x0049da1a
+
+src/05-alu.wat:$th_stack_packet op=2:
+  executes the 0x0049dd20 span-builder prefix through the row-head test
+  implements prologue pushes, x0/x1 sorting, row/x clipping, and lazy flags
+  side-exits to 0x0049dd8b, 0x0049ddc7, or 0x0049e0ad
+```
+
+Exports:
+
+```text
+set_stack_packet_enabled(flag, addr)
+reset_stack_packet_counters()
+get_stack_packet_entries()
+get_stack_packet_0049d9d1_entries()
+get_stack_packet_0049dd20_entries()
+get_stack_packet_0049dd20_to_dd8b_entries()
+get_stack_packet_0049dd20_to_ddc7_entries()
+get_stack_packet_0049dd20_to_e0ad_entries()
+```
+
+Coverage:
+
+```sh
+node test/test-aoe-stack-packet-handler.js
+node test/test-aoe-span-trace-handler.js
+```
+
+Gameplay measurement:
+
+```sh
+LABEL=stack-packet RUNS=3 HANDLER_HIST=0 STACK_PACKET=1 node tools/profile-aoe-repeat.js
+LABEL=span-trace RUNS=3 HANDLER_HIST=0 STACK_PACKET=1 STACK_PACKET_ADDR=0x0049dd20 node tools/profile-aoe-repeat.js
+```
+
+This test drives both exits with synthetic guest memory and verifies register
+state, memory stores, lazy flags, EIP, and counters.
+
+10s repeated gameplay result:
+
+```text
+profile                                  runSlice mean   guest mean   present fps   packet hits
+/private/tmp/aoe-repeat-baseline-10s      6253.8 ms      5881.5 ms       22.98              0
+/private/tmp/aoe-repeat-stack-packet-10s  6294.7 ms      5927.1 ms       21.73        498,890
+
+delta: +40.9 ms runSlice (+0.65%), +45.6 ms guest (+0.78%)
+```
+
+Conclusion: the first handwritten stack packet is a correctness and measurement
+prototype, not a performance win. It proves the allowlisted packet can execute
+real AoE gameplay about 500k times per 10s window, but saving this block's
+threaded dispatch does not offset the cost of the larger WAT handler plus its
+remaining `gl32`/`gs32` and flag work. Do not expand this backend until the next
+packet either removes more memory translation/flag work or targets a larger
+trace where local-state savings are big enough to measure.
+
+0x0049dd20 prefix trace result, same 3x10s campaign gameplay harness:
+
+```text
+profile                                      runSlice mean   guest mean   present fps   packet hits
+/private/tmp/aoe-repeat-span-baseline-10s      6239.7 ms      5824.6 ms       27.91              0
+/private/tmp/aoe-repeat-span-trace-10s         6437.8 ms      6036.4 ms       24.06        939,706
+
+delta: +198.1 ms runSlice (+3.18%), +211.8 ms guest (+3.64%)
+```
+
+Trace exit mix:
+
+```text
+to 0x0049dd8b empty-row allocator path: 420k-431k/run
+to 0x0049ddc7 non-empty row-list path: 497k-534k/run
+to 0x0049e0ad reject path:              1.4k-1.6k/run
+```
+
+Optimization passes tried inside this prefix trace:
+
+```text
+opt1:
+  direct stack i32.load/store through g2w, not generic gs32
+  lazy flags only on real side exits
+  result: 6426.0 ms runSlice, 6012.6 ms guest
+
+opt2:
+  reuse translated stack base and this-object base inside the trace
+  result: 6282.1 ms runSlice, 5870.8 ms guest
+
+opt3:
+  delay register-global flushes until side exits
+  make packet counters optional; speed run used STACK_PACKET_COUNT=0
+  result: 6269.8 ms runSlice, 5888.7 ms guest
+
+empty-inline:
+  inline the empty-row insertion path when the local allocator can satisfy it
+  counted run: 454k-460k empty-row completions/run, toDd8b=0
+  best speed run: 6266.0 ms runSlice, 5809.2 ms guest
+  final current-code speed run: 6341.3 ms runSlice, 5928.2 ms guest
+
+append-inline:
+  tried append-after-tail non-empty insertion
+  counted run: only 38k-41k append completions/run
+  result: slower, because every non-empty row paid extra branch checks
+  action: backed out append inline code; keep only empty-row inline
+```
+
+Fresh current-build baseline for the same harness was noisy:
+
+```text
+/private/tmp/aoe-repeat-span-baseline-current-10s:
+  6374.8 ms runSlice, 5887.6 ms guest
+```
+
+Conclusion: after local optimizations and empty-row insertion inlining, the trace
+is still roughly neutral rather than a reliable speed win. It does prove that
+avoiding helper calls, delaying register flushes, and inlining a genuinely hot
+side path matter. The attempted append-after-tail path is too rare to justify
+checks on every non-empty row. The next useful trace work should target one of
+the hotter non-empty merge/delete paths only if profiling can prove a cheap
+selector for that path.
+
 ## Handler Histogram
 
 The handler histogram is enabled only during the gameplay measurement window. Pair counts reset at decoded-block boundaries, so pair data is useful for superinstruction selection.
@@ -1093,6 +1227,213 @@ Disassembly interpretation of the two largest buckets:
 - `0x005359a0`, `0x00535c20`, `0x00535e00`, and `0x00536420` are AoE's
   software blitter/command decoder. They walk span lists, decode byte commands,
   use jump tables, clip runs, and write pixels.
+
+### Hot Loop Disassembly Read
+
+This is the current best read of what the hottest AoE loops are doing. Address
+names are descriptive, not recovered symbols.
+
+#### `0x0049dd20`: per-row span interval builder
+
+Hot-block share in the 10s profile:
+
+```text
+0x0049d900..0x0049e300 cluster: 13,115,005 block entries
+top entries: 0x0049dd20, 0x0049dd33, 0x0049dd3c, 0x0049dd56,
+             0x0049dd61, 0x0049dd6c, 0x0049dd74, 0x0049dd7e
+```
+
+The function at `0x0049dd20` is called with `ecx=this` and three stack
+arguments that behave like `x0`, `x1`, and `row`. It:
+
+```text
+1. rejects rows outside [this+0x60, this+0x64]
+2. sorts x0/x1
+3. rejects ranges outside [this+0x58, this+0x5c]
+4. clamps the x range to [this+0x58, this+0x5c]
+5. indexes row arrays by row*4:
+     [this+0x3c] row head/list slot
+     [this+0x40] row endpoint/list slot
+     [this+0x44] row min-x slot
+     [this+0x48] row max-x slot
+     [this+0x4c] per-row segment count slot
+6. inserts, extends, merges, or deletes interval nodes
+```
+
+Node shape inferred from stores:
+
+```text
+node+0x00 = next
+node+0x04 = prev
+node+0x08 = x0
+node+0x0c = x1
+```
+
+Important paths:
+
+```text
+0x0049dd20 fast reject/sort/clip
+0x0049dd8b allocate first node for an empty row
+0x0049ddc7 handle non-empty row list
+0x0049dfb9 walk nodes until node.x1 >= new_x0-1
+0x0049e005 merge/delete covered following nodes
+0x0049e273 caller-side loop emitting spans into 0x0049dd20
+```
+
+Pseudocode:
+
+```c
+void add_span(builder, x0, x1, row) {
+  if (row < builder->minRow || row > builder->maxRow) return;
+  if (x0 > x1) swap(x0, x1);
+  if (x1 < builder->minX || x0 > builder->maxX) return;
+  x0 = max(x0, builder->minX);
+  x1 = min(x1, builder->maxX);
+
+  list = rowLists[row];
+  if (!list) {
+    rowLists[row] = alloc_node(x0, x1);
+    rowMin[row] = x0;
+    rowMax[row] = x1;
+    rowCount[row]++;
+    return;
+  }
+
+  find the interval adjacent to or overlapping [x0, x1];
+  insert a new node if it is separated by a gap;
+  otherwise widen the existing interval;
+  remove later intervals fully covered by the widened interval;
+}
+```
+
+This is why small single-block packets did not help much. The hot cost is not
+one arithmetic sequence; it is repeated interval-list control flow, many short
+branches, allocator/free-list calls (`0x0049d9a0`, `0x0049da20`, `0x0049da40`),
+and row-array memory traffic.
+
+#### `0x005357e0..0x00536b40`: clipped software blitter / command decoder
+
+Hot-block share in the 10s profile:
+
+```text
+0x00535700..0x00536c00 cluster: 13,044,401 block entries
+top entries: 0x00535b56, 0x00536420, 0x00535b5b, 0x00535c20,
+             0x00535e00, 0x00535e08, 0x005362e0, 0x00535e7c
+```
+
+The entry around `0x005357e0` clips a requested row/range against global
+clip bounds at `0x775080..0x77508c`, looks up a row span list from
+`[0x775004 + y*4]`, and initializes scratch globals:
+
+```text
+0x775014  destination pointer/current row base plus x offset
+0x775018  source/pattern pointer plus caller x offset
+0x775020  row base used to convert absolute x to local x
+0x775038  current blit line/index
+0x77503c  current span-list node
+0x775044  continuation target after skip/advance ops
+0x775048  draw flags / alignment flags
+0x77504c  left clip amount for current run
+0x775050  saved command stream pointer
+0x775054  saved destination x/pointer
+```
+
+`0x00535aa0` is the per-line setup loop:
+
+```text
+line = 0x775038
+spanNode = rowSpanLists[y + line]
+if no spanNode: goto next_line
+load per-line source offsets from [0x775010 + line*4]
+skip if high-bit sentinel is set
+compute destination pointer and source pointer
+walk spanNode linked list until [runLeft, runRight] intersects [node+8,node+c]
+```
+
+The inner command decoder is jump-table based:
+
+```text
+0x00535c20  forward decoder: read opcode byte, dispatch low nibble via 0x534400
+0x00536420  reverse/mirrored decoder: dispatch low nibble via 0x534540
+0x00535c80  run with length = high-nibble / 4-ish encoding
+0x00535d20  skip/advance by length, then jump to continuation [0x775044]
+0x00535e00  clipped draw run, masked blend path using [0x77502c/30]
+0x00535e7c  run before current span: skip source bytes and restart decoder
+0x00535e8a  run past current span: advance to next span-list node
+0x005362e0  next line; loops back to 0x00535aa0 until line count exhausted
+0x00536b40  same shape for the reverse/mirrored path
+```
+
+The table at `0x534300` is not a code pointer table; it is a packed byte lookup
+used to combine run length/alignment/flags into indices for writer tables. The
+actual low-nibble dispatch table for `0x00535c20` is `0x534400`:
+
+```text
+0 -> 0x00535c80   1 -> 0x00535d20   2 -> 0x00535c85   3 -> 0x00535d31
+4 -> 0x00535c80   5 -> 0x00535d20   6 -> 0x00535d60   7 -> 0x00535e00
+8 -> 0x00535c80   9 -> 0x00535d20  10 -> 0x00535ea0  11 -> 0x00535f40
+12 -> 0x00535c80 13 -> 0x00535d20  14 -> 0x00535c60  15 -> 0x005362e0
+```
+
+Pseudocode:
+
+```c
+for each blit line {
+  setup source/destination pointers for this line;
+  for each row span that intersects the requested x range {
+    while (true) {
+      op = *cmd++;
+      switch (op & 15) {
+        case draw_run:
+          len = decode_length(op, cmd);
+          clip run to current span node;
+          dispatch writer by dest alignment, length class, mask flags;
+          break;
+        case skip:
+          advance destination/source by decoded length;
+          goto continuation;
+        case end_line:
+          next line;
+          break;
+      }
+      if (run is before current span) skip source and continue;
+      if (run is after current span) advance span node and retry;
+    }
+  }
+}
+```
+
+This is a software sprite/tile blitter with span clipping. It is hostile to
+tiny generic fusions because control flow is dominated by indirect jump tables
+and clip/list branches. The best emulator-side opportunities are exact
+`jmp [disp+eax*4]` style dispatch shortcuts, local memory-address reuse inside
+larger trace packets, and possibly recognizing these jump-table decoder blocks
+as a trace family rather than optimizing one block at a time.
+
+#### Smaller hot loops
+
+`0x0045c280` and `0x0045c2e0` update packed 2-bit tile state:
+
+```text
+index byte = base + (x*25)*8 + (y >> 2) + 0x7ef54
+bit shift  = table[y & 3]
+field      = (byte >> shift) & 3
+0x0045c280 increments the field if it is below 3
+0x0045c2e0 decrements the field if it is above 0
+```
+
+`0x004c5fa0` is a fixed 40-slot linear search:
+
+```c
+for (i = 0, p = this + 0x1c; i < 0x28; i++, p += 4)
+  if (*p == needle) return 1;
+return 0;
+```
+
+`0x00508686..0x00509710` is higher-level render glue around the blitter. It
+walks visible object rows/lists, tests visibility and state bits, calls into
+span/blitter setup (`0x535720`, `0x535760`, `0x5357a0`, `0x5359a0`), and has
+nested linked-list compare loops around `0x00509564..0x00509710`.
 
 ### Exact SIB Jump Probe
 

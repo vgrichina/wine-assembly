@@ -18,6 +18,7 @@ const OUTPUT = process.env.OUTPUT || '/private/tmp/aoe-web-profile.json';
 const SCREENSHOT = process.env.SCREENSHOT || '/private/tmp/aoe-web-profile.png';
 const RUN_SLICE = Math.max(1000, parseInt(process.env.RUN_SLICE || '100000', 10) || 100000);
 const GAMEPLAY_MS = Math.max(1000, parseInt(process.env.GAMEPLAY_MS || '10000', 10) || 10000);
+const CDP_INPUT_TIMEOUT_MS = Math.max(3000, parseInt(process.env.CDP_INPUT_TIMEOUT_MS || '10000', 10) || 10000);
 const MENU_WAIT_MS = Math.max(0, parseInt(process.env.MENU_WAIT_MS || '8500', 10) || 0);
 const SINGLE_PLAYER_WAIT_MS = Math.max(0, parseInt(process.env.SINGLE_PLAYER_WAIT_MS || '2500', 10) || 0);
 const CAMPAIGN_MENU_WAIT_MS = Math.max(0, parseInt(process.env.CAMPAIGN_MENU_WAIT_MS || process.env.RANDOM_MAP_WAIT_MS || '9000', 10) || 0);
@@ -29,6 +30,9 @@ const STAGE_SCREENSHOTS = process.env.STAGE_SCREENSHOTS === '1';
 const CPU_PROFILE = process.env.CPU_PROFILE === '1';
 const CPU_PROFILE_OUTPUT = process.env.CPU_PROFILE_OUTPUT || '/private/tmp/aoe-cpu-profile.json';
 const HANDLER_HIST = process.env.HANDLER_HIST !== '0';
+const STACK_PACKET = process.env.STACK_PACKET === '1';
+const STACK_PACKET_ADDR = parseU32(process.env.STACK_PACKET_ADDR || '0x0049d9d1', 0x0049d9d1);
+const STACK_PACKET_COUNT = process.env.STACK_PACKET_COUNT !== '0';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +44,13 @@ function progress(msg) {
 
 function round(v) {
   return +((Number(v) || 0).toFixed(3));
+}
+
+function parseU32(raw, fallback) {
+  const s = String(raw || '').trim();
+  if (!s) return fallback >>> 0;
+  const value = /^0x/i.test(s) ? parseInt(s, 16) : parseInt(s, 10);
+  return Number.isFinite(value) ? (value >>> 0) : (fallback >>> 0);
 }
 
 function buildWasmNameMap() {
@@ -455,7 +466,7 @@ async function main() {
       button,
       buttons,
       clickCount: 1,
-    }), 3000, 'mousePressed');
+    }), CDP_INPUT_TIMEOUT_MS, 'mousePressed');
     await wait(40);
     await withTimeout(cdp.send('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
@@ -464,7 +475,7 @@ async function main() {
       button,
       buttons: 0,
       clickCount: 1,
-    }), 3000, 'mouseReleased');
+    }), CDP_INPUT_TIMEOUT_MS, 'mouseReleased');
   }
 
   async function clickCanvas(x, y) {
@@ -483,7 +494,7 @@ async function main() {
       y: p.y,
       button: 'none',
       buttons: 0,
-    }), 3000, 'mouseMoved');
+    }), CDP_INPUT_TIMEOUT_MS, 'mouseMoved');
   }
 
   function sendMouseNoWait(type, x, y, button, buttons, clickCount) {
@@ -506,7 +517,7 @@ async function main() {
       y: p.y,
       button: 'none',
       buttons: 0,
-    }), 3000, 'dragMouseMoved');
+    }), CDP_INPUT_TIMEOUT_MS, 'dragMouseMoved');
     await wait(40);
     await withTimeout(cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
@@ -515,7 +526,7 @@ async function main() {
       button: 'left',
       buttons: 1,
       clickCount: 1,
-    }), 3000, 'dragMousePressed');
+    }), CDP_INPUT_TIMEOUT_MS, 'dragMousePressed');
     for (let i = 1; i <= steps; i++) {
       const x = x1 + (x2 - x1) * i / steps;
       const y = y1 + (y2 - y1) * i / steps;
@@ -526,7 +537,7 @@ async function main() {
         y: p.y,
         button: 'left',
         buttons: 1,
-      }), 3000, 'dragMouseMove');
+      }), CDP_INPUT_TIMEOUT_MS, 'dragMouseMove');
       await wait(20);
     }
     await wait(60);
@@ -537,7 +548,7 @@ async function main() {
       button: 'left',
       buttons: 0,
       clickCount: 1,
-    }), 3000, 'dragMouseReleased');
+    }), CDP_INPUT_TIMEOUT_MS, 'dragMouseReleased');
   }
 
   async function clickCanvasNoWait(x, y) {
@@ -1252,6 +1263,11 @@ async function main() {
     const appForHist = runningApps && runningApps[0];
     const wineForHist = appForHist && appForHist.wine;
     const exForHist = wineForHist && wineForHist.instance && wineForHist.instance.exports;
+    if (${STACK_PACKET ? 'true' : 'false'} && exForHist && exForHist.set_stack_packet_enabled) {
+      if (exForHist.set_stack_packet_count_enabled) exForHist.set_stack_packet_count_enabled(${STACK_PACKET_COUNT ? '1' : '0'});
+      if (exForHist.reset_stack_packet_counters) exForHist.reset_stack_packet_counters();
+      exForHist.set_stack_packet_enabled(1, ${STACK_PACKET_ADDR >>> 0});
+    }
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
     const buildSnapshot = () => {
@@ -1291,6 +1307,18 @@ async function main() {
         handlerHistogram: window.__aoeSnapshotHandlerHistogram
           ? window.__aoeSnapshotHandlerHistogram(wine, e)
           : null,
+        stackPacket: e && e.get_stack_packet_enabled ? {
+          enabled: e.get_stack_packet_enabled() >>> 0,
+          addr: e.get_stack_packet_addr ? (e.get_stack_packet_addr() >>> 0) : 0,
+          countEnabled: e.get_stack_packet_count_enabled ? (e.get_stack_packet_count_enabled() >>> 0) : 1,
+          entries: e.get_stack_packet_entries ? (e.get_stack_packet_entries() >>> 0) : 0,
+          block0049d9d1Entries: e.get_stack_packet_0049d9d1_entries ? (e.get_stack_packet_0049d9d1_entries() >>> 0) : 0,
+          block0049dd20Entries: e.get_stack_packet_0049dd20_entries ? (e.get_stack_packet_0049dd20_entries() >>> 0) : 0,
+          block0049dd20EmptyInlineEntries: e.get_stack_packet_0049dd20_empty_inline_entries ? (e.get_stack_packet_0049dd20_empty_inline_entries() >>> 0) : 0,
+          block0049dd20ToDd8bEntries: e.get_stack_packet_0049dd20_to_dd8b_entries ? (e.get_stack_packet_0049dd20_to_dd8b_entries() >>> 0) : 0,
+          block0049dd20ToDdc7Entries: e.get_stack_packet_0049dd20_to_ddc7_entries ? (e.get_stack_packet_0049dd20_to_ddc7_entries() >>> 0) : 0,
+          block0049dd20ToE0adEntries: e.get_stack_packet_0049dd20_to_e0ad_entries ? (e.get_stack_packet_0049dd20_to_e0ad_entries() >>> 0) : 0,
+        } : null,
         profile: window.__aoeProfile ? window.__aoeProfile.snapshot() : null,
       };
     };

@@ -63,6 +63,7 @@ function extractMetrics(file, result) {
   const present = jitter.present || {};
   const raf = jitter.raf || {};
   const repaint = jitter.repaint || {};
+  const stackPacket = result && result.stackPacket ? result.stackPacket : {};
   return {
     file,
     screenshot: result && result.screenshot ? result.screenshot : '',
@@ -78,6 +79,15 @@ function extractMetrics(file, result) {
     presentEvents: present.events || 0,
     rafFps: round(raf.fps),
     repaintFps: round(repaint.fps),
+    stackPacketEnabled: stackPacket.enabled >>> 0,
+    stackPacketCountEnabled: stackPacket.countEnabled == null ? 1 : (stackPacket.countEnabled >>> 0),
+    stackPacketEntries: stackPacket.entries >>> 0,
+    stackPacket0049d9d1Entries: stackPacket.block0049d9d1Entries >>> 0,
+    stackPacket0049dd20Entries: stackPacket.block0049dd20Entries >>> 0,
+    stackPacket0049dd20EmptyInlineEntries: stackPacket.block0049dd20EmptyInlineEntries >>> 0,
+    stackPacket0049dd20ToDd8bEntries: stackPacket.block0049dd20ToDd8bEntries >>> 0,
+    stackPacket0049dd20ToDdc7Entries: stackPacket.block0049dd20ToDdc7Entries >>> 0,
+    stackPacket0049dd20ToE0adEntries: stackPacket.block0049dd20ToE0adEntries >>> 0,
   };
 }
 
@@ -146,7 +156,7 @@ function printSummary(summary) {
   console.log(`AoE repeat profile: ${summary.label}`);
   console.log(`runs=${summary.runs.length} timeoutMs=${summary.timeoutMs} summary=${summary.summaryFile}`);
   console.log('');
-  console.log('run  runSlice  guest    host   present  events  output');
+  console.log('run  runSlice  guest    host   present  events  packet1  packet2    output');
   for (let i = 0; i < summary.runs.length; i++) {
     const r = summary.runs[i];
     console.log(
@@ -156,11 +166,13 @@ function printSummary(summary) {
       String(r.hostMs.toFixed(1)).padStart(6) + '  ' +
       String(r.presentFps.toFixed(2)).padStart(7) + '  ' +
       String(r.presentEvents).padStart(6) + '  ' +
+      String(r.stackPacket0049d9d1Entries || 0).padStart(6) + '  ' +
+      String(r.stackPacket0049dd20Entries || 0).padStart(7) + '  ' +
       r.file
     );
   }
   console.log('');
-  for (const key of ['runSliceMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents']) {
+  for (const key of ['runSliceMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents', 'stackPacket0049d9d1Entries', 'stackPacket0049dd20Entries']) {
     const s = summary.stats[key];
     console.log(`${key}: mean=${s.mean} min=${s.min} max=${s.max} sd=${s.sd}`);
   }
@@ -225,6 +237,12 @@ async function main() {
       hostMs: stats(metrics.map(r => r.hostMs)),
       presentFps: stats(metrics.map(r => r.presentFps)),
       presentEvents: stats(metrics.map(r => r.presentEvents)),
+      stackPacket0049d9d1Entries: stats(metrics.map(r => r.stackPacket0049d9d1Entries)),
+      stackPacket0049dd20Entries: stats(metrics.map(r => r.stackPacket0049dd20Entries)),
+      stackPacket0049dd20EmptyInlineEntries: stats(metrics.map(r => r.stackPacket0049dd20EmptyInlineEntries)),
+      stackPacket0049dd20ToDd8bEntries: stats(metrics.map(r => r.stackPacket0049dd20ToDd8bEntries)),
+      stackPacket0049dd20ToDdc7Entries: stats(metrics.map(r => r.stackPacket0049dd20ToDdc7Entries)),
+      stackPacket0049dd20ToE0adEntries: stats(metrics.map(r => r.stackPacket0049dd20ToE0adEntries)),
     },
   };
   fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
