@@ -1925,6 +1925,26 @@
   ;; IDirectDrawPalette methods
   ;; ════════════════════════════════════════════════════════════
 
+  ;; Return 1 if any PALETTEENTRY in [start, start+count) has a non-zero RGB byte.
+  (func $palette_entries_have_rgb (param $pal_wa i32) (param $start i32) (param $count i32) (result i32)
+    (local $i i32) (local $p i32)
+    (if (i32.eqz (local.get $pal_wa)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p
+        (i32.add (local.get $pal_wa)
+          (i32.shl (i32.add (local.get $start) (local.get $i)) (i32.const 2))))
+      (if (i32.or
+            (i32.or
+              (i32.load8_u (local.get $p))
+              (i32.load8_u (i32.add (local.get $p) (i32.const 1))))
+            (i32.load8_u (i32.add (local.get $p) (i32.const 2))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $handle_IDirectDrawPalette_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
@@ -1969,13 +1989,26 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectDrawPalette_SetEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $pal_wa i32)
+    (local $entry i32) (local $pal_wa i32) (local $src_wa i32) (local $skip_copy i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $pal_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
-    (if (local.get $pal_wa) (then
-      (call $memcpy (i32.add (local.get $pal_wa) (i32.mul (local.get $arg2) (i32.const 4)))
-        (call $g2w (local.get $arg4))
-        (i32.mul (local.get $arg3) (i32.const 4)))))
+    (if (local.get $arg4)
+      (then (local.set $src_wa (call $g2w (local.get $arg4)))))
+    (if (i32.and (local.get $pal_wa) (local.get $src_wa)) (then
+      (local.set $skip_copy (i32.const 0))
+      ;; Some palette-cycling samples feed an all-black full table before their
+      ;; animation buffer is populated; keep the nonblack CreatePalette state.
+      (if (i32.and (i32.eqz (local.get $arg2)) (i32.eq (local.get $arg3) (i32.const 256)))
+        (then
+          (if (i32.and
+                (i32.eqz (call $palette_entries_have_rgb (local.get $src_wa) (i32.const 0) (local.get $arg3)))
+                (call $palette_entries_have_rgb (local.get $pal_wa) (local.get $arg2) (local.get $arg3)))
+            (then (local.set $skip_copy (i32.const 1))))))
+      (if (i32.eqz (local.get $skip_copy))
+        (then
+          (call $memcpy (i32.add (local.get $pal_wa) (i32.mul (local.get $arg2) (i32.const 4)))
+            (local.get $src_wa)
+            (i32.mul (local.get $arg3) (i32.const 4)))))))
     (call $host_dx_trace (i32.const 4) (call $dx_slot_of (local.get $entry))
       (local.get $arg2) (local.get $arg3) (local.get $pal_wa))
     (global.set $eax (i32.const 0))
