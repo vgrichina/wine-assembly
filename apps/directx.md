@@ -324,6 +324,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - `IDirect3DDevice{2,3,7}::DrawIndexedPrimitive` now has a minimal fixed-pipeline triangle path for D3DVERTEX/LVERTEX/TLVERTEX indexed geometry, enough for Boids to render after real viewport clears.
 - D3DIM material/background state is now stored across legacy material and viewport interfaces; viewport clears use the app's background material instead of leaving stale setup pixels.
 - D3DRM/Globe execute buffers keep an original-source side cache for in-place `PROCESSVERTICES`, avoiding repeated transforms of TL output as source vertices. Focused Globe captures are nonblank now, but the software rasterizer still needs proper clipping, depth, culling parity, and texture sampling.
+- Execute-buffer triangles can now consult the cleared z-buffer when `D3DRENDERSTATE_ZENABLE` is set. This is intentionally scoped away from indexed draws for now because Boids depends on the older non-depth path until per-pixel interpolation is better.
 
 ### Recent changes (2026-06-11)
 
