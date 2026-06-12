@@ -3128,10 +3128,11 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::CreateMaterial — DX type 25, vtbl D3DMAT3 (v1 caller upgrades on QI)
+  ;; IDirect3D::CreateMaterial returns the legacy v1 material layout.
+  ;; D3DRM calls GetHandle at vtable +0x18, which is not the v3 slot.
   (func $handle_IDirect3D_CreateMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 25) (global.get $DX_VTBL_D3DMAT3)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 25) (global.get $DX_VTBL_D3DMAT1)))
     (if (i32.eqz (local.get $obj)) (then
       (global.set $eax (i32.const 0x80004005))
       (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -3724,8 +3725,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DViewport3_TransformVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   (func $handle_IDirect3DViewport3_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))

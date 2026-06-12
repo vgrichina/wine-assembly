@@ -316,13 +316,15 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
 | tunnel / twist | **PASS** | |
 | Viewer / Bellhop | **PASS** | |
-| Globe | warn (blank) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI and gets through mesh/texture loading with a local `sphere3.x`; still does not emit scene geometry into the render target |
+| Globe | warn (blank) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; still does not emit visible scene geometry into the render target |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
 
 ### Recent changes (2026-06-11)
 
 - `IDirect3D{,2,3}::FindDevice` now fills `D3DFINDDEVICERESULT.guid` with the RGB legacy device GUID and populates DX5-sized embedded device descs. D3DRM uses that GUID to QI the render-target surface; leaving it zero made the surface IUnknown get cached as a device and later jumped through the DDSurface vtable with device method signatures.
 - `IDirectDrawSurface::QueryInterface` now creates bound D3D device wrappers for `IDirect3DDevice{,2,3,7}` IIDs and legacy Ramp/RGB/HAL/MMX device GUIDs.
+- `IDirect3DViewport{,2,3}::TransformVertices` now matches the 5-arg legacy signature and initializes the offscreen result pointer, preventing D3DRM stack corruption during Globe rendering.
+- Legacy `IDirect3D::CreateMaterial` now returns the v1 material layout so D3DRM's `GetHandle` call lands on the expected vtable slot, and `IDirect3DExecuteBuffer::GetExecuteData` mirrors stored execute offsets back to D3DRM after `Execute`.
 
 ### Recent changes (2026-04-21)
 

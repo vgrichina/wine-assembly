@@ -1006,10 +1006,12 @@
     (call $d3dim_viewport_set (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DViewport_TransformVertices — 6 args (incl. this)
+  ;; IDirect3DViewport_TransformVertices — 5 args (incl. this)
   (func $handle_IDirect3DViewport_TransformVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; IDirect3DViewport_LightElements — 3 args (incl. this)
   (func $handle_IDirect3DViewport_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1097,10 +1099,12 @@
     (call $d3dim_viewport_set (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DViewport2_TransformVertices — 6 args (incl. this)
+  ;; IDirect3DViewport2_TransformVertices — 5 args (incl. this)
   (func $handle_IDirect3DViewport2_TransformVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; IDirect3DViewport2_LightElements — 3 args (incl. this)
   (func $handle_IDirect3DViewport2_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1332,6 +1336,19 @@
 
   ;; IDirect3DExecuteBuffer_GetExecuteData — 2 args (incl. this)
   (func $handle_IDirect3DExecuteBuffer_GetExecuteData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (if (local.get $arg1) (then
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 48))
+      (call $gs32 (local.get $arg1) (i32.const 48))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+        (i32.load (i32.add (local.get $entry) (i32.const 16))))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
+        (i32.load (i32.add (local.get $entry) (i32.const 20))))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
+        (i32.load (i32.add (local.get $entry) (i32.const 24))))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 16))
+        (i32.load (i32.add (local.get $entry) (i32.const 28))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
