@@ -3633,6 +3633,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   (func $handle_IDirect3DDevice3_DrawIndexedPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32)
+    (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $lpwIndices    (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (call $d3dim_draw_indexed_primitive
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $dwVertexCount)
+      (local.get $lpwIndices) (local.get $dwIndexCount))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 
@@ -3735,11 +3743,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DViewport3_SetBackground (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_viewport_set_background (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DViewport3_GetBackground (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_viewport_get_background (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DViewport3_SetBackgroundDepth (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3752,7 +3760,8 @@
 
   ;; Clear(this, dwCount, lpRects, dwFlags) — 4 args. No color/z (uses background).
   (func $handle_IDirect3DViewport3_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3) (i32.const 0) (f32.const 1.0))
+    (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3)
+      (call $d3dim_viewport_background_color (local.get $arg0)) (f32.const 1.0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -3921,15 +3930,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DMaterial3_SetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_material_set (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DMaterial3_GetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_material_get (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DMaterial3_GetHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_material_get_handle (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DMaterial3_Reserved1 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -309,15 +309,21 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | ddex4 | **PASS** (82 colors, 3D donuts on checkerboard) | |
 | flip2d | **PASS** (632 colors, spinning cube + FPS) | |
 | flip3dtl | **PASS** (628 colors, HAL-marked cube) | DDSURF2 vtable (18e2278) + back-face culling (f5162f6) |
-| stretch / boids | **PASS** | |
+| stretch / boids | **PASS** | Boids now reaches real indexed D3DIM geometry after viewport clears |
 | palette | warn | Known broken visual in harness |
 | Donut | **PASS** (56 colors, red torus) | Primary-resize (e8e579f) |
 | Donuts | **PASS** (Space Donuts splash + menu) | |
 | Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
 | tunnel / twist | **PASS** | |
 | Viewer / Bellhop | **PASS** | |
-| Globe | warn (blank) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; still does not emit visible scene geometry into the render target |
+| Globe | warn (blank in short harness) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; longer focused runs emit shaded geometry, but clipping/depth/culling/texture behavior is still visibly wrong |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
+
+### Recent changes (2026-06-12)
+
+- `IDirect3DDevice{2,3,7}::DrawIndexedPrimitive` now has a minimal fixed-pipeline triangle path for D3DVERTEX/LVERTEX/TLVERTEX indexed geometry, enough for Boids to render after real viewport clears.
+- D3DIM material/background state is now stored across legacy material and viewport interfaces; viewport clears use the app's background material instead of leaving stale setup pixels.
+- D3DRM/Globe execute buffers keep an original-source side cache for in-place `PROCESSVERTICES`, avoiding repeated transforms of TL output as source vertices. Focused Globe captures are nonblank now, but the software rasterizer still needs proper clipping, depth, culling parity, and texture sampling.
 
 ### Recent changes (2026-06-11)
 
