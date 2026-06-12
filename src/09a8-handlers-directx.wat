@@ -991,6 +991,29 @@
     (i32.store (i32.add (local.get $wa) (i32.const 48)) (i32.const 1))        ;; dwStippleWidth
     (i32.store (i32.add (local.get $wa) (i32.const 52)) (i32.const 1)))       ;; dwStippleHeight
 
+  ;; Fill D3DFINDDEVICERESULT enough for legacy D3DRM callers. d3drm.dll uses
+  ;; result.guid as the surface QI key when creating an IDirect3DDevice, so a
+  ;; zero GUID aliases the surface IUnknown and later dispatches device methods
+  ;; through the DDSurface vtable.
+  (func $d3d_fill_find_device_result (param $p i32)
+    (local $wa i32) (local $sz i32)
+    (if (i32.eqz (local.get $p)) (then (return)))
+    (local.set $wa (call $g2w (local.get $p)))
+    (local.set $sz (i32.load (local.get $wa)))
+    (if (i32.lt_u (local.get $sz) (i32.const 20)) (then (return)))
+    ;; IID_IDirect3DRGBDevice {A4665C60-2673-11CF-A31A-00AA00B93356}
+    (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0xA4665C60))
+    (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x11CF2673))
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0xAA001AA3))
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x5633B900))
+    ;; DX5-era D3DFINDDEVICERESULT is 0x1ac bytes: GUID + two 0xcc-byte
+    ;; D3DDEVICEDESCs. Populate those when the caller supplied that much room.
+    (if (i32.ge_u (local.get $sz) (i32.const 428)) (then
+      (call $gs32 (i32.add (local.get $p) (i32.const 20)) (i32.const 204))
+      (call $d3dim_fill_device_desc (i32.add (local.get $p) (i32.const 20)))
+      (call $gs32 (i32.add (local.get $p) (i32.const 224)) (i32.const 204))
+      (call $d3dim_fill_device_desc (i32.add (local.get $p) (i32.const 224))))))
+
   ;; EnumSurfaces — stub
   (func $handle_IDirectDraw_EnumSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -1200,7 +1223,7 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectDrawSurface_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $iid0 i32) (local $vtbl i32) (local $wrapper i32)
+    (local $entry i32) (local $iid0 i32) (local $vtbl i32) (local $wrapper i32) (local $device_vtbl i32)
     ;; Upgrade IID_IDirect3DTexture / IID_IDirect3DTexture2 to their own vtables —
     ;; the app needs correct per-method arg counts (GetHandle takes 2 args, while
     ;; DDSurface's slot 3 AddAttachedSurface takes 1, so a same-vtable alias
@@ -1216,6 +1239,45 @@
     ;; IID_IDirect3DTexture2 {93281502-8cf8-11d0-89ab-00a0c9054129}
     (if (i32.eq (local.get $iid0) (i32.const 0x93281502)) (then
       (local.set $vtbl (global.get $DX_VTBL_D3DTEX2))))
+    ;; D3DRM asks its render-target surface for a D3D device interface. Return
+    ;; a real device wrapper bound to this surface; aliasing the DDSurface
+    ;; vtable corrupts ESP when D3DRM later calls device-only callback methods.
+    (local.set $device_vtbl (i32.const 0))
+    ;; IID_IDirect3DDevice  {64108800-957d-11d0-89ab-00a0c9054129}
+    (if (i32.eq (local.get $iid0) (i32.const 0x64108800)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV1))))
+    ;; IID_IDirect3DDevice2 {93281501-8cf8-11d0-89ab-00a0c9054129}
+    (if (i32.eq (local.get $iid0) (i32.const 0x93281501)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV2))))
+    ;; IID_IDirect3DDevice3 {B0AB3B60-33D7-11D1-A981-00C04FD7B174}
+    (if (i32.eq (local.get $iid0) (i32.const 0xB0AB3B60)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV3))))
+    ;; IID_IDirect3DDevice7 {F5049E79-4861-11D2-A407-00A0C90629A8}
+    (if (i32.eq (local.get $iid0) (i32.const 0xF5049E79)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV7))))
+    ;; Legacy device class GUIDs from IDirect3D::FindDevice/EnumDevices
+    ;; QueryInterface to an IDirect3DDevice v1 on the render-target surface.
+    ;; IID_IDirect3DRampDevice {F2086B20-259F-11CF-A31A-00AA00B93356}
+    (if (i32.eq (local.get $iid0) (i32.const 0xF2086B20)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV1))))
+    ;; IID_IDirect3DRGBDevice {A4665C60-2673-11CF-A31A-00AA00B93356}
+    (if (i32.eq (local.get $iid0) (i32.const 0xA4665C60)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV1))))
+    ;; IID_IDirect3DHALDevice {84E63DE0-46AA-11CF-816F-0000C020156E}
+    (if (i32.eq (local.get $iid0) (i32.const 0x84E63DE0)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV1))))
+    ;; IID_IDirect3DMMXDevice {881949A1-D6F3-11D0-89AB-00A0C9054129}
+    (if (i32.eq (local.get $iid0) (i32.const 0x881949A1)) (then
+      (local.set $device_vtbl (global.get $DX_VTBL_D3DDEV1))))
+    (if (local.get $device_vtbl)
+      (then
+        (call $d3dim_create_device
+          (i32.const 0)
+          (local.get $arg0)
+          (local.get $arg2)
+          (local.get $device_vtbl))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (if (local.get $vtbl)
       (then
@@ -3090,10 +3152,10 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D::FindDevice — succeed without populating result; the v1 caller
-  ;; reads dwSize / GUIDs from the result struct, but our Phase-0 emulation
-  ;; treats it as advisory and lets CreateDevice return a working object.
+  ;; IDirect3D::FindDevice — return a concrete legacy RGB device GUID. D3DRM
+  ;; feeds result.guid back into surface QI to obtain IDirect3DDevice v1.
   (func $handle_IDirect3D_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3d_fill_find_device_result (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -3165,6 +3227,7 @@
 
   ;; IDirect3D3::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args
   (func $handle_IDirect3D3_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3d_fill_find_device_result (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

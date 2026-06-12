@@ -74,6 +74,7 @@
 
   ;; IDirect3D2_FindDevice — 3 args (incl. this)
   (func $handle_IDirect3D2_FindDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3d_fill_find_device_result (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -1562,4 +1563,3 @@
       (i32.store (i32.add (local.get $dst) (i32.const 12)) (call $dx_slot_of (local.get $src)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-

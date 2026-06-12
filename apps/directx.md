@@ -316,8 +316,13 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
 | tunnel / twist | **PASS** | |
 | Viewer / Bellhop | **PASS** | |
-| Globe | warn (blank) | Guest D3DRM path creates a window/surfaces but does not emit scene geometry yet |
+| Globe | warn (blank) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI and gets through mesh/texture loading with a local `sphere3.x`; still does not emit scene geometry into the render target |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
+
+### Recent changes (2026-06-11)
+
+- `IDirect3D{,2,3}::FindDevice` now fills `D3DFINDDEVICERESULT.guid` with the RGB legacy device GUID and populates DX5-sized embedded device descs. D3DRM uses that GUID to QI the render-target surface; leaving it zero made the surface IUnknown get cached as a device and later jumped through the DDSurface vtable with device method signatures.
+- `IDirectDrawSurface::QueryInterface` now creates bound D3D device wrappers for `IDirect3DDevice{,2,3,7}` IIDs and legacy Ramp/RGB/HAL/MMX device GUIDs.
 
 ### Recent changes (2026-04-21)
 
