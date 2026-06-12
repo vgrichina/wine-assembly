@@ -326,33 +326,55 @@
     (global.set $eax (i32.const 0)))
 
   ;; ── Viewport rect get/set ─────────────────────────────────────
-  ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2) — first 20
-  ;; bytes are identical in both: dwSize, dwX, dwY, dwWidth, dwHeight.
-  ;; We stash those 5 dwords in DX_OBJECTS entry+12..+28. entry+8 is already
-  ;; used by SetCurrentViewport to stash the parent device pointer, so we
-  ;; can't touch it here. Remaining D3DVIEWPORT fields (dvScale/Max or
-  ;; dvClip/dvMinZ/MaxZ) are returned zero — callers that care about them
-  ;; should SetViewport with complete data first (we only persist the rect).
+  ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2). Persist the
+  ;; rectangle and derive the transform viewport used by vertex_project.
   (func $d3dim_viewport_set (param $this i32) (param $lpVp i32)
-    (local $entry i32)
+    (local $entry i32) (local $dev_this i32) (local $state i32) (local $sw i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (if (i32.eqz (local.get $lpVp)) (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (i32.store          (i32.add (local.get $entry) (i32.const 12)) (call $gl32 (local.get $lpVp)))
-    (i32.store          (i32.add (local.get $entry) (i32.const 16)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 4))))
-    (i32.store          (i32.add (local.get $entry) (i32.const 20)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 8))))
-    (i32.store          (i32.add (local.get $entry) (i32.const 24)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 12))))
-    (i32.store          (i32.add (local.get $entry) (i32.const 28)) (call $gl32 (i32.add (local.get $lpVp) (i32.const 16))))
+    (local.set $x (call $gl32 (i32.add (local.get $lpVp) (i32.const 4))))
+    (local.set $y (call $gl32 (i32.add (local.get $lpVp) (i32.const 8))))
+    (local.set $w (call $gl32 (i32.add (local.get $lpVp) (i32.const 12))))
+    (local.set $h (call $gl32 (i32.add (local.get $lpVp) (i32.const 16))))
+    (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $x))
+    (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $y))
+    (i32.store (i32.add (local.get $entry) (i32.const 20)) (local.get $w))
+    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $h))
+    (local.set $dev_this (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (local.get $dev_this) (then
+      (local.set $state (call $d3ddev_state (local.get $dev_this)))
+      (if (local.get $state) (then
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_RECT)) (local.get $x))
+        (i32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 4))) (local.get $y))
+        (i32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 8))) (local.get $w))
+        (i32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 12))) (local.get $h))
+        (f32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_SCALE))
+          (f32.div (f32.convert_i32_s (local.get $w)) (f32.const 2.0)))
+        (f32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 4)))
+          (f32.div (f32.convert_i32_s (local.get $h)) (f32.const 2.0)))
+        (f32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 8))) (f32.const 0.0))
+        (f32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 12))) (f32.const 1.0))
+        (f32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_ORIGIN))
+          (f32.add (f32.convert_i32_s (local.get $x))
+                   (f32.div (f32.convert_i32_s (local.get $w)) (f32.const 2.0))))
+        (f32.store (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_ORIGIN) (i32.const 4)))
+          (f32.add (f32.convert_i32_s (local.get $y))
+                   (f32.div (f32.convert_i32_s (local.get $h)) (f32.const 2.0))))))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_viewport_get (param $this i32) (param $lpVp i32)
-    (local $entry i32)
+    (local $entry i32) (local $size i32)
     (if (i32.eqz (local.get $lpVp)) (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (call $gs32 (local.get $lpVp)                                      (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 20))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (i32.load (i32.add (local.get $entry) (i32.const 24))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (i32.load (i32.add (local.get $entry) (i32.const 28))))
+    (local.set $size (call $gl32 (local.get $lpVp)))
+    (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 80))))
+    (call $gs32 (local.get $lpVp)                                      (local.get $size))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (i32.load (i32.add (local.get $entry) (i32.const 24))))
     (global.set $eax (i32.const 0)))
 
   ;; ============================================================
