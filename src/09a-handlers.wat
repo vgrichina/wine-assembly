@@ -4164,9 +4164,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 315: CreateFontIndirectW — return fake font handle — STUB: unimplemented
+  ;; 315: CreateFontIndirectW — LOGFONTW at arg0
   (func $handle_CreateFontIndirectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $lf i32) (local $face i32)
+    (local.set $lf (call $g2w (local.get $arg0)))
+    (local.set $face (call $heap_alloc (i32.const 64)))
+    ;; LOGFONTW: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28 wchar[32])
+    (drop (call $wide_to_ansi (i32.add (local.get $arg0) (i32.const 28)) (local.get $face) (i32.const 64)))
+    (global.set $eax (call $host_create_font
+      (i32.load (local.get $lf))                              ;; height
+      (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
+      (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
+      (local.get $face)                                      ;; faceName WASM ptr
+    ))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 316: SetStretchBltMode(hdc, mode) → previous mode — 2 args stdcall
@@ -7549,9 +7560,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 609: RegisterWindowMessageW — STUB: unimplemented
+  ;; 609: RegisterWindowMessageW(lpString) — return unique msg ID from 0xC000+ range
   (func $handle_RegisterWindowMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
+    (global.set $eax (global.get $clipboard_format_counter))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 610: GetForegroundWindow — STUB: unimplemented

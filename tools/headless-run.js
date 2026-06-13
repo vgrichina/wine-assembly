@@ -39,7 +39,7 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { g2w: translateGuest } = require('../lib/mem-utils');
-const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
+const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 
 let createCanvas, Win98Renderer;
@@ -259,6 +259,7 @@ async function main() {
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE entry:', hex(entry));
+  const requiredDlls = detectRequiredDlls(exeBytes);
 
   if (instance.exports.set_exe_name) {
     const name = Buffer.from(path.basename(EXE_PATH));
@@ -276,6 +277,8 @@ async function main() {
     const versions = { win98: 0xC0000A04, nt4: 0x05650004, win2k: 0x05650005, winxp: 0x0A280105 };
     const v = versions[WINVER.toLowerCase()] || parseInt(WINVER);
     if (v) instance.exports.set_winver(v);
+  } else if (shouldReportNtForDlls(requiredDlls) && instance.exports.set_winver) {
+    instance.exports.set_winver(0x05650004);
   }
 
   // DLL autoload (same dirs as run.js)
@@ -285,7 +288,7 @@ async function main() {
     dlls = DLL_OVERRIDE.split(',').map(p => ({ name: path.basename(p.trim()), bytes: fs.readFileSync(p.trim()) }));
   } else {
     const LOADABLE = new Set(['msvcrt.dll','mfc42.dll','mfc42u.dll','comctl32.dll','msvcp60.dll','riched20.dll','cabinet.dll','usp10.dll','cards.dll']);
-    const required = detectRequiredDlls(exeBytes);
+    const required = requiredDlls;
     const dirs = [dllDir, path.dirname(EXE_PATH), path.join(ROOT, 'test', 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {

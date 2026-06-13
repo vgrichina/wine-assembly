@@ -1,5 +1,11 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-06-13): 9/9 focused drawing regression
+
+`test/test-mspaint-draw.js` now passes all 9 checks. The Win98 ANSI build is a
+stable regression target while the NT/MFC42U build is being advanced separately
+in `apps/mspaint-nt.md`.
+
 ## Status (2026-04-26 later²): 8/9 — Tools glyphs render again, tool-click still wipes them
 
 `test/test-mspaint-draw.js` 8/9: `colors=3168→2736` ✓ (survives canvas

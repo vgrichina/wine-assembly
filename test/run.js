@@ -3,7 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { HlpParser } = require('../lib/hlp-parser');
-const { loadDlls, detectRequiredDlls } = require('../lib/dll-loader');
+const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
@@ -1416,6 +1416,7 @@ async function main() {
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
+  const requiredDlls = detectRequiredDlls(exeBytes);
 
   // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base)
   if (instance.exports.init_dx_com_thunks) {
@@ -1445,6 +1446,10 @@ async function main() {
     const versions = { 'win98': 0xC0000A04, 'nt4': 0x05650004, 'win2k': 0x05650005, 'winxp': 0x0A280105 };
     const v = versions[WINVER.toLowerCase()] || parseInt(WINVER);
     if (v) { instance.exports.set_winver(v); console.log('Windows version: ' + hex(v)); }
+  } else if (shouldReportNtForDlls(requiredDlls) && instance.exports.set_winver) {
+    const v = 0x05650004;
+    instance.exports.set_winver(v);
+    console.log('Windows version: ' + hex(v) + ' (auto NT for MFC42U)');
   }
 
   // Load DLLs: explicit --dlls=path1,path2,... or auto-detect from EXE imports
@@ -1458,7 +1463,7 @@ async function main() {
     }));
   } else {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
-    const required = detectRequiredDlls(exeBytes);
+    const required = requiredDlls;
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
       'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',

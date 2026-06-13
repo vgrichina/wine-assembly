@@ -1,33 +1,53 @@
-# MSPaint (NT) — FAIL
+# MSPaint (NT) - PARTIAL
 
-**Binary:** `test/binaries/nt/mspaint.exe` (also at `test/binaries/entertainment-pack/mspaint.exe` — identical 447248 bytes)
-**DLLs:** msvcrt.dll, mfc42u.dll
-**Crash:** unhandled C++ exception (`CMemoryException`) → EIP=0
+**Binary:** `test/binaries/nt/mspaint.exe` (also at
+`test/binaries/entertainment-pack/mspaint.exe`; identical 447248 bytes)
+**DLLs:** `msvcrt.dll`, `mfc42u.dll`
 
-## Root Cause
+## Status (2026-06-13)
 
-MFC42U's `DllMain` checks `GetVersion()` and refuses to initialize on anything other than Windows NT. Our emulator reports `$winver = 0xC0000A04` (Win98 SE — high bit set → Win9x platform), so the DLL throws up a MessageBox:
+The old startup blocker is fixed. Runners now auto-report NT 4.0 when an EXE
+imports `MFC42U.DLL`, so MFC42U's `DllMain` no longer rejects the process as a
+Win9x host. MSPaint NT also gets past the first missing Unicode APIs by using
+real handlers for:
 
-> "MFC Runtime Module": "This application or DLL can not be loaded on Windows 95 or on Windows 3.1. It takes advantage of Unicode features only available on Windows NT."
+- `RegisterWindowMessageW`
+- `CreateFontIndirectW`
 
-and returns 0 from `DllMain` (verified in verbose run: `DllMain returned, EAX=0x0`). The process continues anyway, limps through CRT init, then during MFC per-thread-state setup a follow-on alloc fails and MFC throws `CMemoryException` via `_CxxThrowException`. No SEH catches it; EIP lands at 0.
+Current focused run:
 
-Trace sequence reaching the throw:
-1. `GetDC(NULL)` + TLS probes
-2. `HeapAlloc(0x140000, 0, 0x50)` → TLS
-3. `EnterCriticalSection(0x011412c0)` → `HeapAlloc(0x140000, 0, 0x10)` → `LeaveCriticalSection`
-4. `AfxThrowMemoryException` → `RaiseException(0xe06d7363, ..., throwInfo)` with TypeDescriptors `CMemoryException` / `CSimpleException` / `CException` / `CObject`.
+```sh
+node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=150 --batch-size=50000 --no-close --quiet-blocks --no-build --png=/private/tmp/mspaint-nt-auto-2.png
+```
 
-The caller of `AfxThrowMemoryException` (ret = `0x0116c6ff`) lives inside the MFC42U image, not in mspaint.exe's sections (confirm: `tools/find_fn.js` rejects it as "VA not in any section").
+Result: MFC42U and MSVCRT `DllMain` both return success, the app reaches main
+window creation (`hwnd=0x10001`, title `"P"`, size `275x400`), then stalls
+before the window becomes visible.
 
-## Fix Sketch
+## Current Blocker
 
-**Primary fix — report NT:** Add per-app winver override so MSPaint (and any other MFC42U-using NT binary) sees `GetVersion() == 0x00000A04` (bit 31 clear → NT 4.0) instead of the Win9x default. The `set_winver` WAT export is already plumbed; needs a host-side call gated by binary detection (e.g. IMPORT DLL list contains `MFC42U.DLL`).
+Execution stops at `EIP=0x0110d4fe`, which is inside relocated MFC42U `.rdata`,
+not executable code. The immediate bad call is an MFC virtual dispatch through a
+heap-looking object:
 
-Globally flipping to NT would regress Win9x-targeted apps that branch on `GetVersion()`, so this must be per-exe.
+- `ECX=0x011b157c`
+- `[ECX]=0x011b1438`
+- `[0x011b1438 + 0xa0] = 0x0110d4fe`
 
-**Out of scope for now:** actually finishing SEH catch-dispatch so C++ throw→catch would unwind cleanly. Explorer (98) has the same underlying gap — see `explorer98.md`.
+That means MFC is treating a structure as an object/vtable and jumping into data.
+The next useful work is to trace the Unicode window/message path that feeds this
+object into the MFC wrapper. The likely suspects are stale `CreateWindowExW`
+behavior versus the richer ANSI path, or a `SendMessageW`/window-map mismatch
+around MFC `CWnd` lookup.
 
-## Verification
+## Previous Blocker
 
-Run with `--trace-api` — stops at API #287 with `RaiseException` carrying the `CMemoryException` vtable. No window is ever created.
+MFC42U's `DllMain` checks `GetVersion()` and refuses to initialize on anything
+other than Windows NT. The emulator used to report `$winver = 0xC0000A04`
+(Win98 SE, high bit set), so the DLL showed:
+
+> "This application or DLL can not be loaded on Windows 95 or on Windows 3.1."
+
+and returned 0 from `DllMain`. The process then limped into CRT/MFC setup and
+threw `CMemoryException` through `_CxxThrowException`. This is no longer the
+first failure for MFC42U apps.
