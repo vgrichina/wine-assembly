@@ -3611,125 +3611,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 286: CreateWindowExW — delegate to existing CreateWindowEx logic
+  ;; 286: CreateWindowExW — convert ASCII-compatible wide strings and reuse
+  ;; the mature A path. This keeps Unicode callers on the same CBT hook,
+  ;; WM_CREATE, menu, owner/parent, control-class, and show/paint machinery as
+  ;; ANSI callers. Class table keys are byte-string hashes, so RegisterClassW
+  ;; and CreateWindowExA-style lookup share the same slots after conversion.
   (func $handle_CreateWindowExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $v i32) (local $i i32)
-    ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
-    ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
-    (if (i32.and
-          (i32.eqz (global.get $wndproc_addr))
-          (i32.lt_s (call $class_find_slot (call $class_wide_name_key (local.get $arg1))) (i32.const 0)))
-    (then
-    (local.set $i (global.get $GUEST_BASE))
-    (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
-    (block $found (loop $scan
-    (br_if $found (i32.ge_u (local.get $i) (local.get $v)))
-    (if (i32.and
-    (i32.eq (i32.load8_u (local.get $i)) (i32.const 0xC7))
-    (i32.and
-    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 1))) (i32.const 0x44))
-    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 2))) (i32.const 0x24))))
-    (then
-    (if (i32.eq (i32.load (i32.add (local.get $i) (i32.const 4))) (local.get $arg1))
-    (then
-    (if (i32.and
-    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 8))) (i32.const 0xC7))
-    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 7))) (i32.const 0x44)))
-    (then
-    (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
-    (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
-    (then
-    (global.set $wndproc_addr (local.get $tmp))
-    (br $found)))))))))
-    (local.set $i (i32.add (local.get $i) (i32.const 1)))
-    (br $scan)))))
-    ;; Set second wndproc for subsequent windows
-    (if (i32.and
-          (i32.and (i32.ne (global.get $wndproc_addr) (i32.const 0))
-                   (i32.eqz (global.get $wndproc_addr2)))
-          (i32.lt_s (call $class_find_slot (call $class_wide_name_key (local.get $arg1))) (i32.const 0)))
-    (then
-    (if (global.get $main_hwnd)  ;; not the first window
-    (then
-    ;; Scan for second WndProc using same pattern
-    (local.set $i (global.get $GUEST_BASE))
-    (local.set $v (i32.add (global.get $GUEST_BASE) (i32.const 0xA000)))
-    (block $found2 (loop $scan2
-    (br_if $found2 (i32.ge_u (local.get $i) (local.get $v)))
-    (if (i32.and
-    (i32.eq (i32.load8_u (local.get $i)) (i32.const 0xC7))
-    (i32.and
-    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 1))) (i32.const 0x44))
-    (i32.eq (i32.load8_u (i32.add (local.get $i) (i32.const 2))) (i32.const 0x24))))
-    (then
-    (if (i32.eq (i32.load (i32.add (local.get $i) (i32.const 4))) (local.get $arg1))
-    (then
-    (if (i32.and
-    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 8))) (i32.const 0xC7))
-    (i32.eq (i32.load8_u (i32.sub (local.get $i) (i32.const 7))) (i32.const 0x44)))
-    (then
-    (local.set $tmp (i32.load (i32.sub (local.get $i) (i32.const 4))))
-    (if (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
-    (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
-    (then
-    (global.set $wndproc_addr2 (local.get $tmp))
-    (br $found2)))))))))
-    (local.set $i (i32.add (local.get $i) (i32.const 1)))
-    (br $scan2)))))))
-    ;; Allocate HWND; first top-level window becomes main_hwnd
-    (if (i32.eqz (global.get $main_hwnd))
-    (then (global.set $main_hwnd (global.get $next_hwnd))))
-    ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
-    (drop (call $host_create_window
-    (global.get $next_hwnd)                                    ;; hwnd
-    (local.get $arg3)                                           ;; style
-    (local.get $arg4)                                           ;; x
-    (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
-    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
-    (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
-    (call $g2w (local.get $arg2))                               ;; title_ptr (WASM ptr)
-    (call $gl32 (i32.add (global.get $esp) (i32.const 40)))    ;; menu (resource ID or HMENU)
-    ))
-    ;; Pass className to host so it knows the window type (e.g. "Edit")
-    (call $host_set_window_class (global.get $next_hwnd) (call $g2w (local.get $arg1)))
-    ;; Register hwnd→wndproc in window table, preferring the class table over
-    ;; legacy global WndProc guesses.
-    (local.set $tmp (call $class_table_lookup (call $class_wide_name_key (local.get $arg1))))
-    (if (local.get $tmp)
-      (then (call $wnd_table_set (global.get $next_hwnd) (local.get $tmp)))
-      (else
-        (if (global.get $wndproc_addr)
-          (then (call $wnd_table_set (global.get $next_hwnd) (global.get $wndproc_addr))))))
-    ;; Flag to deliver WM_CREATE + WM_SIZE as first messages in GetMessageA
-    (if (i32.eq (global.get $next_hwnd) (global.get $main_hwnd))
-    (then
-    (global.set $pending_wm_create (i32.const 2))
-    ;; Store window outer dimensions
-    (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    ;; Non-client height: borders(3+3) + caption(19) = 25, plus menu(20) if present
-    (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
-      (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 40))) (i32.const 0))))
-    ;; Client = outer - borders(6w) - nc_height
-    (global.set $pending_wm_size (i32.or
-    (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-    (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16)))))
-    (else
-    ;; Child window: flag pending WM_CREATE + WM_SIZE (delivered before main WM_SIZE)
-    (global.set $pending_child_create (global.get $next_hwnd))
-    (global.set $pending_child_size (i32.or
-      (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 28))) (i32.const 0xFFFF))
-      (i32.shl (call $gl32 (i32.add (global.get $esp) (i32.const 32))) (i32.const 16))))
-    (global.set $pending_child_size_hwnd (global.get $next_hwnd))
-    (call $paint_flag_set_inv (global.get $next_hwnd))
-    ))
-    ;; Store parent hwnd (hWndParent = [esp+36])
-    (call $wnd_set_parent (global.get $next_hwnd)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
-    (global.set $eax (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
+    (local $class_a i32) (local $title_a i32)
+    (local.set $class_a (local.get $arg1))
+    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+      (then
+        (local.set $class_a (call $heap_alloc (i32.const 256)))
+        (if (local.get $class_a)
+          (then
+            (drop (call $wide_to_ansi (local.get $arg1) (local.get $class_a) (i32.const 256)))))))
+    (local.set $title_a (local.get $arg2))
+    (if (i32.ge_u (local.get $arg2) (i32.const 0x10000))
+      (then
+        (local.set $title_a (call $heap_alloc (i32.const 512)))
+        (if (local.get $title_a)
+          (then
+            (drop (call $wide_to_ansi (local.get $arg2) (local.get $title_a) (i32.const 512)))))))
+    (call $handle_CreateWindowExA
+      (local.get $arg0)
+      (local.get $class_a)
+      (local.get $title_a)
+      (local.get $arg3)
+      (local.get $arg4)
+      (local.get $name_ptr))
+    (return)
   )
 
   ;; 287: RegisterClassW
@@ -4845,6 +4755,10 @@
 
   ;; 381: SetWindowsHookExW — return fake handle, 4 args stdcall
   (func $handle_SetWindowsHookExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; SetWindowsHookExW(idHook, lpfn, hMod, dwThreadId)
+    ;; Save CBT hook proc (WH_CBT = 5) for CreateWindowEx* to call.
+    (if (i32.eq (local.get $arg0) (i32.const 5))
+      (then (global.set $cbt_hook_proc (local.get $arg1))))
     (global.set $eax (i32.const 0xBEEF))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -7598,16 +7512,22 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 614: CallWindowProcW — STUB: unimplemented
+  ;; 614: CallWindowProcW — same ABI as CallWindowProcA
   (func $handle_CallWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_CallWindowProcA
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $arg3)
+      (local.get $arg4)
+      (local.get $name_ptr))
   )
 
   ;; 793: CallWindowProcA — call a WndProc with (hwnd, msg, wParam, lParam)
   ;; Stack on entry: [ret][lpPrevWndFunc][hWnd][Msg][wParam][lParam]
   ;; We set up a call frame to the WndProc so it returns to our caller.
   (func $handle_CallWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $ctrl_class i32)
+    (local $ret_addr i32) (local $ctrl_class i32) (local $thunk_idx i32) (local $thunk_api i32)
     ;; NULL wndproc — route TreeView messages or return 0
     (if (i32.eqz (local.get $arg0))
       (then
@@ -7660,6 +7580,35 @@
               (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    ;; DefWindowProc import thunks are common saved "previous wndprocs" for
+    ;; MFC subclasses. Dispatch them directly instead of recursively entering
+    ;; the generic thunk path from inside CallWindowProc*.
+    (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))
+      (then
+        (local.set $thunk_idx
+          (i32.div_u (i32.sub (local.get $arg0) (global.get $thunk_guest_base)) (i32.const 8)))
+        (local.set $thunk_api
+          (i32.load (i32.add
+            (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))
+            (i32.const 4))))
+        (if (i32.or (i32.eq (local.get $thunk_api) (i32.const 98))
+                    (i32.eq (local.get $thunk_api) (i32.const 99)))
+          (then
+            ;; Skip lpPrevWndFunc; DefWindowProc's own stdcall cleanup then
+            ;; consumes ret+hWnd+Msg+wParam+lParam = the full CallWindowProc
+            ;; frame size.
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+            (if (i32.eq (local.get $thunk_api) (i32.const 98))
+              (then
+                (call $handle_DefWindowProcA
+                  (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+                  (i32.const 0) (local.get $name_ptr)))
+              (else
+                (call $handle_DefWindowProcW
+                  (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+                  (i32.const 0) (local.get $name_ptr))))
+            (return)))))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)
     (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
                  (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))

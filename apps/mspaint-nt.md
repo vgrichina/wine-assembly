@@ -13,34 +13,37 @@ real handlers for:
 
 - `RegisterWindowMessageW`
 - `CreateFontIndirectW`
+- `SetWindowsHookExW` for `WH_CBT`
+- `CallWindowProcW`
 
 Current focused run:
 
 ```sh
-node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=150 --batch-size=50000 --no-close --quiet-blocks --no-build --png=/private/tmp/mspaint-nt-auto-2.png
+node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=40 --batch-size=1000 --no-close --quiet-api --quiet-blocks --no-build --png=/private/tmp/mspaint-nt-defproc-special.png
 ```
 
 Result: MFC42U and MSVCRT `DllMain` both return success, the app reaches main
-window creation (`hwnd=0x10001`, title `"P"`, size `275x400`), then stalls
-before the window becomes visible.
+window creation (`hwnd=0x10001`, title `"Paint"`, size `275x400`) and creates
+the first child window (`hwnd=0x10002`) after MFC's Unicode CBT hook attaches.
+The old `EIP=0x0110d4fe` jump into MFC42U `.rdata` is no longer the first
+failure.
 
 ## Current Blocker
 
-Execution stops at `EIP=0x0110d4fe`, which is inside relocated MFC42U `.rdata`,
-not executable code. The immediate bad call is an MFC virtual dispatch through a
-heap-looking object:
+After child creation and two `SetWindowText("P")` calls, the run enters a long
+synchronous path that grows the Node/V8 heap until the host process OOMs. This
+happens even with `--quiet-api`, so it is not console-output pressure.
 
-- `ECX=0x011b157c`
-- `[ECX]=0x011b1438`
-- `[0x011b1438 + 0xa0] = 0x0110d4fe`
+The next useful work is to bound that path with hit counters or a targeted
+breakpoint around the post-child-create MFC window/message flow and find the
+repeated EIP or translated-code growth source.
 
-That means MFC is treating a structure as an object/vtable and jumping into data.
-The next useful work is to trace the Unicode window/message path that feeds this
-object into the MFC wrapper. The likely suspects are stale `CreateWindowExW`
-behavior versus the richer ANSI path, or a `SendMessageW`/window-map mismatch
-around MFC `CWnd` lookup.
+Important detail: MFC chains to a saved previous wndproc through
+`CallWindowProcW`; in this run the saved proc is the import thunk for
+`DefWindowProcW` (`0x08103618`, API id 99). `CallWindowProcA/W` now handle
+default-proc thunks directly and leave ESP as a normal `CallWindowProc` return.
 
-## Previous Blocker
+## Previous Blockers
 
 MFC42U's `DllMain` checks `GetVersion()` and refuses to initialize on anything
 other than Windows NT. The emulator used to report `$winver = 0xC0000A04`
@@ -49,5 +52,9 @@ other than Windows NT. The emulator used to report `$winver = 0xC0000A04`
 > "This application or DLL can not be loaded on Windows 95 or on Windows 3.1."
 
 and returned 0 from `DllMain`. The process then limped into CRT/MFC setup and
-threw `CMemoryException` through `_CxxThrowException`. This is no longer the
-first failure for MFC42U apps.
+threw `CMemoryException` through `_CxxThrowException`.
+
+The next blocker after that was a bad virtual call to `0x0110d4fe` inside
+relocated MFC42U `.rdata`. That was caused by skipping MFC's Unicode `WH_CBT`
+attach hook; recording `SetWindowsHookExW(WH_CBT, ...)` lets the hook attach
+the `CWnd` before `WM_CREATE`, moving execution past that point.
