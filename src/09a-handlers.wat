@@ -3784,9 +3784,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 294: SetWindowTextW(hwnd, lpString) → BOOL — delegate to host
+  ;; 294: SetWindowTextW(hwnd, lpString) → BOOL
   (func $handle_SetWindowTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $host_set_window_text (local.get $arg0) (call $g2w (local.get $arg1)))
+    (local $text_gp i32) (local $text_wa i32) (local $len i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+      (then
+        (local.set $text_gp (call $heap_alloc
+          (i32.add (call $guest_wcslen (local.get $arg1)) (i32.const 1))))
+        (if (local.get $text_gp)
+          (then
+            (local.set $len (call $wide_to_ansi
+              (local.get $arg1)
+              (local.get $text_gp)
+              (i32.add (call $guest_wcslen (local.get $arg1)) (i32.const 1))))
+            (local.set $text_wa (call $g2w (local.get $text_gp)))))))
+    ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
+    ;; WAT-native controls store byte strings, so pass the converted buffer.
+    (if (call $ctrl_table_get_class (local.get $arg0))
+      (then
+        (global.set $eax (call $control_wndproc_dispatch
+          (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
+        (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
+        (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $title_table_set (local.get $arg0) (local.get $text_wa) (local.get $len))
+    (call $nc_flags_set (local.get $arg0) (i32.const 1))
+    (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
+    (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

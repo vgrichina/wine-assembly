@@ -15,6 +15,7 @@ real handlers for:
 - `CreateFontIndirectW`
 - `SetWindowsHookExW` for `WH_CBT`
 - `CallWindowProcW`
+- `SetWindowTextW` title/control state parity with the ANSI path
 
 Current focused run:
 
@@ -25,14 +26,17 @@ node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=40 --batch-siz
 Result: MFC42U and MSVCRT `DllMain` both return success, the app reaches main
 window creation (`hwnd=0x10001`, title `"Paint"`, size `275x400`) and creates
 the first child window (`hwnd=0x10002`) after MFC's Unicode CBT hook attaches.
-The old `EIP=0x0110d4fe` jump into MFC42U `.rdata` is no longer the first
-failure.
+`SetWindowTextW` now converts the wide title before feeding the host/title
+tables, so the two startup title updates are `"Paint"` rather than the old
+one-byte `"P"` truncation. The old `EIP=0x0110d4fe` jump into MFC42U `.rdata`
+is no longer the first failure.
 
 ## Current Blocker
 
-After child creation and two `SetWindowText("P")` calls, the run enters a long
-synchronous path that grows the Node/V8 heap until the host process OOMs. This
-happens even with `--quiet-api`, so it is not console-output pressure.
+After child creation and the two top-level `SetWindowTextW("Paint")` calls, the
+run enters a long synchronous path that grows the Node/V8 heap until the host
+process OOMs. This happens even with `--quiet-api`, so it is not console-output
+pressure.
 
 The next useful work is to bound that path with hit counters or a targeted
 breakpoint around the post-child-create MFC window/message flow and find the
