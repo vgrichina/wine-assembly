@@ -25,6 +25,7 @@
   ;;   +3120  viewport offset: dvOriginX,dvOriginY    (8)          → ends 3128
   ;;   +3136  matrix multiply scratch                  (64)
   ;;   +3200  indexed-draw TL vertex scratch           (96)
+  ;;   +3296  execute-buffer clipped TL scratch         (64)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
   (global $D3DIM_OFF_CUR_VP    i32 (i32.const 2816))
@@ -1377,6 +1378,48 @@
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $flp))))))
 
+  (func $d3dim_interp_tl_vertex (param $a i32) (param $b i32) (param $out i32)
+    (local $t f32) (local $av f32) (local $bv f32)
+    ;; Approximate homogeneous near-plane clipping in TL space. rhw is 1/w;
+    ;; crossing through <=0 produces the giant screen-space bands seen in
+    ;; D3DRM Globe. Intersect edges at a tiny positive rhw.
+    (local.set $t
+      (f32.div
+        (f32.sub (f32.const 0.05) (f32.load (i32.add (local.get $a) (i32.const 12))))
+        (f32.sub (f32.load (i32.add (local.get $b) (i32.const 12)))
+                 (f32.load (i32.add (local.get $a) (i32.const 12))))))
+    (local.set $av (f32.load (local.get $a)))
+    (local.set $bv (f32.load (local.get $b)))
+    (f32.store (local.get $out) (f32.add (local.get $av) (f32.mul (f32.sub (local.get $bv) (local.get $av)) (local.get $t))))
+    (local.set $av (f32.load (i32.add (local.get $a) (i32.const 4))))
+    (local.set $bv (f32.load (i32.add (local.get $b) (i32.const 4))))
+    (f32.store (i32.add (local.get $out) (i32.const 4))
+      (f32.add (local.get $av) (f32.mul (f32.sub (local.get $bv) (local.get $av)) (local.get $t))))
+    (local.set $av (f32.load (i32.add (local.get $a) (i32.const 8))))
+    (local.set $bv (f32.load (i32.add (local.get $b) (i32.const 8))))
+    (f32.store (i32.add (local.get $out) (i32.const 8))
+      (f32.add (local.get $av) (f32.mul (f32.sub (local.get $bv) (local.get $av)) (local.get $t))))
+    (f32.store (i32.add (local.get $out) (i32.const 12)) (f32.const 0.05))
+    (i32.store (i32.add (local.get $out) (i32.const 16)) (i32.load (i32.add (local.get $a) (i32.const 16))))
+    (i32.store (i32.add (local.get $out) (i32.const 20)) (i32.load (i32.add (local.get $a) (i32.const 20))))
+    (i32.store (i32.add (local.get $out) (i32.const 24)) (i32.load (i32.add (local.get $a) (i32.const 24))))
+    (i32.store (i32.add (local.get $out) (i32.const 28)) (i32.load (i32.add (local.get $a) (i32.const 28)))))
+
+  (func $d3dim_draw_tl_triangle
+    (param $this i32) (param $rt i32) (param $use_z i32)
+    (param $v0 i32) (param $v1 i32) (param $v2 i32)
+    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z)
+      (i32.trunc_f32_s (f32.load (local.get $v0)))
+      (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+      (f32.load (i32.add (local.get $v0) (i32.const 8)))
+      (i32.trunc_f32_s (f32.load (local.get $v1)))
+      (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+      (f32.load (i32.add (local.get $v1) (i32.const 8)))
+      (i32.trunc_f32_s (f32.load (local.get $v2)))
+      (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+      (f32.load (i32.add (local.get $v2) (i32.const 8)))
+      (i32.load (i32.add (local.get $v0) (i32.const 16)))))
+
   ;; ── Execute-buffer triangle rasterizer ─────────────────────────
   ;; Walks wCount D3DTRIANGLE records (8 bytes each: u16 v1,v2,v3,flags) and
   ;; rasterizes each one by indexing into the vertex area of the exec buffer.
@@ -1388,6 +1431,8 @@
     (local $rt i32) (local $vbase i32) (local $i i32)
     (local $iv0 i32) (local $iv1 i32) (local $iv2 i32)
     (local $v0 i32) (local $v1 i32) (local $v2 i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $pos i32)
+    (local $state i32) (local $sw i32) (local $c0 i32) (local $c1 i32)
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
@@ -1401,17 +1446,74 @@
       (local.set $v0 (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))))
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
-      (call $d3dim_draw_tri_culled (local.get $dev_this) (local.get $rt) (i32.const 1)
-        (i32.trunc_f32_s (f32.load (local.get $v0)))
-        (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
-        (f32.load (i32.add (local.get $v0) (i32.const 8)))
-        (i32.trunc_f32_s (f32.load (local.get $v1)))
-        (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
-        (f32.load (i32.add (local.get $v1) (i32.const 8)))
-        (i32.trunc_f32_s (f32.load (local.get $v2)))
-        (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
-        (f32.load (i32.add (local.get $v2) (i32.const 8)))
-        (i32.load (i32.add (local.get $v0) (i32.const 16))))
+      (local.set $p0 (f32.gt (f32.load (i32.add (local.get $v0) (i32.const 12))) (f32.const 0.0)))
+      (local.set $p1 (f32.gt (f32.load (i32.add (local.get $v1) (i32.const 12))) (f32.const 0.0)))
+      (local.set $p2 (f32.gt (f32.load (i32.add (local.get $v2) (i32.const 12))) (f32.const 0.0)))
+      (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
+      (if (i32.eqz (local.get $pos)) (then
+        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)))
+      (if (i32.eq (local.get $pos) (i32.const 3)) (then
+        (call $d3dim_draw_tl_triangle
+          (local.get $dev_this) (local.get $rt) (i32.const 1)
+          (local.get $v0) (local.get $v1) (local.get $v2))))
+      (if (i32.ne (local.get $pos) (i32.const 3)) (then
+        (local.set $state (call $d3ddev_state (local.get $dev_this)))
+        (if (i32.eqz (local.get $state)) (then
+          (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $lp)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
+        (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
+        (if (i32.eq (local.get $pos) (i32.const 1)) (then
+          (if (local.get $p0) (then
+            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v0) (local.get $c0) (local.get $c1))))
+          (if (local.get $p1) (then
+            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v1) (local.get $c0) (local.get $c1))))
+          (if (local.get $p2) (then
+            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v2) (local.get $c0) (local.get $c1))))))
+        (if (i32.eq (local.get $pos) (i32.const 2)) (then
+          (if (i32.eqz (local.get $p0)) (then
+            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v1) (local.get $v2) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v1) (local.get $c1) (local.get $c0))))
+          (if (i32.eqz (local.get $p1)) (then
+            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v2) (local.get $v0) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v2) (local.get $c1) (local.get $c0))))
+          (if (i32.eqz (local.get $p2)) (then
+            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c0))
+            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v0) (local.get $v1) (local.get $c1))
+            (call $d3dim_draw_tl_triangle
+              (local.get $dev_this) (local.get $rt) (i32.const 1)
+              (local.get $v0) (local.get $c1) (local.get $c0))))))))
       (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))

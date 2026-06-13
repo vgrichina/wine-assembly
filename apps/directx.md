@@ -325,6 +325,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - D3DIM material/background state is now stored across legacy material and viewport interfaces; viewport clears use the app's background material instead of leaving stale setup pixels.
 - D3DRM/Globe execute buffers keep an original-source side cache for in-place `PROCESSVERTICES`, avoiding repeated transforms of TL output as source vertices. Focused Globe captures are nonblank now, but the software rasterizer still needs proper clipping, depth, culling parity, and texture sampling.
 - Execute-buffer triangles can now consult the cleared z-buffer when `D3DRENDERSTATE_ZENABLE` is set. This is intentionally scoped away from indexed draws for now because Boids depends on the older non-depth path until per-pixel interpolation is better.
+- Execute-buffer triangles crossing through non-positive `rhw` are now clipped in TL space before rasterization. This suppresses the worst full-viewport Globe bands, but Globe still needs a real homogeneous clipper/projection fix to become recognizable.
 
 ### Recent changes (2026-06-11)
 
