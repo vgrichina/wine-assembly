@@ -418,6 +418,7 @@
                (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
       (call $g2w (local.get $arg2))
       (i32.const 64))
+    (call $d3dim_refresh_bound_matrix (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

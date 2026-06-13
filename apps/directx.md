@@ -316,16 +316,16 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
 | tunnel / twist | **PASS** | |
 | Viewer / Bellhop | **PASS** | |
-| Globe | warn (blank in short harness) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; longer focused runs emit shaded geometry, but clipping/depth/culling/texture behavior is still visibly wrong |
+| Globe | warn (blank in short harness) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; longer focused runs now show a shaded faceted globe, but depth/culling/texture behavior is still incomplete |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
 
 ### Recent changes (2026-06-12)
 
 - `IDirect3DDevice{2,3,7}::DrawIndexedPrimitive` now has a minimal fixed-pipeline triangle path for D3DVERTEX/LVERTEX/TLVERTEX indexed geometry, enough for Boids to render after real viewport clears.
 - D3DIM material/background state is now stored across legacy material and viewport interfaces; viewport clears use the app's background material instead of leaving stale setup pixels.
-- D3DRM/Globe execute buffers keep an original-source side cache for in-place `PROCESSVERTICES`, avoiding repeated transforms of TL output as source vertices. Focused Globe captures are nonblank now, but the software rasterizer still needs proper clipping, depth, culling parity, and texture sampling.
+- D3DRM/Globe execute buffers keep an original-source side cache for in-place `PROCESSVERTICES`, avoiding repeated transforms of TL output as source vertices. Legacy v1 `STATETRANSFORM` matrix handles are now tracked so later `IDirect3DDevice::SetMatrix` calls refresh the bound world/view/projection slots; focused Globe captures now render a recognizable faceted sphere.
 - Execute-buffer triangles can now consult the cleared z-buffer when `D3DRENDERSTATE_ZENABLE` is set. This is intentionally scoped away from indexed draws for now because Boids depends on the older non-depth path until per-pixel interpolation is better.
-- Execute-buffer triangles crossing through non-positive `rhw` are now clipped in TL space before rasterization. This suppresses the worst full-viewport Globe bands, but Globe still needs a real homogeneous clipper/projection fix to become recognizable.
+- Execute-buffer triangles crossing through non-positive `rhw` are now clipped in TL space before rasterization. This suppresses the worst full-viewport Globe bands; a real homogeneous clipper, culling parity, and texture sampling are still future work.
 
 ### Recent changes (2026-06-11)
 

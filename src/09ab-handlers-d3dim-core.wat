@@ -26,6 +26,7 @@
   ;;   +3136  matrix multiply scratch                  (64)
   ;;   +3200  indexed-draw TL vertex scratch           (96)
   ;;   +3296  execute-buffer clipped TL scratch         (64)
+  ;;   +3360  v1 STATETRANSFORM matrix handles W,V,P    (12)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
   (global $D3DIM_OFF_CUR_VP    i32 (i32.const 2816))
@@ -36,6 +37,7 @@
   (global $D3DIM_OFF_VP_RECT   i32 (i32.const 3088))
   (global $D3DIM_OFF_VP_SCALE  i32 (i32.const 3104))
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
+  (global $D3DIM_OFF_XFORM_HANDLES i32 (i32.const 3360))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
   ;; WAT-private scratch area so they cannot collide with low system strings
@@ -246,8 +248,52 @@
       (local.get $src_wa)
       (i32.const 64)))
 
+  (func $d3dim_bind_transform_handle (param $this i32) (param $xtype i32) (param $handle i32)
+    (local $state i32) (local $sw i32) (local $slot i32)
+    (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
+    (if (i32.ge_u (local.get $slot) (i32.const 3)) (then (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (i32.store
+      (i32.add (local.get $sw)
+        (i32.add (global.get $D3DIM_OFF_XFORM_HANDLES)
+          (i32.mul (local.get $slot) (i32.const 4))))
+      (local.get $handle)))
+
+  (func $d3dim_refresh_bound_matrix (param $this i32) (param $handle i32)
+    (local $state i32) (local $sw i32) (local $slot i32) (local $mat_wa i32)
+    (if (i32.or (i32.lt_u (local.get $handle) (i32.const 1))
+                (i32.gt_u (local.get $handle) (global.get $D3DIM_MATRIX_MAX)))
+      (then (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $mat_wa
+      (i32.add (global.get $D3DIM_MATRICES)
+        (i32.mul (i32.sub (local.get $handle) (i32.const 1)) (i32.const 64))))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $slot) (i32.const 3)))
+      (if (i32.eq
+            (i32.load
+              (i32.add (local.get $sw)
+                (i32.add (global.get $D3DIM_OFF_XFORM_HANDLES)
+                  (i32.mul (local.get $slot) (i32.const 4)))))
+            (local.get $handle))
+        (then
+          (call $memcpy
+            (call $g2w
+              (i32.add (local.get $state)
+                (i32.mul (local.get $slot) (i32.const 64))))
+            (local.get $mat_wa)
+            (i32.const 64))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br 0))))
+
   (func $d3dim_set_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
     (if (local.get $lpmat) (then
+      (call $d3dim_bind_transform_handle (local.get $this) (local.get $xtype) (i32.const 0))
       (call $d3dim_apply_transform (local.get $this) (local.get $xtype)
         (call $g2w (local.get $lpmat)))))
     (global.set $eax (i32.const 0)))
@@ -1772,10 +1818,13 @@
         (then
           (if (i32.and (i32.ge_u (local.get $v) (i32.const 1))
                        (i32.le_u (local.get $v) (global.get $D3DIM_MATRIX_MAX)))
-            (then (call $d3dim_apply_transform
-                    (local.get $dev_this) (local.get $a)
-                    (i32.add (global.get $D3DIM_MATRICES)
-                             (i32.mul (i32.sub (local.get $v) (i32.const 1)) (i32.const 64))))))))
+            (then
+              (call $d3dim_bind_transform_handle
+                (local.get $dev_this) (local.get $a) (local.get $v))
+              (call $d3dim_apply_transform
+                (local.get $dev_this) (local.get $a)
+                (i32.add (global.get $D3DIM_MATRICES)
+                         (i32.mul (i32.sub (local.get $v) (i32.const 1)) (i32.const 64))))))))
       (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
