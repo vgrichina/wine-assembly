@@ -1,10 +1,15 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Status (2026-06-13): 9/9 focused drawing regression
+## Status (2026-06-14): promoted all-EXE smoke + 9/9 focused drawing regression
 
 `test/test-mspaint-draw.js` now passes all 9 checks. The Win98 ANSI build is a
 stable regression target while the NT/MFC42U build is being advanced separately
 in `apps/mspaint-nt.md`.
+
+`test/test-all-exes.js` now gives this build the same representative startup
+budget (`140 x 50000`, raised stuck threshold) and no longer marks it as a
+known-bad render. The general smoke reaches the toolbar, canvas, and color
+palette instead of stopping at the early gray MFC frame.
 
 ## Status (2026-04-26 later²): 8/9 — Tools glyphs render again, tool-click still wipes them
 

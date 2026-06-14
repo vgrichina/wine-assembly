@@ -56,7 +56,9 @@ const TEST_CASES = [
     extraArgs: ['--no-close', '--input=5:0x111:102'] },  // Game > New Game (F2)
   { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire',
     extraArgs: ['--no-close', '--input=5:0x111:1000'] },  // Game > Deal
-  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)', knownBadRender: 'paint canvas/tools are visually broken' },
+  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)',
+    maxBatches: 140, batchSize: 50000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'] },
   { exe: 'test/binaries/nt/mspaint.exe', name: 'MSPaint (NT)' },
   { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel',
     extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
