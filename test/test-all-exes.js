@@ -146,7 +146,7 @@ const TEST_CASES = [
     // Needs enough budget to finish the DDraw/palette splash sequence and
     // expose the title-art surface rather than the initial black frame.
     maxBatches: 3000, extraArgs: ['--no-close', '--quiet-blocks'], timeoutMs: 60000 },
-  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)' },
   { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)',
     // First run prompts for a video-memory test; accept it and wait for the
     // D3DDevice2 render loop to present the logo splash.

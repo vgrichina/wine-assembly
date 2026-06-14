@@ -292,7 +292,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | **AoE** (Age of Empires) | **PASS** — focused 3000-batch all-EXE smoke reaches 800x600 title art | Full scripted path can reach the map with larger budget/input |
 | **RCT** (RollerCoaster Tycoon) | Dialog renders, EndDialog works | Data files (CSG1.DAT etc.) not found via VFS |
 | **Abe's Oddworld demo** | PE load crash | 32MB sizeOfImage overflows WASM memory layout |
-| **AoE2** | Not tested | Likely same issues as AoE1 |
+| **AoE2** | **PASS** — startup/EULA dialog renders in all-EXE smoke | Not advanced to game/menu yet |
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
 | **MCM / MW3** | Partial | MW3 now loads `zbd` data, creates the main window, reaches D3D3 setup, enumerates a 16-bit Z-buffer format, accepts FVF/TLVERTEX `DrawPrimitive` calls, alpha-blends the fade quads, and renders the preview splash with >11K colors under a focused high-instruction smoke. Next blocker: the run spends a long stretch in MW3's own 16bpp pixel-filter loop around `0x526f54`/`0x527075`; performance/acceleration is needed before using a small default budget |
 
@@ -331,6 +331,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - `test-all-exes.js` now promotes MCM with a focused `330 x 5000` smoke and one OK-click input for the first-run video-memory dialog. The resulting splash frame measured 1,487 colors and proves the D3DDevice2 present loop is active.
 - `IDirectDrawSurface::Blt` now handles `DDBLT_KEYSRC` for same-size blits using the source surface's stored color key. This fixes MCM's magenta cursor block without regressing ddex5, FoxBear, or MW3.
 - `test-all-exes.js` now promotes AoE with a focused 3000-batch smoke. The default 80-batch run stopped at a black frame, but the focused budget reaches the full 800x600 title-art surface.
+- `test-all-exes.js` no longer marks AoE2 known-bad: the default smoke renders its EULA dialog correctly. This is startup coverage only, not menu/gameplay coverage.
 
 ### Recent changes (2026-06-12)
 
