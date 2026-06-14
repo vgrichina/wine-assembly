@@ -5,6 +5,21 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-06-14) — first-run dialog accepted; splash smoke promoted
+
+MCM is no longer marked known-bad in the all-EXE smoke list. The harness now accepts the first-run video-memory-test dialog and waits long enough for the post-dialog render loop:
+
+```
+node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE \
+  --max-batches=330 --batch-size=5000 --no-build --verbose \
+  --no-close --quiet-blocks --stuck-after=5000 \
+  --input=60:click:210:153 --png=/private/tmp/mcm-promote-candidate.png
+```
+
+Focused result: `23,894` API calls, `640x480`, `1487` unique colors, top color share `0.78`. The frame shows the Motocross Madness splash while the app is in a D3DDevice2 `BeginScene` / `SetRenderState` / `EndScene` loop with DDraw text and flips. This is a real splash/render-loop smoke, not gameplay coverage yet.
+
+Remaining MCM-specific rendering work: the splash still has a small magenta block near the cursor/logo area, consistent with the previously noted missing color-keyed texture path (`D3DRENDERSTATE_COLORKEYENABLE`). Next useful step is to trace texture load/binding and color-key render state around the first real menu/gameplay transition.
+
 ## Status (2026-04-19, night-3) — winmm aux* stubbed; MCM reaches steady-state main loop
 
 Added minimal stubs for `auxGetNumDevs`, `auxGetDevCapsA`, `auxGetVolume`, `auxSetVolume`, `auxOutMessage` in `src/09a3-handlers-audio.wat`. NumDevs=0, GetDevCaps=BADDEVICEID(2), GetVolume writes 0 and returns NOERROR (MCM probes device 0 even after NumDevs=0; silent success keeps it moving), Set/OutMessage return NOERROR.

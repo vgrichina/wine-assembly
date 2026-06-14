@@ -144,7 +144,12 @@ const TEST_CASES = [
   { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)', knownBadRender: 'known broken visual' },
-  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)',
+    // First run prompts for a video-memory test; accept it and wait for the
+    // D3DDevice2 render loop to present the logo splash.
+    maxBatches: 330, batchSize: 5000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000', '--input=60:click:210:153'],
+    timeoutMs: 150000 },
   { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)',
     // Needs a larger instruction budget to get through MW3's guest 16bpp
     // pixel-filter loop and present the preview splash.
