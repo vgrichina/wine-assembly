@@ -1374,6 +1374,7 @@
     (local $dx i32) (local $dy i32) (local $dw i32) (local $dh i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $bpp i32) (local $bps i32) (local $row i32)
+    (local $ckey i32) (local $col i32)
     (local $drblt_flags i32)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
     (call $host_dx_trace (i32.const 12) (call $dx_slot_of (local.get $dst_entry))
@@ -1456,6 +1457,7 @@
     (local.set $src_entry (call $dx_from_this (local.get $arg2)))
     (local.set $src_dib (i32.load (i32.add (local.get $src_entry) (i32.const 20))))
     (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
+    (local.set $ckey (i32.load (i32.add (local.get $src_entry) (i32.const 24))))
     ;; Parse source rect
     (if (local.get $arg3)
       (then
@@ -1471,6 +1473,63 @@
     (if (i32.and (i32.eq (local.get $dw) (local.get $sw))
                  (i32.eq (local.get $dh) (local.get $sh)))
       (then
+        (if (i32.and
+              (i32.ne (i32.and (local.get $drblt_flags) (i32.const 0x8000)) (i32.const 0))
+              (i32.ne
+                (i32.and (i32.load (i32.add (local.get $src_entry) (i32.const 28))) (i32.const 0x100))
+                (i32.const 0)))
+          (then
+            (local.set $row (i32.const 0))
+            (block $ckblit_done (loop $ckblit_row
+              (br_if $ckblit_done (i32.ge_u (local.get $row) (local.get $dh)))
+              (local.set $src_w (i32.const 0))
+              (block $ckblit_col_done (loop $ckblit_col
+                (br_if $ckblit_col_done (i32.ge_u (local.get $src_w) (local.get $dw)))
+                (if (i32.eq (local.get $bps) (i32.const 1))
+                  (then
+                    (local.set $col (i32.load8_u
+                      (i32.add (local.get $src_dib)
+                        (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
+                                 (i32.add (local.get $sx) (local.get $src_w))))))
+                    (if (i32.ne (local.get $col) (local.get $ckey))
+                      (then (i32.store8
+                        (i32.add (local.get $dst_dib)
+                          (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                                   (i32.add (local.get $dx) (local.get $src_w))))
+                        (local.get $col)))))
+                  (else (if (i32.eq (local.get $bps) (i32.const 2))
+                    (then
+                      (local.set $col (i32.load16_u
+                        (i32.add (local.get $src_dib)
+                          (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
+                                   (i32.mul (i32.add (local.get $sx) (local.get $src_w)) (i32.const 2))))))
+                      (if (i32.ne (local.get $col) (local.get $ckey))
+                        (then (i32.store16
+                          (i32.add (local.get $dst_dib)
+                            (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                                     (i32.mul (i32.add (local.get $dx) (local.get $src_w)) (i32.const 2))))
+                          (local.get $col)))))
+                    (else
+                      (local.set $col (i32.load
+                        (i32.add (local.get $src_dib)
+                          (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
+                                   (i32.mul (i32.add (local.get $sx) (local.get $src_w)) (i32.const 4))))))
+                      (if (i32.ne (local.get $col) (local.get $ckey))
+                        (then (i32.store
+                          (i32.add (local.get $dst_dib)
+                            (i32.add (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                                     (i32.mul (i32.add (local.get $dx) (local.get $src_w)) (i32.const 4))))
+                          (local.get $col))))))))
+                (local.set $src_w (i32.add (local.get $src_w) (i32.const 1)))
+                (br $ckblit_col)))
+              (local.set $row (i32.add (local.get $row) (i32.const 1)))
+              (br $ckblit_row)))
+            ;; If dest is primary, present
+            (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
+              (then (call $dx_present (local.get $dst_entry))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+            (return)))
         (local.set $row (i32.const 0))
         (block $blit_done (loop $blit_row
           (br_if $blit_done (i32.ge_u (local.get $row) (local.get $dh)))

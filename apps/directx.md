@@ -318,7 +318,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | Viewer / Bellhop | **PASS** | |
 | Globe | **PASS** (focused 7000-batch harness) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; needs a longer smoke budget to get through D3DRM setup, then shows a shaded faceted globe. Depth/culling/texture behavior is still incomplete |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
-| Motocross Madness | **PASS** (1487 colors) | Harness accepts the video-memory-test dialog and reaches the D3DDevice2 splash/render loop. Still not gameplay-complete; magenta color-key artifact remains |
+| Motocross Madness | **PASS** (1488 colors) | Harness accepts the video-memory-test dialog and reaches the D3DDevice2 splash/render loop. Still not gameplay-complete |
 
 ### Recent changes (2026-06-14)
 
@@ -329,6 +329,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - TL/FVF flat triangles now respect `D3DRENDERSTATE_ALPHABLENDENABLE` for source-alpha fade quads on 16/32bpp render targets. A `--trace-dx` DP3 probe dumps FVF, caller, and the first few TL vertices.
 - `test-all-exes.js` gives MW3 a focused `250 x 100000` instruction smoke with a raised stuck threshold. That reaches the preview splash (`/private/tmp/mw3-250x100k.png` measured 11,154 colors) instead of the old single-color frame. `150 x 100000` and `200 x 100000` still stop in the pixel-filter loop with the old 2 KB single-color PNG.
 - `test-all-exes.js` now promotes MCM with a focused `330 x 5000` smoke and one OK-click input for the first-run video-memory dialog. The resulting splash frame measured 1,487 colors and proves the D3DDevice2 present loop is active.
+- `IDirectDrawSurface::Blt` now handles `DDBLT_KEYSRC` for same-size blits using the source surface's stored color key. This fixes MCM's magenta cursor block without regressing ddex5, FoxBear, or MW3.
 
 ### Recent changes (2026-06-12)
 

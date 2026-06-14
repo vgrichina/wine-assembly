@@ -18,7 +18,7 @@ node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE \
 
 Focused result: `23,894` API calls, `640x480`, `1487` unique colors, top color share `0.78`. The frame shows the Motocross Madness splash while the app is in a D3DDevice2 `BeginScene` / `SetRenderState` / `EndScene` loop with DDraw text and flips. This is a real splash/render-loop smoke, not gameplay coverage yet.
 
-Remaining MCM-specific rendering work: the splash still has a small magenta block near the cursor/logo area, consistent with the previously noted missing color-keyed texture path (`D3DRENDERSTATE_COLORKEYENABLE`). Next useful step is to trace texture load/binding and color-key render state around the first real menu/gameplay transition.
+Follow-up fix: plain `IDirectDrawSurface::Blt` now honors `DDBLT_KEYSRC` for same-size source blits when the source surface has a stored color key. That removes the magenta cursor block on the splash; the focused smoke now measures `1488` colors. Next useful step is still real menu/gameplay coverage and texture/D3D color-key tracing beyond the splash.
 
 ## Status (2026-04-19, night-3) — winmm aux* stubbed; MCM reaches steady-state main loop
 
