@@ -351,7 +351,8 @@
               (then (local.set $detected_class (i32.const 7))))))
         (if (local.get $detected_class)
           (then
-            ;; System Edit/Button/Static class → WAT-native control
+            ;; System control class → WAT-native control. WM_CREATE is
+            ;; delivered below after the real CREATESTRUCT has been built.
             (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CTRL_NATIVE))
             (local.set $tmp (global.get $WNDPROC_CTRL_NATIVE))
             (local.set $v (call $wnd_table_find (local.get $hwnd)))
@@ -373,9 +374,7 @@
                 (i32.and
                   (i32.eq (local.get $detected_class) (i32.const 5))
                   (i32.ne (i32.and (local.get $arg3) (i32.const 0x3))
-                          (i32.const 1))))) ;; CBS_SIMPLE keeps full height
-            (drop (call $wat_wndproc_dispatch
-              (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (i32.const 0)))) ;; WM_CREATE
+                          (i32.const 1)))))) ;; CBS_SIMPLE keeps full height
           (else
             (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
@@ -584,10 +583,23 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
+    ;; Built-in WAT-native child controls are not app-dispatched windows.
+    ;; Initialize them synchronously with the real CREATESTRUCT and suppress
+    ;; the queued child WM_CREATE; otherwise apps can populate the control
+    ;; before the message loop and then lose that state when the duplicate
+    ;; WM_CREATE is later dispatched (DX Palette's listbox does this).
+    (if (i32.eq (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE))
+      (then
+        (global.set $pending_child_create (i32.const 0))
+        (drop (call $wat_wndproc_dispatch
+          (local.get $hwnd) (i32.const 0x0001) (i32.const 0)
+          (i32.add (global.get $image_base) (i32.const 0x100))))))
     ;; If a CBT hook is installed, fire HCBT_CREATEWND for this child so MFC
     ;; (and anything else using per-hwnd subclassing) can swap in its real
     ;; wndproc via SetWindowLongA before we start delivering messages.
-    (if (global.get $cbt_hook_proc)
+    (if (i32.and
+          (global.get $cbt_hook_proc)
+          (i32.ne (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE)))
     (then
     ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
     (global.set $child_cbt_saved_hwnd (local.get $hwnd))

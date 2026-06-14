@@ -310,7 +310,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | flip2d | **PASS** (632 colors, spinning cube + FPS) | |
 | flip3dtl | **PASS** (628 colors, HAL-marked cube) | DDSURF2 vtable (18e2278) + back-face culling (f5162f6) |
 | stretch / boids | **PASS** | Boids now reaches real indexed D3DIM geometry after viewport clears |
-| palette | warn | Known broken visual in harness |
+| palette | **PASS** (637 colors) | DirectDraw Palette Test window renders its populated native listbox |
 | Donut | **PASS** (56 colors, red torus) | Primary-resize (e8e579f) |
 | Donuts | **PASS** (Space Donuts splash + menu) | |
 | Wormhole | **PASS** (2 colors) | Preserves initial DIB palette when the app sends an all-black full-table update |
@@ -332,6 +332,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - `IDirectDrawSurface::Blt` now handles `DDBLT_KEYSRC` for same-size blits using the source surface's stored color key. This fixes MCM's magenta cursor block without regressing ddex5, FoxBear, or MW3.
 - `test-all-exes.js` now promotes AoE with a focused 3000-batch smoke. The default 80-batch run stopped at a black frame, but the focused budget reaches the full 800x600 title-art surface.
 - `test-all-exes.js` no longer marks AoE2 known-bad: the default smoke renders its EULA dialog correctly. This is startup coverage only, not menu/gameplay coverage.
+- `CreateWindowExA` now initializes WAT-native child controls once, with the real `CREATESTRUCT`, instead of sending an early null `WM_CREATE` and then queuing a duplicate child `WM_CREATE`. This keeps DX5 Palette's listbox rows from being wiped after the app populates them before entering the message loop; the sample is no longer marked known-bad.
 
 ### Recent changes (2026-06-12)
 

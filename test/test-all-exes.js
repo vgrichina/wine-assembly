@@ -167,7 +167,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/ddex4.exe', name: 'DX5 DDraw Sample 4 (ddex4)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)', maxBatches: 500 },
   { exe: 'test/binaries/dx-sdk/bin/flip2d.exe', name: 'DX5 Flip2D' },
-  { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette', knownBadRender: 'known broken visual' },
+  { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette' },
   { exe: 'test/binaries/dx-sdk/bin/stretch.exe', name: 'DX5 Stretch' },
   { exe: 'test/binaries/dx-sdk/bin/tunnel.exe', name: 'DX5 D3DIM Tunnel (DrawPrimitive)' },
   { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist' },
