@@ -6,6 +6,11 @@
 **Data files:** `test/binaries/shareware/aoe/aoe_ex/data/` — sounds.drs, graphics.drs, Terrain.drs, Border.drs, Interfac.drs
 **Window:** 640×480 (or 800×600), title "Age of Empires"
 
+**Status (2026-06-14):** all-EXE smoke promoted for the title splash.
+
+- The harness now runs `Empires.exe` with `maxBatches: 3000`, `--no-close`, and `--quiet-blocks`, which gets past the initial black frame and writes the 800×600 Age of Empires title-art DirectDraw surface.
+- Focused validation: `node test/run.js --exe=test/binaries/shareware/aoe/aoe_ex/Empires.exe --max-batches=3000 --batch-size=1000 --no-build --quiet-api --quiet-blocks --no-close --png=/private/tmp/aoe-3000.png` produced the full title art. The default 80-batch all-EXE budget still stops at a black startup frame, which was the stale known-bad reason.
+
 **Status (2026-06-01):** CPU/API blockers fixed; the full current worktree reaches the in-game map after the briefing OK click.
 
 - Fixed campaign data corruption from overlapping `REP MOVS` copies. WebAssembly `memory.copy` has memmove semantics, but x86 forward `rep movsb`/`rep movsd` propagates reads through the just-written destination when ranges overlap. AoE's `Empires.dat` inflate/load path depends on that behavior.

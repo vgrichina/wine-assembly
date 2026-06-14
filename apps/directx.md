@@ -289,7 +289,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | Game | Status | Blocker |
 |------|--------|---------|
 | **MARBLES** (Plus! 98) | **Rendering game screen** — 173K API calls, sprites visible | Needs mouse input to start gameplay |
-| **AoE** (Age of Empires) | DD init succeeds, creates surfaces/palette/clipper | `MapViewOfFile` for DRS data files; VFS path resolution |
+| **AoE** (Age of Empires) | **PASS** — focused 3000-batch all-EXE smoke reaches 800x600 title art | Full scripted path can reach the map with larger budget/input |
 | **RCT** (RollerCoaster Tycoon) | Dialog renders, EndDialog works | Data files (CSG1.DAT etc.) not found via VFS |
 | **Abe's Oddworld demo** | PE load crash | 32MB sizeOfImage overflows WASM memory layout |
 | **AoE2** | Not tested | Likely same issues as AoE1 |
@@ -330,6 +330,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - `test-all-exes.js` gives MW3 a focused `250 x 100000` instruction smoke with a raised stuck threshold. That reaches the preview splash (`/private/tmp/mw3-250x100k.png` measured 11,154 colors) instead of the old single-color frame. `150 x 100000` and `200 x 100000` still stop in the pixel-filter loop with the old 2 KB single-color PNG.
 - `test-all-exes.js` now promotes MCM with a focused `330 x 5000` smoke and one OK-click input for the first-run video-memory dialog. The resulting splash frame measured 1,487 colors and proves the D3DDevice2 present loop is active.
 - `IDirectDrawSurface::Blt` now handles `DDBLT_KEYSRC` for same-size blits using the source surface's stored color key. This fixes MCM's magenta cursor block without regressing ddex5, FoxBear, or MW3.
+- `test-all-exes.js` now promotes AoE with a focused 3000-batch smoke. The default 80-batch run stopped at a black frame, but the focused budget reaches the full 800x600 title-art surface.
 
 ### Recent changes (2026-06-12)
 
