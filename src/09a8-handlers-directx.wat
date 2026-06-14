@@ -3688,6 +3688,8 @@
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $vtxType (local.get $arg2))
     (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
+    (call $host_dx_trace (i32.const 15) (local.get $arg1) (local.get $arg2)
+      (local.get $dwVertexCount) (local.get $arg3))
     (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
       (local.get $arg3) (local.get $dwVertexCount))
     (global.set $eax (i32.const 0))

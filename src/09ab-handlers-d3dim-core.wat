@@ -869,6 +869,106 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rlp))))
 
+  ;; Source-alpha blend a rect into an RT DIB. The source color is 0xAARRGGBB.
+  (func $viewport_fill_rect_alpha (param $rt_entry i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $color i32) (param $alpha i32)
+    (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
+    (local $row i32) (local $col i32) (local $row_wa i32) (local $ptr i32)
+    (local $dst16 i32) (local $dst32 i32) (local $ia i32)
+    (local $sr i32) (local $sg i32) (local $sb i32)
+    (local $dr i32) (local $dg i32) (local $db i32)
+    (local $rr i32) (local $gg i32) (local $bb i32) (local $px16 i32)
+    (if (i32.eqz (local.get $alpha)) (then (return)))
+    (if (i32.ge_u (local.get $alpha) (i32.const 255)) (then
+      (call $viewport_fill_rect
+        (local.get $rt_entry) (local.get $x) (local.get $y)
+        (local.get $w) (local.get $h) (local.get $color))
+      (return)))
+    (local.set $sw (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 0xFFFF)))
+    (local.set $sh (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 16)))
+    (local.set $bpp (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 0xFFFF)))
+    (local.set $pitch (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 16)))
+    (local.set $dib_wa (i32.load (i32.add (local.get $rt_entry) (i32.const 20))))
+    (if (i32.eqz (local.get $dib_wa)) (then (return)))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then
+      (local.set $w (i32.add (local.get $w) (local.get $x)))
+      (local.set $x (i32.const 0))))
+    (if (i32.lt_s (local.get $y) (i32.const 0)) (then
+      (local.set $h (i32.add (local.get $h) (local.get $y)))
+      (local.set $y (i32.const 0))))
+    (if (i32.gt_s (i32.add (local.get $x) (local.get $w)) (local.get $sw))
+      (then (local.set $w (i32.sub (local.get $sw) (local.get $x)))))
+    (if (i32.gt_s (i32.add (local.get $y) (local.get $h)) (local.get $sh))
+      (then (local.set $h (i32.sub (local.get $sh) (local.get $y)))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    (if (i32.eq (local.get $bpp) (i32.const 8)) (then
+      (call $viewport_fill_rect
+        (local.get $rt_entry) (local.get $x) (local.get $y)
+        (local.get $w) (local.get $h) (local.get $color))
+      (return)))
+    (local.set $ia (i32.sub (i32.const 255) (local.get $alpha)))
+    (local.set $sr (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xff)))
+    (local.set $sg (i32.and (i32.shr_u (local.get $color) (i32.const 8)) (i32.const 0xff)))
+    (local.set $sb (i32.and (local.get $color) (i32.const 0xff)))
+    (local.set $row (i32.const 0))
+    (block $rdone (loop $rlp
+      (br_if $rdone (i32.ge_s (local.get $row) (local.get $h)))
+      (local.set $row_wa (i32.add (local.get $dib_wa)
+        (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $pitch))))
+      (local.set $col (i32.const 0))
+      (block $cdone (loop $clp
+        (br_if $cdone (i32.ge_s (local.get $col) (local.get $w)))
+        (if (i32.eq (local.get $bpp) (i32.const 32)) (then
+          (local.set $ptr
+            (i32.add (local.get $row_wa)
+              (i32.mul (i32.add (local.get $x) (local.get $col)) (i32.const 4))))
+          (local.set $dst32 (i32.load (local.get $ptr)))
+          (local.set $dr (i32.and (i32.shr_u (local.get $dst32) (i32.const 16)) (i32.const 0xff)))
+          (local.set $dg (i32.and (i32.shr_u (local.get $dst32) (i32.const 8)) (i32.const 0xff)))
+          (local.set $db (i32.and (local.get $dst32) (i32.const 0xff)))
+          (local.set $rr (i32.div_u
+            (i32.add (i32.mul (local.get $sr) (local.get $alpha)) (i32.mul (local.get $dr) (local.get $ia)))
+            (i32.const 255)))
+          (local.set $gg (i32.div_u
+            (i32.add (i32.mul (local.get $sg) (local.get $alpha)) (i32.mul (local.get $dg) (local.get $ia)))
+            (i32.const 255)))
+          (local.set $bb (i32.div_u
+            (i32.add (i32.mul (local.get $sb) (local.get $alpha)) (i32.mul (local.get $db) (local.get $ia)))
+            (i32.const 255)))
+          (i32.store (local.get $ptr)
+            (i32.or
+              (i32.and (local.get $dst32) (i32.const 0xff000000))
+              (i32.or (i32.or
+                (i32.shl (local.get $rr) (i32.const 16))
+                (i32.shl (local.get $gg) (i32.const 8)))
+                (local.get $bb))))))
+        (if (i32.eq (local.get $bpp) (i32.const 16)) (then
+          (local.set $ptr
+            (i32.add (local.get $row_wa)
+              (i32.mul (i32.add (local.get $x) (local.get $col)) (i32.const 2))))
+          (local.set $dst16 (i32.load16_u (local.get $ptr)))
+          (local.set $dr (i32.shl (i32.and (i32.shr_u (local.get $dst16) (i32.const 11)) (i32.const 0x1f)) (i32.const 3)))
+          (local.set $dg (i32.shl (i32.and (i32.shr_u (local.get $dst16) (i32.const 5)) (i32.const 0x3f)) (i32.const 2)))
+          (local.set $db (i32.shl (i32.and (local.get $dst16) (i32.const 0x1f)) (i32.const 3)))
+          (local.set $rr (i32.div_u
+            (i32.add (i32.mul (local.get $sr) (local.get $alpha)) (i32.mul (local.get $dr) (local.get $ia)))
+            (i32.const 255)))
+          (local.set $gg (i32.div_u
+            (i32.add (i32.mul (local.get $sg) (local.get $alpha)) (i32.mul (local.get $dg) (local.get $ia)))
+            (i32.const 255)))
+          (local.set $bb (i32.div_u
+            (i32.add (i32.mul (local.get $sb) (local.get $alpha)) (i32.mul (local.get $db) (local.get $ia)))
+            (i32.const 255)))
+          (local.set $px16 (i32.or (i32.or
+            (i32.shl (i32.and (i32.shr_u (local.get $rr) (i32.const 3)) (i32.const 0x1f)) (i32.const 11))
+            (i32.shl (i32.and (i32.shr_u (local.get $gg) (i32.const 2)) (i32.const 0x3f)) (i32.const 5)))
+            (i32.and (i32.shr_u (local.get $bb) (i32.const 3)) (i32.const 0x1f))))
+          (i32.store16 (local.get $ptr) (local.get $px16))))
+        (local.set $col (i32.add (local.get $col) (i32.const 1)))
+        (br $clp)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rlp))))
+
   (func $viewport_fill_rect_z
     (param $rt_entry i32) (param $zbuf_guest i32)
     (param $x i32) (param $y i32) (param $w i32) (param $h i32)
@@ -1024,7 +1124,7 @@
     (param $x1 i32) (param $y1 i32) (param $z1 f32)
     (param $x2 i32) (param $y2 i32) (param $z2 f32)
     (param $color i32)
-    (local $state i32) (local $zbuf i32) (local $zval f32)
+    (local $state i32) (local $zbuf i32) (local $zval f32) (local $alpha i32) (local $blend i32)
     ;; Disable culling until the software path has full clip/winding parity.
     ;; D3DRM meshes otherwise disappear when their explicit cull mode disagrees
     ;; with our current screen-space winding convention.
@@ -1034,6 +1134,14 @@
         (if (call $gl32 (i32.add (local.get $state) (i32.const 284))) (then
           (local.set $zbuf
             (i32.load (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_ZBUF_SLOT))))))))))
+    (local.set $alpha (i32.shr_u (local.get $color) (i32.const 24)))
+    (if (i32.lt_u (local.get $alpha) (i32.const 255)) (then
+      (if (i32.eqz (local.get $state)) (then
+        (local.set $state (call $d3ddev_state (local.get $this)))))
+      (if (local.get $state) (then
+        ;; D3DRENDERSTATE_ALPHABLENDENABLE = 27.
+        (if (call $gl32 (i32.add (local.get $state) (i32.const 364))) (then
+          (local.set $blend (i32.const 1))))))))
     (local.set $zval
       (f32.div
         (f32.add (f32.add (local.get $z0) (local.get $z1)) (local.get $z2))
@@ -1043,6 +1151,7 @@
       (local.get $x1) (local.get $y1)
       (local.get $x2) (local.get $y2)
       (local.get $color)
+      (local.get $blend)
       (local.get $zbuf) (local.get $zval)))
 
   ;; ============================================================
@@ -1058,6 +1167,7 @@
     (param $x1 i32) (param $y1 i32)
     (param $x2 i32) (param $y2 i32)
     (param $color i32)
+    (param $blend i32)
     (param $zbuf_guest i32) (param $zval f32)
     (local $tx i32) (local $ty i32)
     (local $y i32) (local $xa i32) (local $xb i32) (local $xl i32) (local $xr i32)
@@ -1091,10 +1201,17 @@
           (local.get $xl) (local.get $y0)
           (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
           (i32.const 1) (local.get $zval) (local.get $color)))
-        (else (call $viewport_fill_rect (local.get $rt_entry)
-          (local.get $xl) (local.get $y0)
-          (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
-          (i32.const 1) (local.get $color))))
+        (else
+          (if (local.get $blend)
+            (then (call $viewport_fill_rect_alpha (local.get $rt_entry)
+              (local.get $xl) (local.get $y0)
+              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+              (i32.const 1) (local.get $color)
+              (i32.shr_u (local.get $color) (i32.const 24))))
+            (else (call $viewport_fill_rect (local.get $rt_entry)
+              (local.get $xl) (local.get $y0)
+              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+              (i32.const 1) (local.get $color))))))
       (return)))
     (local.set $y (local.get $y0))
     (block $done (loop $lp
@@ -1129,10 +1246,17 @@
           (local.get $xl) (local.get $y)
           (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
           (i32.const 1) (local.get $zval) (local.get $color)))
-        (else (call $viewport_fill_rect (local.get $rt_entry)
-          (local.get $xl) (local.get $y)
-          (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
-          (i32.const 1) (local.get $color))))
+        (else
+          (if (local.get $blend)
+            (then (call $viewport_fill_rect_alpha (local.get $rt_entry)
+              (local.get $xl) (local.get $y)
+              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+              (i32.const 1) (local.get $color)
+              (i32.shr_u (local.get $color) (i32.const 24))))
+            (else (call $viewport_fill_rect (local.get $rt_entry)
+              (local.get $xl) (local.get $y)
+              (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
+              (i32.const 1) (local.get $color))))))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
 
