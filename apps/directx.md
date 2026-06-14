@@ -288,7 +288,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 
 | Game | Status | Blocker |
 |------|--------|---------|
-| **MARBLES** (Plus! 98) | **Rendering game screen** — 173K API calls, sprites visible | Needs mouse input to start gameplay |
+| **MARBLES** (Plus! 98) | **PASS** — focused all-EXE smoke captures the SegaSoft splash; high-budget scripted runs render the game screen | Needs mouse input to start gameplay |
 | **AoE** (Age of Empires) | **PASS** — focused 3000-batch all-EXE smoke reaches 800x600 title art | Full scripted path can reach the map with larger budget/input |
 | **RCT** (RollerCoaster Tycoon) | **PASS** — focused 40×5M smoke captures the 640x480 splash/menu frame | Startup/frame coverage only; gameplay/runtime loop still needs deeper scripting |
 | **Abe's Oddworld demo** | **PASS** — focused 1000-batch smoke captures the title/copyright frame | Extracted `AbeDemo.exe` renders via a 1024x512 offscreen DDraw surface; original 32MB self-extracting archive still overflows the fixed WASM memory layout |

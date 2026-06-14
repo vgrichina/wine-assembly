@@ -139,7 +139,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/wep32-community/Rodent2000/Rodent2000.exe', name: 'Rodent2000 (VB6, expected fail)', expectedCrash: 'VB6 runtime not a current-stage target' },
   // Plus! 98
   { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
-  { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX, expected fail)' },
+  { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX)' },
   // Shareware / demos — DirectX titles
   { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)',
     // Needs enough timer/load-loop budget for the title/copyright pixels to

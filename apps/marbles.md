@@ -4,6 +4,8 @@
 **Assets:** `test/binaries/plus98/*.BMP`, `*.MID`, `*.WAV`, `*.DAT` (extracted from PLUS98.CAB)
 **Window:** 640×480 fullscreen DirectDraw, title "Marbles"
 **Image base:** 0x00400000
+**Status (2026-06-14):** Focused all-EXE smoke is now a normal pass under `LoseYourMarbles (DX)`, capturing the SegaSoft splash frame (`100` APIs, `172` PNG colors). The older deeper gameplay status below still applies for scripted/high-budget runs.
+
 **Status (2026-04-16):** Game screen renders with marbles visible and dialog text ("CLASSIC PLAY / To clear the marbles..."). 173K API calls in 5000 batches. BltFast sprite rendering loop running. All BMP assets load correctly. Needs mouse input to proceed past intro screen.
 
 ## Key Addresses
