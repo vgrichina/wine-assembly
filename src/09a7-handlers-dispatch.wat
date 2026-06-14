@@ -391,8 +391,31 @@
 
   ;; 754: FormatMessageA(dwFlags, lpSource, dwMessageId, dwLanguageId, lpBuffer, nSize, Arguments)
   (func $handle_FormatMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $buf_ga i32)
+    (local $wa i32) (local $buf_ga i32) (local $len i32) (local $nSize i32)
     ;; dwFlags=arg0, lpSource=arg1, dwMessageId=arg2, dwLangId=arg3, lpBuffer=arg4
+    ;; FORMAT_MESSAGE_FROM_STRING: copy lpSource into the caller's output.
+    ;; RegEdit uses this for resource strings before CreateWindowEx.
+    (local.set $nSize (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (i32.and (local.get $arg0) (i32.const 0x400))
+      (then
+        (if (i32.eqz (local.get $arg1))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+            (return)))
+        (local.set $len (call $guest_strlen (local.get $arg1)))
+        (if (i32.and (local.get $arg0) (i32.const 0x100))
+          (then
+            (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+            (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
+            (call $guest_strcpy (local.get $buf_ga) (local.get $arg1)))
+          (else
+            (if (local.get $nSize)
+              (then (call $guest_strncpy (local.get $arg4) (local.get $arg1) (local.get $nSize)))
+              (else (call $guest_strcpy (local.get $arg4) (local.get $arg1))))))
+        (global.set $eax (local.get $len))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
     ;; If FORMAT_MESSAGE_ALLOCATE_BUFFER (0x100), allocate and store ptr
     ;; Otherwise write to lpBuffer directly
     (if (i32.and (local.get $arg0) (i32.const 0x100))

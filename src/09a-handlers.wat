@@ -2454,6 +2454,12 @@
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (if (i32.and
+          (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
+          (i32.ne (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)) (i32.const 0)))
+      (then
+        (drop (call $control_wndproc_dispatch
+          (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
     (if (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
       (then
         (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
@@ -7727,6 +7733,12 @@
     ;; and queue a paint so the moved child redraws.
     (call $defwndproc_do_nccalcsize (local.get $arg1))
     (call $paint_flag_set (local.get $arg1))
+    (if (i32.and
+          (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
+          (i32.ne (i32.and (call $wnd_get_style (local.get $arg1)) (i32.const 0x10000000)) (i32.const 0)))
+      (then
+        (drop (call $control_wndproc_dispatch
+          (local.get $arg1) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
     (global.set $eax (local.get $arg0))  ;; return same HDWP handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
