@@ -146,7 +146,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)',
     // Needs a longer budget to load zbd data and reach the D3D3 setup path.
     maxBatches: 500, extraArgs: ['--no-close'], timeoutMs: 30000,
-    knownBadRender: 'reaches D3D3 setup/window but currently presents zero-filled 16bpp surfaces' },
+    knownBadRender: 'reaches D3D3 setup/window and FVF TL draw calls, but output remains single-color' },
   { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)' },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
   { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)' },
