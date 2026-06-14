@@ -1640,6 +1640,18 @@ async function main() {
           } catch (_) {}
         }
       } catch (_) {}
+      // Some extracted InstallShield-era games put the EXE under Program_Files
+      // but expect the sibling Database_Files/zbd directory to also be visible
+      // as a CWD-relative "zbd\" search root.
+      try {
+        const zbdDir = path.join(parentDir, 'Database_Files', 'zbd');
+        const zbdStat = fs.statSync(zbdDir);
+        if (zbdStat.isDirectory() && !ctx.vfs.dirs.has('c:\\zbd\\')) {
+          ctx.vfs.dirs.add('c:\\zbd\\');
+          ctx.vfs.dirs.add('c:\\zbd');
+          loadDir(zbdDir, 'c:\\zbd\\');
+        }
+      } catch (_) {}
     }
   }
 
