@@ -294,7 +294,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | **Abe's Oddworld demo** | PE load crash | 32MB sizeOfImage overflows WASM memory layout |
 | **AoE2** | Not tested | Likely same issues as AoE1 |
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
-| **MCM / MW3** | Partial | MW3 now loads `zbd` data, creates the main window, reaches D3D3 setup, enumerates a 16-bit Z-buffer format, accepts FVF/TLVERTEX `DrawPrimitive` calls, alpha-blends the fade quads, and presents valid 16bpp DirectDraw frames. Next blocker: the run spends a long stretch in MW3's own 16bpp pixel-filter loop around `0x526f54`/`0x527075`, and the presented frame is still single-color |
+| **MCM / MW3** | Partial | MW3 now loads `zbd` data, creates the main window, reaches D3D3 setup, enumerates a 16-bit Z-buffer format, accepts FVF/TLVERTEX `DrawPrimitive` calls, alpha-blends the fade quads, and renders the preview splash with >11K colors under a focused high-instruction smoke. Next blocker: the run spends a long stretch in MW3's own 16bpp pixel-filter loop around `0x526f54`/`0x527075`; performance/acceleration is needed before using a small default budget |
 
 ### DX5 SDK samples (harness, 2026-04-21)
 
@@ -326,7 +326,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - DirectDraw presentation no longer reuses `PAINT_SCRATCH` for BITMAPINFO data. MW3 now logs sane `640x480 16bpp` presents instead of malformed `0x640 0bpp` headers.
 - `IDirect3DDevice3::DrawPrimitive`/`DrawIndexedPrimitive` now map XYZRHW FVF descriptors to the internal TLVERTEX path. MW3 runs past the previous `D3DIM:DrawPrimitive vtx/prim` trap and reaches 2200 focused batches.
 - TL/FVF flat triangles now respect `D3DRENDERSTATE_ALPHABLENDENABLE` for source-alpha fade quads on 16/32bpp render targets. A `--trace-dx` DP3 probe dumps FVF, caller, and the first few TL vertices.
-- `test-all-exes.js` gives MW3 a 500-batch smoke budget. Current expected result is a known-bad-render warning: main window, D3D setup, and FVF TL draw calls are reached, but presented output remains single-color. Longer focused runs reach MW3's own 16bpp pixel filter loop at `0x526f54`/`0x527075`.
+- `test-all-exes.js` gives MW3 a focused `250 x 100000` instruction smoke with a raised stuck threshold. That reaches the preview splash (`/private/tmp/mw3-250x100k.png` measured 11,154 colors) instead of the old single-color frame. `150 x 100000` and `200 x 100000` still stop in the pixel-filter loop with the old 2 KB single-color PNG.
 
 ### Recent changes (2026-06-12)
 
