@@ -4615,9 +4615,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 362: GetObjectW — STUB: unimplemented
+  ;; 362: GetObjectW — same object layout as GetObjectA for bitmaps
   (func $handle_GetObjectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_GetObjectA
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg2)
+      (local.get $arg3)
+      (local.get $arg4)
+      (local.get $name_ptr))
   )
 
   ;; SetTextAlign(hdc, fMode) — store alignment on the DC and return the previous value.
@@ -5031,9 +5037,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 392: LoadBitmapW — STUB: unimplemented
+  ;; 392: LoadBitmapW
   (func $handle_LoadBitmapW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32)
+    ;; arg1 = resource ID (MAKEINTRESOURCE if <= 0xFFFF, else string pointer)
+    (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
+      (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
+        (then (local.get $arg1))
+        (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
+    (if (i32.eqz (local.get $tmp))
+      (then (local.set $tmp (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))))
+    (global.set $eax (local.get $tmp))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
   ;; 393: wvsprintfW — STUB: unimplemented
@@ -5688,9 +5703,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 52)))  ;; stdcall, 12 args
   )
 
-  ;; 445: GetTextExtentPointW — STUB: unimplemented
+  ;; 445: GetTextExtentPointW — font-aware wide text measurement
   (func $handle_GetTextExtentPointW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $packed i32)
+    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
+    (call $gs32 (local.get $arg3)
+      (i32.mul (local.get $arg2) (i32.shr_u (local.get $packed) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+      (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 446: CreateICW — STUB: unimplemented
@@ -7392,9 +7414,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 604: GetTextExtentPoint32W — STUB: unimplemented
+  ;; 604: GetTextExtentPoint32W — font-aware wide text measurement
   (func $handle_GetTextExtentPoint32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $packed i32)
+    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
+    (call $gs32 (local.get $arg3)
+      (i32.mul (local.get $arg2) (i32.shr_u (local.get $packed) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+      (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 605: GetClipBox(hdc, lpRect) → regionType — 2 args stdcall

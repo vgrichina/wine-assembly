@@ -6,41 +6,46 @@
 
 ## Status (2026-06-13)
 
-The old startup blocker is fixed. Runners now auto-report NT 4.0 when an EXE
+The old startup blockers are fixed. Runners now auto-report NT 4.0 when an EXE
 imports `MFC42U.DLL`, so MFC42U's `DllMain` no longer rejects the process as a
-Win9x host. MSPaint NT also gets past the first missing Unicode APIs by using
-real handlers for:
+Win9x host. MSPaint NT also gets through the first Unicode/MFC setup path by
+using real handlers for:
 
 - `RegisterWindowMessageW`
 - `CreateFontIndirectW`
 - `SetWindowsHookExW` for `WH_CBT`
 - `CallWindowProcW`
 - `SetWindowTextW` title/control state parity with the ANSI path
+- `LoadBitmapW`
+- `GetTextExtentPointW`
+- `GetTextExtentPoint32W`
+- `GetObjectW`
+
+The old Node/V8 heap OOM is also fixed. MSPaint NT passes a 24bpp
+`BITMAPINFOHEADER` with a bogus non-zero `biClrUsed`; high-bpp BI_RGB DIBs do
+not have color tables, so the host now caps/ignores DIB palettes unless the
+format is indexed.
 
 Current focused run:
 
 ```sh
-node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=40 --batch-size=1000 --no-close --quiet-api --quiet-blocks --no-build --png=/private/tmp/mspaint-nt-defproc-special.png
+node test/run.js --exe=test/binaries/nt/mspaint.exe --max-batches=420 --batch-size=1000 --no-close --quiet-api --quiet-blocks --no-build --png=/private/tmp/mspaint-nt-getobjectw.png
 ```
 
-Result: MFC42U and MSVCRT `DllMain` both return success, the app reaches main
-window creation (`hwnd=0x10001`, title `"Paint"`, size `275x400`) and creates
-the first child window (`hwnd=0x10002`) after MFC's Unicode CBT hook attaches.
-`SetWindowTextW` now converts the wide title before feeding the host/title
-tables, so the two startup title updates are `"Paint"` rather than the old
-one-byte `"P"` truncation. The old `EIP=0x0110d4fe` jump into MFC42U `.rdata`
-is no longer the first failure.
+Result: MFC42U and MSVCRT `DllMain` both return success, the app reaches the
+main frame (`hwnd=0x10001`, title `"Untitled - Paint"`), creates the image child
+and common-control child windows, and writes a visible 640x480 PNG. The standard
+`test/test-all-exes.js` smoke matrix now reports `MSPaint (NT)` and `MSPaint
+(EP)` as `PASS`.
 
 ## Current Blocker
 
-After child creation and the two top-level `SetWindowTextW("Paint")` calls, the
-run enters a long synchronous path that grows the Node/V8 heap until the host
-process OOMs. This happens even with `--quiet-api`, so it is not console-output
-pressure.
-
-The next useful work is to bound that path with hit counters or a targeted
-breakpoint around the post-child-create MFC window/message flow and find the
-repeated EIP or translated-code growth source.
+The longer focused run still trips the harness stuck detector after visible UI
+startup, with the last reported `EIP=0x010713a6`. It is no longer an
+unimplemented API or heap OOM. The visible output shows the NT MSPaint frame,
+menu bar, and gray client area; the remaining work is to inspect that MFC42U
+path and determine whether it is a normal idle/message wait pattern, an
+over-aggressive stuck detector, or a real missing message/control behavior.
 
 Important detail: MFC chains to a saved previous wndproc through
 `CallWindowProcW`; in this run the saved proc is the import thunk for
