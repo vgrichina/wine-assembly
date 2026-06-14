@@ -8776,2666 +8776,2680 @@
   },
   {
     "id": 1135,
+    "name": "IDirect3D3_EnumZBufferFormats",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 805695777
+  },
+  {
+    "id": 1136,
+    "name": "IDirect3D3_EvictManagedTextures",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3378093510
+  },
+  {
+    "id": 1137,
     "name": "Direct3DRMCreate",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 345094950
   },
   {
-    "id": 1136,
+    "id": 1138,
     "name": "EnumWindows",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1830140861
   },
   {
-    "id": 1137,
+    "id": 1139,
     "name": "PlaySoundA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1518626457
   },
   {
-    "id": 1138,
+    "id": 1140,
     "name": "IDirectDrawFactory_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2694927343
   },
   {
-    "id": 1139,
+    "id": 1141,
     "name": "IDirectDrawFactory_AddRef",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2604191108
   },
   {
-    "id": 1140,
+    "id": 1142,
     "name": "IDirectDrawFactory_Release",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 994183717
   },
   {
-    "id": 1141,
+    "id": 1143,
     "name": "IDirectDrawFactory_CreateDirectDraw",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3653582339
   },
   {
-    "id": 1142,
+    "id": 1144,
     "name": "IDirectDrawFactory_DirectDrawEnumerate",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 43468675
   },
   {
-    "id": 1143,
+    "id": 1145,
     "name": "CLSIDFromProgID",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2489871255
   },
   {
-    "id": 1144,
+    "id": 1146,
     "name": "IDirect3DDevice3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 518793041
   },
   {
-    "id": 1145,
+    "id": 1147,
     "name": "IDirect3DDevice3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1058265586
   },
   {
-    "id": 1146,
+    "id": 1148,
     "name": "IDirect3DDevice3_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2496651439
   },
   {
-    "id": 1147,
+    "id": 1149,
     "name": "IDirect3DDevice3_GetCaps",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4285060915
   },
   {
-    "id": 1148,
+    "id": 1150,
     "name": "IDirect3DDevice3_GetStats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 53625777
   },
   {
-    "id": 1149,
+    "id": 1151,
     "name": "IDirect3DDevice3_AddViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3091141139
   },
   {
-    "id": 1150,
+    "id": 1152,
     "name": "IDirect3DDevice3_DeleteViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 313179991
   },
   {
-    "id": 1151,
+    "id": 1153,
     "name": "IDirect3DDevice3_NextViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 748510025
   },
   {
-    "id": 1152,
+    "id": 1154,
     "name": "IDirect3DDevice3_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3187501282
   },
   {
-    "id": 1153,
+    "id": 1155,
     "name": "IDirect3DDevice3_BeginScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1961184473
   },
   {
-    "id": 1154,
+    "id": 1156,
     "name": "IDirect3DDevice3_EndScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1154552289
   },
   {
-    "id": 1155,
+    "id": 1157,
     "name": "IDirect3DDevice3_GetDirect3D",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1783112092
   },
   {
-    "id": 1156,
+    "id": 1158,
     "name": "IDirect3DDevice3_SetCurrentViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 721750237
   },
   {
-    "id": 1157,
+    "id": 1159,
     "name": "IDirect3DDevice3_GetCurrentViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 619747761
   },
   {
-    "id": 1158,
+    "id": 1160,
     "name": "IDirect3DDevice3_SetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 495662451
   },
   {
-    "id": 1159,
+    "id": 1161,
     "name": "IDirect3DDevice3_GetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2968857655
   },
   {
-    "id": 1160,
+    "id": 1162,
     "name": "IDirect3DDevice3_Begin",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3025860635
   },
   {
-    "id": 1161,
+    "id": 1163,
     "name": "IDirect3DDevice3_BeginIndexed",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1102986312
   },
   {
-    "id": 1162,
+    "id": 1164,
     "name": "IDirect3DDevice3_Vertex",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3491690708
   },
   {
-    "id": 1163,
+    "id": 1165,
     "name": "IDirect3DDevice3_Index",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2164693418
   },
   {
-    "id": 1164,
+    "id": 1166,
     "name": "IDirect3DDevice3_End",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3176073059
   },
   {
-    "id": 1165,
+    "id": 1167,
     "name": "IDirect3DDevice3_GetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2522187963
   },
   {
-    "id": 1166,
+    "id": 1168,
     "name": "IDirect3DDevice3_SetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4270201975
   },
   {
-    "id": 1167,
+    "id": 1169,
     "name": "IDirect3DDevice3_GetLightState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1045849787
   },
   {
-    "id": 1168,
+    "id": 1170,
     "name": "IDirect3DDevice3_SetLightState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3211231527
   },
   {
-    "id": 1169,
+    "id": 1171,
     "name": "IDirect3DDevice3_SetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4265567830
   },
   {
-    "id": 1170,
+    "id": 1172,
     "name": "IDirect3DDevice3_GetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1717712490
   },
   {
-    "id": 1171,
+    "id": 1173,
     "name": "IDirect3DDevice3_MultiplyTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 302998070
   },
   {
-    "id": 1172,
+    "id": 1174,
     "name": "IDirect3DDevice3_DrawPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2140554961
   },
   {
-    "id": 1173,
+    "id": 1175,
     "name": "IDirect3DDevice3_DrawIndexedPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3033261662
   },
   {
-    "id": 1174,
+    "id": 1176,
     "name": "IDirect3DDevice3_SetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2705003434
   },
   {
-    "id": 1175,
+    "id": 1177,
     "name": "IDirect3DDevice3_GetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2317017694
   },
   {
-    "id": 1176,
+    "id": 1178,
     "name": "IDirect3DDevice3_DrawPrimitiveStrided",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3278966392
   },
   {
-    "id": 1177,
+    "id": 1179,
     "name": "IDirect3DDevice3_DrawIndexedPrimitiveStrided",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2309431637
   },
   {
-    "id": 1178,
+    "id": 1180,
     "name": "IDirect3DDevice3_DrawPrimitiveVB",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3410864965
   },
   {
-    "id": 1179,
+    "id": 1181,
     "name": "IDirect3DDevice3_DrawIndexedPrimitiveVB",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2438041902
   },
   {
-    "id": 1180,
+    "id": 1182,
     "name": "IDirect3DDevice3_ComputeSphereVisibility",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4196430038
   },
   {
-    "id": 1181,
+    "id": 1183,
     "name": "IDirect3DDevice3_GetTexture",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2729212565
   },
   {
-    "id": 1182,
+    "id": 1184,
     "name": "IDirect3DDevice3_SetTexture",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4268098145
   },
   {
-    "id": 1183,
+    "id": 1185,
     "name": "IDirect3DDevice3_GetTextureStageState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3392481726
   },
   {
-    "id": 1184,
+    "id": 1186,
     "name": "IDirect3DDevice3_SetTextureStageState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2547990074
   },
   {
-    "id": 1185,
+    "id": 1187,
     "name": "IDirect3DDevice3_ValidateDevice",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1249181266
   },
   {
-    "id": 1186,
+    "id": 1188,
     "name": "IDirect3DViewport3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3101062033
   },
   {
-    "id": 1187,
+    "id": 1189,
     "name": "IDirect3DViewport3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3120826162
   },
   {
-    "id": 1188,
+    "id": 1190,
     "name": "IDirect3DViewport3_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3706082031
   },
   {
-    "id": 1189,
+    "id": 1191,
     "name": "IDirect3DViewport3_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1023656556
   },
   {
-    "id": 1190,
+    "id": 1192,
     "name": "IDirect3DViewport3_GetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 348728372
   },
   {
-    "id": 1191,
+    "id": 1193,
     "name": "IDirect3DViewport3_SetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3914709736
   },
   {
-    "id": 1192,
+    "id": 1194,
     "name": "IDirect3DViewport3_TransformVertices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1385465709
   },
   {
-    "id": 1193,
+    "id": 1195,
     "name": "IDirect3DViewport3_LightElements",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2081588611
   },
   {
-    "id": 1194,
+    "id": 1196,
     "name": "IDirect3DViewport3_SetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3507299254
   },
   {
-    "id": 1195,
+    "id": 1197,
     "name": "IDirect3DViewport3_GetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4285854610
   },
   {
-    "id": 1196,
+    "id": 1198,
     "name": "IDirect3DViewport3_SetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3879102095
   },
   {
-    "id": 1197,
+    "id": 1199,
     "name": "IDirect3DViewport3_GetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 267452427
   },
   {
-    "id": 1198,
+    "id": 1200,
     "name": "IDirect3DViewport3_Clear",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3955235991
   },
   {
-    "id": 1199,
+    "id": 1201,
     "name": "IDirect3DViewport3_AddLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2743249631
   },
   {
-    "id": 1200,
+    "id": 1202,
     "name": "IDirect3DViewport3_DeleteLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 969632011
   },
   {
-    "id": 1201,
+    "id": 1203,
     "name": "IDirect3DViewport3_NextLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 539145829
   },
   {
-    "id": 1202,
+    "id": 1204,
     "name": "IDirect3DViewport3_GetViewport2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3199225202
   },
   {
-    "id": 1203,
+    "id": 1205,
     "name": "IDirect3DViewport3_SetViewport2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 737486126
   },
   {
-    "id": 1204,
+    "id": 1206,
     "name": "IDirect3DViewport3_SetBackgroundDepth2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3080960903
   },
   {
-    "id": 1205,
+    "id": 1207,
     "name": "IDirect3DViewport3_GetBackgroundDepth2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1365465531
   },
   {
-    "id": 1206,
+    "id": 1208,
     "name": "IDirect3DViewport3_Clear2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3295483839
   },
   {
-    "id": 1207,
+    "id": 1209,
     "name": "IDirect3DLight_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 617502364
   },
   {
-    "id": 1208,
+    "id": 1210,
     "name": "IDirect3DLight_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3830084039
   },
   {
-    "id": 1209,
+    "id": 1211,
     "name": "IDirect3DLight_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3576443600
   },
   {
-    "id": 1210,
+    "id": 1212,
     "name": "IDirect3DLight_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1161278633
   },
   {
-    "id": 1211,
+    "id": 1213,
     "name": "IDirect3DLight_SetLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1116289099
   },
   {
-    "id": 1212,
+    "id": 1214,
     "name": "IDirect3DLight_GetLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1310272151
   },
   {
-    "id": 1213,
+    "id": 1215,
     "name": "IDirect3DMaterial3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 635542
   },
   {
-    "id": 1214,
+    "id": 1216,
     "name": "IDirect3DMaterial3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3939031253
   },
   {
-    "id": 1215,
+    "id": 1217,
     "name": "IDirect3DMaterial3_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1932170706
   },
   {
-    "id": 1216,
+    "id": 1218,
     "name": "IDirect3DMaterial3_SetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2640743086
   },
   {
-    "id": 1217,
+    "id": 1219,
     "name": "IDirect3DMaterial3_GetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2296316442
   },
   {
-    "id": 1218,
+    "id": 1220,
     "name": "IDirect3DMaterial3_GetHandle",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4192502533
   },
   {
-    "id": 1219,
+    "id": 1221,
     "name": "IDirect3DMaterial3_Reserved1",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4169488912
   },
   {
-    "id": 1220,
+    "id": 1222,
     "name": "IDirect3DMaterial3_Reserved2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4219821769
   },
   {
-    "id": 1221,
+    "id": 1223,
     "name": "timeGetDevCaps",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3847877410
   },
   {
-    "id": 1222,
+    "id": 1224,
     "name": "GetLogicalDriveStringsA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3860817427
   },
   {
-    "id": 1223,
+    "id": 1225,
     "name": "SetLocaleInfoA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1277596188
   },
   {
-    "id": 1224,
+    "id": 1226,
     "name": "GetKeyboardType",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3181069110
   },
   {
-    "id": 1225,
+    "id": 1227,
     "name": "GetTextCharacterExtra",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 315056275
   },
   {
-    "id": 1226,
+    "id": 1228,
     "name": "ModifyMenuA",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1452613103
   },
   {
-    "id": 1227,
+    "id": 1229,
     "name": "GetSystemInfo",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3069927718
   },
   {
-    "id": 1228,
+    "id": 1230,
     "name": "GetUserNameA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 950519322
   },
   {
-    "id": 1229,
+    "id": 1231,
     "name": "GetComputerNameA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1148103228
   },
   {
-    "id": 1230,
+    "id": 1232,
     "name": "DirectPlayCreate",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3338882626
   },
   {
-    "id": 1231,
+    "id": 1233,
     "name": "DirectPlayEnumerate",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3702747444
   },
   {
-    "id": 1232,
+    "id": 1234,
     "name": "DirectPlayEnumerateA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3816528687
   },
   {
-    "id": 1233,
+    "id": 1235,
     "name": "DirectPlayLobbyCreateA",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4226280081
   },
   {
-    "id": 1234,
+    "id": 1236,
     "name": "DirectSoundEnumerateA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3780135274
   },
   {
-    "id": 1235,
+    "id": 1237,
     "name": "mciSendStringA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2226675570
   },
   {
-    "id": 1236,
+    "id": 1238,
     "name": "midiOutGetVolume",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2555465382
   },
   {
-    "id": 1237,
+    "id": 1239,
     "name": "midiOutSetVolume",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1490704906
   },
   {
-    "id": 1238,
+    "id": 1240,
     "name": "OpenMutexA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4094163651
   },
   {
-    "id": 1239,
+    "id": 1241,
     "name": "CreateMutexA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 997118615
   },
   {
-    "id": 1240,
+    "id": 1242,
     "name": "PaintRgn",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1992772342
   },
   {
-    "id": 1241,
+    "id": 1243,
     "name": "CharUpperA",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 505419018
   },
   {
-    "id": 1242,
+    "id": 1244,
     "name": "CharLowerA",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3575899993
   },
   {
-    "id": 1243,
+    "id": 1245,
     "name": "ImmAssociateContext",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3996975227
   },
   {
-    "id": 1244,
+    "id": 1246,
     "name": "ImmGetContext",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 117298633
   },
   {
-    "id": 1245,
+    "id": 1247,
     "name": "ImmReleaseContext",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 551866330
   },
   {
-    "id": 1246,
+    "id": 1248,
     "name": "ExtEscape",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3581342023
   },
   {
-    "id": 1247,
+    "id": 1249,
     "name": "SetMessageQueue",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 156967389
   },
   {
-    "id": 1248,
+    "id": 1250,
     "name": "timeSetEvent",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 682150372
   },
   {
-    "id": 1249,
+    "id": 1251,
     "name": "timeKillEvent",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3662307660
   },
   {
-    "id": 1250,
+    "id": 1252,
     "name": "PostThreadMessageA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2814568581
   },
   {
-    "id": 1251,
+    "id": 1253,
     "name": "IDirectDraw2_GetAvailableVidMem",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2047766143
   },
   {
-    "id": 1252,
+    "id": 1254,
     "name": "FlashWindow",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1251232729
   },
   {
-    "id": 1253,
+    "id": 1255,
     "name": "IDirectDrawClipper_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3492942158
   },
   {
-    "id": 1254,
+    "id": 1256,
     "name": "IDirectDrawClipper_AddRef",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2611172029
   },
   {
-    "id": 1255,
+    "id": 1257,
     "name": "IDirectDrawClipper_Release",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2400996634
   },
   {
-    "id": 1256,
+    "id": 1258,
     "name": "IDirectDrawClipper_GetClipList",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2073144121
   },
   {
-    "id": 1257,
+    "id": 1259,
     "name": "IDirectDrawClipper_GetHWnd",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3220739368
   },
   {
-    "id": 1258,
+    "id": 1260,
     "name": "IDirectDrawClipper_Initialize",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 890549391
   },
   {
-    "id": 1259,
+    "id": 1261,
     "name": "IDirectDrawClipper_IsClipListChanged",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 803689933
   },
   {
-    "id": 1260,
+    "id": 1262,
     "name": "IDirectDrawClipper_SetClipList",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 406686165
   },
   {
-    "id": 1261,
+    "id": 1263,
     "name": "IDirectDrawClipper_SetHWnd",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3048796964
   },
   {
-    "id": 1262,
+    "id": 1264,
     "name": "ICInfo",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 957179781
   },
   {
-    "id": 1263,
+    "id": 1265,
     "name": "ICOpen",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 4239926601
   },
   {
-    "id": 1264,
+    "id": 1266,
     "name": "ICClose",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3212715171
   },
   {
-    "id": 1265,
+    "id": 1267,
     "name": "GetPriorityClass",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3113584897
   },
   {
-    "id": 1266,
+    "id": 1268,
     "name": "GetThreadPriority",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2001465759
   },
   {
-    "id": 1267,
+    "id": 1269,
     "name": "GetUpdateRgn",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3235427389
   },
   {
-    "id": 1268,
+    "id": 1270,
     "name": "SubtractRect",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2053040163
   },
   {
-    "id": 1269,
+    "id": 1271,
     "name": "GetKeyboardLayout",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2590156960
   },
   {
-    "id": 1270,
+    "id": 1272,
     "name": "SetThreadLocale",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2934215533
   },
   {
-    "id": 1271,
+    "id": 1273,
     "name": "OemToCharA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 304757724
   },
   {
-    "id": 1272,
+    "id": 1274,
     "name": "GetKeyboardLayoutList",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 940384968
   },
   {
-    "id": 1273,
+    "id": 1275,
     "name": "IDirect3D2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2418560322
   },
   {
-    "id": 1274,
+    "id": 1276,
     "name": "IDirect3D2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 672506361
   },
   {
-    "id": 1275,
+    "id": 1277,
     "name": "IDirect3D2_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1671751854
   },
   {
-    "id": 1276,
+    "id": 1278,
     "name": "IDirect3D2_EnumDevices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3121627083
   },
   {
-    "id": 1277,
+    "id": 1279,
     "name": "IDirect3D2_CreateLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2505776119
   },
   {
-    "id": 1278,
+    "id": 1280,
     "name": "IDirect3D2_CreateMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 16469304
   },
   {
-    "id": 1279,
+    "id": 1281,
     "name": "IDirect3D2_CreateViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 731026219
   },
   {
-    "id": 1280,
+    "id": 1282,
     "name": "IDirect3D2_FindDevice",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4118786876
   },
   {
-    "id": 1281,
+    "id": 1283,
     "name": "IDirect3D2_CreateDevice",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 228934059
   },
   {
-    "id": 1282,
+    "id": 1284,
     "name": "IDirect3D7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3231089519
   },
   {
-    "id": 1283,
+    "id": 1285,
     "name": "IDirect3D7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 923110660
   },
   {
-    "id": 1284,
+    "id": 1286,
     "name": "IDirect3D7_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4271079589
   },
   {
-    "id": 1285,
+    "id": 1287,
     "name": "IDirect3D7_EnumDevices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2981622528
   },
   {
-    "id": 1286,
+    "id": 1288,
     "name": "IDirect3D7_CreateDevice",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1831249030
   },
   {
-    "id": 1287,
+    "id": 1289,
     "name": "IDirect3D7_CreateVertexBuffer",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1873178644
   },
   {
-    "id": 1288,
+    "id": 1290,
     "name": "IDirect3D7_EnumZBufferFormats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 577012621
   },
   {
-    "id": 1289,
+    "id": 1291,
     "name": "IDirect3D7_EvictManagedTextures",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1359420250
   },
   {
-    "id": 1290,
+    "id": 1292,
     "name": "IDirect3DDevice_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 263853486
   },
   {
-    "id": 1291,
+    "id": 1293,
     "name": "IDirect3DDevice_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2483714589
   },
   {
-    "id": 1292,
+    "id": 1294,
     "name": "IDirect3DDevice_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 629171002
   },
   {
-    "id": 1293,
+    "id": 1295,
     "name": "IDirect3DDevice_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3157605679
   },
   {
-    "id": 1294,
+    "id": 1296,
     "name": "IDirect3DDevice_GetCaps",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 209356598
   },
   {
-    "id": 1295,
+    "id": 1297,
     "name": "IDirect3DDevice_SwapTextureHandles",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2578870456
   },
   {
-    "id": 1296,
+    "id": 1298,
     "name": "IDirect3DDevice_CreateExecuteBuffer",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3248646566
   },
   {
-    "id": 1297,
+    "id": 1299,
     "name": "IDirect3DDevice_GetStats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3635086758
   },
   {
-    "id": 1298,
+    "id": 1300,
     "name": "IDirect3DDevice_Execute",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 71940988
   },
   {
-    "id": 1299,
+    "id": 1301,
     "name": "IDirect3DDevice_AddViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3149698898
   },
   {
-    "id": 1300,
+    "id": 1302,
     "name": "IDirect3DDevice_DeleteViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1947918056
   },
   {
-    "id": 1301,
+    "id": 1303,
     "name": "IDirect3DDevice_NextViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2725396558
   },
   {
-    "id": 1302,
+    "id": 1304,
     "name": "IDirect3DDevice_Pick",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4137531164
   },
   {
-    "id": 1303,
+    "id": 1305,
     "name": "IDirect3DDevice_GetPickRecords",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2038213240
   },
   {
-    "id": 1304,
+    "id": 1306,
     "name": "IDirect3DDevice_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2545828129
   },
   {
-    "id": 1305,
+    "id": 1307,
     "name": "IDirect3DDevice_CreateMatrix",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1446879632
   },
   {
-    "id": 1306,
+    "id": 1308,
     "name": "IDirect3DDevice_SetMatrix",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3943568882
   },
   {
-    "id": 1307,
+    "id": 1309,
     "name": "IDirect3DDevice_GetMatrix",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 122115502
   },
   {
-    "id": 1308,
+    "id": 1310,
     "name": "IDirect3DDevice_DeleteMatrix",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 214794187
   },
   {
-    "id": 1309,
+    "id": 1311,
     "name": "IDirect3DDevice_BeginScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 561424546
   },
   {
-    "id": 1310,
+    "id": 1312,
     "name": "IDirect3DDevice_EndScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2744838270
   },
   {
-    "id": 1311,
+    "id": 1313,
     "name": "IDirect3DDevice_GetDirect3D",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1078089501
   },
   {
-    "id": 1312,
+    "id": 1314,
     "name": "IDirect3DDevice2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2865828064
   },
   {
-    "id": 1313,
+    "id": 1315,
     "name": "IDirect3DDevice2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1084069219
   },
   {
-    "id": 1314,
+    "id": 1316,
     "name": "IDirect3DDevice2_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4224879524
   },
   {
-    "id": 1315,
+    "id": 1317,
     "name": "IDirect3DDevice2_GetCaps",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2234615836
   },
   {
-    "id": 1316,
+    "id": 1318,
     "name": "IDirect3DDevice2_SwapTextureHandles",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2869981890
   },
   {
-    "id": 1317,
+    "id": 1319,
     "name": "IDirect3DDevice2_GetStats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1259208552
   },
   {
-    "id": 1318,
+    "id": 1320,
     "name": "IDirect3DDevice2_AddViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4016474332
   },
   {
-    "id": 1319,
+    "id": 1321,
     "name": "IDirect3DDevice2_DeleteViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1029340054
   },
   {
-    "id": 1320,
+    "id": 1322,
     "name": "IDirect3DDevice2_NextViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1604073688
   },
   {
-    "id": 1321,
+    "id": 1323,
     "name": "IDirect3DDevice2_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3397453055
   },
   {
-    "id": 1322,
+    "id": 1324,
     "name": "IDirect3DDevice2_BeginScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 470530296
   },
   {
-    "id": 1323,
+    "id": 1325,
     "name": "IDirect3DDevice2_EndScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1456380852
   },
   {
-    "id": 1324,
+    "id": 1326,
     "name": "IDirect3DDevice2_GetDirect3D",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 207667519
   },
   {
-    "id": 1325,
+    "id": 1327,
     "name": "IDirect3DDevice2_SetCurrentViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3875745692
   },
   {
-    "id": 1326,
+    "id": 1328,
     "name": "IDirect3DDevice2_GetCurrentViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3651762096
   },
   {
-    "id": 1327,
+    "id": 1329,
     "name": "IDirect3DDevice2_SetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2181644576
   },
   {
-    "id": 1328,
+    "id": 1330,
     "name": "IDirect3DDevice2_GetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1962512932
   },
   {
-    "id": 1329,
+    "id": 1331,
     "name": "IDirect3DDevice2_Begin",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1301401840
   },
   {
-    "id": 1330,
+    "id": 1332,
     "name": "IDirect3DDevice2_BeginIndexed",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2814689021
   },
   {
-    "id": 1331,
+    "id": 1333,
     "name": "IDirect3DDevice2_Vertex",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3842000369
   },
   {
-    "id": 1332,
+    "id": 1334,
     "name": "IDirect3DDevice2_Index",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 687511285
   },
   {
-    "id": 1333,
+    "id": 1335,
     "name": "IDirect3DDevice2_End",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1588528700
   },
   {
-    "id": 1334,
+    "id": 1336,
     "name": "IDirect3DDevice2_GetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1500698146
   },
   {
-    "id": 1335,
+    "id": 1337,
     "name": "IDirect3DDevice2_SetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 995936670
   },
   {
-    "id": 1336,
+    "id": 1338,
     "name": "IDirect3DDevice2_GetLightState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 168951044
   },
   {
-    "id": 1337,
+    "id": 1339,
     "name": "IDirect3DDevice2_SetLightState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3345976752
   },
   {
-    "id": 1338,
+    "id": 1340,
     "name": "IDirect3DDevice2_SetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1715414027
   },
   {
-    "id": 1339,
+    "id": 1341,
     "name": "IDirect3DDevice2_GetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3457271375
   },
   {
-    "id": 1340,
+    "id": 1342,
     "name": "IDirect3DDevice2_MultiplyTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4227876209
   },
   {
-    "id": 1341,
+    "id": 1343,
     "name": "IDirect3DDevice2_DrawPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 402505646
   },
   {
-    "id": 1342,
+    "id": 1344,
     "name": "IDirect3DDevice2_DrawIndexedPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1848079023
   },
   {
-    "id": 1343,
+    "id": 1345,
     "name": "IDirect3DDevice2_SetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1015382781
   },
   {
-    "id": 1344,
+    "id": 1346,
     "name": "IDirect3DDevice2_GetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 650852209
   },
   {
-    "id": 1345,
+    "id": 1347,
     "name": "IDirect3DDevice7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2945558269
   },
   {
-    "id": 1346,
+    "id": 1348,
     "name": "IDirect3DDevice7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 630277814
   },
   {
-    "id": 1347,
+    "id": 1349,
     "name": "IDirect3DDevice7_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 170807659
   },
   {
-    "id": 1348,
+    "id": 1350,
     "name": "IDirect3DDevice7_GetCaps",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2927973783
   },
   {
-    "id": 1349,
+    "id": 1351,
     "name": "IDirect3DDevice7_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2131998094
   },
   {
-    "id": 1350,
+    "id": 1352,
     "name": "IDirect3DDevice7_BeginScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1897753917
   },
   {
-    "id": 1351,
+    "id": 1353,
     "name": "IDirect3DDevice7_EndScene",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1891165397
   },
   {
-    "id": 1352,
+    "id": 1354,
     "name": "IDirect3DDevice7_GetDirect3D",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1805733568
   },
   {
-    "id": 1353,
+    "id": 1355,
     "name": "IDirect3DDevice7_SetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2217687855
   },
   {
-    "id": 1354,
+    "id": 1356,
     "name": "IDirect3DDevice7_GetRenderTarget",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2783266411
   },
   {
-    "id": 1355,
+    "id": 1357,
     "name": "IDirect3DDevice7_Clear",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 916563635
   },
   {
-    "id": 1356,
+    "id": 1358,
     "name": "IDirect3DDevice7_SetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1658288658
   },
   {
-    "id": 1357,
+    "id": 1359,
     "name": "IDirect3DDevice7_GetTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2072730206
   },
   {
-    "id": 1358,
+    "id": 1360,
     "name": "IDirect3DDevice7_SetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 516988860
   },
   {
-    "id": 1359,
+    "id": 1361,
     "name": "IDirect3DDevice7_MultiplyTransform",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1587953330
   },
   {
-    "id": 1360,
+    "id": 1362,
     "name": "IDirect3DDevice7_GetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3563909808
   },
   {
-    "id": 1361,
+    "id": 1363,
     "name": "IDirect3DDevice7_SetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 930813807
   },
   {
-    "id": 1362,
+    "id": 1364,
     "name": "IDirect3DDevice7_GetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1795504859
   },
   {
-    "id": 1363,
+    "id": 1365,
     "name": "IDirect3DDevice7_SetLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 186768302
   },
   {
-    "id": 1364,
+    "id": 1366,
     "name": "IDirect3DDevice7_GetLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 663943402
   },
   {
-    "id": 1365,
+    "id": 1367,
     "name": "IDirect3DDevice7_BeginStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1126120001
   },
   {
-    "id": 1366,
+    "id": 1368,
     "name": "IDirect3DDevice7_EndStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 846489641
   },
   {
-    "id": 1367,
+    "id": 1369,
     "name": "IDirect3DDevice7_PreLoad",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 54297315
   },
   {
-    "id": 1368,
+    "id": 1370,
     "name": "IDirect3DDevice7_DrawPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 506358317
   },
   {
-    "id": 1369,
+    "id": 1371,
     "name": "IDirect3DDevice7_DrawIndexedPrimitive",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1070825194
   },
   {
-    "id": 1370,
+    "id": 1372,
     "name": "IDirect3DDevice7_SetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 592611398
   },
   {
-    "id": 1371,
+    "id": 1373,
     "name": "IDirect3DDevice7_GetClipStatus",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 890186834
   },
   {
-    "id": 1372,
+    "id": 1374,
     "name": "IDirect3DDevice7_DrawPrimitiveStrided",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 232678396
   },
   {
-    "id": 1373,
+    "id": 1375,
     "name": "IDirect3DDevice7_DrawIndexedPrimitiveStrided",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2809539785
   },
   {
-    "id": 1374,
+    "id": 1376,
     "name": "IDirect3DDevice7_DrawPrimitiveVB",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3636376153
   },
   {
-    "id": 1375,
+    "id": 1377,
     "name": "IDirect3DDevice7_DrawIndexedPrimitiveVB",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2677813634
   },
   {
-    "id": 1376,
+    "id": 1378,
     "name": "IDirect3DDevice7_ComputeSphereVisibility",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4244093602
   },
   {
-    "id": 1377,
+    "id": 1379,
     "name": "IDirect3DDevice7_GetTexture",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2827750825
   },
   {
-    "id": 1378,
+    "id": 1380,
     "name": "IDirect3DDevice7_SetTexture",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1763260477
   },
   {
-    "id": 1379,
+    "id": 1381,
     "name": "IDirect3DDevice7_GetTextureStageState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1769274210
   },
   {
-    "id": 1380,
+    "id": 1382,
     "name": "IDirect3DDevice7_SetTextureStageState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2986199398
   },
   {
-    "id": 1381,
+    "id": 1383,
     "name": "IDirect3DDevice7_ValidateDevice",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3001196206
   },
   {
-    "id": 1382,
+    "id": 1384,
     "name": "IDirect3DDevice7_ApplyStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1072814072
   },
   {
-    "id": 1383,
+    "id": 1385,
     "name": "IDirect3DDevice7_CaptureStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2799421610
   },
   {
-    "id": 1384,
+    "id": 1386,
     "name": "IDirect3DDevice7_DeleteStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 622015875
   },
   {
-    "id": 1385,
+    "id": 1387,
     "name": "IDirect3DDevice7_CreateStateBlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2755030876
   },
   {
-    "id": 1386,
+    "id": 1388,
     "name": "IDirect3DDevice7_Load",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2408245986
   },
   {
-    "id": 1387,
+    "id": 1389,
     "name": "IDirect3DDevice7_LightEnable",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2289076365
   },
   {
-    "id": 1388,
+    "id": 1390,
     "name": "IDirect3DDevice7_GetLightEnable",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3927487769
   },
   {
-    "id": 1389,
+    "id": 1391,
     "name": "IDirect3DDevice7_SetClipPlane",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3225897534
   },
   {
-    "id": 1390,
+    "id": 1392,
     "name": "IDirect3DDevice7_GetClipPlane",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2774568626
   },
   {
-    "id": 1391,
+    "id": 1393,
     "name": "IDirect3DDevice7_GetInfo",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2969516374
   },
   {
-    "id": 1392,
+    "id": 1394,
     "name": "IDirect3DDevice7_SetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 993511491
   },
   {
-    "id": 1393,
+    "id": 1395,
     "name": "IDirect3DDevice7_GetRenderState",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 923553855
   },
   {
-    "id": 1394,
+    "id": 1396,
     "name": "IDirect3DViewport_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3042211694
   },
   {
-    "id": 1395,
+    "id": 1397,
     "name": "IDirect3DViewport_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2465759709
   },
   {
-    "id": 1396,
+    "id": 1398,
     "name": "IDirect3DViewport_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3757836282
   },
   {
-    "id": 1397,
+    "id": 1399,
     "name": "IDirect3DViewport_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1483177711
   },
   {
-    "id": 1398,
+    "id": 1400,
     "name": "IDirect3DViewport_GetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1863798025
   },
   {
-    "id": 1399,
+    "id": 1401,
     "name": "IDirect3DViewport_SetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3144577941
   },
   {
-    "id": 1400,
+    "id": 1402,
     "name": "IDirect3DViewport_TransformVertices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1196143016
   },
   {
-    "id": 1401,
+    "id": 1403,
     "name": "IDirect3DViewport_LightElements",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2518563154
   },
   {
-    "id": 1402,
+    "id": 1404,
     "name": "IDirect3DViewport_SetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1256812419
   },
   {
-    "id": 1403,
+    "id": 1405,
     "name": "IDirect3DViewport_GetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1306096871
   },
   {
-    "id": 1404,
+    "id": 1406,
     "name": "IDirect3DViewport_SetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 878070636
   },
   {
-    "id": 1405,
+    "id": 1407,
     "name": "IDirect3DViewport_GetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3571754496
   },
   {
-    "id": 1406,
+    "id": 1408,
     "name": "IDirect3DViewport_Clear",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2637237838
   },
   {
-    "id": 1407,
+    "id": 1409,
     "name": "IDirect3DViewport_AddLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3493817620
   },
   {
-    "id": 1408,
+    "id": 1410,
     "name": "IDirect3DViewport_DeleteLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3231490562
   },
   {
-    "id": 1409,
+    "id": 1411,
     "name": "IDirect3DViewport_NextLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2928352968
   },
   {
-    "id": 1410,
+    "id": 1412,
     "name": "IDirect3DViewport2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3250248736
   },
   {
-    "id": 1411,
+    "id": 1413,
     "name": "IDirect3DViewport2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1616480675
   },
   {
-    "id": 1412,
+    "id": 1414,
     "name": "IDirect3DViewport2_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 900370660
   },
   {
-    "id": 1413,
+    "id": 1415,
     "name": "IDirect3DViewport2_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4292691621
   },
   {
-    "id": 1414,
+    "id": 1416,
     "name": "IDirect3DViewport2_GetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3385776895
   },
   {
-    "id": 1415,
+    "id": 1417,
     "name": "IDirect3DViewport2_SetViewport",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2838771059
   },
   {
-    "id": 1416,
+    "id": 1418,
     "name": "IDirect3DViewport2_TransformVertices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3765470746
   },
   {
-    "id": 1417,
+    "id": 1419,
     "name": "IDirect3DViewport2_LightElements",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3686457544
   },
   {
-    "id": 1418,
+    "id": 1420,
     "name": "IDirect3DViewport2_SetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4258456813
   },
   {
-    "id": 1419,
+    "id": 1421,
     "name": "IDirect3DViewport2_GetBackground",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3107673
   },
   {
-    "id": 1420,
+    "id": 1422,
     "name": "IDirect3DViewport2_SetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2719563058
   },
   {
-    "id": 1421,
+    "id": 1423,
     "name": "IDirect3DViewport2_GetBackgroundDepth",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1171362878
   },
   {
-    "id": 1422,
+    "id": 1424,
     "name": "IDirect3DViewport2_Clear",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1985562720
   },
   {
-    "id": 1423,
+    "id": 1425,
     "name": "IDirect3DViewport2_AddLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3082488974
   },
   {
-    "id": 1424,
+    "id": 1426,
     "name": "IDirect3DViewport2_DeleteLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3376026160
   },
   {
-    "id": 1425,
+    "id": 1427,
     "name": "IDirect3DViewport2_NextLight",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4277339474
   },
   {
-    "id": 1426,
+    "id": 1428,
     "name": "IDirect3DViewport2_GetViewport2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2107797687
   },
   {
-    "id": 1427,
+    "id": 1429,
     "name": "IDirect3DViewport2_SetViewport2",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2653934931
   },
   {
-    "id": 1428,
+    "id": 1430,
     "name": "IDirect3DMaterial_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3452501287
   },
   {
-    "id": 1429,
+    "id": 1431,
     "name": "IDirect3DMaterial_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 270765996
   },
   {
-    "id": 1430,
+    "id": 1432,
     "name": "IDirect3DMaterial_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1420259853
   },
   {
-    "id": 1431,
+    "id": 1433,
     "name": "IDirect3DMaterial_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4066870614
   },
   {
-    "id": 1432,
+    "id": 1434,
     "name": "IDirect3DMaterial_SetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3696448377
   },
   {
-    "id": 1433,
+    "id": 1435,
     "name": "IDirect3DMaterial_GetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 221291973
   },
   {
-    "id": 1434,
+    "id": 1436,
     "name": "IDirect3DMaterial_GetHandle",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 919659042
   },
   {
-    "id": 1435,
+    "id": 1437,
     "name": "IDirect3DMaterial_Reserve",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3287898136
   },
   {
-    "id": 1436,
+    "id": 1438,
     "name": "IDirect3DMaterial_Unreserve",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2534996277
   },
   {
-    "id": 1437,
+    "id": 1439,
     "name": "IDirect3DMaterial2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2408145839
   },
   {
-    "id": 1438,
+    "id": 1440,
     "name": "IDirect3DMaterial2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 282021700
   },
   {
-    "id": 1439,
+    "id": 1441,
     "name": "IDirect3DMaterial2_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 892185061
   },
   {
-    "id": 1440,
+    "id": 1442,
     "name": "IDirect3DMaterial2_SetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2789296113
   },
   {
-    "id": 1441,
+    "id": 1443,
     "name": "IDirect3DMaterial2_GetMaterial",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 850578269
   },
   {
-    "id": 1442,
+    "id": 1444,
     "name": "IDirect3DMaterial2_GetHandle",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3959242074
   },
   {
-    "id": 1443,
+    "id": 1445,
     "name": "IDirect3DExecuteBuffer_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2652787799
   },
   {
-    "id": 1444,
+    "id": 1446,
     "name": "IDirect3DExecuteBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1551145276
   },
   {
-    "id": 1445,
+    "id": 1447,
     "name": "IDirect3DExecuteBuffer_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3143086557
   },
   {
-    "id": 1446,
+    "id": 1448,
     "name": "IDirect3DExecuteBuffer_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3662714694
   },
   {
-    "id": 1447,
+    "id": 1449,
     "name": "IDirect3DExecuteBuffer_Lock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1192754215
   },
   {
-    "id": 1448,
+    "id": 1450,
     "name": "IDirect3DExecuteBuffer_Unlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 283134716
   },
   {
-    "id": 1449,
+    "id": 1451,
     "name": "IDirect3DExecuteBuffer_SetExecuteData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 362293415
   },
   {
-    "id": 1450,
+    "id": 1452,
     "name": "IDirect3DExecuteBuffer_GetExecuteData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3166799075
   },
   {
-    "id": 1451,
+    "id": 1453,
     "name": "IDirect3DExecuteBuffer_Validate",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 114280246
   },
   {
-    "id": 1452,
+    "id": 1454,
     "name": "IDirect3DExecuteBuffer_Optimize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3478777615
   },
   {
-    "id": 1453,
+    "id": 1455,
     "name": "IDirect3DVertexBuffer_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1445206456
   },
   {
-    "id": 1454,
+    "id": 1456,
     "name": "IDirect3DVertexBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 383961227
   },
   {
-    "id": 1455,
+    "id": 1457,
     "name": "IDirect3DVertexBuffer_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 405241100
   },
   {
-    "id": 1456,
+    "id": 1458,
     "name": "IDirect3DVertexBuffer_Lock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2370644832
   },
   {
-    "id": 1457,
+    "id": 1459,
     "name": "IDirect3DVertexBuffer_Unlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1529473551
   },
   {
-    "id": 1458,
+    "id": 1460,
     "name": "IDirect3DVertexBuffer_ProcessVertices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1642664435
   },
   {
-    "id": 1459,
+    "id": 1461,
     "name": "IDirect3DVertexBuffer_GetVertexBufferDesc",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 979674052
   },
   {
-    "id": 1460,
+    "id": 1462,
     "name": "IDirect3DVertexBuffer_Optimize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2688564840
   },
   {
-    "id": 1461,
+    "id": 1463,
     "name": "IDirect3DVertexBuffer7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2015253431
   },
   {
-    "id": 1462,
+    "id": 1464,
     "name": "IDirect3DVertexBuffer7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 453563804
   },
   {
-    "id": 1463,
+    "id": 1465,
     "name": "IDirect3DVertexBuffer7_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1541311869
   },
   {
-    "id": 1464,
+    "id": 1466,
     "name": "IDirect3DVertexBuffer7_Lock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3458090823
   },
   {
-    "id": 1465,
+    "id": 1467,
     "name": "IDirect3DVertexBuffer7_Unlock",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1299232028
   },
   {
-    "id": 1466,
+    "id": 1468,
     "name": "IDirect3DVertexBuffer7_ProcessVertices",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2177878198
   },
   {
-    "id": 1467,
+    "id": 1469,
     "name": "IDirect3DVertexBuffer7_GetVertexBufferDesc",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3930517573
   },
   {
-    "id": 1468,
+    "id": 1470,
     "name": "IDirect3DVertexBuffer7_Optimize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 270534191
   },
   {
-    "id": 1469,
+    "id": 1471,
     "name": "IDirect3DVertexBuffer7_ProcessVerticesStrided",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1902727565
   },
   {
-    "id": 1470,
+    "id": 1472,
     "name": "IDirect3DTexture_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4254569073
   },
   {
-    "id": 1471,
+    "id": 1473,
     "name": "IDirect3DTexture_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3837249682
   },
   {
-    "id": 1472,
+    "id": 1474,
     "name": "IDirect3DTexture_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1932729615
   },
   {
-    "id": 1473,
+    "id": 1475,
     "name": "IDirect3DTexture_Initialize",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 747178508
   },
   {
-    "id": 1474,
+    "id": 1476,
     "name": "IDirect3DTexture_GetHandle",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4269136828
   },
   {
-    "id": 1475,
+    "id": 1477,
     "name": "IDirect3DTexture_PaletteChanged",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2038281151
   },
   {
-    "id": 1476,
+    "id": 1478,
     "name": "IDirect3DTexture_Load",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1708588422
   },
   {
-    "id": 1477,
+    "id": 1479,
     "name": "IDirect3DTexture_Unload",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2216220841
   },
   {
-    "id": 1478,
+    "id": 1480,
     "name": "IDirect3DTexture2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 118513681
   },
   {
-    "id": 1479,
+    "id": 1481,
     "name": "IDirect3DTexture2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1653531570
   },
   {
-    "id": 1480,
+    "id": 1482,
     "name": "IDirect3DTexture2_Release",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2944364655
   },
   {
-    "id": 1481,
+    "id": 1483,
     "name": "IDirect3DTexture2_GetHandle",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3186253788
   },
   {
-    "id": 1482,
+    "id": 1484,
     "name": "IDirect3DTexture2_PaletteChanged",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2389755359
   },
   {
-    "id": 1483,
+    "id": 1485,
     "name": "IDirect3DTexture2_Load",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 702875750
   },
   {
-    "id": 1484,
+    "id": 1486,
     "name": "DirectDrawCreateClipper",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4283039011
   },
   {
-    "id": 1485,
+    "id": 1487,
     "name": "auxGetNumDevs",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 3284888601
   },
   {
-    "id": 1486,
+    "id": 1488,
     "name": "auxGetDevCapsA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 553405166
   },
   {
-    "id": 1487,
+    "id": 1489,
     "name": "auxGetVolume",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 979332293
   },
   {
-    "id": 1488,
+    "id": 1490,
     "name": "auxSetVolume",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4274665385
   },
   {
-    "id": 1489,
+    "id": 1491,
     "name": "auxOutMessage",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2159409594
   },
   {
-    "id": 1490,
+    "id": 1492,
     "name": "SetMenuItemInfoA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 783918890
   },
   {
-    "id": 1491,
+    "id": 1493,
     "name": "GetMenuItemInfoA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3656723766
   },
   {
-    "id": 1492,
+    "id": 1494,
     "name": "CreateEllipticRgn",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1205160998
   },
   {
-    "id": 1493,
+    "id": 1495,
     "name": "GetRgnBox",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 855758575
   },
   {
-    "id": 1494,
+    "id": 1496,
     "name": "IDirectDrawSurface2_GetDDInterface",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2187028522
   },
   {
-    "id": 1495,
+    "id": 1497,
     "name": "IDirectDrawSurface2_PageLock",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3135379509
   },
   {
-    "id": 1496,
+    "id": 1498,
     "name": "IDirectDrawSurface2_PageUnlock",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4022437158
   },
   {
-    "id": 1497,
+    "id": 1499,
     "name": "bsearch",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3761877705
   },
   {
-    "id": 1498,
+    "id": 1500,
     "name": "CoLockObjectExternal",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 659865628
   },
   {
-    "id": 1499,
+    "id": 1501,
     "name": "RegDeleteKeyA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1117720496
   },
   {
-    "id": 1500,
+    "id": 1502,
     "name": "RegDeleteKeyW",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 949944306
   },
   {
-    "id": 1501,
+    "id": 1503,
     "name": "RegDeleteValueA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3972606214
   },
   {
-    "id": 1502,
+    "id": 1504,
     "name": "RegDeleteValueW",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4274603356
   },
   {
-    "id": 1503,
+    "id": 1505,
     "name": "VkKeyScanW",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1975579077
   },
   {
-    "id": 1504,
+    "id": 1506,
     "name": "MapVirtualKeyW",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3486428232
   },
   {
-    "id": 1505,
+    "id": 1507,
     "name": "VirtualQuery",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3192741624
   },
   {
-    "id": 1506,
+    "id": 1508,
     "name": "GetDeviceGammaRamp",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2175164542
   },
   {
-    "id": 1507,
+    "id": 1509,
     "name": "EnumDisplaySettingsA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3782596270
   },
   {
-    "id": 1508,
+    "id": 1510,
     "name": "GetKeyboardLayoutNameA",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1789657574
   },
   {
-    "id": 1509,
+    "id": 1511,
     "name": "LoadKeyboardLayoutA",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3356268293
   },
   {
-    "id": 1510,
+    "id": 1512,
     "name": "CreateIconFromResourceEx",
     "nargs": 7,
     "convention": "stdcall",
     "hash": 3000191017
   },
   {
-    "id": 1511,
+    "id": 1513,
     "name": "CreateSemaphoreA",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3896222620
   },
   {
-    "id": 1512,
+    "id": 1514,
     "name": "MapVirtualKeyExA",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3269813513
   },
   {
-    "id": 1513,
+    "id": 1515,
     "name": "GetKeyboardState",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3645156891
   },
   {
-    "id": 1514,
+    "id": 1516,
     "name": "ToAsciiEx",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 349546314
   },
   {
-    "id": 1515,
+    "id": 1517,
     "name": "GetWindowTextLengthA",
     "nargs": 1,
     "convention": "stdcall",
@@ -11449,539 +11463,539 @@
     "ret": "INT"
   },
   {
-    "id": 1516,
+    "id": 1518,
     "name": "WinExec",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1100429264
   },
   {
-    "id": 1517,
+    "id": 1519,
     "name": "CreateDialogIndirectParamA",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3389844147
   },
   {
-    "id": 1518,
+    "id": 1520,
     "name": "GetSystemDefaultLCID",
     "nargs": 0,
     "convention": "stdcall",
     "hash": 544724655
   },
   {
-    "id": 1519,
+    "id": 1521,
     "name": "ImageList_AddMasked",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1580905743
   },
   {
-    "id": 1520,
+    "id": 1522,
     "name": "mmioSeek",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3500785251
   },
   {
-    "id": 1521,
+    "id": 1523,
     "name": "mbstowcs",
     "nargs": 3,
     "convention": "cdecl",
     "hash": 3222761413
   },
   {
-    "id": 1522,
+    "id": 1524,
     "name": "wcstombs",
     "nargs": 3,
     "convention": "cdecl",
     "hash": 2385846207
   },
   {
-    "id": 1523,
+    "id": 1525,
     "name": "ceil",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 1659167240
   },
   {
-    "id": 1524,
+    "id": 1526,
     "name": "sqrt",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 2112764879
   },
   {
-    "id": 1525,
+    "id": 1527,
     "name": "sin",
     "nargs": 1,
     "convention": "cdecl",
     "hash": 3761252941
   },
   {
-    "id": 1526,
+    "id": 1528,
     "name": "pow",
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1479764693
   },
   {
-    "id": 1527,
+    "id": 1529,
     "name": "_CIpow",
     "nargs": 0,
     "convention": "cdecl",
     "hash": 51420124
   },
   {
-    "id": 1528,
+    "id": 1530,
     "name": "UpdateColors",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3463167992
   },
   {
-    "id": 1529,
+    "id": 1531,
     "name": "DrawTextExA",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 612066656
   },
   {
-    "id": 1530,
+    "id": 1532,
     "name": "DrawTextExW",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 981174274
   },
   {
-    "id": 1531,
+    "id": 1533,
     "name": "IDirectPlay3_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 460816370
   },
   {
-    "id": 1532,
+    "id": 1534,
     "name": "IDirectPlay3_AddRef",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1511343625
   },
   {
-    "id": 1533,
+    "id": 1535,
     "name": "IDirectPlay3_Release",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2639681150
   },
   {
-    "id": 1534,
+    "id": 1536,
     "name": "IDirectPlay3_AddPlayerToGroup",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 359669339
   },
   {
-    "id": 1535,
+    "id": 1537,
     "name": "IDirectPlay3_Close",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3110642467
   },
   {
-    "id": 1536,
+    "id": 1538,
     "name": "IDirectPlay3_CreateGroup",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 4277643428
   },
   {
-    "id": 1537,
+    "id": 1539,
     "name": "IDirectPlay3_CreatePlayer",
     "nargs": 7,
     "convention": "stdcall",
     "hash": 2311827832
   },
   {
-    "id": 1538,
+    "id": 1540,
     "name": "IDirectPlay3_DeletePlayerFromGroup",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1911639494
   },
   {
-    "id": 1539,
+    "id": 1541,
     "name": "IDirectPlay3_DestroyGroup",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4183786668
   },
   {
-    "id": 1540,
+    "id": 1542,
     "name": "IDirectPlay3_DestroyPlayer",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2538594720
   },
   {
-    "id": 1541,
+    "id": 1543,
     "name": "IDirectPlay3_EnumGroupPlayers",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 821330771
   },
   {
-    "id": 1542,
+    "id": 1544,
     "name": "IDirectPlay3_EnumGroups",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2971539792
   },
   {
-    "id": 1543,
+    "id": 1545,
     "name": "IDirectPlay3_EnumPlayers",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1525854802
   },
   {
-    "id": 1544,
+    "id": 1546,
     "name": "IDirectPlay3_EnumSessions",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2085587693
   },
   {
-    "id": 1545,
+    "id": 1547,
     "name": "IDirectPlay3_GetCaps",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2422106226
   },
   {
-    "id": 1546,
+    "id": 1548,
     "name": "IDirectPlay3_GetGroupData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 556814910
   },
   {
-    "id": 1547,
+    "id": 1549,
     "name": "IDirectPlay3_GetGroupName",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1818851069
   },
   {
-    "id": 1548,
+    "id": 1550,
     "name": "IDirectPlay3_GetMessageCount",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3912331941
   },
   {
-    "id": 1549,
+    "id": 1551,
     "name": "IDirectPlay3_GetPlayerAddress",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2787170270
   },
   {
-    "id": 1550,
+    "id": 1552,
     "name": "IDirectPlay3_GetPlayerCaps",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 4246491271
   },
   {
-    "id": 1551,
+    "id": 1553,
     "name": "IDirectPlay3_GetPlayerData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 793812662
   },
   {
-    "id": 1552,
+    "id": 1554,
     "name": "IDirectPlay3_GetPlayerName",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2424288117
   },
   {
-    "id": 1553,
+    "id": 1555,
     "name": "IDirectPlay3_GetSessionDesc",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3217102764
   },
   {
-    "id": 1554,
+    "id": 1556,
     "name": "IDirectPlay3_Initialize",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 961597003
   },
   {
-    "id": 1555,
+    "id": 1557,
     "name": "IDirectPlay3_Open",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 760003785
   },
   {
-    "id": 1556,
+    "id": 1558,
     "name": "IDirectPlay3_Receive",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2331471266
   },
   {
-    "id": 1557,
+    "id": 1559,
     "name": "IDirectPlay3_Send",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3427778735
   },
   {
-    "id": 1558,
+    "id": 1560,
     "name": "IDirectPlay3_SetGroupData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4137504810
   },
   {
-    "id": 1559,
+    "id": 1561,
     "name": "IDirectPlay3_SetGroupName",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1085338913
   },
   {
-    "id": 1560,
+    "id": 1562,
     "name": "IDirectPlay3_SetPlayerData",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 492705474
   },
   {
-    "id": 1561,
+    "id": 1563,
     "name": "IDirectPlay3_SetPlayerName",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2396303833
   },
   {
-    "id": 1562,
+    "id": 1564,
     "name": "IDirectPlay3_SetSessionDesc",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 591863112
   },
   {
-    "id": 1563,
+    "id": 1565,
     "name": "IDirectPlay3_AddGroupToGroup",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2888959685
   },
   {
-    "id": 1564,
+    "id": 1566,
     "name": "IDirectPlay3_CreateGroupInGroup",
     "nargs": 7,
     "convention": "stdcall",
     "hash": 3401940242
   },
   {
-    "id": 1565,
+    "id": 1567,
     "name": "IDirectPlay3_DeleteGroupFromGroup",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2997692340
   },
   {
-    "id": 1566,
+    "id": 1568,
     "name": "IDirectPlay3_EnumConnections",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2261619281
   },
   {
-    "id": 1567,
+    "id": 1569,
     "name": "IDirectPlay3_EnumGroupsInGroup",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 283507382
   },
   {
-    "id": 1568,
+    "id": 1570,
     "name": "IDirectPlay3_GetGroupConnectionSettings",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4120056575
   },
   {
-    "id": 1569,
+    "id": 1571,
     "name": "IDirectPlay3_InitializeConnection",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 272267867
   },
   {
-    "id": 1570,
+    "id": 1572,
     "name": "IDirectPlay3_SecureOpen",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1612232184
   },
   {
-    "id": 1571,
+    "id": 1573,
     "name": "IDirectPlay3_SendChatMessage",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1806577480
   },
   {
-    "id": 1572,
+    "id": 1574,
     "name": "IDirectPlay3_SetGroupConnectionSettings",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2765428331
   },
   {
-    "id": 1573,
+    "id": 1575,
     "name": "IDirectPlay3_StartSession",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3530707433
   },
   {
-    "id": 1574,
+    "id": 1576,
     "name": "IDirectPlay3_GetGroupFlags",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2626060505
   },
   {
-    "id": 1575,
+    "id": 1577,
     "name": "IDirectPlay3_GetGroupParent",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4012312686
   },
   {
-    "id": 1576,
+    "id": 1578,
     "name": "IDirectPlay3_GetPlayerAccount",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4135615913
   },
   {
-    "id": 1577,
+    "id": 1579,
     "name": "IDirectPlay3_GetPlayerFlags",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 122898065
   },
   {
-    "id": 1578,
+    "id": 1580,
     "name": "IDirectPlayLobby2_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2101520277
   },
   {
-    "id": 1579,
+    "id": 1581,
     "name": "IDirectPlayLobby2_AddRef",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2853561022
   },
   {
-    "id": 1580,
+    "id": 1582,
     "name": "IDirectPlayLobby2_Release",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1201154899
   },
   {
-    "id": 1581,
+    "id": 1583,
     "name": "IDirectPlayLobby2_Connect",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2231147408
   },
   {
-    "id": 1582,
+    "id": 1584,
     "name": "IDirectPlayLobby2_CreateAddress",
     "nargs": 7,
     "convention": "stdcall",
     "hash": 52383982
   },
   {
-    "id": 1583,
+    "id": 1585,
     "name": "IDirectPlayLobby2_EnumAddress",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 858040145
   },
   {
-    "id": 1584,
+    "id": 1586,
     "name": "IDirectPlayLobby2_EnumAddressTypes",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1816863006
   },
   {
-    "id": 1585,
+    "id": 1587,
     "name": "IDirectPlayLobby2_EnumLocalApplications",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2018734345
   },
   {
-    "id": 1586,
+    "id": 1588,
     "name": "IDirectPlayLobby2_GetConnectionSettings",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3713423679
   },
   {
-    "id": 1587,
+    "id": 1589,
     "name": "IDirectPlayLobby2_ReceiveLobbyMessage",
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2094263588
   },
   {
-    "id": 1588,
+    "id": 1590,
     "name": "IDirectPlayLobby2_RunApplication",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1322036275
   },
   {
-    "id": 1589,
+    "id": 1591,
     "name": "IDirectPlayLobby2_SendLobbyMessage",
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1124648207
   },
   {
-    "id": 1590,
+    "id": 1592,
     "name": "IDirectPlayLobby2_SetConnectionSettings",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 571736307
   },
   {
-    "id": 1591,
+    "id": 1593,
     "name": "IDirectPlayLobby2_SetLobbyMessageEvent",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 728718515
   },
   {
-    "id": 1592,
+    "id": 1594,
     "name": "IDirectPlayLobby2_CreateCompoundAddress",
     "nargs": 5,
     "convention": "stdcall",

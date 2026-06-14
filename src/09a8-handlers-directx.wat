@@ -105,6 +105,13 @@
   (global $enum_modes_ret (mut i32) (i32.const 0))       ;; saved caller return addr
   (global $enum_modes_thunk (mut i32) (i32.const 0))     ;; CACA0008 thunk guest addr
 
+  ;; IDirect3D3::EnumZBufferFormats continuation state
+  (global $d3d_enum_zbuf_callback (mut i32) (i32.const 0))
+  (global $d3d_enum_zbuf_context  (mut i32) (i32.const 0))
+  (global $d3d_enum_zbuf_format   (mut i32) (i32.const 0))
+  (global $d3d_enum_zbuf_ret      (mut i32) (i32.const 0))
+  (global $d3d_enum_zbuf_thunk    (mut i32) (i32.const 0)) ;; CACA000D thunk guest addr
+
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
   (func $dx_alloc (param $type i32) (result i32)
@@ -934,6 +941,40 @@
         (return)))
     (global.set $d3d_enum_dev_idx (i32.add (global.get $d3d_enum_dev_idx) (i32.const 1)))
     (call $d3d_enum_devices_dispatch))
+
+  ;; ── IDirect3D3::EnumZBufferFormats — report a single 16-bit Z format ──
+  ;; Callback signature: EnumZBufferFormatsCallback(lpDDPixelFormat, lpContext).
+  (func $d3d_enum_zbuf_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+    (local $wa i32)
+    (global.set $d3d_enum_zbuf_callback (local.get $cb))
+    (global.set $d3d_enum_zbuf_context  (local.get $ctx))
+    (global.set $d3d_enum_zbuf_ret      (local.get $ret_addr))
+    (global.set $d3d_enum_zbuf_format   (call $heap_alloc (i32.const 32)))
+    (local.set $wa (call $g2w (global.get $d3d_enum_zbuf_format)))
+    (call $zero_memory (local.get $wa) (i32.const 32))
+    (i32.store (local.get $wa)                         (i32.const 32))    ;; dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x400)) ;; DDPF_ZBUFFER
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))   ;; dwZBufferBitDepth
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0xFFFF)) ;; dwZBitMask
+    ;; Push saved caller return, then callback args right-to-left.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_zbuf_context))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_zbuf_format))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_zbuf_thunk))
+    (global.set $eip (global.get $d3d_enum_zbuf_callback))
+    (global.set $steps (i32.const 0)))
+
+  ;; CACA000D: z-buffer-format callback returned. One format is enough for
+  ;; DX5-era device setup, so finish enumeration regardless of callback EAX.
+  (func $d3d_enum_zbuf_continue
+    (global.set $d3d_enum_zbuf_ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (global.set $eip (global.get $d3d_enum_zbuf_ret))
+    (global.set $eax (i32.const 0)))
 
   ;; Fill D3DDEVICEDESC (DX5-style 252-byte layout).
   ;; is_hal=1 sets HWRASTERIZATION + vidmem caps; is_hal=0 is HEL (software).
@@ -1937,9 +1978,9 @@
     (local.set $dib_wa (i32.load (i32.add (local.get $entry_wa) (i32.const 20))))
     (call $host_dx_trace (i32.const 5) (call $dx_slot_of (local.get $entry_wa))
       (local.get $bpp) (local.get $dib_wa) (global.get $dx_primary_pal_wa))
-    ;; Build BITMAPINFO at scratch area 0xAD40 (40-byte header + optional palette)
-    ;; Space available: 0xAD40 to 0x12000 = plenty for header + 256-entry palette
-    (local.set $bmi_wa (i32.const 0x0000AD40))
+    ;; Build BITMAPINFO in a private DirectDraw scratch area. PAINT_SCRATCH
+    ;; at 0xAD40 is reused by window/control paint paths during presentation.
+    (local.set $bmi_wa (i32.const 0x00011140))
     (call $zero_memory (local.get $bmi_wa) (i32.const 1064)) ;; 40 + 256*4
     (i32.store (local.get $bmi_wa) (i32.const 40)) ;; biSize
     (i32.store (i32.add (local.get $bmi_wa) (i32.const 4)) (local.get $w))
@@ -3319,6 +3360,22 @@
   (func $handle_IDirect3D3_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004005))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; IDirect3D3::EnumZBufferFormats(this, refclsid, lpCallback, lpContext)
+  (func $handle_IDirect3D3_EnumZBufferFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg2)) (then
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $d3d_enum_zbuf_invoke (local.get $arg2) (local.get $arg3) (local.get $ret_addr)))
+
+  ;; IDirect3D3::EvictManagedTextures(this)
+  (func $handle_IDirect3D3_EvictManagedTextures (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDrawFactory methods (from ddrawex.dll)

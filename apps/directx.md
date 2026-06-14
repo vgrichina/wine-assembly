@@ -294,7 +294,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 | **Abe's Oddworld demo** | PE load crash | 32MB sizeOfImage overflows WASM memory layout |
 | **AoE2** | Not tested | Likely same issues as AoE1 |
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
-| **MCM / MW3** | Blocked | Need D3D Immediate Mode (see `direct3d-im.md`) |
+| **MCM / MW3** | Partial | MW3 now loads `zbd` data, creates the main window, reaches D3D3 setup, enumerates a 16-bit Z-buffer format, and presents valid 16bpp DirectDraw frames. Next blocker: render surfaces are still zero-filled/blank |
 
 ### DX5 SDK samples (harness, 2026-04-21)
 
@@ -318,6 +318,13 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 | Viewer / Bellhop | **PASS** | |
 | Globe | **PASS** (focused 7000-batch harness) | Guest D3DRM path now creates a legacy D3D device from `FindDevice`/surface QI, loads mesh/texture data with a local `sphere3.x`, and runs repeated execute-buffer render frames; needs a longer smoke budget to get through D3DRM setup, then shows a shaded faceted globe. Depth/culling/texture behavior is still incomplete |
 | FoxBear | **PASS** (93 colors) | Needs `maxBatches: 1800` to get past the art loader into the full scene |
+
+### Recent changes (2026-06-14)
+
+- MW3 extracted-layout VFS now exposes sibling `Database_Files/zbd` as `c:\zbd\`, matching the demo's CWD-relative `zbd\reader.zbd` probes.
+- `IDirect3D3` vtable coverage now includes `EnumZBufferFormats` and `EvictManagedTextures`; `EnumZBufferFormats` invokes the guest callback once with a 16-bit `DDPF_ZBUFFER` format. This removes MW3's null-vtable call at D3D3 slot `+0x28`.
+- DirectDraw presentation no longer reuses `PAINT_SCRATCH` for BITMAPINFO data. MW3 now logs sane `640x480 16bpp` presents instead of malformed `0x640 0bpp` headers.
+- `test-all-exes.js` gives MW3 a 500-batch smoke budget. Current expected result is a known-bad-render warning: main window and D3D setup are reached, but presented surfaces remain blank.
 
 ### Recent changes (2026-06-12)
 

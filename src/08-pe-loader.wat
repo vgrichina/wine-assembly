@@ -340,6 +340,15 @@
       (i32.const 0xCACA000B))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate D3D EnumZBufferFormats callback continuation thunk (marker 0xCACA000D)
+    (global.set $d3d_enum_zbuf_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000D))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate mm_timer callback return thunk (marker 0xCACA000A)
     (global.set $mm_timer_ret_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))

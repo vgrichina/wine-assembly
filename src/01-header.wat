@@ -573,7 +573,8 @@
   ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
   ;; 0x00010F00  256B    Free
   ;; 0x00011000  320B    WAT-owned system strings
-  ;; 0x00011140  ~2.5KB  Free (up to GUEST_BASE)
+  ;; 0x00011140  1064B   DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
+  ;; 0x00011568  ~2.6KB  Free (up to GUEST_BASE)
   ;; --- High WAT-private tables ---
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)

@@ -143,7 +143,10 @@ const TEST_CASES = [
   { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)', knownBadRender: 'known broken visual' },
   { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)', knownBadRender: 'known broken visual' },
-  { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)' },
+  { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)',
+    // Needs a longer budget to load zbd data and reach the D3D3 setup path.
+    maxBatches: 500, extraArgs: ['--no-close'], timeoutMs: 30000,
+    knownBadRender: 'reaches D3D3 setup/window but currently presents zero-filled 16bpp surfaces' },
   { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)' },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
   { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)' },
