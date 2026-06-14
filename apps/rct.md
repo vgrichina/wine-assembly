@@ -4,6 +4,9 @@
 **Image base:** 0x00400000
 **Data files:** `test/binaries/shareware/rct/Data/` — CSG1.DAT, CSG1i.DAT, CSS*.DAT, etc.
 **Window:** Fullscreen 640x480 8bpp (Chris Sawyer's custom engine)
+
+**Status (2026-06-14):** Focused all-EXE smoke coverage is now promoted. `test/test-all-exes.js` runs RCT with `40 x 5,000,000` instructions, which gets through the long pre-window loader and captures the 640x480 RollerCoaster Tycoon splash/menu DirectDraw frame (`179` PNG colors). This is startup/frame coverage, not a claim that gameplay is complete.
+
 **Status (2026-04-30):** PR #1 fixed the `0x67` `LOOP/LOOPE/LOOPNE/JCXZ` decoder trap. With that in place, RCT gets past the splash, loads `SC3.SC4`, and enters the auto-demo/runtime path. The active investigation is now firmly in runtime/render/game-tick, not startup: `timeGetTime` is advancing, the `1x1` viewport write at `0x004311c2` appears intentional and is not the main bug, and `0x0043867d` is active but not the root deadlock. Presentation is also no longer a one-shot init artifact: repeated full-screen `SetDIBitsToDevice` calls occur, but the output remains black. The first hard failure currently seen is the fatal path at batch `1407`, where `0x00430344` compares the `SC3.SC4` scenario result against `word [0x00836522]`; that word stays zero, so the scenario handoff never reports success.
 
 **ASCII TLDR current state (2026-05-08):** Native/CLI RCT reaches a real

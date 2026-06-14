@@ -290,7 +290,7 @@ Because it won't get us past the first `Lock` — MARBLES dereferences `DDSURFAC
 |------|--------|---------|
 | **MARBLES** (Plus! 98) | **Rendering game screen** — 173K API calls, sprites visible | Needs mouse input to start gameplay |
 | **AoE** (Age of Empires) | **PASS** — focused 3000-batch all-EXE smoke reaches 800x600 title art | Full scripted path can reach the map with larger budget/input |
-| **RCT** (RollerCoaster Tycoon) | Dialog renders, EndDialog works | Data files (CSG1.DAT etc.) not found via VFS |
+| **RCT** (RollerCoaster Tycoon) | **PASS** — focused 40×5M smoke captures the 640x480 splash/menu frame | Startup/frame coverage only; gameplay/runtime loop still needs deeper scripting |
 | **Abe's Oddworld demo** | **PASS** — focused 1000-batch smoke captures the title/copyright frame | Extracted `AbeDemo.exe` renders via a 1024x512 offscreen DDraw surface; original 32MB self-extracting archive still overflows the fixed WASM memory layout |
 | **AoE2** | **PASS** — startup/EULA dialog renders in all-EXE smoke | Not advanced to game/menu yet |
 | **Screensavers (7)** | Blocked | Need D3DRM (see `d3drm.md`) |
@@ -334,6 +334,7 @@ Pixel-diversity gate added to `test-all-exes.js` (commit c484b24) exposed which 
 - `test-all-exes.js` no longer marks AoE2 known-bad: the default smoke renders its EULA dialog correctly. This is startup coverage only, not menu/gameplay coverage.
 - `CreateWindowExA` now initializes WAT-native child controls once, with the real `CREATESTRUCT`, instead of sending an early null `WM_CREATE` and then queuing a duplicate child `WM_CREATE`. This keeps DX5 Palette's listbox rows from being wiped after the app populates them before entering the message loop; the sample is no longer marked known-bad.
 - DirectDraw presentation/capture now scores sampled surface diversity instead of picking any nonzero primary surface first. This lets Abe's focused smoke present the richer 1024x512 title/copyright offscreen surface while its primary remains a two-color dark buffer.
+- `test-all-exes.js` now gives RollerCoaster Tycoon a focused `40 x 5,000,000` instruction smoke. The default tiny budget stopped before the first window; the focused run reaches and captures the 640x480 splash/menu DirectDraw frame.
 
 ### Recent changes (2026-06-12)
 

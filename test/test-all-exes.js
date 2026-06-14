@@ -162,7 +162,10 @@ const TEST_CASES = [
     maxBatches: 250, batchSize: 100000,
     extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 90000 },
-  { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)' },
+  { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)',
+    // RCT's pre-window loader is instruction-heavy; this focused budget
+    // reaches the 640x480 splash/menu DirectDraw frame.
+    maxBatches: 40, batchSize: 5000000, extraArgs: ['--quiet-blocks'], timeoutMs: 45000 },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
   { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex2.exe', name: 'DX5 DDraw Sample 2 (ddex2)' },
