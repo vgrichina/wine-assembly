@@ -13,7 +13,7 @@
 ### PE file offset note
 `.text` section: RVA=0x1000, file offset=0x400. Delta = 0xC00. To read bytes at VA X: `fileOffset = X - 0x400000 - 0x1000 + 0x400 = X - 0x400C00`.
 
-**Status (2026-04-16):** Game initializes DDraw/DSound, creates audio thread, loads level data, enters main loop. Timer callback fires and posts WM_USER to thread 1 which reads level files. Main loop does DDraw Lock/Unlock pixel blitting. **Crashes to EIP=0** due to dual timer dispatch bug.
+**Status (2026-06-14):** `AbeDemo.exe` initializes DDraw/DSound, creates its audio/thread timer loop, loads `s1.lvl`, and no longer hits the old timer-dispatch EIP=0 crash. The focused all-EXE smoke now uses 1000 batches and captures the title/copyright frame from the 1024x512 16bpp offscreen DirectDraw surface. The original 32MB self-extracting `ABEODD.EXE` is still blocked by the fixed WASM memory layout.
 
 ## What works
 
@@ -26,9 +26,10 @@
 - Main loop: PeekMessageA → TranslateMessage → DispatchMessageA → timeGetTime → DDraw Lock/Unlock
 - Level data loading: Thread 1 does SetFilePointer + ReadFile for multiple chunks, main thread blits pixels
 - DSound: DirectSoundCreate, CreateSoundBuffer, Lock/Unlock for audio buffers
+- DirectDraw presentation smoke: the primary surface remains a low-diversity dark buffer, but the richer 1024x512 offscreen surface contains the visible title/copyright frame and is selected for capture/presentation.
 - **With timer disabled (`--no-timer`): reaches 6853 API calls**, progresses through full level loading sequence
 
-## Current blocker: dual timer dispatch causes stack corruption → EIP=0
+## Historical blocker: dual timer dispatch caused stack corruption → EIP=0
 
 **Symptom:** Game crashes at batch ~208, 660 API calls. EIP=0x00000000, prev_eip=0x0048757e. The instruction at 0x48757e is `add esp,0x10; xor eax,eax; add esp,0x8; ret` — the `ret` pops 0 from the stack.
 
@@ -57,10 +58,9 @@ Both paths fire the same callback at 0x498be0. The `fire_mm_timer` re-entrancy g
 
 ## Next steps
 
-1. **Fix dual timer dispatch** — disable `fire_mm_timer` JS-side injection; let `$check_timer` in PeekMessageA/GetMessageA handle MM timer via 0x7FF0 messages exclusively
-2. **After timer fix**: with `--no-timer` the game reaches 6853 API calls and gets stuck in a busy-wait loop at 0xa7c272 (dynamically loaded code) calling timeGetTime endlessly — this is the timing wait loop that relies on the timer callback to set [0xab1220]=1. With the message-queue dispatch working, this loop should proceed.
-3. **Verify level loading completes** — Thread 1 should read all level chunks and the main thread should start rendering frames
-4. **Check rendering** — DDraw surface Lock/Unlock pixel blitting happens but no PNG output has been captured yet
+1. Track Abe's intended offscreen-to-primary copy path. Current presentation chooses the richer offscreen frame when the primary is only a dark timing/copy buffer.
+2. Advance beyond the title/load frame into interactive gameplay and verify input/timing/audio behavior under a longer scripted run.
+3. Revisit the original 32MB self-extracting archive after the guest/WASM memory layout can fit large PE images.
 
 ## Key addresses
 
@@ -105,6 +105,11 @@ Both paths fire the same callback at 0x498be0. The `fire_mm_timer` re-entrancy g
 ### timeSetEvent/timeKillEvent unimplemented — FIXED
 **File:** `src/09a3-handlers-audio.wat`, `src/13-exports.wat`
 **Fix:** Implemented `$handle_timeSetEvent` (stores callback, interval, flags in globals), `$handle_timeKillEvent`, and `fire_mm_timer` export for JS-side timer firing.
+
+### Low-information primary hid the visible offscreen frame — FIXED
+**Files:** `lib/host-imports.js`, `test/run.js`, `test/test-all-exes.js`
+**Root cause:** PNG capture and live DirectDraw presentation picked any nonzero primary surface before considering offscreen surfaces. Abe's primary contains only two dark colors while its visible title/copyright frame lands on a 1024x512 offscreen surface.
+**Fix:** DirectDraw presentation now scores sampled surface diversity and allows a substantially richer offscreen surface to beat a low-diversity primary. The all-EXE smoke gives Abe 1000 batches so the title frame has time to appear.
 
 ### TranslateAcceleratorA unimplemented — FIXED
 **File:** `src/09a-handlers.wat`

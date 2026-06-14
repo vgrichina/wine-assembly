@@ -3781,6 +3781,83 @@ if (VERBOSE) {
     return data;
   };
 
+  const dxSurfaceContentScore = (surface, mem) => {
+    if (!surface || !surface.dib || !surface.w || !surface.h || !surface.pitch) {
+      return { colors: 0, nonZero: 0, total: 0 };
+    }
+    const colors = new Set();
+    let nonZero = 0;
+    let total = 0;
+    try {
+      const step = Math.max(1, Math.ceil(Math.sqrt((surface.w * surface.h) / 2048)));
+      for (let y = 0; y < surface.h; y += step) {
+        const srcRow = surface.dib + y * surface.pitch;
+        for (let x = 0; x < surface.w; x += step) {
+          let key = 0;
+          if (surface.bpp === 8) {
+            const idx = mem[srcRow + x] || 0;
+            if (surface.paletteWa) {
+              const pi = surface.paletteWa + idx * 4;
+              key = ((mem[pi] || 0) << 16) | ((mem[pi + 1] || 0) << 8) | (mem[pi + 2] || 0);
+            } else {
+              key = idx;
+            }
+          } else if (surface.bpp === 16) {
+            key = (mem[srcRow + x * 2] || 0) | ((mem[srcRow + x * 2 + 1] || 0) << 8);
+          } else if (surface.bpp === 24) {
+            const pi = srcRow + x * 3;
+            key = ((mem[pi + 2] || 0) << 16) | ((mem[pi + 1] || 0) << 8) | (mem[pi] || 0);
+          } else if (surface.bpp === 32) {
+            const pi = srcRow + x * 4;
+            key = ((mem[pi + 2] || 0) << 16) | ((mem[pi + 1] || 0) << 8) | (mem[pi] || 0);
+          }
+          colors.add(key >>> 0);
+          if (key !== 0) nonZero++;
+          total++;
+        }
+      }
+    } catch (_) {}
+    return { colors: colors.size, nonZero, total };
+  };
+
+  const chooseDxPresentationSurface = (surfaces, mem) => {
+    const primary = surfaces.filter(s => (s.flags & 1));
+    const offscreen = surfaces.filter(s => (s.flags & 4));
+    const scored = (surface) => ({ surface, score: dxSurfaceContentScore(surface, mem) });
+    const useful = (item) => item && item.score.nonZero > 0;
+    const bestByDiversity = (items) => items
+      .filter(useful)
+      .sort((a, b) =>
+        (b.score.colors - a.score.colors) ||
+        (b.score.nonZero - a.score.nonZero))[0] || null;
+
+    const primaryCandidates = primary.map(scored);
+    const offscreenCandidates = offscreen
+      .filter(s => s.w >= 320 && s.h >= 200)
+      .map(scored);
+    const bestPrimary = bestByDiversity(primaryCandidates);
+    const bestOffscreen = bestByDiversity(offscreenCandidates);
+
+    if (!bestPrimary) {
+      for (const p of primary) {
+        const matching = bestByDiversity(offscreenCandidates.filter(item =>
+          item.surface.w === p.w &&
+          item.surface.h === p.h &&
+          item.surface.bpp === p.bpp));
+        if (matching) return matching.surface;
+      }
+      return bestOffscreen ? bestOffscreen.surface : null;
+    }
+
+    if (bestOffscreen &&
+        bestOffscreen.score.colors >= 16 &&
+        bestOffscreen.score.colors >= Math.max(bestPrimary.score.colors + 8, bestPrimary.score.colors * 4)) {
+      return bestOffscreen.surface;
+    }
+
+    return bestPrimary.surface;
+  };
+
   const writeRgbaPng = (outPath, width, height, data) => {
     if (!PNG) throw new Error('pngjs is required for direct PNG capture');
     const png = new PNG({ width, height });
@@ -3792,19 +3869,7 @@ if (VERBOSE) {
 
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();
-    const visiblePrimary = surfaces.find(s => (s.flags & 1) && s.firstNonZero >= 0);
-    const matchingOffscreen = (() => {
-      const prim = surfaces.find(s => (s.flags & 1));
-      if (!prim) return null;
-      return surfaces.find(s =>
-        (s.flags & 4) &&
-        s.w === prim.w &&
-        s.h === prim.h &&
-        s.bpp === prim.bpp &&
-        s.firstNonZero >= 0);
-    })();
-    const fallback = surfaces.find(s => (s.flags & 4) && s.w >= 320 && s.h >= 200 && s.firstNonZero >= 0);
-    const surface = visiblePrimary || matchingOffscreen || fallback;
+    const surface = chooseDxPresentationSurface(surfaces, mem);
     if (surface) {
       const bytes = writeRgbaPng(PNG_OUT, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
       console.log(`Wrote ${PNG_OUT} (${bytes} bytes, dx slot ${surface.slot} ${surface.w}x${surface.h})`);
