@@ -1873,22 +1873,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 822: CreateDialogParamW(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
-  ;; Wide-char version — same template layout as A, different lpTemplateName
-  ;; encoding when it's a string (UTF-16 vs ASCII). Our $find_resource only
-  ;; understands integer IDs and ASCII guest string names, so UTF-16
-  ;; template names still go through as-is and fall to the int branch.
+  ;; RT_DIALOG templates have the same binary layout for A/W callers. Reuse
+  ;; the A path so W dialogs get the same WAT-side registration, auto-show, and
+  ;; seeded painting behavior. UTF-16 template-name strings remain limited by
+  ;; the shared $find_resource implementation, which primarily handles int IDs.
   (func $handle_CreateDialogParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $hwnd i32)
-    (local.set $hwnd (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $dlg_hwnd (local.get $hwnd))
-    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
-    (call $push_rsrc_ctx (local.get $arg0))
-    (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
-    (call $pop_rsrc_ctx)
-    (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
-    (global.set $eax (local.get $hwnd))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (call $handle_CreateDialogParamA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
 
   ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space

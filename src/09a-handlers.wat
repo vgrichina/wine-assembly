@@ -4070,6 +4070,20 @@
     (call $handle_GetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
+  ;; Set/GetClassLongW — same scalar indices as A; class string fields are not
+  ;; modeled by the current lightweight class table.
+  (func $handle_SetClassLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_SetClassLongA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
+  (func $handle_GetClassLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GetClassLongA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
   ;; 309: InitCommonControlsEx — return 1 (success) — STUB: unimplemented
   (func $handle_InitCommonControlsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; InitCommonControlsEx(lpInitCtrls) → BOOL. 1 arg stdcall. Return TRUE
@@ -4208,6 +4222,14 @@
     (if (i32.eqz (call $gl16 (local.get $arg0)))
       (then (global.set $eax (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+  )
+
+  ;; CharPrevW(lpszStart, lpszCurrent) — step back one UTF-16 code unit.
+  (func $handle_CharPrevW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.le_u (local.get $arg1) (local.get $arg0))
+      (then (global.set $eax (local.get $arg0)))
+      (else (global.set $eax (i32.sub (local.get $arg1) (i32.const 2)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
   ;; 325: wsprintfW — wide sprintf (cdecl, caller cleans up)
@@ -7572,9 +7594,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 613: RemovePropW — STUB: unimplemented
+  ;; 613: RemovePropW(hwnd, lpString) -> HANDLE.
+  ;; Share the lightweight USER32 property table with the A variant; atom names
+  ;; already pass through unchanged, and app-local string properties only need a
+  ;; stable key across Set/Get/Remove.
   (func $handle_RemovePropW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_RemovePropA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 614: CallWindowProcW — same ABI as CallWindowProcA
@@ -7749,14 +7776,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 615: GetPropW — STUB: unimplemented
+  ;; 615: GetPropW(hwnd, lpString) -> HANDLE
   (func $handle_GetPropW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_GetPropA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 616: SetPropW — STUB: unimplemented
+  ;; 616: SetPropW(hwnd, lpString, hData) -> BOOL
   (func $handle_SetPropW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_SetPropA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 617: GetWindowTextLengthW — STUB: unimplemented

@@ -12133,5 +12133,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3439044610
+  },
+  {
+    "id": 1614,
+    "name": "SetClassLongW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2028576828
+  },
+  {
+    "id": 1615,
+    "name": "GetClassLongW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 794290464
+  },
+  {
+    "id": 1616,
+    "name": "CharPrevW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3563048653
   }
 ]

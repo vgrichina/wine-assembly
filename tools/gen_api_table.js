@@ -158,6 +158,8 @@ const extra = [
   { name: 'InvalidateRect', nargs: 3 },
   { name: 'UpdateWindow', nargs: 1 },
   { name: 'GetClassInfoW', nargs: 3 },
+  { name: 'SetClassLongW', nargs: 3 },
+  { name: 'GetClassLongW', nargs: 2 },
   { name: 'SetWindowLongW', nargs: 3 },
   { name: 'GetWindowLongW', nargs: 2 },
   { name: 'InitCommonControlsEx', nargs: 1 },
@@ -185,6 +187,7 @@ const extra = [
   { name: 'lstrcmpW', nargs: 2 },
   { name: 'lstrcmpiW', nargs: 2 },
   { name: 'CharNextW', nargs: 1 },
+  { name: 'CharPrevW', nargs: 2 },
   { name: 'wsprintfW', nargs: -1 },
   // TLS and synchronization
   { name: 'TlsAlloc', nargs: 0 },
