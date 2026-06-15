@@ -65,6 +65,7 @@ const extra = [
   { name: 'PaintRgn', nargs: 2 },
   { name: 'CharUpperA', nargs: 1 },
   { name: 'CharLowerA', nargs: 1 },
+  { name: 'CharLowerBuffA', nargs: 2 },
   { name: 'ImmAssociateContext', nargs: 2 },
   { name: 'ImmGetContext', nargs: 1 },
   { name: 'ImmReleaseContext', nargs: 2 },

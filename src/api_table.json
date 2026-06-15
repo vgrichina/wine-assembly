@@ -12168,5 +12168,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3288747016
+  },
+  {
+    "id": 1619,
+    "name": "CharLowerBuffA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3414498658
   }
 ]

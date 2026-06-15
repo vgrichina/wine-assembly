@@ -9203,6 +9203,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; CharLowerBuffA(lpsz, cchLength) — lowercase exactly cchLength ANSI bytes
+  ;; in place. Returns the number of bytes processed.
+  (func $handle_CharLowerBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $i i32) (local $c i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $p (call $g2w (local.get $arg0)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
+      (local.set $c (i32.load8_u (i32.add (local.get $p) (local.get $i))))
+      (if (i32.and
+            (i32.ge_u (local.get $c) (i32.const 0x41))
+            (i32.le_u (local.get $c) (i32.const 0x5a)))
+        (then
+          (i32.store8
+            (i32.add (local.get $p) (local.get $i))
+            (i32.add (local.get $c) (i32.const 0x20)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; OemToCharA(lpSrc, lpDst) — for US codepage, OEM ≡ ANSI; strcpy.
   (func $handle_OemToCharA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $src i32) (local $dst i32) (local $c i32)

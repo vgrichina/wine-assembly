@@ -1544,7 +1544,7 @@
 
   ;; $nc_flags_scan(mask) → hwnd of first slot with any $mask bit set, else 0.
   (func $nc_flags_scan (param $mask i32) (result i32)
-    (local $i i32) (local $ptr i32) (local $flags i32) (local $hwnd i32)
+    (local $i i32) (local $ptr i32) (local $flags i32) (local $hwnd i32) (local $new i32)
     (if (i32.eqz (global.get $nc_flags_count)) (then (return (i32.const 0))))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -1560,7 +1560,16 @@
                 (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x10000))
                          (i32.lt_u (local.get $hwnd) (global.get $next_hwnd)))
                 (i32.ne (i32.load offset=4 (call $wnd_record_addr (local.get $i))) (i32.const 0)))
-            (then (return (local.get $hwnd)))
+            (then
+              (if (call $wnd_is_effectively_visible (local.get $hwnd))
+                (then (return (local.get $hwnd))))
+              (if (i32.and (local.get $mask) (i32.const 4))
+                (then (call $defwndproc_do_nccalcsize (local.get $hwnd))))
+              (local.set $new (i32.and (local.get $flags) (i32.xor (local.get $mask) (i32.const -1))))
+              (i32.store (local.get $ptr) (local.get $new))
+              (if (i32.and (i32.eqz (local.get $new))
+                           (i32.gt_u (global.get $nc_flags_count) (i32.const 0)))
+                (then (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
             (else
               (i32.store (local.get $ptr) (i32.const 0))
               (if (i32.gt_u (global.get $nc_flags_count) (i32.const 0))
