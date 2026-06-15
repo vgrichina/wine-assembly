@@ -236,7 +236,13 @@ const TEST_CASES = [
   { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)',
+    // Animates into DDraw offscreen buffers before the first primary Blt.
+    // The default 80k instructions stops during the decode/update loop and
+    // captures the still-black primary surface.
+    maxBatches: 140, batchSize: 50000,
+    extraArgs: ['--args=/s', '--quiet-blocks'],
+    timeoutMs: 30000 },
   { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'] },
   // Plus! 98 screensavers — DirectDraw/Direct3DRM
   { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
