@@ -17,6 +17,22 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0000))
       (then (global.set $eip (global.get $eax)) (return)))
 
+    ;; Delphi SEH handler returned. EAX=1 means ExceptionContinueSearch, so
+    ;; clean the handler's cdecl arguments and invoke the next registration.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000E))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (if (i32.eq (global.get $eax) (i32.const 1))
+          (then
+            (global.set $delphi_seh_rec (call $gl32 (global.get $delphi_seh_rec)))
+            (call $dispatch_delphi_exception_handler)
+            (return)))
+        ;; Other dispositions should have resumed inside the Delphi runtime.
+        ;; If one returns here, fail closed instead of jumping through stale stack.
+        (call $host_exit (i32.or (i32.const 0xDE00)
+          (call $gl32 (global.get $delphi_exception_record))))
+        (return)))
+
     ;; CreateWindowEx continuation — WndProc(WM_CREATE) returned
     ;; Stack layout: [ESP] = saved_ret, [ESP+4] = saved_hwnd (pushed before WndProc args)
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))

@@ -108,6 +108,17 @@ async function main() {
   runCode([0x54, 0x58]); // push esp; pop eax
   test('PUSH ESP stores original ESP', e.get_eax(), imageBase + 0xD00000);
 
+  // Delphi/VCL uses x87 FILD/FISTP qword pairs as a memcpy fast path. The
+  // integer payload is often a string chunk, so preserving raw bytes matters.
+  const fpuCopyBytes = [0x54, 0x4d, 0x41, 0x49, 0x4e, 0x46, 0x4f, 0x52]; // "TMAINFOR"
+  setBytes(scratch, fpuCopyBytes);
+  setBytes(scratchA, [0, 0, 0, 0, 0, 0, 0, 0]);
+  runCode([
+    0xDF, 0x2D, ...le32(scratch),  // fild qword ptr [scratch]
+    0xDF, 0x3D, ...le32(scratchA), // fistp qword ptr [scratchA]
+  ]);
+  testBytes('FILD/FISTP m64 preserves raw qword bytes', bytesAt(scratchA, 8), fpuCopyBytes);
+
   // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply
   // ================================================================

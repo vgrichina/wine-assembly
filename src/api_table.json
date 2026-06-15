@@ -12161,5 +12161,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3194339426
+  },
+  {
+    "id": 1618,
+    "name": "IsWindowUnicode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3288747016
   }
 ]

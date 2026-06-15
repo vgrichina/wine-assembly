@@ -76,12 +76,15 @@ async function main() {
 
   const expDir = e.guest_alloc(32);
   const dllNameA = writeAscii('KERNEL32.dll');
+  const queryA = writeAscii('C:\\Windows\\System\\kernel32.dll');
   const queryW = writeWide('kernel32.dll');
   const loadAddr = expDir - 0x1000;
   e.guest_write32(expDir + 12, dllNameA - loadAddr);
   dv.setUint32(e.get_dll_table(), loadAddr >>> 0, true);
   dv.setUint32(e.get_dll_table() + 8, 0x1000, true);
   e.test_set_dll_count(1);
+  check('GetModuleHandleA finds DLL table entry by basename',
+    (e.test_call_GetModuleHandleA(queryA) >>> 0) === (loadAddr >>> 0));
   check('GetModuleHandleW returns NULL module as image base',
     (e.test_call_GetModuleHandleW(0) >>> 0) === (e.get_image_base() >>> 0));
   check('GetModuleHandleW finds DLL table entry case-insensitively',

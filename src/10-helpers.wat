@@ -996,6 +996,40 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; FlatSB entry points are optional comctl32 helpers. The loaded Win9x
+  ;; comctl32 implementation expects native subclass state we do not model, so
+  ;; callers should take their existing USER32 scrollbar fallback path.
+  (func $guest_name_contains_flatsb (param $name_ptr i32) (result i32)
+    (local $i i32) (local $c i32)
+    (block $done (loop $scan
+      (local.set $c (call $gl8 (i32.add (local.get $name_ptr) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (if (i32.and
+            (i32.and
+              (i32.and
+                (i32.eq (call $tolower (local.get $c)) (i32.const 0x66)) ;; f
+                (i32.eq (call $tolower
+                  (call $gl8 (i32.add (local.get $name_ptr) (i32.add (local.get $i) (i32.const 1)))))
+                  (i32.const 0x6c))) ;; l
+              (i32.and
+                (i32.eq (call $tolower
+                  (call $gl8 (i32.add (local.get $name_ptr) (i32.add (local.get $i) (i32.const 2)))))
+                  (i32.const 0x61)) ;; a
+                (i32.eq (call $tolower
+                  (call $gl8 (i32.add (local.get $name_ptr) (i32.add (local.get $i) (i32.const 3)))))
+                  (i32.const 0x74)))) ;; t
+            (i32.and
+              (i32.eq (call $tolower
+                (call $gl8 (i32.add (local.get $name_ptr) (i32.add (local.get $i) (i32.const 4)))))
+                (i32.const 0x73)) ;; s
+              (i32.eq (call $tolower
+                (call $gl8 (i32.add (local.get $name_ptr) (i32.add (local.get $i) (i32.const 5)))))
+                (i32.const 0x62)))) ;; b
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $update_rect_addr_for_slot (param $slot i32) (result i32)
     (i32.add (global.get $UPDATE_RECT) (i32.mul (local.get $slot) (i32.const 16))))
 

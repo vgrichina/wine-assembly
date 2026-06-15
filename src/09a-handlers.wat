@@ -223,10 +223,17 @@
 
   ;; 1: GetModuleHandleA(lpModuleName) — NULL→image_base, else search DLL table
   (func $handle_GetModuleHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result i32)
+    (local $result i32) (local $idx i32)
     (if (i32.eqz (local.get $arg0))
       (then (local.set $result (global.get $image_base)))
-      (else (local.set $result (call $find_dll_by_name (call $g2w (local.get $arg0))))))
+      (else
+        (local.set $idx (call $find_loaded_dll (local.get $arg0)))
+        (if (i32.ge_s (local.get $idx) (i32.const 0))
+          (then
+            (local.set $result
+              (i32.load (i32.add (global.get $DLL_TABLE)
+                (i32.mul (local.get $idx) (i32.const 32))))))
+          (else (local.set $result (i32.const 0))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -259,6 +266,13 @@
       (local.set $dll_base (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32)))))
       (if (i32.eq (local.get $dll_base) (local.get $arg0))
         (then
+          ;; Flat scrollbar APIs are optional. Let VCL/common-control callers
+          ;; use their USER32 fallback wrappers instead of entering the loaded
+          ;; comctl32 FlatSB code path, which depends on native subclass state.
+          (if (call $guest_name_contains_flatsb (local.get $arg1))
+            (then
+              (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+              (return)))
           ;; Found matching DLL — resolve export by name
           (local.set $resolved (call $resolve_name_export (local.get $i) (call $g2w (local.get $arg1))))
           (if (local.get $resolved)
@@ -443,6 +457,13 @@
         (global.set $yield_reason (i32.const 5))
         (global.set $yield_flag (i32.const 1))
         (global.set $steps (i32.const 0))
+        (return)))
+    ;; uxtheme.dll is optional and absent on Win98. Returning a synthetic
+    ;; handle makes VCL cache NULL theming procedure pointers, then call them.
+    (if (call $dll_name_match (local.get $arg0) (i32.const 0x36D))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Not found — return EXE base (system DLL stub) so GetProcAddress can create thunks
     (global.set $eax (global.get $image_base))
@@ -4056,6 +4077,12 @@
       (i32.ge_u (local.get $arg0) (i32.const 0x10000))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; IsWindowUnicode(hwnd) → BOOL. The current window/class path is ANSI-first,
+  ;; including VCL apps such as Tetravex, so report FALSE.
+  (func $handle_IsWindowUnicode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
   (func $handle_GetClassInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) → BOOL
@@ -5402,6 +5429,10 @@
   ;; 4 args stdcall. Pop first so SEH walker sees the caller's frame, then dispatch.
   (func $handle_RaiseException (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (if (i32.eq (local.get $arg0) (i32.const 0x0eedfade))
+      (then
+        (call $raise_delphi_exception (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+        (return)))
     (call $raise_exception (local.get $arg0))
   )
 
@@ -7394,9 +7425,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 588: GetCurrentPositionEx — STUB: unimplemented
+  ;; 588: GetCurrentPositionEx(hdc, lpPoint) -> BOOL
   (func $handle_GetCurrentPositionEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eq (global.get $gdi_current_pos_hdc) (local.get $arg0))
+      (then
+        (call $gs32 (local.get $arg1) (global.get $gdi_current_pos_x))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (global.get $gdi_current_pos_y)))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 589: ScaleWindowExtEx — STUB: unimplemented

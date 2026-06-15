@@ -190,6 +190,15 @@
       (i32.const 0xCACA0000))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate Delphi SEH handler continuation thunk (marker 0xCACA000E)
+    (global.set $delphi_seh_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA000E))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate CreateWindowEx continuation thunk (marker 0xCACA0001)
     (global.set $createwnd_ret_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))

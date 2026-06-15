@@ -55,6 +55,10 @@
       (i32.shl (i32.const 1) (call $fpu_tag_phys
         (i32.add (global.get $fpu_top) (local.get $i)))))))
   (func $fpu_mark_empty (param $i i32)
+    (global.set $fpu_raw_tag (i32.and (global.get $fpu_raw_tag)
+      (i32.xor (i32.const 0xFF)
+        (i32.shl (i32.const 1) (call $fpu_tag_phys
+          (i32.add (global.get $fpu_top) (local.get $i)))))))
     (global.set $fpu_tag (i32.and (global.get $fpu_tag)
       (i32.xor (i32.const 0xFF)
         (i32.shl (i32.const 1) (call $fpu_tag_phys
@@ -63,6 +67,47 @@
     (i32.and (i32.shr_u (global.get $fpu_tag)
       (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i))))
       (i32.const 1)))
+
+  (func $fpu_raw_clear (param $i i32)
+    (global.set $fpu_raw_tag (i32.and (global.get $fpu_raw_tag)
+      (i32.xor (i32.const 0xFF)
+        (i32.shl (i32.const 1) (call $fpu_tag_phys
+          (i32.add (global.get $fpu_top) (local.get $i))))))))
+
+  (func $fpu_raw_valid (param $i i32) (result i32)
+    (i32.and (i32.shr_u (global.get $fpu_raw_tag)
+      (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i))))
+      (i32.const 1)))
+
+  (func $fpu_raw_get_phys (param $p i32) (result i64)
+    (local $v i64)
+    (local.set $v (global.get $fpu_raw7))
+    (if (i32.eq (local.get $p) (i32.const 0)) (then (local.set $v (global.get $fpu_raw0))))
+    (if (i32.eq (local.get $p) (i32.const 1)) (then (local.set $v (global.get $fpu_raw1))))
+    (if (i32.eq (local.get $p) (i32.const 2)) (then (local.set $v (global.get $fpu_raw2))))
+    (if (i32.eq (local.get $p) (i32.const 3)) (then (local.set $v (global.get $fpu_raw3))))
+    (if (i32.eq (local.get $p) (i32.const 4)) (then (local.set $v (global.get $fpu_raw4))))
+    (if (i32.eq (local.get $p) (i32.const 5)) (then (local.set $v (global.get $fpu_raw5))))
+    (if (i32.eq (local.get $p) (i32.const 6)) (then (local.set $v (global.get $fpu_raw6))))
+    (local.get $v))
+
+  (func $fpu_raw_get (param $i i32) (result i64)
+    (call $fpu_raw_get_phys
+      (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i)))))
+
+  (func $fpu_raw_set (param $i i32) (param $v i64)
+    (local $p i32)
+    (local.set $p (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i))))
+    (if (i32.eq (local.get $p) (i32.const 0)) (then (global.set $fpu_raw0 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 1)) (then (global.set $fpu_raw1 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 2)) (then (global.set $fpu_raw2 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 3)) (then (global.set $fpu_raw3 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 4)) (then (global.set $fpu_raw4 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 5)) (then (global.set $fpu_raw5 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 6)) (then (global.set $fpu_raw6 (local.get $v))))
+    (if (i32.eq (local.get $p) (i32.const 7)) (then (global.set $fpu_raw7 (local.get $v))))
+    (global.set $fpu_raw_tag
+      (i32.or (global.get $fpu_raw_tag) (i32.shl (i32.const 1) (local.get $p)))))
 
   ;; Set status-word exception flags. Bits: IE=1, DE=2, ZE=4, OE=8, UE=16, PE=32,
   ;; SF=64 (stack fault, paired with IE), ES=128 (error summary).
@@ -75,6 +120,7 @@
       (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))))
 
   (func $fpu_set (param $i i32) (param $v f64)
+    (call $fpu_raw_clear (local.get $i))
     (f64.store (i32.add (i32.const 0x200)
       (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))
       (local.get $v))
@@ -279,6 +325,7 @@
     (local.set $sw (i32.and (i32.load (i32.add (local.get $w) (i32.const 4))) (i32.const 0xFFFF)))
     (global.set $fpu_top (i32.and (i32.shr_u (local.get $sw) (i32.const 11)) (i32.const 7)))
     (global.set $fpu_sw (i32.and (local.get $sw) (i32.const 0xC7FF)))
+    (global.set $fpu_raw_tag (i32.const 0))
     (call $fpu_unpack_tag_word
       (i32.and (i32.load (i32.add (local.get $w) (i32.const 8))) (i32.const 0xFFFF))))
 
@@ -299,6 +346,7 @@
 
   (func $fpu_load_regs (param $addr i32)
     (local $i i32) (local $base i32) (local $slot i32)
+    (global.set $fpu_raw_tag (i32.const 0))
     (local.set $base (call $g2w (local.get $addr)))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
@@ -359,7 +407,7 @@
     (i32.store8 (i32.add (local.get $w) (i32.const 9)) (local.get $sign)))
 
   (func $fpu_exec_mem (param $group i32) (param $reg i32) (param $addr i32)
-    (local $val f64)
+    (local $val f64) (local $raw i64)
     ;; Group 0 (D8) / Group 4 (DC): arithmetic with float32/float64
     (if (i32.or (i32.eq (local.get $group) (i32.const 0)) (i32.eq (local.get $group) (i32.const 4)))
       (then
@@ -427,6 +475,7 @@
                 ;; Post-FNSAVE: reinit to power-on state (matches real x87).
                 (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F))
                 (global.set $fpu_sw (i32.const 0)) (global.set $fpu_tag (i32.const 0))
+                (global.set $fpu_raw_tag (i32.const 0))
                 (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 3 (DB): FILD/FIST/FISTP int32, FLD/FSTP m80
@@ -459,11 +508,22 @@
         (if (i32.eq (local.get $reg) (i32.const 4))
           (then (call $fpu_bld (local.get $addr)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
-          (then (call $fpu_push (f64.convert_i64_s (i64.load (call $g2w (local.get $addr))))) (return)))
+          (then
+            (local.set $raw (i64.load (call $g2w (local.get $addr))))
+            (call $fpu_push (f64.convert_i64_s (local.get $raw)))
+            (call $fpu_raw_set (i32.const 0) (local.get $raw))
+            (return)))
         (if (i32.eq (local.get $reg) (i32.const 6))
           (then (call $fpu_bstp (local.get $addr)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
-          (then (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop))) (return)))
+          (then
+            (if (call $fpu_raw_valid (i32.const 0))
+              (then
+                (i64.store (call $g2w (local.get $addr)) (call $fpu_raw_get (i32.const 0)))
+                (drop (call $fpu_pop))
+                (return)))
+            (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop)))
+            (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0))
   )

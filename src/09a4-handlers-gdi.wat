@@ -77,15 +77,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 154: MoveToEx(hdc, x, y, lpPoint) — delegate to host GDI
+  ;; 154: MoveToEx(hdc, x, y, lpPoint) — delegate to host GDI and return previous current point.
   (func $handle_MoveToEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_move_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local $old_x i32) (local $old_y i32) (local $ok i32)
+    (if (i32.eq (global.get $gdi_current_pos_hdc) (local.get $arg0))
+      (then
+        (local.set $old_x (global.get $gdi_current_pos_x))
+        (local.set $old_y (global.get $gdi_current_pos_y)))
+      (else
+        (local.set $old_x (i32.const 0))
+        (local.set $old_y (i32.const 0))))
+    (if (local.get $arg3) (then
+      (call $gs32 (local.get $arg3) (local.get $old_x))
+      (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $old_y))
+    ))
+    (local.set $ok (call $host_gdi_move_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (if (local.get $ok) (then
+      (global.set $gdi_current_pos_hdc (local.get $arg0))
+      (global.set $gdi_current_pos_x (local.get $arg1))
+      (global.set $gdi_current_pos_y (local.get $arg2))
+    ))
+    (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 155: LineTo(hdc, x, y) — delegate to host GDI
+  ;; 155: LineTo(hdc, x, y) — delegate to host GDI and advance current point.
   (func $handle_LineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local $ok i32)
+    (local.set $ok (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (if (local.get $ok) (then
+      (global.set $gdi_current_pos_hdc (local.get $arg0))
+      (global.set $gdi_current_pos_x (local.get $arg1))
+      (global.set $gdi_current_pos_y (local.get $arg2))
+    ))
+    (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

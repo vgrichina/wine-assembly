@@ -528,6 +528,8 @@ const extra = [
   { name: 'SubtractRect', nargs: 3 },
   // USER32 — keyboard layout lookup (Tetravex asks before GetKeyState dispatch)
   { name: 'GetKeyboardLayout', nargs: 1 },
+  // USER32 — ANSI/Unicode window probe. Win9x/VCL ANSI windows expect FALSE.
+  { name: 'IsWindowUnicode', nargs: 1 },
   // KERNEL32 — Telnet sets thread locale at startup; accept & ignore
   { name: 'SetThreadLocale', nargs: 1 },
   // GDI32 — region builders + queries (exact polygon clip + GetRgnBox).

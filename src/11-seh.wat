@@ -27,6 +27,63 @@
   ;;   [+4]  filterFunc (guest addr, or 0)
   ;;   [+8]  handlerFunc (guest addr — the __except block)
   ;;
+  (func $dispatch_delphi_exception_handler
+    (local $handler i32)
+    (block $unhandled (loop $walk
+      (br_if $unhandled (i32.eq (global.get $delphi_seh_rec) (i32.const 0xFFFFFFFF)))
+      (br_if $unhandled (i32.eqz (global.get $delphi_seh_rec)))
+      (local.set $handler (call $gl32 (i32.add (global.get $delphi_seh_rec) (i32.const 4))))
+      (if (local.get $handler)
+        (then
+          ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext).
+          (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+          (call $gs32 (global.get $esp) (global.get $delphi_seh_thunk))
+          (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $delphi_exception_record))
+          (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (global.get $delphi_seh_rec))
+          (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))
+          (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0))
+          (global.set $eip (local.get $handler))
+          (global.set $steps (i32.const 0))
+          (return)))
+      (global.set $delphi_seh_rec (call $gl32 (global.get $delphi_seh_rec)))
+      (br $walk)))
+    (call $host_exit (i32.or (i32.const 0xDE00)
+      (call $gl32 (global.get $delphi_exception_record)))))
+
+  (func $raise_delphi_exception (param $code i32) (param $flags i32) (param $nargs i32) (param $args_ptr i32)
+    (local $seh_rec i32) (local $rec i32) (local $i i32) (local $n i32)
+    (local.set $seh_rec (call $gl32 (global.get $fs_base)))
+    (if (i32.or
+          (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF))
+          (i32.eqz (local.get $seh_rec)))
+      (then
+        (call $host_exit (i32.or (i32.const 0xDE00) (local.get $code)))
+        (return)))
+    (local.set $rec (call $heap_alloc (i32.const 80)))
+    ;; EXCEPTION_RECORD:
+    ;; +0 code, +4 flags, +8 nested record, +C address, +10 arg count,
+    ;; +14 ExceptionInformation[] copied from RaiseException lpArguments.
+    (call $gs32 (local.get $rec) (local.get $code))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (local.get $flags))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (global.get $eip))
+    (local.set $n (if (result i32) (i32.gt_u (local.get $nargs) (i32.const 15))
+      (then (i32.const 15))
+      (else (local.get $nargs))))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 16)) (local.get $n))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs32
+        (i32.add (local.get $rec) (i32.add (i32.const 20) (i32.shl (local.get $i) (i32.const 2))))
+        (if (result i32) (local.get $args_ptr)
+          (then (call $gl32 (i32.add (local.get $args_ptr) (i32.shl (local.get $i) (i32.const 2)))))
+          (else (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $delphi_exception_record (local.get $rec))
+    (global.set $delphi_seh_rec (local.get $seh_rec))
+    (call $dispatch_delphi_exception_handler))
+
   (func $raise_exception (param $code i32)
     (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
     (local $trylevel i32) (local $scopetable i32) (local $entry i32)
@@ -162,4 +219,3 @@
       (br $walk)))
     ;; Unhandled exception — fall back to host_exit
     (call $host_exit (i32.or (i32.const 0xDE00) (local.get $code))))
-

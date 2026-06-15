@@ -498,6 +498,7 @@
   (data (i32.const 0x357) "No\00")           ;; len 2  — MB_YESNO / MB_YESNOCANCEL
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
+  (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -980,6 +981,9 @@
   (global $msvcrt_wcmdln_ptr (mut i32) (i32.const 0))  ;; wide command line pointer
   ;; Guest-space address of catch-return thunk (set during PE load)
   (global $catch_ret_thunk (mut i32) (i32.const 0))
+  (global $delphi_seh_thunk (mut i32) (i32.const 0))
+  (global $delphi_seh_rec (mut i32) (i32.const 0))
+  (global $delphi_exception_record (mut i32) (i32.const 0))
   ;; Synchronous WM_CREATE: continuation thunk + saved state
   (global $createwnd_ret_thunk (mut i32) (i32.const 0))
   (global $sync_msg_ret_thunk (mut i32) (i32.const 0))
@@ -1339,10 +1343,27 @@
   ;; only distinguish valid/empty since we can't represent the other states without
   ;; tracking each value's class. Used for stack overflow/underflow detection.
   (global $fpu_tag (mut i32) (i32.const 0))
+  ;; Exact raw payload shadow for FILD m64 values. Delphi/VCL uses
+  ;; FILD/FISTP qword pairs as a memcpy fast path; f64 cannot preserve all
+  ;; 64 integer bits, so unchanged FILD m64 entries keep their original bytes.
+  (global $fpu_raw_tag (mut i32) (i32.const 0)) ;; bit i = physical ST(i) has raw_i64
+  (global $fpu_raw0 (mut i64) (i64.const 0))
+  (global $fpu_raw1 (mut i64) (i64.const 0))
+  (global $fpu_raw2 (mut i64) (i64.const 0))
+  (global $fpu_raw3 (mut i64) (i64.const 0))
+  (global $fpu_raw4 (mut i64) (i64.const 0))
+  (global $fpu_raw5 (mut i64) (i64.const 0))
+  (global $fpu_raw6 (mut i64) (i64.const 0))
+  (global $fpu_raw7 (mut i64) (i64.const 0))
 
   ;; Palette management
   (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index
   (global $selected_palette (mut i32) (i32.const 0))  ;; Currently selected HPALETTE
+
+  ;; GDI current-position shadow for MoveToEx/LineTo/GetCurrentPositionEx.
+  (global $gdi_current_pos_hdc (mut i32) (i32.const 0))
+  (global $gdi_current_pos_x (mut i32) (i32.const 0))
+  (global $gdi_current_pos_y (mut i32) (i32.const 0))
 
   ;; Menu loader scratch — used by $menu_load (09c5-menu.wat) while
   ;; walking PE menu resource bytes (UTF-16 MENUITEMTEMPLATE) in two
