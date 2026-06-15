@@ -8849,7 +8849,18 @@
     "name": "CLSIDFromProgID",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2489871255
+    "hash": 2489871255,
+    "args": [
+      {
+        "name": "progId",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "clsid",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1146,
@@ -12182,5 +12193,3202 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3457575310
+  },
+  {
+    "id": 1621,
+    "name": "IDirectAnimationDAView_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 719961167,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppv",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1622,
+    "name": "IDirectAnimationDAView_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1235159396,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1623,
+    "name": "IDirectAnimationDAView_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 356827845,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1624,
+    "name": "IDirectAnimationDAView_GetTypeInfoCount",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3281589903,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pctinfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1625,
+    "name": "IDirectAnimationDAView_GetTypeInfo",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1318994848,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "iTInfo",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppTInfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1626,
+    "name": "IDirectAnimationDAView_GetIDsOfNames",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3385180605,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "names",
+        "type": "LPOLESTRARRAY"
+      },
+      {
+        "name": "cNames",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "dispids",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1627,
+    "name": "IDirectAnimationDAView_Invoke",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 3393823400,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dispid",
+        "type": "INT"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "params",
+        "type": "DISPPARAMS"
+      },
+      {
+        "name": "result",
+        "type": "DWORD"
+      },
+      {
+        "name": "excep",
+        "type": "DWORD"
+      },
+      {
+        "name": "argErr",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1628,
+    "name": "IDirectAnimationDAView_DirectSlot007",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2723609750
+  },
+  {
+    "id": 1629,
+    "name": "IDirectAnimationDAView_DirectSlot008",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2908163559
+  },
+  {
+    "id": 1630,
+    "name": "IDirectAnimationDAView_DirectSlot009",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2891385940
+  },
+  {
+    "id": 1631,
+    "name": "IDirectAnimationDAView_DirectSlot010",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2673129798
+  },
+  {
+    "id": 1632,
+    "name": "IDirectAnimationDAView_DirectSlot011",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2689907417
+  },
+  {
+    "id": 1633,
+    "name": "IDirectAnimationDAView_DirectSlot012",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2639574560
+  },
+  {
+    "id": 1634,
+    "name": "IDirectAnimationDAView_DirectSlot013",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2656352179
+  },
+  {
+    "id": 1635,
+    "name": "IDirectAnimationDAView_DirectSlot014",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2740240274
+  },
+  {
+    "id": 1636,
+    "name": "IDirectAnimationDAView_DirectSlot015",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2757017893
+  },
+  {
+    "id": 1637,
+    "name": "IDirectAnimationDAView_DirectSlot016",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2706685036
+  },
+  {
+    "id": 1638,
+    "name": "IDirectAnimationDAView_DirectSlot017",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2723462655
+  },
+  {
+    "id": 1639,
+    "name": "IDirectAnimationDAView_DirectSlot018",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2807350750
+  },
+  {
+    "id": 1640,
+    "name": "IDirectAnimationDAView_DirectSlot019",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2824128369
+  },
+  {
+    "id": 1641,
+    "name": "IDirectAnimationDAView_DirectSlot020",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 961665565
+  },
+  {
+    "id": 1642,
+    "name": "IDirectAnimationDAView_DirectSlot021",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 944887946
+  },
+  {
+    "id": 1643,
+    "name": "IDirectAnimationDAStatics_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2607791209,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppv",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1644,
+    "name": "IDirectAnimationDAStatics_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1971740442,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1645,
+    "name": "IDirectAnimationDAStatics_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 892484151,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1646,
+    "name": "IDirectAnimationDAStatics_GetTypeInfoCount",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3400608841,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pctinfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1647,
+    "name": "IDirectAnimationDAStatics_GetTypeInfo",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1343976194,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "iTInfo",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppTInfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1648,
+    "name": "IDirectAnimationDAStatics_GetIDsOfNames",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3929333159,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "names",
+        "type": "LPOLESTRARRAY"
+      },
+      {
+        "name": "cNames",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "dispids",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1649,
+    "name": "IDirectAnimationDAStatics_Invoke",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 863614302,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dispid",
+        "type": "INT"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "params",
+        "type": "DISPPARAMS"
+      },
+      {
+        "name": "result",
+        "type": "DWORD"
+      },
+      {
+        "name": "excep",
+        "type": "DWORD"
+      },
+      {
+        "name": "argErr",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 1650,
+    "name": "IDirectAnimationDAStatics_DirectSlot007",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 413237724
+  },
+  {
+    "id": 1651,
+    "name": "IDirectAnimationDAStatics_DirectSlot008",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 530681057
+  },
+  {
+    "id": 1652,
+    "name": "IDirectAnimationDAStatics_DirectSlot009",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 513903438
+  },
+  {
+    "id": 1653,
+    "name": "IDirectAnimationDAStatics_DirectSlot010",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2443079360
+  },
+  {
+    "id": 1654,
+    "name": "IDirectAnimationDAStatics_DirectSlot011",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2459856979
+  },
+  {
+    "id": 1655,
+    "name": "IDirectAnimationDAStatics_DirectSlot012",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2476634598
+  },
+  {
+    "id": 1656,
+    "name": "IDirectAnimationDAStatics_DirectSlot013",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2493412217
+  },
+  {
+    "id": 1657,
+    "name": "IDirectAnimationDAStatics_DirectSlot014",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2510189836
+  },
+  {
+    "id": 1658,
+    "name": "IDirectAnimationDAStatics_DirectSlot015",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2526967455
+  },
+  {
+    "id": 1659,
+    "name": "IDirectAnimationDAStatics_DirectSlot016",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2543745074
+  },
+  {
+    "id": 1660,
+    "name": "IDirectAnimationDAStatics_DirectSlot017",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2560522693
+  },
+  {
+    "id": 1661,
+    "name": "IDirectAnimationDAStatics_DirectSlot018",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2577300312
+  },
+  {
+    "id": 1662,
+    "name": "IDirectAnimationDAStatics_DirectSlot019",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2594077931
+  },
+  {
+    "id": 1663,
+    "name": "IDirectAnimationDAStatics_DirectSlot020",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 598085723
+  },
+  {
+    "id": 1664,
+    "name": "IDirectAnimationDAStatics_DirectSlot021",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 581308104
+  },
+  {
+    "id": 1665,
+    "name": "IDirectAnimationDAStatics_DirectSlot022",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 631640961
+  },
+  {
+    "id": 1666,
+    "name": "IDirectAnimationDAStatics_DirectSlot023",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 614863342
+  },
+  {
+    "id": 1667,
+    "name": "IDirectAnimationDAStatics_DirectSlot024",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 665196199
+  },
+  {
+    "id": 1668,
+    "name": "IDirectAnimationDAStatics_DirectSlot025",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 648418580
+  },
+  {
+    "id": 1669,
+    "name": "IDirectAnimationDAStatics_DirectSlot026",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 698751437
+  },
+  {
+    "id": 1670,
+    "name": "IDirectAnimationDAStatics_DirectSlot027",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 681973818
+  },
+  {
+    "id": 1671,
+    "name": "IDirectAnimationDAStatics_DirectSlot028",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 463864771
+  },
+  {
+    "id": 1672,
+    "name": "IDirectAnimationDAStatics_DirectSlot029",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 447087152
+  },
+  {
+    "id": 1673,
+    "name": "IDirectAnimationDAStatics_DirectSlot030",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 497272914
+  },
+  {
+    "id": 1674,
+    "name": "IDirectAnimationDAStatics_DirectSlot031",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 514050533
+  },
+  {
+    "id": 1675,
+    "name": "IDirectAnimationDAStatics_DirectSlot032",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 463717676
+  },
+  {
+    "id": 1676,
+    "name": "IDirectAnimationDAStatics_DirectSlot033",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 480495295
+  },
+  {
+    "id": 1677,
+    "name": "IDirectAnimationDAStatics_DirectSlot034",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 430162438
+  },
+  {
+    "id": 1678,
+    "name": "IDirectAnimationDAStatics_DirectSlot035",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 446940057
+  },
+  {
+    "id": 1679,
+    "name": "IDirectAnimationDAStatics_DirectSlot036",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 396607200
+  },
+  {
+    "id": 1680,
+    "name": "IDirectAnimationDAStatics_DirectSlot037",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 413384819
+  },
+  {
+    "id": 1681,
+    "name": "IDirectAnimationDAStatics_DirectSlot038",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 631493866
+  },
+  {
+    "id": 1682,
+    "name": "IDirectAnimationDAStatics_DirectSlot039",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 648271485
+  },
+  {
+    "id": 1683,
+    "name": "IDirectAnimationDAStatics_DirectSlot040",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2947246573
+  },
+  {
+    "id": 1684,
+    "name": "IDirectAnimationDAStatics_DirectSlot041",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2930468954
+  },
+  {
+    "id": 1685,
+    "name": "IDirectAnimationDAStatics_DirectSlot042",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2913691335
+  },
+  {
+    "id": 1686,
+    "name": "IDirectAnimationDAStatics_DirectSlot043",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2896913716
+  },
+  {
+    "id": 1687,
+    "name": "IDirectAnimationDAStatics_DirectSlot044",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2880136097
+  },
+  {
+    "id": 1688,
+    "name": "IDirectAnimationDAStatics_DirectSlot045",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2863358478
+  },
+  {
+    "id": 1689,
+    "name": "IDirectAnimationDAStatics_DirectSlot046",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2846580859
+  },
+  {
+    "id": 1690,
+    "name": "IDirectAnimationDAStatics_DirectSlot047",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2829803240
+  },
+  {
+    "id": 1691,
+    "name": "IDirectAnimationDAStatics_DirectSlot048",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2813025621
+  },
+  {
+    "id": 1692,
+    "name": "IDirectAnimationDAStatics_DirectSlot049",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2796248002
+  },
+  {
+    "id": 1693,
+    "name": "IDirectAnimationDAStatics_DirectSlot050",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 698898532
+  },
+  {
+    "id": 1694,
+    "name": "IDirectAnimationDAStatics_DirectSlot051",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 715676151
+  },
+  {
+    "id": 1695,
+    "name": "IDirectAnimationDAStatics_DirectSlot052",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 732453770
+  },
+  {
+    "id": 1696,
+    "name": "IDirectAnimationDAStatics_DirectSlot053",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 749231389
+  },
+  {
+    "id": 1697,
+    "name": "IDirectAnimationDAStatics_DirectSlot054",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 631788056
+  },
+  {
+    "id": 1698,
+    "name": "IDirectAnimationDAStatics_DirectSlot055",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 648565675
+  },
+  {
+    "id": 1699,
+    "name": "IDirectAnimationDAStatics_DirectSlot056",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 665343294
+  },
+  {
+    "id": 1700,
+    "name": "IDirectAnimationDAStatics_DirectSlot057",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 682120913
+  },
+  {
+    "id": 1701,
+    "name": "IDirectAnimationDAStatics_DirectSlot058",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 564677580
+  },
+  {
+    "id": 1702,
+    "name": "IDirectAnimationDAStatics_DirectSlot059",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 581455199
+  },
+  {
+    "id": 1703,
+    "name": "IDirectAnimationDAStatics_DirectSlot060",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2611988383
+  },
+  {
+    "id": 1704,
+    "name": "IDirectAnimationDAStatics_DirectSlot061",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2595210764
+  },
+  {
+    "id": 1705,
+    "name": "IDirectAnimationDAStatics_DirectSlot062",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2645543621
+  },
+  {
+    "id": 1706,
+    "name": "IDirectAnimationDAStatics_DirectSlot063",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2628766002
+  },
+  {
+    "id": 1707,
+    "name": "IDirectAnimationDAStatics_DirectSlot064",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2544877907
+  },
+  {
+    "id": 1708,
+    "name": "IDirectAnimationDAStatics_DirectSlot065",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2528100288
+  },
+  {
+    "id": 1709,
+    "name": "IDirectAnimationDAStatics_DirectSlot066",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2578433145
+  },
+  {
+    "id": 1710,
+    "name": "IDirectAnimationDAStatics_DirectSlot067",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2561655526
+  },
+  {
+    "id": 1711,
+    "name": "IDirectAnimationDAStatics_DirectSlot068",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2746209335
+  },
+  {
+    "id": 1712,
+    "name": "IDirectAnimationDAStatics_DirectSlot069",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2729431716
+  },
+  {
+    "id": 1713,
+    "name": "IDirectAnimationDAStatics_DirectSlot070",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2511175574
+  },
+  {
+    "id": 1714,
+    "name": "IDirectAnimationDAStatics_DirectSlot071",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2527953193
+  },
+  {
+    "id": 1715,
+    "name": "IDirectAnimationDAStatics_DirectSlot072",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2477620336
+  },
+  {
+    "id": 1716,
+    "name": "IDirectAnimationDAStatics_DirectSlot073",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2494397955
+  },
+  {
+    "id": 1717,
+    "name": "IDirectAnimationDAStatics_DirectSlot074",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2578286050
+  },
+  {
+    "id": 1718,
+    "name": "IDirectAnimationDAStatics_DirectSlot075",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2595063669
+  },
+  {
+    "id": 1719,
+    "name": "IDirectAnimationDAStatics_DirectSlot076",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2544730812
+  },
+  {
+    "id": 1720,
+    "name": "IDirectAnimationDAStatics_DirectSlot077",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2561508431
+  },
+  {
+    "id": 1721,
+    "name": "IDirectAnimationDAStatics_DirectSlot078",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2645396526
+  },
+  {
+    "id": 1722,
+    "name": "IDirectAnimationDAStatics_DirectSlot079",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2662174145
+  },
+  {
+    "id": 1723,
+    "name": "IDirectAnimationDAStatics_DirectSlot080",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 666181937
+  },
+  {
+    "id": 1724,
+    "name": "IDirectAnimationDAStatics_DirectSlot081",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 649404318
+  },
+  {
+    "id": 1725,
+    "name": "IDirectAnimationDAStatics_DirectSlot082",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 632626699
+  },
+  {
+    "id": 1726,
+    "name": "IDirectAnimationDAStatics_DirectSlot083",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 615849080
+  },
+  {
+    "id": 1727,
+    "name": "IDirectAnimationDAStatics_DirectSlot084",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 733292413
+  },
+  {
+    "id": 1728,
+    "name": "IDirectAnimationDAStatics_DirectSlot085",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 716514794
+  },
+  {
+    "id": 1729,
+    "name": "IDirectAnimationDAStatics_DirectSlot086",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 699737175
+  },
+  {
+    "id": 1730,
+    "name": "IDirectAnimationDAStatics_DirectSlot087",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 682959556
+  },
+  {
+    "id": 1731,
+    "name": "IDirectAnimationDAStatics_DirectSlot088",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 531960985
+  },
+  {
+    "id": 1732,
+    "name": "IDirectAnimationDAStatics_DirectSlot089",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 515183366
+  },
+  {
+    "id": 1733,
+    "name": "IDirectAnimationDAStatics_DirectSlot090",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 565369128
+  },
+  {
+    "id": 1734,
+    "name": "IDirectAnimationDAStatics_DirectSlot091",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 582146747
+  },
+  {
+    "id": 1735,
+    "name": "IDirectAnimationDAStatics_DirectSlot092",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 598924366
+  },
+  {
+    "id": 1736,
+    "name": "IDirectAnimationDAStatics_DirectSlot093",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 615701985
+  },
+  {
+    "id": 1737,
+    "name": "IDirectAnimationDAStatics_DirectSlot094",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 632479604
+  },
+  {
+    "id": 1738,
+    "name": "IDirectAnimationDAStatics_DirectSlot095",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 649257223
+  },
+  {
+    "id": 1739,
+    "name": "IDirectAnimationDAStatics_DirectSlot096",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 666034842
+  },
+  {
+    "id": 1740,
+    "name": "IDirectAnimationDAStatics_DirectSlot097",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 682812461
+  },
+  {
+    "id": 1741,
+    "name": "IDirectAnimationDAStatics_DirectSlot098",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 431148176
+  },
+  {
+    "id": 1742,
+    "name": "IDirectAnimationDAStatics_DirectSlot099",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 447925795
+  },
+  {
+    "id": 1743,
+    "name": "IDirectAnimationDAStatics_DirectSlot100",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 962147550
+  },
+  {
+    "id": 1744,
+    "name": "IDirectAnimationDAStatics_DirectSlot101",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 978925169
+  },
+  {
+    "id": 1745,
+    "name": "IDirectAnimationDAStatics_DirectSlot102",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 928592312
+  },
+  {
+    "id": 1746,
+    "name": "IDirectAnimationDAStatics_DirectSlot103",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 945369931
+  },
+  {
+    "id": 1747,
+    "name": "IDirectAnimationDAStatics_DirectSlot104",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1029258026
+  },
+  {
+    "id": 1748,
+    "name": "IDirectAnimationDAStatics_DirectSlot105",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1046035645
+  },
+  {
+    "id": 1749,
+    "name": "IDirectAnimationDAStatics_DirectSlot106",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 995702788
+  },
+  {
+    "id": 1750,
+    "name": "IDirectAnimationDAStatics_DirectSlot107",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1012480407
+  },
+  {
+    "id": 1751,
+    "name": "IDirectAnimationDAStatics_DirectSlot108",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 827926598
+  },
+  {
+    "id": 1752,
+    "name": "IDirectAnimationDAStatics_DirectSlot109",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 844704217
+  },
+  {
+    "id": 1753,
+    "name": "IDirectAnimationDAStatics_DirectSlot110",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1062960359
+  },
+  {
+    "id": 1754,
+    "name": "IDirectAnimationDAStatics_DirectSlot111",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1046182740
+  },
+  {
+    "id": 1755,
+    "name": "IDirectAnimationDAStatics_DirectSlot112",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1096515597
+  },
+  {
+    "id": 1756,
+    "name": "IDirectAnimationDAStatics_DirectSlot113",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1079737978
+  },
+  {
+    "id": 1757,
+    "name": "IDirectAnimationDAStatics_DirectSlot114",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 995849883
+  },
+  {
+    "id": 1758,
+    "name": "IDirectAnimationDAStatics_DirectSlot115",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 979072264
+  },
+  {
+    "id": 1759,
+    "name": "IDirectAnimationDAStatics_DirectSlot116",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1029405121
+  },
+  {
+    "id": 1760,
+    "name": "IDirectAnimationDAStatics_DirectSlot117",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1012627502
+  },
+  {
+    "id": 1761,
+    "name": "IDirectAnimationDAStatics_DirectSlot118",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 928739407
+  },
+  {
+    "id": 1762,
+    "name": "IDirectAnimationDAStatics_DirectSlot119",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 911961788
+  },
+  {
+    "id": 1763,
+    "name": "IDirectAnimationDAStatics_DirectSlot120",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2907953996
+  },
+  {
+    "id": 1764,
+    "name": "IDirectAnimationDAStatics_DirectSlot121",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2924731615
+  },
+  {
+    "id": 1765,
+    "name": "IDirectAnimationDAStatics_DirectSlot122",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2941509234
+  },
+  {
+    "id": 1766,
+    "name": "IDirectAnimationDAStatics_DirectSlot123",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2958286853
+  },
+  {
+    "id": 1767,
+    "name": "IDirectAnimationDAStatics_DirectSlot124",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2840843520
+  },
+  {
+    "id": 1768,
+    "name": "IDirectAnimationDAStatics_DirectSlot125",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2857621139
+  },
+  {
+    "id": 1769,
+    "name": "IDirectAnimationDAStatics_DirectSlot126",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2874398758
+  },
+  {
+    "id": 1770,
+    "name": "IDirectAnimationDAStatics_DirectSlot127",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2891176377
+  },
+  {
+    "id": 1771,
+    "name": "IDirectAnimationDAStatics_DirectSlot128",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3042174948
+  },
+  {
+    "id": 1772,
+    "name": "IDirectAnimationDAStatics_DirectSlot129",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3058952567
+  },
+  {
+    "id": 1773,
+    "name": "IDirectAnimationDAStatics_DirectSlot130",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 861334741
+  },
+  {
+    "id": 1774,
+    "name": "IDirectAnimationDAStatics_DirectSlot131",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 844557122
+  },
+  {
+    "id": 1775,
+    "name": "IDirectAnimationDAStatics_DirectSlot132",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 827779503
+  },
+  {
+    "id": 1776,
+    "name": "IDirectAnimationDAStatics_DirectSlot133",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 811001884
+  },
+  {
+    "id": 1777,
+    "name": "IDirectAnimationDAStatics_DirectSlot134",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 794224265
+  },
+  {
+    "id": 1778,
+    "name": "IDirectAnimationDAStatics_DirectSlot135",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 777446646
+  },
+  {
+    "id": 1779,
+    "name": "IDirectAnimationDAStatics_DirectSlot136",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 760669027
+  },
+  {
+    "id": 1780,
+    "name": "IDirectAnimationDAStatics_DirectSlot137",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 743891408
+  },
+  {
+    "id": 1781,
+    "name": "IDirectAnimationDAStatics_DirectSlot138",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 995555693
+  },
+  {
+    "id": 1782,
+    "name": "IDirectAnimationDAStatics_DirectSlot139",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 978778074
+  },
+  {
+    "id": 1783,
+    "name": "IDirectAnimationDAStatics_DirectSlot140",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3243212186
+  },
+  {
+    "id": 1784,
+    "name": "IDirectAnimationDAStatics_DirectSlot141",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3259989805
+  },
+  {
+    "id": 1785,
+    "name": "IDirectAnimationDAStatics_DirectSlot142",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3209656948
+  },
+  {
+    "id": 1786,
+    "name": "IDirectAnimationDAStatics_DirectSlot143",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3226434567
+  },
+  {
+    "id": 1787,
+    "name": "IDirectAnimationDAStatics_DirectSlot144",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3176101710
+  },
+  {
+    "id": 1788,
+    "name": "IDirectAnimationDAStatics_DirectSlot145",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3192879329
+  },
+  {
+    "id": 1789,
+    "name": "IDirectAnimationDAStatics_DirectSlot146",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3142546472
+  },
+  {
+    "id": 1790,
+    "name": "IDirectAnimationDAStatics_DirectSlot147",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3159324091
+  },
+  {
+    "id": 1791,
+    "name": "IDirectAnimationDAStatics_DirectSlot148",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3108991234
+  },
+  {
+    "id": 1792,
+    "name": "IDirectAnimationDAStatics_DirectSlot149",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3125768853
+  },
+  {
+    "id": 1793,
+    "name": "IDirectAnimationDAStatics_DirectSlot150",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2807141187
+  },
+  {
+    "id": 1794,
+    "name": "IDirectAnimationDAStatics_DirectSlot151",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2790363568
+  },
+  {
+    "id": 1795,
+    "name": "IDirectAnimationDAStatics_DirectSlot152",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2840696425
+  },
+  {
+    "id": 1796,
+    "name": "IDirectAnimationDAStatics_DirectSlot153",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2823918806
+  },
+  {
+    "id": 1797,
+    "name": "IDirectAnimationDAStatics_DirectSlot154",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2874251663
+  },
+  {
+    "id": 1798,
+    "name": "IDirectAnimationDAStatics_DirectSlot155",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2857474044
+  },
+  {
+    "id": 1799,
+    "name": "IDirectAnimationDAStatics_DirectSlot156",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2907806901
+  },
+  {
+    "id": 1800,
+    "name": "IDirectAnimationDAStatics_DirectSlot157",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2891029282
+  },
+  {
+    "id": 1801,
+    "name": "IDirectAnimationDAStatics_DirectSlot158",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2941362139
+  },
+  {
+    "id": 1802,
+    "name": "IDirectAnimationDAStatics_DirectSlot159",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2924584520
+  },
+  {
+    "id": 1803,
+    "name": "IDirectAnimationDAStatics_DirectSlot160",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 894051336
+  },
+  {
+    "id": 1804,
+    "name": "IDirectAnimationDAStatics_DirectSlot161",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 910828955
+  },
+  {
+    "id": 1805,
+    "name": "IDirectAnimationDAStatics_DirectSlot162",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 927606574
+  },
+  {
+    "id": 1806,
+    "name": "IDirectAnimationDAStatics_DirectSlot163",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 944384193
+  },
+  {
+    "id": 1807,
+    "name": "IDirectAnimationDAStatics_DirectSlot164",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 961161812
+  },
+  {
+    "id": 1808,
+    "name": "IDirectAnimationDAStatics_DirectSlot165",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 977939431
+  },
+  {
+    "id": 1809,
+    "name": "IDirectAnimationDAStatics_DirectSlot166",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 994717050
+  },
+  {
+    "id": 1810,
+    "name": "IDirectAnimationDAStatics_DirectSlot167",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1011494669
+  },
+  {
+    "id": 1811,
+    "name": "IDirectAnimationDAStatics_DirectSlot168",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 759830384
+  },
+  {
+    "id": 1812,
+    "name": "IDirectAnimationDAStatics_DirectSlot169",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 776608003
+  },
+  {
+    "id": 1813,
+    "name": "IDirectAnimationDAStatics_DirectSlot170",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 994864145
+  },
+  {
+    "id": 1814,
+    "name": "IDirectAnimationDAStatics_DirectSlot171",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 978086526
+  },
+  {
+    "id": 1815,
+    "name": "IDirectAnimationDAStatics_DirectSlot172",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 961308907
+  },
+  {
+    "id": 1816,
+    "name": "IDirectAnimationDAStatics_DirectSlot173",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 944531288
+  },
+  {
+    "id": 1817,
+    "name": "IDirectAnimationDAStatics_DirectSlot174",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1061974621
+  },
+  {
+    "id": 1818,
+    "name": "IDirectAnimationDAStatics_DirectSlot175",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1045197002
+  },
+  {
+    "id": 1819,
+    "name": "IDirectAnimationDAStatics_DirectSlot176",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1028419383
+  },
+  {
+    "id": 1820,
+    "name": "IDirectAnimationDAStatics_DirectSlot177",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1011641764
+  },
+  {
+    "id": 1821,
+    "name": "IDirectAnimationDAStatics_DirectSlot178",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 860643193
+  },
+  {
+    "id": 1822,
+    "name": "IDirectAnimationDAStatics_DirectSlot179",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 843865574
+  },
+  {
+    "id": 1823,
+    "name": "IDirectAnimationDAStatics_DirectSlot180",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 692425718
+  },
+  {
+    "id": 1824,
+    "name": "IDirectAnimationDAStatics_DirectSlot181",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 709203337
+  },
+  {
+    "id": 1825,
+    "name": "IDirectAnimationDAStatics_DirectSlot182",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 658870480
+  },
+  {
+    "id": 1826,
+    "name": "IDirectAnimationDAStatics_DirectSlot183",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 675648099
+  },
+  {
+    "id": 1827,
+    "name": "IDirectAnimationDAStatics_DirectSlot184",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 759536194
+  },
+  {
+    "id": 1828,
+    "name": "IDirectAnimationDAStatics_DirectSlot185",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 776313813
+  },
+  {
+    "id": 1829,
+    "name": "IDirectAnimationDAStatics_DirectSlot186",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 725980956
+  },
+  {
+    "id": 1830,
+    "name": "IDirectAnimationDAStatics_DirectSlot187",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 742758575
+  },
+  {
+    "id": 1831,
+    "name": "IDirectAnimationDAStatics_DirectSlot188",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 826646670
+  },
+  {
+    "id": 1832,
+    "name": "IDirectAnimationDAStatics_DirectSlot189",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 843424289
+  },
+  {
+    "id": 1833,
+    "name": "IDirectAnimationDAStatics_DirectSlot190",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 793238527
+  },
+  {
+    "id": 1834,
+    "name": "IDirectAnimationDAStatics_DirectSlot191",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 776460908
+  },
+  {
+    "id": 1835,
+    "name": "IDirectAnimationDAStatics_DirectSlot192",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 826793765
+  },
+  {
+    "id": 1836,
+    "name": "IDirectAnimationDAStatics_DirectSlot193",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 810016146
+  },
+  {
+    "id": 1837,
+    "name": "IDirectAnimationDAStatics_DirectSlot194",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 726128051
+  },
+  {
+    "id": 1838,
+    "name": "IDirectAnimationDAStatics_DirectSlot195",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 709350432
+  },
+  {
+    "id": 1839,
+    "name": "IDirectAnimationDAStatics_DirectSlot196",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 759683289
+  },
+  {
+    "id": 1840,
+    "name": "IDirectAnimationDAStatics_DirectSlot197",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 742905670
+  },
+  {
+    "id": 1841,
+    "name": "IDirectAnimationDAStatics_DirectSlot198",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 927459479
+  },
+  {
+    "id": 1842,
+    "name": "IDirectAnimationDAStatics_DirectSlot199",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 910681860
+  },
+  {
+    "id": 1843,
+    "name": "IDirectAnimationDAStatics_DirectSlot200",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3112475187
+  },
+  {
+    "id": 1844,
+    "name": "IDirectAnimationDAStatics_DirectSlot201",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3095697568
+  },
+  {
+    "id": 1845,
+    "name": "IDirectAnimationDAStatics_DirectSlot202",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3146030425
+  },
+  {
+    "id": 1846,
+    "name": "IDirectAnimationDAStatics_DirectSlot203",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3129252806
+  },
+  {
+    "id": 1847,
+    "name": "IDirectAnimationDAStatics_DirectSlot204",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3179585663
+  },
+  {
+    "id": 1848,
+    "name": "IDirectAnimationDAStatics_DirectSlot205",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3162808044
+  },
+  {
+    "id": 1849,
+    "name": "IDirectAnimationDAStatics_DirectSlot206",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3213140901
+  },
+  {
+    "id": 1850,
+    "name": "IDirectAnimationDAStatics_DirectSlot207",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3196363282
+  },
+  {
+    "id": 1851,
+    "name": "IDirectAnimationDAStatics_DirectSlot208",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3246696139
+  },
+  {
+    "id": 1852,
+    "name": "IDirectAnimationDAStatics_DirectSlot209",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3229918520
+  },
+  {
+    "id": 1853,
+    "name": "IDirectAnimationDAStatics_DirectSlot210",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1401010954
+  },
+  {
+    "id": 1854,
+    "name": "IDirectAnimationDAStatics_DirectSlot211",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1417788573
+  },
+  {
+    "id": 1855,
+    "name": "IDirectAnimationDAStatics_DirectSlot212",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1367455716
+  },
+  {
+    "id": 1856,
+    "name": "IDirectAnimationDAStatics_DirectSlot213",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1384233335
+  },
+  {
+    "id": 1857,
+    "name": "IDirectAnimationDAStatics_DirectSlot214",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1333900478
+  },
+  {
+    "id": 1858,
+    "name": "IDirectAnimationDAStatics_DirectSlot215",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1350678097
+  },
+  {
+    "id": 1859,
+    "name": "IDirectAnimationDAStatics_DirectSlot216",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1300345240
+  },
+  {
+    "id": 1860,
+    "name": "IDirectAnimationDAStatics_DirectSlot217",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1317122859
+  },
+  {
+    "id": 1861,
+    "name": "IDirectAnimationDAStatics_DirectSlot218",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1266790002
+  },
+  {
+    "id": 1862,
+    "name": "IDirectAnimationDAStatics_DirectSlot219",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1283567621
+  },
+  {
+    "id": 1863,
+    "name": "IDirectAnimationDAStatics_DirectSlot220",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1300198145
+  },
+  {
+    "id": 1864,
+    "name": "IDirectAnimationDAStatics_DirectSlot221",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1283420526
+  },
+  {
+    "id": 1865,
+    "name": "IDirectAnimationDAStatics_DirectSlot222",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1266642907
+  },
+  {
+    "id": 1866,
+    "name": "IDirectAnimationDAStatics_DirectSlot223",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1249865288
+  },
+  {
+    "id": 1867,
+    "name": "IDirectAnimationDAStatics_DirectSlot224",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1367308621
+  },
+  {
+    "id": 1868,
+    "name": "IDirectAnimationDAStatics_DirectSlot225",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1350531002
+  },
+  {
+    "id": 1869,
+    "name": "IDirectAnimationDAStatics_DirectSlot226",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1333753383
+  },
+  {
+    "id": 1870,
+    "name": "IDirectAnimationDAStatics_DirectSlot227",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1316975764
+  },
+  {
+    "id": 1871,
+    "name": "IDirectAnimationDAStatics_DirectSlot228",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1165977193
+  },
+  {
+    "id": 1872,
+    "name": "IDirectAnimationDAStatics_DirectSlot229",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1149199574
+  },
+  {
+    "id": 1873,
+    "name": "IDirectAnimationDAStatics_DirectSlot230",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1199385336
+  },
+  {
+    "id": 1874,
+    "name": "IDirectAnimationDAStatics_DirectSlot231",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1216162955
+  },
+  {
+    "id": 1875,
+    "name": "IDirectAnimationDAStatics_DirectSlot232",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1232940574
+  },
+  {
+    "id": 1876,
+    "name": "IDirectAnimationDAStatics_DirectSlot233",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1249718193
+  },
+  {
+    "id": 1877,
+    "name": "IDirectAnimationDAStatics_DirectSlot234",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1266495812
+  },
+  {
+    "id": 1878,
+    "name": "IDirectAnimationDAStatics_DirectSlot235",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1283273431
+  },
+  {
+    "id": 1879,
+    "name": "IDirectAnimationDAStatics_DirectSlot236",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1300051050
+  },
+  {
+    "id": 1880,
+    "name": "IDirectAnimationDAStatics_DirectSlot237",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1316828669
+  },
+  {
+    "id": 1881,
+    "name": "IDirectAnimationDAStatics_DirectSlot238",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1065164384
+  },
+  {
+    "id": 1882,
+    "name": "IDirectAnimationDAStatics_DirectSlot239",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1081942003
+  },
+  {
+    "id": 1883,
+    "name": "IDirectAnimationDAStatics_DirectSlot240",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1368294359
+  },
+  {
+    "id": 1884,
+    "name": "IDirectAnimationDAStatics_DirectSlot241",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1351516740
+  },
+  {
+    "id": 1885,
+    "name": "IDirectAnimationDAStatics_DirectSlot242",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1401849597
+  },
+  {
+    "id": 1886,
+    "name": "IDirectAnimationDAStatics_DirectSlot243",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1385071978
+  },
+  {
+    "id": 1887,
+    "name": "IDirectAnimationDAStatics_DirectSlot244",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1301183883
+  },
+  {
+    "id": 1888,
+    "name": "IDirectAnimationDAStatics_DirectSlot245",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1284406264
+  },
+  {
+    "id": 1889,
+    "name": "IDirectAnimationDAStatics_DirectSlot246",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1334739121
+  },
+  {
+    "id": 1890,
+    "name": "IDirectAnimationDAStatics_DirectSlot247",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1317961502
+  },
+  {
+    "id": 1891,
+    "name": "IDirectAnimationDAStatics_DirectSlot248",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1234073407
+  },
+  {
+    "id": 1892,
+    "name": "IDirectAnimationDAStatics_DirectSlot249",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1217295788
+  },
+  {
+    "id": 1893,
+    "name": "IDirectAnimationDAStatics_DirectSlot250",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1267481550
+  },
+  {
+    "id": 1894,
+    "name": "IDirectAnimationDAStatics_DirectSlot251",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1284259169
+  },
+  {
+    "id": 1895,
+    "name": "IDirectAnimationDAStatics_DirectSlot252",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1233926312
+  },
+  {
+    "id": 1896,
+    "name": "IDirectAnimationDAStatics_DirectSlot253",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1250703931
+  },
+  {
+    "id": 1897,
+    "name": "IDirectAnimationDAStatics_DirectSlot254",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1334592026
+  },
+  {
+    "id": 1898,
+    "name": "IDirectAnimationDAStatics_DirectSlot255",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1351369645
+  },
+  {
+    "id": 1899,
+    "name": "IDirectAnimationDAStatics_DirectSlot256",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1301036788
+  },
+  {
+    "id": 1900,
+    "name": "IDirectAnimationDAStatics_DirectSlot257",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1317814407
+  },
+  {
+    "id": 1901,
+    "name": "IDirectAnimationDAStatics_DirectSlot258",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1133260598
+  },
+  {
+    "id": 1902,
+    "name": "IDirectAnimationDAStatics_DirectSlot259",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1150038217
+  },
+  {
+    "id": 1903,
+    "name": "IDirectAnimationDAStatics_DirectSlot260",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3314100805
+  },
+  {
+    "id": 1904,
+    "name": "IDirectAnimationDAStatics_DirectSlot261",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3297323186
+  },
+  {
+    "id": 1905,
+    "name": "IDirectAnimationDAStatics_DirectSlot262",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3280545567
+  },
+  {
+    "id": 1906,
+    "name": "IDirectAnimationDAStatics_DirectSlot263",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3263767948
+  },
+  {
+    "id": 1907,
+    "name": "IDirectAnimationDAStatics_DirectSlot264",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3246990329
+  },
+  {
+    "id": 1908,
+    "name": "IDirectAnimationDAStatics_DirectSlot265",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3230212710
+  },
+  {
+    "id": 1909,
+    "name": "IDirectAnimationDAStatics_DirectSlot266",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3213435091
+  },
+  {
+    "id": 1910,
+    "name": "IDirectAnimationDAStatics_DirectSlot267",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3196657472
+  },
+  {
+    "id": 1911,
+    "name": "IDirectAnimationDAStatics_DirectSlot268",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3448321757
+  },
+  {
+    "id": 1912,
+    "name": "IDirectAnimationDAStatics_DirectSlot269",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3431544138
+  },
+  {
+    "id": 1913,
+    "name": "IDirectAnimationDAStatics_DirectSlot270",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3213287996
+  },
+  {
+    "id": 1914,
+    "name": "IDirectAnimationDAStatics_DirectSlot271",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3230065615
+  },
+  {
+    "id": 1915,
+    "name": "IDirectAnimationDAStatics_DirectSlot272",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3246843234
+  },
+  {
+    "id": 1916,
+    "name": "IDirectAnimationDAStatics_DirectSlot273",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3263620853
+  },
+  {
+    "id": 1917,
+    "name": "IDirectAnimationDAStatics_DirectSlot274",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3146177520
+  },
+  {
+    "id": 1918,
+    "name": "IDirectAnimationDAStatics_DirectSlot275",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3162955139
+  },
+  {
+    "id": 1919,
+    "name": "IDirectAnimationDAStatics_DirectSlot276",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3179732758
+  },
+  {
+    "id": 1920,
+    "name": "IDirectAnimationDAStatics_DirectSlot277",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3196510377
+  },
+  {
+    "id": 1921,
+    "name": "IDirectAnimationDAStatics_DirectSlot278",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3347508948
+  },
+  {
+    "id": 1922,
+    "name": "IDirectAnimationDAStatics_DirectSlot279",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3364286567
+  },
+  {
+    "id": 1923,
+    "name": "IDirectAnimationDAStatics_DirectSlot280",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1232101931
+  },
+  {
+    "id": 1924,
+    "name": "IDirectAnimationDAStatics_DirectSlot281",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1215324312
+  },
+  {
+    "id": 1925,
+    "name": "IDirectAnimationDAStatics_DirectSlot282",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1265657169
+  },
+  {
+    "id": 1926,
+    "name": "IDirectAnimationDAStatics_DirectSlot283",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1248879550
+  },
+  {
+    "id": 1927,
+    "name": "IDirectAnimationDAStatics_DirectSlot284",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1299212407
+  },
+  {
+    "id": 1928,
+    "name": "IDirectAnimationDAStatics_DirectSlot285",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1282434788
+  },
+  {
+    "id": 1929,
+    "name": "IDirectAnimationDAStatics_DirectSlot286",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1332767645
+  },
+  {
+    "id": 1930,
+    "name": "IDirectAnimationDAStatics_DirectSlot287",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1315990026
+  },
+  {
+    "id": 1931,
+    "name": "IDirectAnimationDAStatics_DirectSlot288",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1097880979
+  },
+  {
+    "id": 1932,
+    "name": "IDirectAnimationDAStatics_DirectSlot289",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1081103360
+  },
+  {
+    "id": 1933,
+    "name": "IDirectAnimationDAStatics_DirectSlot290",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1131289122
+  },
+  {
+    "id": 1934,
+    "name": "IDirectAnimationDAStatics_DirectSlot291",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1148066741
+  },
+  {
+    "id": 1935,
+    "name": "IDirectAnimationDAStatics_DirectSlot292",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1097733884
+  },
+  {
+    "id": 1936,
+    "name": "IDirectAnimationDAStatics_DirectSlot293",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1114511503
+  },
+  {
+    "id": 1937,
+    "name": "IDirectAnimationDAStatics_DirectSlot294",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1064178646
+  },
+  {
+    "id": 1938,
+    "name": "IDirectAnimationDAStatics_DirectSlot295",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1080956265
+  },
+  {
+    "id": 1939,
+    "name": "IDirectAnimationDAStatics_DirectSlot296",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1030623408
+  },
+  {
+    "id": 1940,
+    "name": "IDirectAnimationDAStatics_DirectSlot297",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1047401027
+  },
+  {
+    "id": 1941,
+    "name": "IDirectAnimationDAStatics_DirectSlot298",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1265510074
+  },
+  {
+    "id": 1942,
+    "name": "IDirectAnimationDAStatics_DirectSlot299",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1282287693
+  },
+  {
+    "id": 1943,
+    "name": "IDirectAnimationDAStatics_DirectSlot300",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1525507688
+  },
+  {
+    "id": 1944,
+    "name": "IDirectAnimationDAStatics_DirectSlot301",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1542285307
+  },
+  {
+    "id": 1945,
+    "name": "IDirectAnimationDAStatics_DirectSlot302",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1559062926
+  },
+  {
+    "id": 1946,
+    "name": "IDirectAnimationDAStatics_DirectSlot303",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1575840545
+  },
+  {
+    "id": 1947,
+    "name": "IDirectAnimationDAStatics_DirectSlot304",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1592618164
+  },
+  {
+    "id": 1948,
+    "name": "IDirectAnimationDAStatics_DirectSlot305",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1609395783
+  },
+  {
+    "id": 1949,
+    "name": "IDirectAnimationDAStatics_DirectSlot306",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1626173402
+  },
+  {
+    "id": 1950,
+    "name": "IDirectAnimationDAStatics_DirectSlot307",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1642951021
+  },
+  {
+    "id": 1951,
+    "name": "IDirectAnimationDAStatics_DirectSlot308",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1391286736
+  },
+  {
+    "id": 1952,
+    "name": "IDirectAnimationDAStatics_DirectSlot309",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1408064355
+  },
+  {
+    "id": 1953,
+    "name": "IDirectAnimationDAStatics_DirectSlot310",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1626320497
+  },
+  {
+    "id": 1954,
+    "name": "IDirectAnimationDAStatics_DirectSlot311",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1609542878
+  },
+  {
+    "id": 1955,
+    "name": "IDirectAnimationDAStatics_DirectSlot312",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1592765259
+  },
+  {
+    "id": 1956,
+    "name": "IDirectAnimationDAStatics_DirectSlot313",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1575987640
+  },
+  {
+    "id": 1957,
+    "name": "IDirectAnimationDAStatics_DirectSlot314",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1693430973
+  },
+  {
+    "id": 1958,
+    "name": "IDirectAnimationDAStatics_DirectSlot315",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1676653354
+  },
+  {
+    "id": 1959,
+    "name": "IDirectAnimationDAStatics_DirectSlot316",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1659875735
+  },
+  {
+    "id": 1960,
+    "name": "IDirectAnimationDAStatics_DirectSlot317",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1643098116
+  },
+  {
+    "id": 1961,
+    "name": "IDirectAnimationDAStatics_DirectSlot318",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1492099545
+  },
+  {
+    "id": 1962,
+    "name": "IDirectAnimationDAStatics_DirectSlot319",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1475321926
+  },
+  {
+    "id": 1963,
+    "name": "IDirectAnimationDAStatics_DirectSlot320",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1727133306
+  },
+  {
+    "id": 1964,
+    "name": "IDirectAnimationDAStatics_DirectSlot321",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1743910925
+  },
+  {
+    "id": 1965,
+    "name": "IDirectAnimationDAStatics_DirectSlot322",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1693578068
+  },
+  {
+    "id": 1966,
+    "name": "IDirectAnimationDAStatics_DirectSlot323",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1710355687
+  },
+  {
+    "id": 1967,
+    "name": "IDirectAnimationDAStatics_DirectSlot324",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1660022830
+  },
+  {
+    "id": 1968,
+    "name": "IDirectAnimationDAStatics_DirectSlot325",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1676800449
+  },
+  {
+    "id": 1969,
+    "name": "IDirectAnimationDAStatics_DirectSlot326",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1626467592
+  },
+  {
+    "id": 1970,
+    "name": "IDirectAnimationDAStatics_DirectSlot327",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1643245211
+  },
+  {
+    "id": 1971,
+    "name": "IDirectAnimationDAStatics_DirectSlot328",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1592912354
+  },
+  {
+    "id": 1972,
+    "name": "IDirectAnimationDAStatics_DirectSlot329",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1609689973
+  },
+  {
+    "id": 1973,
+    "name": "IDirectAnimationDAStatics_DirectSlot330",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3438597539
+  },
+  {
+    "id": 1974,
+    "name": "IDirectAnimationDAStatics_DirectSlot331",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3421819920
+  },
+  {
+    "id": 1975,
+    "name": "IDirectAnimationDAStatics_DirectSlot332",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3472152777
+  },
+  {
+    "id": 1976,
+    "name": "IDirectAnimationDAStatics_DirectSlot333",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3455375158
+  },
+  {
+    "id": 1977,
+    "name": "IDirectAnimationDAStatics_DirectSlot334",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3505708015
+  },
+  {
+    "id": 1978,
+    "name": "IDirectAnimationDAStatics_DirectSlot335",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3488930396
+  },
+  {
+    "id": 1979,
+    "name": "IDirectAnimationDAStatics_DirectSlot336",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3539263253
+  },
+  {
+    "id": 1980,
+    "name": "IDirectAnimationDAStatics_DirectSlot337",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3522485634
+  },
+  {
+    "id": 1981,
+    "name": "IDirectAnimationDAStatics_DirectSlot338",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3572818491
+  },
+  {
+    "id": 1982,
+    "name": "IDirectAnimationDAStatics_DirectSlot339",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3556040872
+  },
+  {
+    "id": 1983,
+    "name": "IDirectAnimationDAStatics_DirectSlot340",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3539410348
+  },
+  {
+    "id": 1984,
+    "name": "IDirectAnimationDAStatics_DirectSlot341",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3556187967
+  },
+  {
+    "id": 1985,
+    "name": "IDirectAnimationDAStatics_DirectSlot342",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3572965586
+  },
+  {
+    "id": 1986,
+    "name": "IDirectAnimationDAStatics_DirectSlot343",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3589743205
+  },
+  {
+    "id": 1987,
+    "name": "IDirectAnimationDAStatics_DirectSlot344",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3472299872
+  },
+  {
+    "id": 1988,
+    "name": "IDirectAnimationDAStatics_DirectSlot345",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3489077491
+  },
+  {
+    "id": 1989,
+    "name": "IDirectAnimationDAStatics_DirectSlot346",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3505855110
+  },
+  {
+    "id": 1990,
+    "name": "IDirectAnimationDAStatics_DirectSlot347",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3522632729
+  },
+  {
+    "id": 1991,
+    "name": "IDirectAnimationDABehavior_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1472428154
+  },
+  {
+    "id": 1992,
+    "name": "IDirectAnimationDABehavior_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3432812641
+  },
+  {
+    "id": 1993,
+    "name": "IDirectAnimationDABehavior_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3637902358
+  },
+  {
+    "id": 1994,
+    "name": "IDirectAnimationDABehavior_GetTypeInfoCount",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3965622210
+  },
+  {
+    "id": 1995,
+    "name": "IDirectAnimationDABehavior_GetTypeInfo",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1610065859
+  },
+  {
+    "id": 1996,
+    "name": "IDirectAnimationDABehavior_GetIDsOfNames",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2336714194
+  },
+  {
+    "id": 1997,
+    "name": "IDirectAnimationDABehavior_Invoke",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 3466149061
+  },
+  {
+    "id": 1998,
+    "name": "IDirectAnimationDABehavior_DirectSlot007",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 957183837
+  },
+  {
+    "id": 1999,
+    "name": "IDirectAnimationDABehavior_DirectSlot008",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 705519552
+  },
+  {
+    "id": 2000,
+    "name": "IDirectAnimationDABehavior_DirectSlot009",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 722297171
+  },
+  {
+    "id": 2001,
+    "name": "IDirectAnimationDABehavior_DirectSlot010",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3088088545
+  },
+  {
+    "id": 2002,
+    "name": "IDirectAnimationDABehavior_DirectSlot011",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3071310926
+  },
+  {
+    "id": 2003,
+    "name": "IDirectAnimationDABehavior_DirectSlot012",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3054533307
+  },
+  {
+    "id": 2004,
+    "name": "IDirectAnimationDABehavior_DirectSlot013",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3037755688
+  },
+  {
+    "id": 2005,
+    "name": "IDirectAnimationDABehavior_DirectSlot014",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3155199021
+  },
+  {
+    "id": 2006,
+    "name": "IDirectAnimationDABehavior_DirectSlot015",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3138421402
+  },
+  {
+    "id": 2007,
+    "name": "IDirectAnimationDABehavior_DirectSlot016",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3121643783
+  },
+  {
+    "id": 2008,
+    "name": "IDirectAnimationDABehavior_DirectSlot017",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3104866164
+  },
+  {
+    "id": 2009,
+    "name": "IDirectAnimationDABehavior_DirectSlot018",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2953867593
+  },
+  {
+    "id": 2010,
+    "name": "IDirectAnimationDABehavior_DirectSlot019",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2937089974
+  },
+  {
+    "id": 2011,
+    "name": "OleRun",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 177265206,
+    "args": [
+      {
+        "name": "unknown",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2012,
+    "name": "OleIsRunning",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3069287104,
+    "args": [
+      {
+        "name": "object",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2013,
+    "name": "OleLockRunning",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 712417013,
+    "args": [
+      {
+        "name": "unknown",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lock",
+        "type": "BOOL"
+      },
+      {
+        "name": "lastUnlockCloses",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2014,
+    "name": "CoGetMalloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3543430873,
+    "args": [
+      {
+        "name": "context",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppMalloc",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2015,
+    "name": "IMalloc_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 923448282
+  },
+  {
+    "id": 2016,
+    "name": "IMalloc_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3033428417
+  },
+  {
+    "id": 2017,
+    "name": "IMalloc_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4236744374
+  },
+  {
+    "id": 2018,
+    "name": "IMalloc_Alloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3769457166,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "size",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 2019,
+    "name": "IMalloc_Realloc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 623706653,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "ptr",
+        "type": "HANDLE"
+      },
+      {
+        "name": "size",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 2020,
+    "name": "IMalloc_Free",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 231262131,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "ptr",
+        "type": "HANDLE"
+      }
+    ]
+  },
+  {
+    "id": 2021,
+    "name": "IMalloc_GetSize",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1998735990,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "ptr",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2022,
+    "name": "IMalloc_DidAlloc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 726378135,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "ptr",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "INT"
+  },
+  {
+    "id": 2023,
+    "name": "IMalloc_HeapMinimize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 763432199
+  },
+  {
+    "id": 2024,
+    "name": "CoSetState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1000329502,
+    "args": [
+      {
+        "name": "state",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2025,
+    "name": "CoGetState",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 114452738,
+    "args": [
+      {
+        "name": "ppState",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

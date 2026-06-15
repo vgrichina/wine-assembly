@@ -7,6 +7,411 @@
 
     ;; === O(1) br_table dispatch ===
     (block $fallback
+    (block $api_2025
+    (block $api_2024
+    (block $api_2023
+    (block $api_2022
+    (block $api_2021
+    (block $api_2020
+    (block $api_2019
+    (block $api_2018
+    (block $api_2017
+    (block $api_2016
+    (block $api_2015
+    (block $api_2014
+    (block $api_2013
+    (block $api_2012
+    (block $api_2011
+    (block $api_2010
+    (block $api_2009
+    (block $api_2008
+    (block $api_2007
+    (block $api_2006
+    (block $api_2005
+    (block $api_2004
+    (block $api_2003
+    (block $api_2002
+    (block $api_2001
+    (block $api_2000
+    (block $api_1999
+    (block $api_1998
+    (block $api_1997
+    (block $api_1996
+    (block $api_1995
+    (block $api_1994
+    (block $api_1993
+    (block $api_1992
+    (block $api_1991
+    (block $api_1990
+    (block $api_1989
+    (block $api_1988
+    (block $api_1987
+    (block $api_1986
+    (block $api_1985
+    (block $api_1984
+    (block $api_1983
+    (block $api_1982
+    (block $api_1981
+    (block $api_1980
+    (block $api_1979
+    (block $api_1978
+    (block $api_1977
+    (block $api_1976
+    (block $api_1975
+    (block $api_1974
+    (block $api_1973
+    (block $api_1972
+    (block $api_1971
+    (block $api_1970
+    (block $api_1969
+    (block $api_1968
+    (block $api_1967
+    (block $api_1966
+    (block $api_1965
+    (block $api_1964
+    (block $api_1963
+    (block $api_1962
+    (block $api_1961
+    (block $api_1960
+    (block $api_1959
+    (block $api_1958
+    (block $api_1957
+    (block $api_1956
+    (block $api_1955
+    (block $api_1954
+    (block $api_1953
+    (block $api_1952
+    (block $api_1951
+    (block $api_1950
+    (block $api_1949
+    (block $api_1948
+    (block $api_1947
+    (block $api_1946
+    (block $api_1945
+    (block $api_1944
+    (block $api_1943
+    (block $api_1942
+    (block $api_1941
+    (block $api_1940
+    (block $api_1939
+    (block $api_1938
+    (block $api_1937
+    (block $api_1936
+    (block $api_1935
+    (block $api_1934
+    (block $api_1933
+    (block $api_1932
+    (block $api_1931
+    (block $api_1930
+    (block $api_1929
+    (block $api_1928
+    (block $api_1927
+    (block $api_1926
+    (block $api_1925
+    (block $api_1924
+    (block $api_1923
+    (block $api_1922
+    (block $api_1921
+    (block $api_1920
+    (block $api_1919
+    (block $api_1918
+    (block $api_1917
+    (block $api_1916
+    (block $api_1915
+    (block $api_1914
+    (block $api_1913
+    (block $api_1912
+    (block $api_1911
+    (block $api_1910
+    (block $api_1909
+    (block $api_1908
+    (block $api_1907
+    (block $api_1906
+    (block $api_1905
+    (block $api_1904
+    (block $api_1903
+    (block $api_1902
+    (block $api_1901
+    (block $api_1900
+    (block $api_1899
+    (block $api_1898
+    (block $api_1897
+    (block $api_1896
+    (block $api_1895
+    (block $api_1894
+    (block $api_1893
+    (block $api_1892
+    (block $api_1891
+    (block $api_1890
+    (block $api_1889
+    (block $api_1888
+    (block $api_1887
+    (block $api_1886
+    (block $api_1885
+    (block $api_1884
+    (block $api_1883
+    (block $api_1882
+    (block $api_1881
+    (block $api_1880
+    (block $api_1879
+    (block $api_1878
+    (block $api_1877
+    (block $api_1876
+    (block $api_1875
+    (block $api_1874
+    (block $api_1873
+    (block $api_1872
+    (block $api_1871
+    (block $api_1870
+    (block $api_1869
+    (block $api_1868
+    (block $api_1867
+    (block $api_1866
+    (block $api_1865
+    (block $api_1864
+    (block $api_1863
+    (block $api_1862
+    (block $api_1861
+    (block $api_1860
+    (block $api_1859
+    (block $api_1858
+    (block $api_1857
+    (block $api_1856
+    (block $api_1855
+    (block $api_1854
+    (block $api_1853
+    (block $api_1852
+    (block $api_1851
+    (block $api_1850
+    (block $api_1849
+    (block $api_1848
+    (block $api_1847
+    (block $api_1846
+    (block $api_1845
+    (block $api_1844
+    (block $api_1843
+    (block $api_1842
+    (block $api_1841
+    (block $api_1840
+    (block $api_1839
+    (block $api_1838
+    (block $api_1837
+    (block $api_1836
+    (block $api_1835
+    (block $api_1834
+    (block $api_1833
+    (block $api_1832
+    (block $api_1831
+    (block $api_1830
+    (block $api_1829
+    (block $api_1828
+    (block $api_1827
+    (block $api_1826
+    (block $api_1825
+    (block $api_1824
+    (block $api_1823
+    (block $api_1822
+    (block $api_1821
+    (block $api_1820
+    (block $api_1819
+    (block $api_1818
+    (block $api_1817
+    (block $api_1816
+    (block $api_1815
+    (block $api_1814
+    (block $api_1813
+    (block $api_1812
+    (block $api_1811
+    (block $api_1810
+    (block $api_1809
+    (block $api_1808
+    (block $api_1807
+    (block $api_1806
+    (block $api_1805
+    (block $api_1804
+    (block $api_1803
+    (block $api_1802
+    (block $api_1801
+    (block $api_1800
+    (block $api_1799
+    (block $api_1798
+    (block $api_1797
+    (block $api_1796
+    (block $api_1795
+    (block $api_1794
+    (block $api_1793
+    (block $api_1792
+    (block $api_1791
+    (block $api_1790
+    (block $api_1789
+    (block $api_1788
+    (block $api_1787
+    (block $api_1786
+    (block $api_1785
+    (block $api_1784
+    (block $api_1783
+    (block $api_1782
+    (block $api_1781
+    (block $api_1780
+    (block $api_1779
+    (block $api_1778
+    (block $api_1777
+    (block $api_1776
+    (block $api_1775
+    (block $api_1774
+    (block $api_1773
+    (block $api_1772
+    (block $api_1771
+    (block $api_1770
+    (block $api_1769
+    (block $api_1768
+    (block $api_1767
+    (block $api_1766
+    (block $api_1765
+    (block $api_1764
+    (block $api_1763
+    (block $api_1762
+    (block $api_1761
+    (block $api_1760
+    (block $api_1759
+    (block $api_1758
+    (block $api_1757
+    (block $api_1756
+    (block $api_1755
+    (block $api_1754
+    (block $api_1753
+    (block $api_1752
+    (block $api_1751
+    (block $api_1750
+    (block $api_1749
+    (block $api_1748
+    (block $api_1747
+    (block $api_1746
+    (block $api_1745
+    (block $api_1744
+    (block $api_1743
+    (block $api_1742
+    (block $api_1741
+    (block $api_1740
+    (block $api_1739
+    (block $api_1738
+    (block $api_1737
+    (block $api_1736
+    (block $api_1735
+    (block $api_1734
+    (block $api_1733
+    (block $api_1732
+    (block $api_1731
+    (block $api_1730
+    (block $api_1729
+    (block $api_1728
+    (block $api_1727
+    (block $api_1726
+    (block $api_1725
+    (block $api_1724
+    (block $api_1723
+    (block $api_1722
+    (block $api_1721
+    (block $api_1720
+    (block $api_1719
+    (block $api_1718
+    (block $api_1717
+    (block $api_1716
+    (block $api_1715
+    (block $api_1714
+    (block $api_1713
+    (block $api_1712
+    (block $api_1711
+    (block $api_1710
+    (block $api_1709
+    (block $api_1708
+    (block $api_1707
+    (block $api_1706
+    (block $api_1705
+    (block $api_1704
+    (block $api_1703
+    (block $api_1702
+    (block $api_1701
+    (block $api_1700
+    (block $api_1699
+    (block $api_1698
+    (block $api_1697
+    (block $api_1696
+    (block $api_1695
+    (block $api_1694
+    (block $api_1693
+    (block $api_1692
+    (block $api_1691
+    (block $api_1690
+    (block $api_1689
+    (block $api_1688
+    (block $api_1687
+    (block $api_1686
+    (block $api_1685
+    (block $api_1684
+    (block $api_1683
+    (block $api_1682
+    (block $api_1681
+    (block $api_1680
+    (block $api_1679
+    (block $api_1678
+    (block $api_1677
+    (block $api_1676
+    (block $api_1675
+    (block $api_1674
+    (block $api_1673
+    (block $api_1672
+    (block $api_1671
+    (block $api_1670
+    (block $api_1669
+    (block $api_1668
+    (block $api_1667
+    (block $api_1666
+    (block $api_1665
+    (block $api_1664
+    (block $api_1663
+    (block $api_1662
+    (block $api_1661
+    (block $api_1660
+    (block $api_1659
+    (block $api_1658
+    (block $api_1657
+    (block $api_1656
+    (block $api_1655
+    (block $api_1654
+    (block $api_1653
+    (block $api_1652
+    (block $api_1651
+    (block $api_1650
+    (block $api_1649
+    (block $api_1648
+    (block $api_1647
+    (block $api_1646
+    (block $api_1645
+    (block $api_1644
+    (block $api_1643
+    (block $api_1642
+    (block $api_1641
+    (block $api_1640
+    (block $api_1639
+    (block $api_1638
+    (block $api_1637
+    (block $api_1636
+    (block $api_1635
+    (block $api_1634
+    (block $api_1633
+    (block $api_1632
+    (block $api_1631
+    (block $api_1630
+    (block $api_1629
+    (block $api_1628
+    (block $api_1627
+    (block $api_1626
+    (block $api_1625
+    (block $api_1624
+    (block $api_1623
+    (block $api_1622
+    (block $api_1621
     (block $api_1620
     (block $api_1619
     (block $api_1618
@@ -1628,7 +2033,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $api_973 $api_974 $api_975 $api_976 $api_977 $api_978 $api_979 $api_980 $api_981 $api_982 $api_983 $api_984 $api_985 $api_986 $api_987 $api_988 $api_989 $api_990 $api_991 $api_992 $api_993 $api_994 $api_995 $api_996 $api_997 $api_998 $api_999 $api_1000 $api_1001 $api_1002 $api_1003 $api_1004 $api_1005 $api_1006 $api_1007 $api_1008 $api_1009 $api_1010 $api_1011 $api_1012 $api_1013 $api_1014 $api_1015 $api_1016 $api_1017 $api_1018 $api_1019 $api_1020 $api_1021 $api_1022 $api_1023 $api_1024 $api_1025 $api_1026 $api_1027 $api_1028 $api_1029 $api_1030 $api_1031 $api_1032 $api_1033 $api_1034 $api_1035 $api_1036 $api_1037 $api_1038 $api_1039 $api_1040 $api_1041 $api_1042 $api_1043 $api_1044 $api_1045 $api_1046 $api_1047 $api_1048 $api_1049 $api_1050 $api_1051 $api_1052 $api_1053 $api_1054 $api_1055 $api_1056 $api_1057 $api_1058 $api_1059 $api_1060 $api_1061 $api_1062 $api_1063 $api_1064 $api_1065 $api_1066 $api_1067 $api_1068 $api_1069 $api_1070 $api_1071 $api_1072 $api_1073 $api_1074 $api_1075 $api_1076 $api_1077 $api_1078 $api_1079 $api_1080 $api_1081 $api_1082 $api_1083 $api_1084 $api_1085 $api_1086 $api_1087 $api_1088 $api_1089 $api_1090 $api_1091 $api_1092 $api_1093 $api_1094 $api_1095 $api_1096 $api_1097 $api_1098 $api_1099 $api_1100 $api_1101 $api_1102 $api_1103 $api_1104 $api_1105 $api_1106 $api_1107 $api_1108 $api_1109 $api_1110 $api_1111 $api_1112 $api_1113 $api_1114 $api_1115 $api_1116 $api_1117 $api_1118 $api_1119 $api_1120 $api_1121 $api_1122 $api_1123 $api_1124 $api_1125 $api_1126 $api_1127 $api_1128 $api_1129 $api_1130 $api_1131 $api_1132 $api_1133 $api_1134 $api_1135 $api_1136 $api_1137 $api_1138 $api_1139 $api_1140 $api_1141 $api_1142 $api_1143 $api_1144 $api_1145 $api_1146 $api_1147 $api_1148 $api_1149 $api_1150 $api_1151 $api_1152 $api_1153 $api_1154 $api_1155 $api_1156 $api_1157 $api_1158 $api_1159 $api_1160 $api_1161 $api_1162 $api_1163 $api_1164 $api_1165 $api_1166 $api_1167 $api_1168 $api_1169 $api_1170 $api_1171 $api_1172 $api_1173 $api_1174 $api_1175 $api_1176 $api_1177 $api_1178 $api_1179 $api_1180 $api_1181 $api_1182 $api_1183 $api_1184 $api_1185 $api_1186 $api_1187 $api_1188 $api_1189 $api_1190 $api_1191 $api_1192 $api_1193 $api_1194 $api_1195 $api_1196 $api_1197 $api_1198 $api_1199 $api_1200 $api_1201 $api_1202 $api_1203 $api_1204 $api_1205 $api_1206 $api_1207 $api_1208 $api_1209 $api_1210 $api_1211 $api_1212 $api_1213 $api_1214 $api_1215 $api_1216 $api_1217 $api_1218 $api_1219 $api_1220 $api_1221 $api_1222 $api_1223 $api_1224 $api_1225 $api_1226 $api_1227 $api_1228 $api_1229 $api_1230 $api_1231 $api_1232 $api_1233 $api_1234 $api_1235 $api_1236 $api_1237 $api_1238 $api_1239 $api_1240 $api_1241 $api_1242 $api_1243 $api_1244 $api_1245 $api_1246 $api_1247 $api_1248 $api_1249 $api_1250 $api_1251 $api_1252 $api_1253 $api_1254 $api_1255 $api_1256 $api_1257 $api_1258 $api_1259 $api_1260 $api_1261 $api_1262 $api_1263 $api_1264 $api_1265 $api_1266 $api_1267 $api_1268 $api_1269 $api_1270 $api_1271 $api_1272 $api_1273 $api_1274 $api_1275 $api_1276 $api_1277 $api_1278 $api_1279 $api_1280 $api_1281 $api_1282 $api_1283 $api_1284 $api_1285 $api_1286 $api_1287 $api_1288 $api_1289 $api_1290 $api_1291 $api_1292 $api_1293 $api_1294 $api_1295 $api_1296 $api_1297 $api_1298 $api_1299 $api_1300 $api_1301 $api_1302 $api_1303 $api_1304 $api_1305 $api_1306 $api_1307 $api_1308 $api_1309 $api_1310 $api_1311 $api_1312 $api_1313 $api_1314 $api_1315 $api_1316 $api_1317 $api_1318 $api_1319 $api_1320 $api_1321 $api_1322 $api_1323 $api_1324 $api_1325 $api_1326 $api_1327 $api_1328 $api_1329 $api_1330 $api_1331 $api_1332 $api_1333 $api_1334 $api_1335 $api_1336 $api_1337 $api_1338 $api_1339 $api_1340 $api_1341 $api_1342 $api_1343 $api_1344 $api_1345 $api_1346 $api_1347 $api_1348 $api_1349 $api_1350 $api_1351 $api_1352 $api_1353 $api_1354 $api_1355 $api_1356 $api_1357 $api_1358 $api_1359 $api_1360 $api_1361 $api_1362 $api_1363 $api_1364 $api_1365 $api_1366 $api_1367 $api_1368 $api_1369 $api_1370 $api_1371 $api_1372 $api_1373 $api_1374 $api_1375 $api_1376 $api_1377 $api_1378 $api_1379 $api_1380 $api_1381 $api_1382 $api_1383 $api_1384 $api_1385 $api_1386 $api_1387 $api_1388 $api_1389 $api_1390 $api_1391 $api_1392 $api_1393 $api_1394 $api_1395 $api_1396 $api_1397 $api_1398 $api_1399 $api_1400 $api_1401 $api_1402 $api_1403 $api_1404 $api_1405 $api_1406 $api_1407 $api_1408 $api_1409 $api_1410 $api_1411 $api_1412 $api_1413 $api_1414 $api_1415 $api_1416 $api_1417 $api_1418 $api_1419 $api_1420 $api_1421 $api_1422 $api_1423 $api_1424 $api_1425 $api_1426 $api_1427 $api_1428 $api_1429 $api_1430 $api_1431 $api_1432 $api_1433 $api_1434 $api_1435 $api_1436 $api_1437 $api_1438 $api_1439 $api_1440 $api_1441 $api_1442 $api_1443 $api_1444 $api_1445 $api_1446 $api_1447 $api_1448 $api_1449 $api_1450 $api_1451 $api_1452 $api_1453 $api_1454 $api_1455 $api_1456 $api_1457 $api_1458 $api_1459 $api_1460 $api_1461 $api_1462 $api_1463 $api_1464 $api_1465 $api_1466 $api_1467 $api_1468 $api_1469 $api_1470 $api_1471 $api_1472 $api_1473 $api_1474 $api_1475 $api_1476 $api_1477 $api_1478 $api_1479 $api_1480 $api_1481 $api_1482 $api_1483 $api_1484 $api_1485 $api_1486 $api_1487 $api_1488 $api_1489 $api_1490 $api_1491 $api_1492 $api_1493 $api_1494 $api_1495 $api_1496 $api_1497 $api_1498 $api_1499 $api_1500 $api_1501 $api_1502 $api_1503 $api_1504 $api_1505 $api_1506 $api_1507 $api_1508 $api_1509 $api_1510 $api_1511 $api_1512 $api_1513 $api_1514 $api_1515 $api_1516 $api_1517 $api_1518 $api_1519 $api_1520 $api_1521 $api_1522 $api_1523 $api_1524 $api_1525 $api_1526 $api_1527 $api_1528 $api_1529 $api_1530 $api_1531 $api_1532 $api_1533 $api_1534 $api_1535 $api_1536 $api_1537 $api_1538 $api_1539 $api_1540 $api_1541 $api_1542 $api_1543 $api_1544 $api_1545 $api_1546 $api_1547 $api_1548 $api_1549 $api_1550 $api_1551 $api_1552 $api_1553 $api_1554 $api_1555 $api_1556 $api_1557 $api_1558 $api_1559 $api_1560 $api_1561 $api_1562 $api_1563 $api_1564 $api_1565 $api_1566 $api_1567 $api_1568 $api_1569 $api_1570 $api_1571 $api_1572 $api_1573 $api_1574 $api_1575 $api_1576 $api_1577 $api_1578 $api_1579 $api_1580 $api_1581 $api_1582 $api_1583 $api_1584 $api_1585 $api_1586 $api_1587 $api_1588 $api_1589 $api_1590 $api_1591 $api_1592 $api_1593 $api_1594 $api_1595 $api_1596 $api_1597 $api_1598 $api_1599 $api_1600 $api_1601 $api_1602 $api_1603 $api_1604 $api_1605 $api_1606 $api_1607 $api_1608 $api_1609 $api_1610 $api_1611 $api_1612 $api_1613 $api_1614 $api_1615 $api_1616 $api_1617 $api_1618 $api_1619 $api_1620 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $api_256 $api_257 $api_258 $api_259 $api_260 $api_261 $api_262 $api_263 $api_264 $api_265 $api_266 $api_267 $api_268 $api_269 $api_270 $api_271 $api_272 $api_273 $api_274 $api_275 $api_276 $api_277 $api_278 $api_279 $api_280 $api_281 $api_282 $api_283 $api_284 $api_285 $api_286 $api_287 $api_288 $api_289 $api_290 $api_291 $api_292 $api_293 $api_294 $api_295 $api_296 $api_297 $api_298 $api_299 $api_300 $api_301 $api_302 $api_303 $api_304 $api_305 $api_306 $api_307 $api_308 $api_309 $api_310 $api_311 $api_312 $api_313 $api_314 $api_315 $api_316 $api_317 $api_318 $api_319 $api_320 $api_321 $api_322 $api_323 $api_324 $api_325 $api_326 $api_327 $api_328 $api_329 $api_330 $api_331 $api_332 $api_333 $api_334 $api_335 $api_336 $api_337 $api_338 $api_339 $api_340 $api_341 $api_342 $api_343 $api_344 $api_345 $api_346 $api_347 $api_348 $api_349 $api_350 $api_351 $api_352 $api_353 $api_354 $api_355 $api_356 $api_357 $api_358 $api_359 $api_360 $api_361 $api_362 $api_363 $api_364 $api_365 $api_366 $api_367 $api_368 $api_369 $api_370 $api_371 $api_372 $api_373 $api_374 $api_375 $api_376 $api_377 $api_378 $api_379 $api_380 $api_381 $api_382 $api_383 $api_384 $api_385 $api_386 $api_387 $api_388 $api_389 $api_390 $api_391 $api_392 $api_393 $api_394 $api_395 $api_396 $api_397 $api_398 $api_399 $api_400 $api_401 $api_402 $api_403 $api_404 $api_405 $api_406 $api_407 $api_408 $api_409 $api_410 $api_411 $api_412 $api_413 $api_414 $api_415 $api_416 $api_417 $api_418 $api_419 $api_420 $api_421 $api_422 $api_423 $api_424 $api_425 $api_426 $api_427 $api_428 $api_429 $api_430 $api_431 $api_432 $api_433 $api_434 $api_435 $api_436 $api_437 $api_438 $api_439 $api_440 $api_441 $api_442 $api_443 $api_444 $api_445 $api_446 $api_447 $api_448 $api_449 $api_450 $api_451 $api_452 $api_453 $api_454 $api_455 $api_456 $api_457 $api_458 $api_459 $api_460 $api_461 $api_462 $api_463 $api_464 $api_465 $api_466 $api_467 $api_468 $api_469 $api_470 $api_471 $api_472 $api_473 $api_474 $api_475 $api_476 $api_477 $api_478 $api_479 $api_480 $api_481 $api_482 $api_483 $api_484 $api_485 $api_486 $api_487 $api_488 $api_489 $api_490 $api_491 $api_492 $api_493 $api_494 $api_495 $api_496 $api_497 $api_498 $api_499 $api_500 $api_501 $api_502 $api_503 $api_504 $api_505 $api_506 $api_507 $api_508 $api_509 $api_510 $api_511 $api_512 $api_513 $api_514 $api_515 $api_516 $api_517 $api_518 $api_519 $api_520 $api_521 $api_522 $api_523 $api_524 $api_525 $api_526 $api_527 $api_528 $api_529 $api_530 $api_531 $api_532 $api_533 $api_534 $api_535 $api_536 $api_537 $api_538 $api_539 $api_540 $api_541 $api_542 $api_543 $api_544 $api_545 $api_546 $api_547 $api_548 $api_549 $api_550 $api_551 $api_552 $api_553 $api_554 $api_555 $api_556 $api_557 $api_558 $api_559 $api_560 $api_561 $api_562 $api_563 $api_564 $api_565 $api_566 $api_567 $api_568 $api_569 $api_570 $api_571 $api_572 $api_573 $api_574 $api_575 $api_576 $api_577 $api_578 $api_579 $api_580 $api_581 $api_582 $api_583 $api_584 $api_585 $api_586 $api_587 $api_588 $api_589 $api_590 $api_591 $api_592 $api_593 $api_594 $api_595 $api_596 $api_597 $api_598 $api_599 $api_600 $api_601 $api_602 $api_603 $api_604 $api_605 $api_606 $api_607 $api_608 $api_609 $api_610 $api_611 $api_612 $api_613 $api_614 $api_615 $api_616 $api_617 $api_618 $api_619 $api_620 $api_621 $api_622 $api_623 $api_624 $api_625 $api_626 $api_627 $api_628 $api_629 $api_630 $api_631 $api_632 $api_633 $api_634 $api_635 $api_636 $api_637 $api_638 $api_639 $api_640 $api_641 $api_642 $api_643 $api_644 $api_645 $api_646 $api_647 $api_648 $api_649 $api_650 $api_651 $api_652 $api_653 $api_654 $api_655 $api_656 $api_657 $api_658 $api_659 $api_660 $api_661 $api_662 $api_663 $api_664 $api_665 $api_666 $api_667 $api_668 $api_669 $api_670 $api_671 $api_672 $api_673 $api_674 $api_675 $api_676 $api_677 $api_678 $api_679 $api_680 $api_681 $api_682 $api_683 $api_684 $api_685 $api_686 $api_687 $api_688 $api_689 $api_690 $api_691 $api_692 $api_693 $api_694 $api_695 $api_696 $api_697 $api_698 $api_699 $api_700 $api_701 $api_702 $api_703 $api_704 $api_705 $api_706 $api_707 $api_708 $api_709 $api_710 $api_711 $api_712 $api_713 $api_714 $api_715 $api_716 $api_717 $api_718 $api_719 $api_720 $api_721 $api_722 $api_723 $api_724 $api_725 $api_726 $api_727 $api_728 $api_729 $api_730 $api_731 $api_732 $api_733 $api_734 $api_735 $api_736 $api_737 $api_738 $api_739 $api_740 $api_741 $api_742 $api_743 $api_744 $api_745 $api_746 $api_747 $api_748 $api_749 $api_750 $api_751 $api_752 $api_753 $api_754 $api_755 $api_756 $api_757 $api_758 $api_759 $api_760 $api_761 $api_762 $api_763 $api_764 $api_765 $api_766 $api_767 $api_768 $api_769 $api_770 $api_771 $api_772 $api_773 $api_774 $api_775 $api_776 $api_777 $api_778 $api_779 $api_780 $api_781 $api_782 $api_783 $api_784 $api_785 $api_786 $api_787 $api_788 $api_789 $api_790 $api_791 $api_792 $api_793 $api_794 $api_795 $api_796 $api_797 $api_798 $api_799 $api_800 $api_801 $api_802 $api_803 $api_804 $api_805 $api_806 $api_807 $api_808 $api_809 $api_810 $api_811 $api_812 $api_813 $api_814 $api_815 $api_816 $api_817 $api_818 $api_819 $api_820 $api_821 $api_822 $api_823 $api_824 $api_825 $api_826 $api_827 $api_828 $api_829 $api_830 $api_831 $api_832 $api_833 $api_834 $api_835 $api_836 $api_837 $api_838 $api_839 $api_840 $api_841 $api_842 $api_843 $api_844 $api_845 $api_846 $api_847 $api_848 $api_849 $api_850 $api_851 $api_852 $api_853 $api_854 $api_855 $api_856 $api_857 $api_858 $api_859 $api_860 $api_861 $api_862 $api_863 $api_864 $api_865 $api_866 $api_867 $api_868 $api_869 $api_870 $api_871 $api_872 $api_873 $api_874 $api_875 $api_876 $api_877 $api_878 $api_879 $api_880 $api_881 $api_882 $api_883 $api_884 $api_885 $api_886 $api_887 $api_888 $api_889 $api_890 $api_891 $api_892 $api_893 $api_894 $api_895 $api_896 $api_897 $api_898 $api_899 $api_900 $api_901 $api_902 $api_903 $api_904 $api_905 $api_906 $api_907 $api_908 $api_909 $api_910 $api_911 $api_912 $api_913 $api_914 $api_915 $api_916 $api_917 $api_918 $api_919 $api_920 $api_921 $api_922 $api_923 $api_924 $api_925 $api_926 $api_927 $api_928 $api_929 $api_930 $api_931 $api_932 $api_933 $api_934 $api_935 $api_936 $api_937 $api_938 $api_939 $api_940 $api_941 $api_942 $api_943 $api_944 $api_945 $api_946 $api_947 $api_948 $api_949 $api_950 $api_951 $api_952 $api_953 $api_954 $api_955 $api_956 $api_957 $api_958 $api_959 $api_960 $api_961 $api_962 $api_963 $api_964 $api_965 $api_966 $api_967 $api_968 $api_969 $api_970 $api_971 $api_972 $api_973 $api_974 $api_975 $api_976 $api_977 $api_978 $api_979 $api_980 $api_981 $api_982 $api_983 $api_984 $api_985 $api_986 $api_987 $api_988 $api_989 $api_990 $api_991 $api_992 $api_993 $api_994 $api_995 $api_996 $api_997 $api_998 $api_999 $api_1000 $api_1001 $api_1002 $api_1003 $api_1004 $api_1005 $api_1006 $api_1007 $api_1008 $api_1009 $api_1010 $api_1011 $api_1012 $api_1013 $api_1014 $api_1015 $api_1016 $api_1017 $api_1018 $api_1019 $api_1020 $api_1021 $api_1022 $api_1023 $api_1024 $api_1025 $api_1026 $api_1027 $api_1028 $api_1029 $api_1030 $api_1031 $api_1032 $api_1033 $api_1034 $api_1035 $api_1036 $api_1037 $api_1038 $api_1039 $api_1040 $api_1041 $api_1042 $api_1043 $api_1044 $api_1045 $api_1046 $api_1047 $api_1048 $api_1049 $api_1050 $api_1051 $api_1052 $api_1053 $api_1054 $api_1055 $api_1056 $api_1057 $api_1058 $api_1059 $api_1060 $api_1061 $api_1062 $api_1063 $api_1064 $api_1065 $api_1066 $api_1067 $api_1068 $api_1069 $api_1070 $api_1071 $api_1072 $api_1073 $api_1074 $api_1075 $api_1076 $api_1077 $api_1078 $api_1079 $api_1080 $api_1081 $api_1082 $api_1083 $api_1084 $api_1085 $api_1086 $api_1087 $api_1088 $api_1089 $api_1090 $api_1091 $api_1092 $api_1093 $api_1094 $api_1095 $api_1096 $api_1097 $api_1098 $api_1099 $api_1100 $api_1101 $api_1102 $api_1103 $api_1104 $api_1105 $api_1106 $api_1107 $api_1108 $api_1109 $api_1110 $api_1111 $api_1112 $api_1113 $api_1114 $api_1115 $api_1116 $api_1117 $api_1118 $api_1119 $api_1120 $api_1121 $api_1122 $api_1123 $api_1124 $api_1125 $api_1126 $api_1127 $api_1128 $api_1129 $api_1130 $api_1131 $api_1132 $api_1133 $api_1134 $api_1135 $api_1136 $api_1137 $api_1138 $api_1139 $api_1140 $api_1141 $api_1142 $api_1143 $api_1144 $api_1145 $api_1146 $api_1147 $api_1148 $api_1149 $api_1150 $api_1151 $api_1152 $api_1153 $api_1154 $api_1155 $api_1156 $api_1157 $api_1158 $api_1159 $api_1160 $api_1161 $api_1162 $api_1163 $api_1164 $api_1165 $api_1166 $api_1167 $api_1168 $api_1169 $api_1170 $api_1171 $api_1172 $api_1173 $api_1174 $api_1175 $api_1176 $api_1177 $api_1178 $api_1179 $api_1180 $api_1181 $api_1182 $api_1183 $api_1184 $api_1185 $api_1186 $api_1187 $api_1188 $api_1189 $api_1190 $api_1191 $api_1192 $api_1193 $api_1194 $api_1195 $api_1196 $api_1197 $api_1198 $api_1199 $api_1200 $api_1201 $api_1202 $api_1203 $api_1204 $api_1205 $api_1206 $api_1207 $api_1208 $api_1209 $api_1210 $api_1211 $api_1212 $api_1213 $api_1214 $api_1215 $api_1216 $api_1217 $api_1218 $api_1219 $api_1220 $api_1221 $api_1222 $api_1223 $api_1224 $api_1225 $api_1226 $api_1227 $api_1228 $api_1229 $api_1230 $api_1231 $api_1232 $api_1233 $api_1234 $api_1235 $api_1236 $api_1237 $api_1238 $api_1239 $api_1240 $api_1241 $api_1242 $api_1243 $api_1244 $api_1245 $api_1246 $api_1247 $api_1248 $api_1249 $api_1250 $api_1251 $api_1252 $api_1253 $api_1254 $api_1255 $api_1256 $api_1257 $api_1258 $api_1259 $api_1260 $api_1261 $api_1262 $api_1263 $api_1264 $api_1265 $api_1266 $api_1267 $api_1268 $api_1269 $api_1270 $api_1271 $api_1272 $api_1273 $api_1274 $api_1275 $api_1276 $api_1277 $api_1278 $api_1279 $api_1280 $api_1281 $api_1282 $api_1283 $api_1284 $api_1285 $api_1286 $api_1287 $api_1288 $api_1289 $api_1290 $api_1291 $api_1292 $api_1293 $api_1294 $api_1295 $api_1296 $api_1297 $api_1298 $api_1299 $api_1300 $api_1301 $api_1302 $api_1303 $api_1304 $api_1305 $api_1306 $api_1307 $api_1308 $api_1309 $api_1310 $api_1311 $api_1312 $api_1313 $api_1314 $api_1315 $api_1316 $api_1317 $api_1318 $api_1319 $api_1320 $api_1321 $api_1322 $api_1323 $api_1324 $api_1325 $api_1326 $api_1327 $api_1328 $api_1329 $api_1330 $api_1331 $api_1332 $api_1333 $api_1334 $api_1335 $api_1336 $api_1337 $api_1338 $api_1339 $api_1340 $api_1341 $api_1342 $api_1343 $api_1344 $api_1345 $api_1346 $api_1347 $api_1348 $api_1349 $api_1350 $api_1351 $api_1352 $api_1353 $api_1354 $api_1355 $api_1356 $api_1357 $api_1358 $api_1359 $api_1360 $api_1361 $api_1362 $api_1363 $api_1364 $api_1365 $api_1366 $api_1367 $api_1368 $api_1369 $api_1370 $api_1371 $api_1372 $api_1373 $api_1374 $api_1375 $api_1376 $api_1377 $api_1378 $api_1379 $api_1380 $api_1381 $api_1382 $api_1383 $api_1384 $api_1385 $api_1386 $api_1387 $api_1388 $api_1389 $api_1390 $api_1391 $api_1392 $api_1393 $api_1394 $api_1395 $api_1396 $api_1397 $api_1398 $api_1399 $api_1400 $api_1401 $api_1402 $api_1403 $api_1404 $api_1405 $api_1406 $api_1407 $api_1408 $api_1409 $api_1410 $api_1411 $api_1412 $api_1413 $api_1414 $api_1415 $api_1416 $api_1417 $api_1418 $api_1419 $api_1420 $api_1421 $api_1422 $api_1423 $api_1424 $api_1425 $api_1426 $api_1427 $api_1428 $api_1429 $api_1430 $api_1431 $api_1432 $api_1433 $api_1434 $api_1435 $api_1436 $api_1437 $api_1438 $api_1439 $api_1440 $api_1441 $api_1442 $api_1443 $api_1444 $api_1445 $api_1446 $api_1447 $api_1448 $api_1449 $api_1450 $api_1451 $api_1452 $api_1453 $api_1454 $api_1455 $api_1456 $api_1457 $api_1458 $api_1459 $api_1460 $api_1461 $api_1462 $api_1463 $api_1464 $api_1465 $api_1466 $api_1467 $api_1468 $api_1469 $api_1470 $api_1471 $api_1472 $api_1473 $api_1474 $api_1475 $api_1476 $api_1477 $api_1478 $api_1479 $api_1480 $api_1481 $api_1482 $api_1483 $api_1484 $api_1485 $api_1486 $api_1487 $api_1488 $api_1489 $api_1490 $api_1491 $api_1492 $api_1493 $api_1494 $api_1495 $api_1496 $api_1497 $api_1498 $api_1499 $api_1500 $api_1501 $api_1502 $api_1503 $api_1504 $api_1505 $api_1506 $api_1507 $api_1508 $api_1509 $api_1510 $api_1511 $api_1512 $api_1513 $api_1514 $api_1515 $api_1516 $api_1517 $api_1518 $api_1519 $api_1520 $api_1521 $api_1522 $api_1523 $api_1524 $api_1525 $api_1526 $api_1527 $api_1528 $api_1529 $api_1530 $api_1531 $api_1532 $api_1533 $api_1534 $api_1535 $api_1536 $api_1537 $api_1538 $api_1539 $api_1540 $api_1541 $api_1542 $api_1543 $api_1544 $api_1545 $api_1546 $api_1547 $api_1548 $api_1549 $api_1550 $api_1551 $api_1552 $api_1553 $api_1554 $api_1555 $api_1556 $api_1557 $api_1558 $api_1559 $api_1560 $api_1561 $api_1562 $api_1563 $api_1564 $api_1565 $api_1566 $api_1567 $api_1568 $api_1569 $api_1570 $api_1571 $api_1572 $api_1573 $api_1574 $api_1575 $api_1576 $api_1577 $api_1578 $api_1579 $api_1580 $api_1581 $api_1582 $api_1583 $api_1584 $api_1585 $api_1586 $api_1587 $api_1588 $api_1589 $api_1590 $api_1591 $api_1592 $api_1593 $api_1594 $api_1595 $api_1596 $api_1597 $api_1598 $api_1599 $api_1600 $api_1601 $api_1602 $api_1603 $api_1604 $api_1605 $api_1606 $api_1607 $api_1608 $api_1609 $api_1610 $api_1611 $api_1612 $api_1613 $api_1614 $api_1615 $api_1616 $api_1617 $api_1618 $api_1619 $api_1620 $api_1621 $api_1622 $api_1623 $api_1624 $api_1625 $api_1626 $api_1627 $api_1628 $api_1629 $api_1630 $api_1631 $api_1632 $api_1633 $api_1634 $api_1635 $api_1636 $api_1637 $api_1638 $api_1639 $api_1640 $api_1641 $api_1642 $api_1643 $api_1644 $api_1645 $api_1646 $api_1647 $api_1648 $api_1649 $api_1650 $api_1651 $api_1652 $api_1653 $api_1654 $api_1655 $api_1656 $api_1657 $api_1658 $api_1659 $api_1660 $api_1661 $api_1662 $api_1663 $api_1664 $api_1665 $api_1666 $api_1667 $api_1668 $api_1669 $api_1670 $api_1671 $api_1672 $api_1673 $api_1674 $api_1675 $api_1676 $api_1677 $api_1678 $api_1679 $api_1680 $api_1681 $api_1682 $api_1683 $api_1684 $api_1685 $api_1686 $api_1687 $api_1688 $api_1689 $api_1690 $api_1691 $api_1692 $api_1693 $api_1694 $api_1695 $api_1696 $api_1697 $api_1698 $api_1699 $api_1700 $api_1701 $api_1702 $api_1703 $api_1704 $api_1705 $api_1706 $api_1707 $api_1708 $api_1709 $api_1710 $api_1711 $api_1712 $api_1713 $api_1714 $api_1715 $api_1716 $api_1717 $api_1718 $api_1719 $api_1720 $api_1721 $api_1722 $api_1723 $api_1724 $api_1725 $api_1726 $api_1727 $api_1728 $api_1729 $api_1730 $api_1731 $api_1732 $api_1733 $api_1734 $api_1735 $api_1736 $api_1737 $api_1738 $api_1739 $api_1740 $api_1741 $api_1742 $api_1743 $api_1744 $api_1745 $api_1746 $api_1747 $api_1748 $api_1749 $api_1750 $api_1751 $api_1752 $api_1753 $api_1754 $api_1755 $api_1756 $api_1757 $api_1758 $api_1759 $api_1760 $api_1761 $api_1762 $api_1763 $api_1764 $api_1765 $api_1766 $api_1767 $api_1768 $api_1769 $api_1770 $api_1771 $api_1772 $api_1773 $api_1774 $api_1775 $api_1776 $api_1777 $api_1778 $api_1779 $api_1780 $api_1781 $api_1782 $api_1783 $api_1784 $api_1785 $api_1786 $api_1787 $api_1788 $api_1789 $api_1790 $api_1791 $api_1792 $api_1793 $api_1794 $api_1795 $api_1796 $api_1797 $api_1798 $api_1799 $api_1800 $api_1801 $api_1802 $api_1803 $api_1804 $api_1805 $api_1806 $api_1807 $api_1808 $api_1809 $api_1810 $api_1811 $api_1812 $api_1813 $api_1814 $api_1815 $api_1816 $api_1817 $api_1818 $api_1819 $api_1820 $api_1821 $api_1822 $api_1823 $api_1824 $api_1825 $api_1826 $api_1827 $api_1828 $api_1829 $api_1830 $api_1831 $api_1832 $api_1833 $api_1834 $api_1835 $api_1836 $api_1837 $api_1838 $api_1839 $api_1840 $api_1841 $api_1842 $api_1843 $api_1844 $api_1845 $api_1846 $api_1847 $api_1848 $api_1849 $api_1850 $api_1851 $api_1852 $api_1853 $api_1854 $api_1855 $api_1856 $api_1857 $api_1858 $api_1859 $api_1860 $api_1861 $api_1862 $api_1863 $api_1864 $api_1865 $api_1866 $api_1867 $api_1868 $api_1869 $api_1870 $api_1871 $api_1872 $api_1873 $api_1874 $api_1875 $api_1876 $api_1877 $api_1878 $api_1879 $api_1880 $api_1881 $api_1882 $api_1883 $api_1884 $api_1885 $api_1886 $api_1887 $api_1888 $api_1889 $api_1890 $api_1891 $api_1892 $api_1893 $api_1894 $api_1895 $api_1896 $api_1897 $api_1898 $api_1899 $api_1900 $api_1901 $api_1902 $api_1903 $api_1904 $api_1905 $api_1906 $api_1907 $api_1908 $api_1909 $api_1910 $api_1911 $api_1912 $api_1913 $api_1914 $api_1915 $api_1916 $api_1917 $api_1918 $api_1919 $api_1920 $api_1921 $api_1922 $api_1923 $api_1924 $api_1925 $api_1926 $api_1927 $api_1928 $api_1929 $api_1930 $api_1931 $api_1932 $api_1933 $api_1934 $api_1935 $api_1936 $api_1937 $api_1938 $api_1939 $api_1940 $api_1941 $api_1942 $api_1943 $api_1944 $api_1945 $api_1946 $api_1947 $api_1948 $api_1949 $api_1950 $api_1951 $api_1952 $api_1953 $api_1954 $api_1955 $api_1956 $api_1957 $api_1958 $api_1959 $api_1960 $api_1961 $api_1962 $api_1963 $api_1964 $api_1965 $api_1966 $api_1967 $api_1968 $api_1969 $api_1970 $api_1971 $api_1972 $api_1973 $api_1974 $api_1975 $api_1976 $api_1977 $api_1978 $api_1979 $api_1980 $api_1981 $api_1982 $api_1983 $api_1984 $api_1985 $api_1986 $api_1987 $api_1988 $api_1989 $api_1990 $api_1991 $api_1992 $api_1993 $api_1994 $api_1995 $api_1996 $api_1997 $api_1998 $api_1999 $api_2000 $api_2001 $api_2002 $api_2003 $api_2004 $api_2005 $api_2006 $api_2007 $api_2008 $api_2009 $api_2010 $api_2011 $api_2012 $api_2013 $api_2014 $api_2015 $api_2016 $api_2017 $api_2018 $api_2019 $api_2020 $api_2021 $api_2022 $api_2023 $api_2024 $api_2025 $fallback (local.get $api_id))
     ) ;; 0: ??1type_info@@UAE@XZ
       (call $handle_??1type_info@@UAE@XZ (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -6492,6 +6897,1221 @@
     ) ;; 1620: CreatePenIndirect
       (call $handle_CreatePenIndirect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 1621: IDirectAnimationDAView_QueryInterface
+      (call $handle_IDirectAnimationDAView_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1622: IDirectAnimationDAView_AddRef
+      (call $handle_IDirectAnimationDAView_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1623: IDirectAnimationDAView_Release
+      (call $handle_IDirectAnimationDAView_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1624: IDirectAnimationDAView_GetTypeInfoCount
+      (call $handle_IDirectAnimationDAView_GetTypeInfoCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1625: IDirectAnimationDAView_GetTypeInfo
+      (call $handle_IDirectAnimationDAView_GetTypeInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1626: IDirectAnimationDAView_GetIDsOfNames
+      (call $handle_IDirectAnimationDAView_GetIDsOfNames (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1627: IDirectAnimationDAView_Invoke
+      (call $handle_IDirectAnimationDAView_Invoke (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1628: IDirectAnimationDAView_DirectSlot007
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 7) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1629: IDirectAnimationDAView_DirectSlot008
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 8) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1630: IDirectAnimationDAView_DirectSlot009
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 9) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1631: IDirectAnimationDAView_DirectSlot010
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 10) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1632: IDirectAnimationDAView_DirectSlot011
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 11) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1633: IDirectAnimationDAView_DirectSlot012
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1634: IDirectAnimationDAView_DirectSlot013
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 13) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1635: IDirectAnimationDAView_DirectSlot014
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 14) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1636: IDirectAnimationDAView_DirectSlot015
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 15) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1637: IDirectAnimationDAView_DirectSlot016
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 16) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1638: IDirectAnimationDAView_DirectSlot017
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 17) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1639: IDirectAnimationDAView_DirectSlot018
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 18) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1640: IDirectAnimationDAView_DirectSlot019
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 19) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1641: IDirectAnimationDAView_DirectSlot020
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 20) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1642: IDirectAnimationDAView_DirectSlot021
+      (call $handle_IDirectAnimationDAView_DirectSlot (i32.const 21) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1643: IDirectAnimationDAStatics_QueryInterface
+      (call $handle_IDirectAnimationDAStatics_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1644: IDirectAnimationDAStatics_AddRef
+      (call $handle_IDirectAnimationDAStatics_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1645: IDirectAnimationDAStatics_Release
+      (call $handle_IDirectAnimationDAStatics_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1646: IDirectAnimationDAStatics_GetTypeInfoCount
+      (call $handle_IDirectAnimationDAStatics_GetTypeInfoCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1647: IDirectAnimationDAStatics_GetTypeInfo
+      (call $handle_IDirectAnimationDAStatics_GetTypeInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1648: IDirectAnimationDAStatics_GetIDsOfNames
+      (call $handle_IDirectAnimationDAStatics_GetIDsOfNames (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1649: IDirectAnimationDAStatics_Invoke
+      (call $handle_IDirectAnimationDAStatics_Invoke (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1650: IDirectAnimationDAStatics_DirectSlot007
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 7) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1651: IDirectAnimationDAStatics_DirectSlot008
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 8) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1652: IDirectAnimationDAStatics_DirectSlot009
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 9) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1653: IDirectAnimationDAStatics_DirectSlot010
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 10) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1654: IDirectAnimationDAStatics_DirectSlot011
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 11) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1655: IDirectAnimationDAStatics_DirectSlot012
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1656: IDirectAnimationDAStatics_DirectSlot013
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 13) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1657: IDirectAnimationDAStatics_DirectSlot014
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 14) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1658: IDirectAnimationDAStatics_DirectSlot015
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 15) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1659: IDirectAnimationDAStatics_DirectSlot016
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 16) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1660: IDirectAnimationDAStatics_DirectSlot017
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 17) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1661: IDirectAnimationDAStatics_DirectSlot018
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 18) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1662: IDirectAnimationDAStatics_DirectSlot019
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 19) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1663: IDirectAnimationDAStatics_DirectSlot020
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 20) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1664: IDirectAnimationDAStatics_DirectSlot021
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 21) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1665: IDirectAnimationDAStatics_DirectSlot022
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 22) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1666: IDirectAnimationDAStatics_DirectSlot023
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 23) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1667: IDirectAnimationDAStatics_DirectSlot024
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 24) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1668: IDirectAnimationDAStatics_DirectSlot025
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 25) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1669: IDirectAnimationDAStatics_DirectSlot026
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 26) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1670: IDirectAnimationDAStatics_DirectSlot027
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 27) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1671: IDirectAnimationDAStatics_DirectSlot028
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 28) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1672: IDirectAnimationDAStatics_DirectSlot029
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 29) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1673: IDirectAnimationDAStatics_DirectSlot030
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 30) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1674: IDirectAnimationDAStatics_DirectSlot031
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 31) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1675: IDirectAnimationDAStatics_DirectSlot032
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 32) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1676: IDirectAnimationDAStatics_DirectSlot033
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 33) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1677: IDirectAnimationDAStatics_DirectSlot034
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 34) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1678: IDirectAnimationDAStatics_DirectSlot035
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 35) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1679: IDirectAnimationDAStatics_DirectSlot036
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 36) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1680: IDirectAnimationDAStatics_DirectSlot037
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 37) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1681: IDirectAnimationDAStatics_DirectSlot038
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 38) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1682: IDirectAnimationDAStatics_DirectSlot039
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 39) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1683: IDirectAnimationDAStatics_DirectSlot040
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 40) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1684: IDirectAnimationDAStatics_DirectSlot041
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 41) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1685: IDirectAnimationDAStatics_DirectSlot042
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 42) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1686: IDirectAnimationDAStatics_DirectSlot043
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 43) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1687: IDirectAnimationDAStatics_DirectSlot044
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 44) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1688: IDirectAnimationDAStatics_DirectSlot045
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 45) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1689: IDirectAnimationDAStatics_DirectSlot046
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 46) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1690: IDirectAnimationDAStatics_DirectSlot047
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 47) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1691: IDirectAnimationDAStatics_DirectSlot048
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 48) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1692: IDirectAnimationDAStatics_DirectSlot049
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 49) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1693: IDirectAnimationDAStatics_DirectSlot050
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 50) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1694: IDirectAnimationDAStatics_DirectSlot051
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 51) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1695: IDirectAnimationDAStatics_DirectSlot052
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 52) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1696: IDirectAnimationDAStatics_DirectSlot053
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 53) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1697: IDirectAnimationDAStatics_DirectSlot054
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 54) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1698: IDirectAnimationDAStatics_DirectSlot055
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 55) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1699: IDirectAnimationDAStatics_DirectSlot056
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 56) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1700: IDirectAnimationDAStatics_DirectSlot057
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 57) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1701: IDirectAnimationDAStatics_DirectSlot058
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 58) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1702: IDirectAnimationDAStatics_DirectSlot059
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 59) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1703: IDirectAnimationDAStatics_DirectSlot060
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 60) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1704: IDirectAnimationDAStatics_DirectSlot061
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 61) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1705: IDirectAnimationDAStatics_DirectSlot062
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 62) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1706: IDirectAnimationDAStatics_DirectSlot063
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 63) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1707: IDirectAnimationDAStatics_DirectSlot064
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 64) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1708: IDirectAnimationDAStatics_DirectSlot065
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 65) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1709: IDirectAnimationDAStatics_DirectSlot066
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 66) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1710: IDirectAnimationDAStatics_DirectSlot067
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 67) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1711: IDirectAnimationDAStatics_DirectSlot068
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 68) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1712: IDirectAnimationDAStatics_DirectSlot069
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 69) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1713: IDirectAnimationDAStatics_DirectSlot070
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 70) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1714: IDirectAnimationDAStatics_DirectSlot071
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 71) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1715: IDirectAnimationDAStatics_DirectSlot072
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 72) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1716: IDirectAnimationDAStatics_DirectSlot073
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 73) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1717: IDirectAnimationDAStatics_DirectSlot074
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 74) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1718: IDirectAnimationDAStatics_DirectSlot075
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 75) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1719: IDirectAnimationDAStatics_DirectSlot076
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 76) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1720: IDirectAnimationDAStatics_DirectSlot077
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 77) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1721: IDirectAnimationDAStatics_DirectSlot078
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 78) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1722: IDirectAnimationDAStatics_DirectSlot079
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 79) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1723: IDirectAnimationDAStatics_DirectSlot080
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 80) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1724: IDirectAnimationDAStatics_DirectSlot081
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 81) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1725: IDirectAnimationDAStatics_DirectSlot082
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 82) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1726: IDirectAnimationDAStatics_DirectSlot083
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 83) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1727: IDirectAnimationDAStatics_DirectSlot084
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 84) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1728: IDirectAnimationDAStatics_DirectSlot085
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 85) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1729: IDirectAnimationDAStatics_DirectSlot086
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 86) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1730: IDirectAnimationDAStatics_DirectSlot087
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 87) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1731: IDirectAnimationDAStatics_DirectSlot088
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 88) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1732: IDirectAnimationDAStatics_DirectSlot089
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 89) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1733: IDirectAnimationDAStatics_DirectSlot090
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 90) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1734: IDirectAnimationDAStatics_DirectSlot091
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 91) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1735: IDirectAnimationDAStatics_DirectSlot092
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 92) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1736: IDirectAnimationDAStatics_DirectSlot093
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 93) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1737: IDirectAnimationDAStatics_DirectSlot094
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 94) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1738: IDirectAnimationDAStatics_DirectSlot095
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 95) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1739: IDirectAnimationDAStatics_DirectSlot096
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 96) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1740: IDirectAnimationDAStatics_DirectSlot097
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 97) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1741: IDirectAnimationDAStatics_DirectSlot098
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 98) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1742: IDirectAnimationDAStatics_DirectSlot099
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 99) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1743: IDirectAnimationDAStatics_DirectSlot100
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 100) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1744: IDirectAnimationDAStatics_DirectSlot101
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 101) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1745: IDirectAnimationDAStatics_DirectSlot102
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 102) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1746: IDirectAnimationDAStatics_DirectSlot103
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 103) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1747: IDirectAnimationDAStatics_DirectSlot104
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 104) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1748: IDirectAnimationDAStatics_DirectSlot105
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 105) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1749: IDirectAnimationDAStatics_DirectSlot106
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 106) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1750: IDirectAnimationDAStatics_DirectSlot107
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 107) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1751: IDirectAnimationDAStatics_DirectSlot108
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 108) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1752: IDirectAnimationDAStatics_DirectSlot109
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 109) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1753: IDirectAnimationDAStatics_DirectSlot110
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 110) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1754: IDirectAnimationDAStatics_DirectSlot111
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 111) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1755: IDirectAnimationDAStatics_DirectSlot112
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 112) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1756: IDirectAnimationDAStatics_DirectSlot113
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 113) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1757: IDirectAnimationDAStatics_DirectSlot114
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 114) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1758: IDirectAnimationDAStatics_DirectSlot115
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 115) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1759: IDirectAnimationDAStatics_DirectSlot116
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 116) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1760: IDirectAnimationDAStatics_DirectSlot117
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 117) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1761: IDirectAnimationDAStatics_DirectSlot118
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 118) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1762: IDirectAnimationDAStatics_DirectSlot119
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 119) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1763: IDirectAnimationDAStatics_DirectSlot120
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 120) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1764: IDirectAnimationDAStatics_DirectSlot121
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 121) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1765: IDirectAnimationDAStatics_DirectSlot122
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 122) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1766: IDirectAnimationDAStatics_DirectSlot123
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 123) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1767: IDirectAnimationDAStatics_DirectSlot124
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 124) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1768: IDirectAnimationDAStatics_DirectSlot125
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 125) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1769: IDirectAnimationDAStatics_DirectSlot126
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 126) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1770: IDirectAnimationDAStatics_DirectSlot127
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 127) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1771: IDirectAnimationDAStatics_DirectSlot128
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 128) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1772: IDirectAnimationDAStatics_DirectSlot129
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 129) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1773: IDirectAnimationDAStatics_DirectSlot130
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 130) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1774: IDirectAnimationDAStatics_DirectSlot131
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 131) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1775: IDirectAnimationDAStatics_DirectSlot132
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 132) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1776: IDirectAnimationDAStatics_DirectSlot133
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 133) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1777: IDirectAnimationDAStatics_DirectSlot134
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 134) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1778: IDirectAnimationDAStatics_DirectSlot135
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 135) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1779: IDirectAnimationDAStatics_DirectSlot136
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 136) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1780: IDirectAnimationDAStatics_DirectSlot137
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 137) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1781: IDirectAnimationDAStatics_DirectSlot138
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 138) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1782: IDirectAnimationDAStatics_DirectSlot139
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 139) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1783: IDirectAnimationDAStatics_DirectSlot140
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 140) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1784: IDirectAnimationDAStatics_DirectSlot141
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 141) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1785: IDirectAnimationDAStatics_DirectSlot142
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 142) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1786: IDirectAnimationDAStatics_DirectSlot143
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 143) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1787: IDirectAnimationDAStatics_DirectSlot144
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 144) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1788: IDirectAnimationDAStatics_DirectSlot145
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 145) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1789: IDirectAnimationDAStatics_DirectSlot146
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 146) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1790: IDirectAnimationDAStatics_DirectSlot147
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 147) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1791: IDirectAnimationDAStatics_DirectSlot148
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 148) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1792: IDirectAnimationDAStatics_DirectSlot149
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 149) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1793: IDirectAnimationDAStatics_DirectSlot150
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 150) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1794: IDirectAnimationDAStatics_DirectSlot151
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 151) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1795: IDirectAnimationDAStatics_DirectSlot152
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 152) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1796: IDirectAnimationDAStatics_DirectSlot153
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 153) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1797: IDirectAnimationDAStatics_DirectSlot154
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 154) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1798: IDirectAnimationDAStatics_DirectSlot155
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 155) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1799: IDirectAnimationDAStatics_DirectSlot156
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 156) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1800: IDirectAnimationDAStatics_DirectSlot157
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 157) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1801: IDirectAnimationDAStatics_DirectSlot158
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 158) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1802: IDirectAnimationDAStatics_DirectSlot159
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 159) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1803: IDirectAnimationDAStatics_DirectSlot160
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 160) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1804: IDirectAnimationDAStatics_DirectSlot161
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 161) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1805: IDirectAnimationDAStatics_DirectSlot162
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 162) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1806: IDirectAnimationDAStatics_DirectSlot163
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 163) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1807: IDirectAnimationDAStatics_DirectSlot164
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 164) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1808: IDirectAnimationDAStatics_DirectSlot165
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 165) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1809: IDirectAnimationDAStatics_DirectSlot166
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 166) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1810: IDirectAnimationDAStatics_DirectSlot167
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 167) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1811: IDirectAnimationDAStatics_DirectSlot168
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 168) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1812: IDirectAnimationDAStatics_DirectSlot169
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 169) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1813: IDirectAnimationDAStatics_DirectSlot170
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 170) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1814: IDirectAnimationDAStatics_DirectSlot171
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 171) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1815: IDirectAnimationDAStatics_DirectSlot172
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 172) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1816: IDirectAnimationDAStatics_DirectSlot173
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 173) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1817: IDirectAnimationDAStatics_DirectSlot174
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 174) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1818: IDirectAnimationDAStatics_DirectSlot175
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 175) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1819: IDirectAnimationDAStatics_DirectSlot176
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 176) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1820: IDirectAnimationDAStatics_DirectSlot177
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 177) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1821: IDirectAnimationDAStatics_DirectSlot178
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 178) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1822: IDirectAnimationDAStatics_DirectSlot179
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 179) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1823: IDirectAnimationDAStatics_DirectSlot180
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 180) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1824: IDirectAnimationDAStatics_DirectSlot181
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 181) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1825: IDirectAnimationDAStatics_DirectSlot182
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 182) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1826: IDirectAnimationDAStatics_DirectSlot183
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 183) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1827: IDirectAnimationDAStatics_DirectSlot184
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 184) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1828: IDirectAnimationDAStatics_DirectSlot185
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 185) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1829: IDirectAnimationDAStatics_DirectSlot186
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 186) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1830: IDirectAnimationDAStatics_DirectSlot187
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 187) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1831: IDirectAnimationDAStatics_DirectSlot188
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 188) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1832: IDirectAnimationDAStatics_DirectSlot189
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 189) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1833: IDirectAnimationDAStatics_DirectSlot190
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 190) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1834: IDirectAnimationDAStatics_DirectSlot191
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 191) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1835: IDirectAnimationDAStatics_DirectSlot192
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 192) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1836: IDirectAnimationDAStatics_DirectSlot193
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 193) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1837: IDirectAnimationDAStatics_DirectSlot194
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 194) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1838: IDirectAnimationDAStatics_DirectSlot195
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 195) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1839: IDirectAnimationDAStatics_DirectSlot196
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 196) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1840: IDirectAnimationDAStatics_DirectSlot197
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 197) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1841: IDirectAnimationDAStatics_DirectSlot198
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 198) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1842: IDirectAnimationDAStatics_DirectSlot199
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 199) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1843: IDirectAnimationDAStatics_DirectSlot200
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 200) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1844: IDirectAnimationDAStatics_DirectSlot201
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 201) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1845: IDirectAnimationDAStatics_DirectSlot202
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 202) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1846: IDirectAnimationDAStatics_DirectSlot203
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 203) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1847: IDirectAnimationDAStatics_DirectSlot204
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 204) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1848: IDirectAnimationDAStatics_DirectSlot205
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 205) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1849: IDirectAnimationDAStatics_DirectSlot206
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 206) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1850: IDirectAnimationDAStatics_DirectSlot207
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 207) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1851: IDirectAnimationDAStatics_DirectSlot208
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 208) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1852: IDirectAnimationDAStatics_DirectSlot209
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 209) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1853: IDirectAnimationDAStatics_DirectSlot210
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 210) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1854: IDirectAnimationDAStatics_DirectSlot211
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 211) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1855: IDirectAnimationDAStatics_DirectSlot212
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 212) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1856: IDirectAnimationDAStatics_DirectSlot213
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 213) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1857: IDirectAnimationDAStatics_DirectSlot214
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 214) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1858: IDirectAnimationDAStatics_DirectSlot215
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 215) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1859: IDirectAnimationDAStatics_DirectSlot216
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 216) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1860: IDirectAnimationDAStatics_DirectSlot217
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 217) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1861: IDirectAnimationDAStatics_DirectSlot218
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 218) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1862: IDirectAnimationDAStatics_DirectSlot219
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 219) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1863: IDirectAnimationDAStatics_DirectSlot220
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 220) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1864: IDirectAnimationDAStatics_DirectSlot221
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 221) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1865: IDirectAnimationDAStatics_DirectSlot222
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 222) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1866: IDirectAnimationDAStatics_DirectSlot223
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 223) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1867: IDirectAnimationDAStatics_DirectSlot224
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 224) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1868: IDirectAnimationDAStatics_DirectSlot225
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 225) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1869: IDirectAnimationDAStatics_DirectSlot226
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 226) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1870: IDirectAnimationDAStatics_DirectSlot227
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 227) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1871: IDirectAnimationDAStatics_DirectSlot228
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 228) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1872: IDirectAnimationDAStatics_DirectSlot229
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 229) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1873: IDirectAnimationDAStatics_DirectSlot230
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 230) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1874: IDirectAnimationDAStatics_DirectSlot231
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 231) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1875: IDirectAnimationDAStatics_DirectSlot232
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 232) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1876: IDirectAnimationDAStatics_DirectSlot233
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 233) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1877: IDirectAnimationDAStatics_DirectSlot234
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 234) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1878: IDirectAnimationDAStatics_DirectSlot235
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 235) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1879: IDirectAnimationDAStatics_DirectSlot236
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 236) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1880: IDirectAnimationDAStatics_DirectSlot237
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 237) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1881: IDirectAnimationDAStatics_DirectSlot238
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 238) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1882: IDirectAnimationDAStatics_DirectSlot239
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 239) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1883: IDirectAnimationDAStatics_DirectSlot240
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 240) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1884: IDirectAnimationDAStatics_DirectSlot241
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 241) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1885: IDirectAnimationDAStatics_DirectSlot242
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 242) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1886: IDirectAnimationDAStatics_DirectSlot243
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 243) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1887: IDirectAnimationDAStatics_DirectSlot244
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 244) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1888: IDirectAnimationDAStatics_DirectSlot245
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 245) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1889: IDirectAnimationDAStatics_DirectSlot246
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 246) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1890: IDirectAnimationDAStatics_DirectSlot247
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 247) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1891: IDirectAnimationDAStatics_DirectSlot248
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 248) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1892: IDirectAnimationDAStatics_DirectSlot249
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 249) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1893: IDirectAnimationDAStatics_DirectSlot250
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 250) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1894: IDirectAnimationDAStatics_DirectSlot251
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 251) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1895: IDirectAnimationDAStatics_DirectSlot252
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 252) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1896: IDirectAnimationDAStatics_DirectSlot253
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 253) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1897: IDirectAnimationDAStatics_DirectSlot254
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 254) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1898: IDirectAnimationDAStatics_DirectSlot255
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 255) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1899: IDirectAnimationDAStatics_DirectSlot256
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 256) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1900: IDirectAnimationDAStatics_DirectSlot257
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 257) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1901: IDirectAnimationDAStatics_DirectSlot258
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 258) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1902: IDirectAnimationDAStatics_DirectSlot259
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 259) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1903: IDirectAnimationDAStatics_DirectSlot260
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 260) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1904: IDirectAnimationDAStatics_DirectSlot261
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 261) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1905: IDirectAnimationDAStatics_DirectSlot262
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 262) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1906: IDirectAnimationDAStatics_DirectSlot263
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 263) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1907: IDirectAnimationDAStatics_DirectSlot264
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 264) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1908: IDirectAnimationDAStatics_DirectSlot265
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 265) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1909: IDirectAnimationDAStatics_DirectSlot266
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 266) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1910: IDirectAnimationDAStatics_DirectSlot267
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 267) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1911: IDirectAnimationDAStatics_DirectSlot268
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 268) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1912: IDirectAnimationDAStatics_DirectSlot269
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 269) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1913: IDirectAnimationDAStatics_DirectSlot270
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 270) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1914: IDirectAnimationDAStatics_DirectSlot271
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 271) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1915: IDirectAnimationDAStatics_DirectSlot272
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 272) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1916: IDirectAnimationDAStatics_DirectSlot273
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 273) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1917: IDirectAnimationDAStatics_DirectSlot274
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 274) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1918: IDirectAnimationDAStatics_DirectSlot275
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 275) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1919: IDirectAnimationDAStatics_DirectSlot276
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 276) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1920: IDirectAnimationDAStatics_DirectSlot277
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 277) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1921: IDirectAnimationDAStatics_DirectSlot278
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 278) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1922: IDirectAnimationDAStatics_DirectSlot279
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 279) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1923: IDirectAnimationDAStatics_DirectSlot280
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 280) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1924: IDirectAnimationDAStatics_DirectSlot281
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 281) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1925: IDirectAnimationDAStatics_DirectSlot282
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 282) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1926: IDirectAnimationDAStatics_DirectSlot283
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 283) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1927: IDirectAnimationDAStatics_DirectSlot284
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 284) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1928: IDirectAnimationDAStatics_DirectSlot285
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 285) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1929: IDirectAnimationDAStatics_DirectSlot286
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 286) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1930: IDirectAnimationDAStatics_DirectSlot287
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 287) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1931: IDirectAnimationDAStatics_DirectSlot288
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 288) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1932: IDirectAnimationDAStatics_DirectSlot289
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 289) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1933: IDirectAnimationDAStatics_DirectSlot290
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 290) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1934: IDirectAnimationDAStatics_DirectSlot291
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 291) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1935: IDirectAnimationDAStatics_DirectSlot292
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 292) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1936: IDirectAnimationDAStatics_DirectSlot293
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 293) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1937: IDirectAnimationDAStatics_DirectSlot294
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 294) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1938: IDirectAnimationDAStatics_DirectSlot295
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 295) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1939: IDirectAnimationDAStatics_DirectSlot296
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 296) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1940: IDirectAnimationDAStatics_DirectSlot297
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 297) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1941: IDirectAnimationDAStatics_DirectSlot298
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 298) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1942: IDirectAnimationDAStatics_DirectSlot299
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 299) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1943: IDirectAnimationDAStatics_DirectSlot300
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 300) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1944: IDirectAnimationDAStatics_DirectSlot301
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 301) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1945: IDirectAnimationDAStatics_DirectSlot302
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 302) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1946: IDirectAnimationDAStatics_DirectSlot303
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 303) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1947: IDirectAnimationDAStatics_DirectSlot304
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 304) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1948: IDirectAnimationDAStatics_DirectSlot305
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 305) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1949: IDirectAnimationDAStatics_DirectSlot306
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 306) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1950: IDirectAnimationDAStatics_DirectSlot307
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 307) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1951: IDirectAnimationDAStatics_DirectSlot308
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 308) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1952: IDirectAnimationDAStatics_DirectSlot309
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 309) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1953: IDirectAnimationDAStatics_DirectSlot310
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 310) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1954: IDirectAnimationDAStatics_DirectSlot311
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 311) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1955: IDirectAnimationDAStatics_DirectSlot312
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 312) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1956: IDirectAnimationDAStatics_DirectSlot313
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 313) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1957: IDirectAnimationDAStatics_DirectSlot314
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 314) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1958: IDirectAnimationDAStatics_DirectSlot315
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 315) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1959: IDirectAnimationDAStatics_DirectSlot316
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 316) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1960: IDirectAnimationDAStatics_DirectSlot317
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 317) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1961: IDirectAnimationDAStatics_DirectSlot318
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 318) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1962: IDirectAnimationDAStatics_DirectSlot319
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 319) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1963: IDirectAnimationDAStatics_DirectSlot320
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 320) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1964: IDirectAnimationDAStatics_DirectSlot321
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 321) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1965: IDirectAnimationDAStatics_DirectSlot322
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 322) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1966: IDirectAnimationDAStatics_DirectSlot323
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 323) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1967: IDirectAnimationDAStatics_DirectSlot324
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 324) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1968: IDirectAnimationDAStatics_DirectSlot325
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 325) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1969: IDirectAnimationDAStatics_DirectSlot326
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 326) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1970: IDirectAnimationDAStatics_DirectSlot327
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 327) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1971: IDirectAnimationDAStatics_DirectSlot328
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 328) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1972: IDirectAnimationDAStatics_DirectSlot329
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 329) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1973: IDirectAnimationDAStatics_DirectSlot330
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 330) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1974: IDirectAnimationDAStatics_DirectSlot331
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 331) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1975: IDirectAnimationDAStatics_DirectSlot332
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 332) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1976: IDirectAnimationDAStatics_DirectSlot333
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 333) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1977: IDirectAnimationDAStatics_DirectSlot334
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 334) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1978: IDirectAnimationDAStatics_DirectSlot335
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 335) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1979: IDirectAnimationDAStatics_DirectSlot336
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 336) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1980: IDirectAnimationDAStatics_DirectSlot337
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 337) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1981: IDirectAnimationDAStatics_DirectSlot338
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 338) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1982: IDirectAnimationDAStatics_DirectSlot339
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 339) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1983: IDirectAnimationDAStatics_DirectSlot340
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 340) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1984: IDirectAnimationDAStatics_DirectSlot341
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 341) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1985: IDirectAnimationDAStatics_DirectSlot342
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 342) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1986: IDirectAnimationDAStatics_DirectSlot343
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 343) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1987: IDirectAnimationDAStatics_DirectSlot344
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 344) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1988: IDirectAnimationDAStatics_DirectSlot345
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 345) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1989: IDirectAnimationDAStatics_DirectSlot346
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 346) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1990: IDirectAnimationDAStatics_DirectSlot347
+      (call $handle_IDirectAnimationDAStatics_DirectSlot (i32.const 347) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1991: IDirectAnimationDABehavior_QueryInterface
+      (call $handle_IDirectAnimationDABehavior_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1992: IDirectAnimationDABehavior_AddRef
+      (call $handle_IDirectAnimationDABehavior_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1993: IDirectAnimationDABehavior_Release
+      (call $handle_IDirectAnimationDABehavior_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1994: IDirectAnimationDABehavior_GetTypeInfoCount
+      (call $handle_IDirectAnimationDABehavior_GetTypeInfoCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1995: IDirectAnimationDABehavior_GetTypeInfo
+      (call $handle_IDirectAnimationDABehavior_GetTypeInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1996: IDirectAnimationDABehavior_GetIDsOfNames
+      (call $handle_IDirectAnimationDABehavior_GetIDsOfNames (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1997: IDirectAnimationDABehavior_Invoke
+      (call $handle_IDirectAnimationDABehavior_Invoke (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1998: IDirectAnimationDABehavior_DirectSlot007
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 7) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 1999: IDirectAnimationDABehavior_DirectSlot008
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 8) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2000: IDirectAnimationDABehavior_DirectSlot009
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 9) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2001: IDirectAnimationDABehavior_DirectSlot010
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 10) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2002: IDirectAnimationDABehavior_DirectSlot011
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 11) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2003: IDirectAnimationDABehavior_DirectSlot012
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2004: IDirectAnimationDABehavior_DirectSlot013
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 13) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2005: IDirectAnimationDABehavior_DirectSlot014
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 14) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2006: IDirectAnimationDABehavior_DirectSlot015
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 15) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2007: IDirectAnimationDABehavior_DirectSlot016
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 16) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2008: IDirectAnimationDABehavior_DirectSlot017
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 17) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2009: IDirectAnimationDABehavior_DirectSlot018
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 18) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2010: IDirectAnimationDABehavior_DirectSlot019
+      (call $handle_IDirectAnimationDABehavior_DirectSlot (i32.const 19) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2011: OleRun
+      (call $handle_OleRun (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2012: OleIsRunning
+      (call $handle_OleIsRunning (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2013: OleLockRunning
+      (call $handle_OleLockRunning (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2014: CoGetMalloc
+      (call $handle_CoGetMalloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2015: IMalloc_QueryInterface
+      (call $handle_IMalloc_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2016: IMalloc_AddRef
+      (call $handle_IMalloc_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2017: IMalloc_Release
+      (call $handle_IMalloc_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2018: IMalloc_Alloc
+      (call $handle_IMalloc_Alloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2019: IMalloc_Realloc
+      (call $handle_IMalloc_Realloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2020: IMalloc_Free
+      (call $handle_IMalloc_Free (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2021: IMalloc_GetSize
+      (call $handle_IMalloc_GetSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2022: IMalloc_DidAlloc
+      (call $handle_IMalloc_DidAlloc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2023: IMalloc_HeapMinimize
+      (call $handle_IMalloc_HeapMinimize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2024: CoSetState
+      (call $handle_CoSetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2025: CoGetState
+      (call $handle_CoGetState (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (local.get $api_id))
   )
@@ -6533,6 +8153,14 @@
     (global.set $DX_VTBL_D3D3 (call $init_com_vtable (i32.const 1125) (i32.const 12)))
     ;; IDirectDrawFactory: 5 methods starting at api_id 1140
     (global.set $DX_VTBL_DDFACTORY (call $init_com_vtable (i32.const 1140) (i32.const 5)))
+    ;; IDirectAnimationDAView: 22 methods starting at api_id 1621
+    (global.set $DX_VTBL_DA_VIEW (call $init_com_vtable (i32.const 1621) (i32.const 22)))
+    ;; IDirectAnimationDAStatics: 348 methods starting at api_id 1643
+    (global.set $DX_VTBL_DA_STATICS (call $init_com_vtable (i32.const 1643) (i32.const 348)))
+    ;; IDirectAnimationDABehavior: 20 methods starting at api_id 1991
+    (global.set $DX_VTBL_DA_BEHAVIOR (call $init_com_vtable (i32.const 1991) (i32.const 20)))
+    ;; IMalloc: 9 methods starting at api_id 2015
+    (global.set $DX_VTBL_IMALLOC (call $init_com_vtable (i32.const 2015) (i32.const 9)))
     ;; IDirect3DDevice3: 42 methods starting at api_id 1146
     (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1146) (i32.const 42)))
     ;; IDirect3DViewport3: 21 methods starting at api_id 1188

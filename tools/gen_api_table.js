@@ -18,11 +18,79 @@ function fnv1a(str) {
   return h;
 }
 
+function daBase(prefix) {
+  return [
+    { name: `${prefix}_QueryInterface`, nargs: 3 },
+    { name: `${prefix}_AddRef`, nargs: 1 },
+    { name: `${prefix}_Release`, nargs: 1 },
+    { name: `${prefix}_GetTypeInfoCount`, nargs: 2 },
+    { name: `${prefix}_GetTypeInfo`, nargs: 4 },
+    { name: `${prefix}_GetIDsOfNames`, nargs: 6 },
+    { name: `${prefix}_Invoke`, nargs: 9 },
+  ];
+}
+
+function daSlots(prefix, maxSlot, nargsBySlot) {
+  const out = daBase(prefix);
+  for (let slot = 7; slot <= maxSlot; slot++) {
+    out.push({
+      name: `${prefix}_DirectSlot${String(slot).padStart(3, '0')}`,
+      nargs: nargsBySlot[slot] || 1,
+    });
+  }
+  return out;
+}
+
+// Plus!98 MFC screensavers use DirectAnimation dual interfaces. These vtables
+// are intentionally regenerated as contiguous blocks because gen_dispatch.js
+// builds COM vtables from contiguous API ids.
+const daViewApis = daSlots('IDirectAnimationDAView', 21, {
+  8: 4,
+  9: 1,
+  12: 5,
+  15: 2,
+  17: 2,
+  21: 2,
+});
+const daStaticsApis = daSlots('IDirectAnimationDAStatics', 347, {
+  18: 3,
+  19: 4,
+  32: 3,
+  65: 4,
+  67: 4,
+  95: 4,
+  106: 2,
+  111: 4,
+  252: 2,
+  347: 4,
+});
+const daBehaviorApis = daSlots('IDirectAnimationDABehavior', 19, {
+  7: 2,
+  12: 2,
+  16: 4,
+  19: 2,
+});
+
+function normalizeDirectAnimationApis(table) {
+  let insertAt = table.findIndex(api =>
+    api.name.startsWith('IDirectAnimationDAView_') ||
+    api.name.startsWith('IDirectAnimationDAStatics_') ||
+    api.name.startsWith('IDirectAnimationDABehavior_'));
+  if (insertAt < 0) insertAt = table.length;
+  const kept = table.filter(api =>
+    !api.name.startsWith('IDirectAnimationDAView_') &&
+    !api.name.startsWith('IDirectAnimationDAStatics_') &&
+    !api.name.startsWith('IDirectAnimationDABehavior_'));
+  kept.splice(insertAt, 0, ...daViewApis, ...daStaticsApis, ...daBehaviorApis);
+  return kept;
+}
+
 // Load existing table
 let existing = [];
 if (fs.existsSync(jsonPath)) {
   existing = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 }
+existing = normalizeDirectAnimationApis(existing);
 const seen = new Set(existing.map(e => e.name));
 
 // APIs from sub-dispatchers (not in main dispatch comment pattern)
@@ -167,6 +235,12 @@ const extra = [
   { name: 'InitCommonControlsEx', nargs: 1 },
   // OLE32 minimal stubs
   { name: 'OleInitialize', nargs: 1 },
+  { name: 'OleRun', nargs: 1 },
+  { name: 'OleIsRunning', nargs: 1 },
+  { name: 'OleLockRunning', nargs: 3 },
+  { name: 'CoGetMalloc', nargs: 2 },
+  { name: 'CoSetState', nargs: 1 },
+  { name: 'CoGetState', nargs: 1 },
   { name: 'CoTaskMemFree', nargs: 1 },
   // GDI extras
   { name: 'SaveDC', nargs: 1 },
@@ -412,6 +486,31 @@ const extra = [
   { name: 'IDirectDrawFactory_Release', nargs: 1 },
   { name: 'IDirectDrawFactory_CreateDirectDraw', nargs: 6 },
   { name: 'IDirectDrawFactory_DirectDrawEnumerate', nargs: 2 },
+  // DirectAnimation Automation placeholders for Plus!98 MFC screensavers.
+  { name: 'IDirectAnimationDAView_QueryInterface', nargs: 3 },
+  { name: 'IDirectAnimationDAView_AddRef', nargs: 1 },
+  { name: 'IDirectAnimationDAView_Release', nargs: 1 },
+  { name: 'IDirectAnimationDAView_GetTypeInfoCount', nargs: 2 },
+  { name: 'IDirectAnimationDAView_GetTypeInfo', nargs: 4 },
+  { name: 'IDirectAnimationDAView_GetIDsOfNames', nargs: 6 },
+  { name: 'IDirectAnimationDAView_Invoke', nargs: 9 },
+  { name: 'IDirectAnimationDAStatics_QueryInterface', nargs: 3 },
+  { name: 'IDirectAnimationDAStatics_AddRef', nargs: 1 },
+  { name: 'IDirectAnimationDAStatics_Release', nargs: 1 },
+  { name: 'IDirectAnimationDAStatics_GetTypeInfoCount', nargs: 2 },
+  { name: 'IDirectAnimationDAStatics_GetTypeInfo', nargs: 4 },
+  { name: 'IDirectAnimationDAStatics_GetIDsOfNames', nargs: 6 },
+  { name: 'IDirectAnimationDAStatics_Invoke', nargs: 9 },
+  // OLE IMalloc returned by CoGetMalloc; oleaut32 uses this for Automation buffers.
+  { name: 'IMalloc_QueryInterface', nargs: 3 },
+  { name: 'IMalloc_AddRef', nargs: 1 },
+  { name: 'IMalloc_Release', nargs: 1 },
+  { name: 'IMalloc_Alloc', nargs: 2 },
+  { name: 'IMalloc_Realloc', nargs: 3 },
+  { name: 'IMalloc_Free', nargs: 2 },
+  { name: 'IMalloc_GetSize', nargs: 2 },
+  { name: 'IMalloc_DidAlloc', nargs: 2 },
+  { name: 'IMalloc_HeapMinimize', nargs: 1 },
   // WINMM — timer device capabilities
   { name: 'timeGetDevCaps', nargs: 2 },
   // KERNEL32 — drive enumeration

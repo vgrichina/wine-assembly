@@ -5,7 +5,7 @@
 
   ;; ── DX_OBJECTS table ─────────────────────────────────────────
   ;; 256 entries × 32 bytes at 0x07FF0000 (high memory, safe from guest writes)
-  ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev,26=DPlay3,27=DPlayLobby2
+  ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev,26=DPlay3,27=DPlayLobby2,28=DAView,29=DAStatics,30=IMalloc,31=DABehavior/node
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
   ;; +12 width (u16) | height (u16)
@@ -55,6 +55,10 @@
   (global $DX_VTBL_D3DLIGHT   (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DMAT3    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDFACTORY  (mut i32) (i32.const 0))
+  (global $DX_VTBL_DA_VIEW    (mut i32) (i32.const 0))
+  (global $DX_VTBL_DA_STATICS (mut i32) (i32.const 0))
+  (global $DX_VTBL_DA_BEHAVIOR (mut i32) (i32.const 0))
+  (global $DX_VTBL_IMALLOC    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDSURF2   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
@@ -3546,6 +3550,405 @@
     (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
     (global.set $eip (local.get $arg1))
     (global.set $steps (i32.const 0)))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; DirectAnimation IDispatch placeholders (danim.dll)
+  ;; ════════════════════════════════════════════════════════════
+  ;; The Plus!98 CORBIS/FASHION/HORROR/WOTRAVEL screensavers drive
+  ;; DirectAnimation via OLE Automation. This is not a DA evaluator; it is a
+  ;; small IDispatch-compatible object graph that lets those apps get past COM
+  ;; activation and exposes member names in traces for the next compatibility
+  ;; slices.
+
+  (func $da_addref (param $this i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (i32.load (i32.add (local.get $entry) (i32.const 4))))
+
+  (func $da_release (param $this i32) (result i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
+    (if (i32.le_s (local.get $rc) (i32.const 0))
+      (then (call $dx_free (local.get $entry))))
+    (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+
+  (func $da_iid_target_vtbl (param $iid_dword i32) (result i32)
+    ;; DAView/DAStatics IIDs from the Plus!98 screensavers, plus common
+    ;; DirectAnimation graph-node IIDs observed near the same typelib data.
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x283807B4))
+      (then (return (global.get $DX_VTBL_DA_VIEW))))
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x542FB452))
+      (then (return (global.get $DX_VTBL_DA_STATICS))))
+    (if (i32.or
+          (i32.or
+            (i32.eq (local.get $iid_dword) (i32.const 0x283807B7))
+            (i32.eq (local.get $iid_dword) (i32.const 0xC46C1BD3)))
+          (i32.or
+            (i32.eq (local.get $iid_dword) (i32.const 0xC46C1BC7))
+            (i32.eq (local.get $iid_dword) (i32.const 0xC46C1BCD))))
+      (then (return (global.get $DX_VTBL_DA_BEHAVIOR))))
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x4A933702))
+      (then (return (global.get $DX_VTBL_DA_BEHAVIOR))))
+    (i32.const 0))
+
+  (func $da_qi (param $this i32) (param $riid i32) (param $ppv i32) (result i32)
+    (local $iid_dword i32) (local $target_vtbl i32) (local $entry i32)
+    (if (i32.eqz (local.get $ppv)) (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (local.set $iid_dword
+      (if (result i32) (local.get $riid)
+        (then (call $gl32 (local.get $riid)))
+        (else (i32.const 0))))
+    (local.set $target_vtbl (call $da_iid_target_vtbl (local.get $iid_dword)))
+    ;; IUnknown, IDispatch, our two sentinel CLSIDs, and known DirectAnimation
+    ;; direct interfaces used by the Plus!98 screensavers.
+    (if (i32.or
+          (i32.or
+            (i32.eqz (local.get $iid_dword))
+            (i32.eq (local.get $iid_dword) (i32.const 0x00020400)))
+          (i32.or
+            (i32.or (i32.eq (local.get $iid_dword) (i32.const 0xDA51DA01))
+                    (i32.eq (local.get $iid_dword) (i32.const 0xDA57A71C)))
+            (i32.ne (local.get $target_vtbl) (i32.const 0))))
+      (then
+        (if (local.get $target_vtbl)
+          (then
+            (local.set $entry (call $dx_from_this (local.get $this)))
+            (call $gs32 (local.get $ppv)
+              (call $dx_get_wrapper_for_vtbl
+                (call $dx_slot_of (local.get $entry))
+                (local.get $target_vtbl))))
+          (else
+            (call $gs32 (local.get $ppv) (local.get $this))))
+        (drop (call $da_addref (local.get $this)))
+        (return (i32.const 0))))
+    (call $gs32 (local.get $ppv) (i32.const 0))
+    (i32.const 0x80004002)) ;; E_NOINTERFACE
+
+  (func $da_dispid_for_name (param $name_guest i32) (result i32)
+    (local $name_wa i32)
+    (if (i32.eqz (local.get $name_guest)) (then (return (i32.const 0x5000))))
+    (local.set $name_wa (call $g2w (local.get $name_guest)))
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x31C0)) (then (return (i32.const 0x1001)))) ;; ImportImage
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x31D0)) (then (return (i32.const 0x1002)))) ;; ImportSound
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x31E0)) (then (return (i32.const 0x1003)))) ;; ModifiableBehavior
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x31F8)) (then (return (i32.const 0x1004)))) ;; NumberB
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3200)) (then (return (i32.const 0x1005)))) ;; StringB
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3208)) (then (return (i32.const 0x1006)))) ;; Compose2
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3214)) (then (return (i32.const 0x1007)))) ;; DetectCollision
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3228)) (then (return (i32.const 0x2001)))) ;; StartModel
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3234)) (then (return (i32.const 0x2002)))) ;; Tick
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x323C)) (then (return (i32.const 0x2003)))) ;; Pause
+    (if (call $wide_ascii_eq (local.get $name_wa) (i32.const 0x3244)) (then (return (i32.const 0x2004)))) ;; SetRenderTimeout
+    ;; Stable enough for tracing and generic Invoke fallback: fold the first
+    ;; two UTF-16 chars into a private DISPID range.
+    (i32.or (i32.const 0x5000)
+      (i32.and
+        (i32.xor
+          (i32.load16_u (local.get $name_wa))
+          (i32.shl (i32.load16_u (i32.add (local.get $name_wa) (i32.const 2))) (i32.const 5)))
+        (i32.const 0x0FFF))))
+
+  (func $da_get_ids_of_names (param $rgszNames i32) (param $cNames i32) (param $rgDispId i32) (result i32)
+    (local $i i32) (local $name_guest i32)
+    (if (i32.eqz (local.get $rgDispId)) (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $cNames)))
+      (local.set $name_guest
+        (if (result i32) (local.get $rgszNames)
+          (then (call $gl32 (i32.add (local.get $rgszNames) (i32.shl (local.get $i) (i32.const 2)))))
+          (else (i32.const 0))))
+      (call $gs32
+        (i32.add (local.get $rgDispId) (i32.shl (local.get $i) (i32.const 2)))
+        (call $da_dispid_for_name (local.get $name_guest)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.const 0)) ;; S_OK
+
+  (func $da_create_node (result i32)
+    (call $dx_create_com_obj (i32.const 31) (global.get $DX_VTBL_DA_BEHAVIOR)))
+
+  (func $da_write_out_node (param $out_ptr i32) (result i32)
+    (local $obj_guest i32)
+    (if (i32.eqz (local.get $out_ptr)) (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (local.set $obj_guest (call $da_create_node))
+    (if (i32.eqz (local.get $obj_guest)) (then (return (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
+    (call $gs32 (local.get $out_ptr) (local.get $obj_guest))
+    (i32.const 0))
+
+  (func $da_write_dispatch_variant (param $pVarResult i32) (result i32)
+    (local $obj_guest i32)
+    (if (i32.eqz (local.get $pVarResult)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $pVarResult)) (i32.const 16))
+    (local.set $obj_guest (call $da_create_node))
+    (if (i32.eqz (local.get $obj_guest)) (then (return (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
+    (i32.store16 (call $g2w (local.get $pVarResult)) (i32.const 9)) ;; VT_DISPATCH
+    (call $gs32 (i32.add (local.get $pVarResult) (i32.const 8)) (local.get $obj_guest))
+    (i32.const 0))
+
+  (func $da_invoke (param $this i32) (param $dispId i32) (param $wFlags i32) (param $pVarResult i32) (result i32)
+    ;; Property puts and void-style DAView methods do not need a result.
+    (if (i32.or
+          (i32.and (local.get $wFlags) (i32.const 0x0C))
+          (i32.and
+            (i32.ge_u (local.get $dispId) (i32.const 0x2001))
+            (i32.le_u (local.get $dispId) (i32.const 0x2004))))
+      (then
+        (if (local.get $pVarResult)
+          (then (call $zero_memory (call $g2w (local.get $pVarResult)) (i32.const 16))))
+        (return (i32.const 0))))
+    (call $da_write_dispatch_variant (local.get $pVarResult)))
+
+  (func $handle_IDirectAnimationDAView_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_qi (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IDirectAnimationDAView_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDAView_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDAView_GetTypeInfoCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IDirectAnimationDAView_GetTypeInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_IDirectAnimationDAView_GetIDsOfNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_get_ids_of_names (local.get $arg2) (local.get $arg3) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  (func $handle_IDirectAnimationDAView_Invoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_invoke
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+
+  (func $handle_IDirectAnimationDAStatics_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_qi (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IDirectAnimationDAStatics_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDAStatics_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDAStatics_GetTypeInfoCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IDirectAnimationDAStatics_GetTypeInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_IDirectAnimationDAStatics_GetIDsOfNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_get_ids_of_names (local.get $arg2) (local.get $arg3) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  (func $handle_IDirectAnimationDAStatics_Invoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_invoke
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+
+  (func $handle_IDirectAnimationDABehavior_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_qi (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IDirectAnimationDABehavior_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDABehavior_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IDirectAnimationDABehavior_GetTypeInfoCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IDirectAnimationDABehavior_GetTypeInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_IDirectAnimationDABehavior_GetIDsOfNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_get_ids_of_names (local.get $arg2) (local.get $arg3) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  (func $handle_IDirectAnimationDABehavior_Invoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_invoke
+      (local.get $arg0)
+      (local.get $arg1)
+      (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+
+  (func $da_view_direct_nargs (param $slot i32) (result i32)
+    (if (i32.eq (local.get $slot) (i32.const 8)) (then (return (i32.const 4))))
+    (if (i32.eq (local.get $slot) (i32.const 12)) (then (return (i32.const 5))))
+    (if (i32.or
+          (i32.or (i32.eq (local.get $slot) (i32.const 15))
+                  (i32.eq (local.get $slot) (i32.const 17)))
+          (i32.eq (local.get $slot) (i32.const 21)))
+      (then (return (i32.const 2))))
+    (i32.const 1))
+
+  (func $da_statics_direct_nargs (param $slot i32) (result i32)
+    (if (i32.or (i32.eq (local.get $slot) (i32.const 18))
+                (i32.eq (local.get $slot) (i32.const 32)))
+      (then (return (i32.const 3))))
+    (if (i32.or
+          (i32.or
+            (i32.or (i32.eq (local.get $slot) (i32.const 19))
+                    (i32.eq (local.get $slot) (i32.const 65)))
+            (i32.or (i32.eq (local.get $slot) (i32.const 67))
+                    (i32.eq (local.get $slot) (i32.const 95))))
+          (i32.or (i32.eq (local.get $slot) (i32.const 111))
+                  (i32.eq (local.get $slot) (i32.const 347))))
+      (then (return (i32.const 4))))
+    (if (i32.or (i32.eq (local.get $slot) (i32.const 106))
+                (i32.eq (local.get $slot) (i32.const 252)))
+      (then (return (i32.const 2))))
+    (i32.const 1))
+
+  (func $da_behavior_direct_nargs (param $slot i32) (result i32)
+    (if (i32.or
+          (i32.or (i32.eq (local.get $slot) (i32.const 7))
+                  (i32.eq (local.get $slot) (i32.const 12)))
+          (i32.eq (local.get $slot) (i32.const 19)))
+      (then (return (i32.const 2))))
+    (if (i32.eq (local.get $slot) (i32.const 16))
+      (then (return (i32.const 4))))
+    (i32.const 1))
+
+  (func $handle_IDirectAnimationDAView_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; DAView runtime methods such as Tick/Pause/StartModel/SetRenderTimeout.
+    ;; The placeholder renderer does not evaluate the graph yet, but these are
+    ;; success-returning lifecycle calls.
+    (if (i32.eq (local.get $slot) (i32.const 8))
+      (then
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp
+      (i32.add (global.get $esp)
+        (i32.shl (i32.add (call $da_view_direct_nargs (local.get $slot)) (i32.const 1)) (i32.const 2)))))
+
+  (func $handle_IDirectAnimationDAStatics_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (local.set $hr (i32.const 0))
+    ;; Import/constructor methods return graph nodes through their final
+    ;; out-parameter. Slots are from the shared Plus!98 MFC DirectAnimation
+    ;; wrapper call sites.
+    (if (i32.or (i32.eq (local.get $slot) (i32.const 18))
+                (i32.eq (local.get $slot) (i32.const 32)))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg2)))))
+    (if (i32.or
+          (i32.or
+            (i32.or (i32.eq (local.get $slot) (i32.const 19))
+                    (i32.eq (local.get $slot) (i32.const 65)))
+            (i32.or (i32.eq (local.get $slot) (i32.const 67))
+                    (i32.eq (local.get $slot) (i32.const 95))))
+          (i32.or (i32.eq (local.get $slot) (i32.const 111))
+                  (i32.eq (local.get $slot) (i32.const 347))))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg3)))))
+    (if (i32.or (i32.eq (local.get $slot) (i32.const 106))
+                (i32.eq (local.get $slot) (i32.const 252)))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg1)))))
+    (global.set $eax (local.get $hr))
+    (global.set $esp
+      (i32.add (global.get $esp)
+        (i32.shl (i32.add (call $da_statics_direct_nargs (local.get $slot)) (i32.const 1)) (i32.const 2)))))
+
+  (func $handle_IDirectAnimationDABehavior_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (local.set $hr (i32.const 0))
+    (if (i32.eq (local.get $slot) (i32.const 7))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg1)))))
+    (if (i32.eq (local.get $slot) (i32.const 16))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg3)))))
+    (if (i32.eq (local.get $slot) (i32.const 19))
+      (then (local.set $hr (call $da_write_out_node (local.get $arg1)))))
+    (global.set $eax (local.get $hr))
+    (global.set $esp
+      (i32.add (global.get $esp)
+        (i32.shl (i32.add (call $da_behavior_direct_nargs (local.get $slot)) (i32.const 1)) (i32.const 2)))))
+
+  ;; ── IMalloc returned by CoGetMalloc ─────────────────────────
+  (func $handle_IMalloc_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iid_dword i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $iid_dword
+      (if (result i32) (local.get $arg1)
+        (then (call $gl32 (local.get $arg1)))
+        (else (i32.const 0))))
+    ;; IID_IUnknown or IID_IMalloc {00000002-0000-0000-C000-000000000046}
+    (if (i32.or (i32.eqz (local.get $iid_dword))
+                (i32.eq (local.get $iid_dword) (i32.const 0x00000002)))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $arg0))
+        (drop (call $da_addref (local.get $arg0)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMalloc_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IMalloc_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $da_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IMalloc_Alloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $heap_alloc (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMalloc_Realloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $heap_realloc (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMalloc_Free (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $heap_free (local.get $arg1))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMalloc_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
+          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))
+      (then
+        (global.set $eax (i32.sub
+          (call $gl32 (i32.sub (local.get $arg1) (i32.const 4)))
+          (i32.const 4))))
+      (else
+        (global.set $eax (i32.const 0xFFFFFFFF))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMalloc_DidAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (select
+        (i32.const 1)
+        (i32.const 0)
+        (i32.and
+          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
+          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMalloc_HeapMinimize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; ════════════════════════════════════════════════════════════
   ;; D3DIM Phase 0 — S_OK stubs (generated by scratch/gen-d3dim-phase0.js)
   ;; ════════════════════════════════════════════════════════════

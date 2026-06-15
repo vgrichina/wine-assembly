@@ -479,6 +479,46 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; CoGetMalloc(dwMemContext, ppMalloc) — return a process-local IMalloc
+  ;; backed by the emulator heap. oleaut32 uses this for Automation buffers.
+  (func $handle_CoGetMalloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj_guest i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 30) (global.get $DX_VTBL_IMALLOC)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj_guest))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CoSetState/CoGetState — single-thread COM state placeholder used by
+  ;; oleaut32 during Automation startup.
+  (func $handle_CoSetState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $com_state_unknown (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  (func $handle_CoGetState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (call $gs32 (local.get $arg0) (global.get $com_state_unknown))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 760: CoUninitialize() — no-op
   (func $handle_CoUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
@@ -487,6 +527,26 @@
   ;; 761: OleUninitialize() — no-op
   (func $handle_OleUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; OleRun(pUnknown) — transition a linked/embedded OLE object to running.
+  ;; Our DirectAnimation placeholders are already in-memory dispatch objects,
+  ;; so there is no server process to start.
+  (func $handle_OleRun (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; OleIsRunning(pObject) — report true for non-null placeholders.
+  (func $handle_OleIsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; OleLockRunning(pUnknown, fLock, fLastUnlockCloses) — no-op lifetime hint.
+  (func $handle_OleLockRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 762: GetWindowLongA(hWnd, nIndex)
@@ -634,6 +694,36 @@
     (if (i32.eq (local.get $clsid_d1) (i32.const 0x2FE8F810))
       (then
         (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Minimal DirectAnimation Automation placeholders for the Plus!98 MFC
+    ;; screensavers. CLSIDFromProgID below writes private sentinel CLSIDs for
+    ;; DAView/DAStatics; these objects expose IDispatch enough for tracing and
+    ;; graceful fallback without loading danim.dll.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0xDA51DA01))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 28) (global.get $DX_VTBL_DA_VIEW)))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0xDA57A71C))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj (i32.const 29) (global.get $DX_VTBL_DA_STATICS)))
         (if (i32.eqz (local.get $obj_guest))
           (then
             (call $gs32 (local.get $arg4) (i32.const 0))
@@ -902,12 +992,35 @@
   )
 
   ;; CLSIDFromProgID(lpszProgID, pclsid) — 2 args stdcall
-  ;; Wide ProgID string → CLSID. We don't maintain a ProgID registry, so return
-  ;; REGDB_E_CLASSNOTREG (0x80040154). Callers typically propagate the error
-  ;; through their CoCreateInstance path and degrade gracefully (MFC image
-  ;; loaders used by CORBIS/FASHION/HORROR/WOTRAVEL fall into a "no image"
-  ;; state rather than crashing).
+  ;; Wide ProgID string → CLSID. We only recognise the DirectAnimation ProgIDs
+  ;; used by the Plus!98 MFC screensavers and return private sentinel CLSIDs
+  ;; that $handle_CoCreateInstance consumes above. Everything else remains
+  ;; class-not-registered.
   (func $handle_CLSIDFromProgID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0x80004003))  ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    (if (call $wide_ascii_eq (local.get $src) (i32.const 0x3180))
+      (then
+        (i32.store (local.get $dst) (i32.const 0xDA51DA01))
+        (i64.store (i32.add (local.get $dst) (i32.const 4)) (i64.const 0))
+        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (call $wide_ascii_eq (local.get $src) (i32.const 0x31A0))
+      (then
+        (i32.store (local.get $dst) (i32.const 0xDA57A71C))
+        (i64.store (i32.add (local.get $dst) (i32.const 4)) (i64.const 0))
+        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (global.set $eax (i32.const 0x80040154))  ;; REGDB_E_CLASSNOTREG
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; ret + 2 args
   )

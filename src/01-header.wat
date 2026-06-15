@@ -542,6 +542,19 @@
   (data (i32.const 0x3150) "Slider1\00")
   (data (i32.const 0x3158) "msctls_trackbar32\00")
   (data (i32.const 0x316B) "SysTreeView32\00")
+  (data (i32.const 0x3180) "DirectAnimation.DAView\00")
+  (data (i32.const 0x31A0) "DirectAnimation.DAStatics\00")
+  (data (i32.const 0x31C0) "ImportImage\00")
+  (data (i32.const 0x31D0) "ImportSound\00")
+  (data (i32.const 0x31E0) "ModifiableBehavior\00")
+  (data (i32.const 0x31F8) "NumberB\00")
+  (data (i32.const 0x3200) "StringB\00")
+  (data (i32.const 0x3208) "Compose2\00")
+  (data (i32.const 0x3214) "DetectCollision\00")
+  (data (i32.const 0x3228) "StartModel\00")
+  (data (i32.const 0x3234) "Tick\00")
+  (data (i32.const 0x323C) "Pause\00")
+  (data (i32.const 0x3244) "SetRenderTimeout\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -1176,6 +1189,7 @@
   (global $com_unk_outer (mut i32) (i32.const 0))   ;; pUnkOuter
   (global $com_cls_ctx   (mut i32) (i32.const 0))   ;; dwClsContext
   (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
+  (global $com_state_unknown (mut i32) (i32.const 0)) ;; CoSetState/CoGetState single-thread placeholder
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $haccel_data  (mut i32) (i32.const 0))    ;; WASM addr of accel table bytes (0 if none)
