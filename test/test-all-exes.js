@@ -80,7 +80,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi' },
   { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper (WEP)' },
   // Win98 accessories
-  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad', expectedCrash: 'not a current-stage target' },
+  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad' },
   { exe: 'test/binaries/win98-apps/write.exe', name: 'Write',
     // Win98 write.exe is a compatibility launcher for WordPad. It should
     // ShellExecute wordpad.exe and exit without drawing its own UI.

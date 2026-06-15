@@ -1,7 +1,13 @@
-# WordPad (Win98) — FAIL
+# WordPad (Win98) — PASS
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Crash:** `ResumeThread` unimplemented (calls `$crash_unimplemented`)
+**Status (2026-06-14):** PASS in the all-EXE smoke matrix.
+
+WordPad now opens and renders in the focused smoke:
+
+```text
+WordPad ... PASS  134 APIs, window created, 392 colors
+```
 
 ## Write Launcher
 
@@ -13,14 +19,19 @@ The Win98 `write.exe` binary is only a compatibility launcher. It calls
 own window, so the smoke harness validates the `ShellExecuteA` call and skips
 the blank-canvas gate for this case.
 
-## Root Cause
+## Threading Note
 
-WordPad creates a suspended thread during OLE/COM initialization, then calls `ResumeThread` to start it. The emulator has `CreateThread` support but no `CREATE_SUSPENDED` flag handling or `ResumeThread`.
+The older blocker was `ResumeThread` during OLE/COM initialization. The current
+handler returns a previous suspend count and advances the stack, which is enough
+for the WordPad startup smoke. Thread creation still does not fully model
+`CREATE_SUSPENDED`; that is a fidelity issue, not a current WordPad startup
+blocker.
 
-## Fix Needed
+## Follow-Up
 
-1. In `lib/thread-manager.js`: support `CREATE_SUSPENDED` flag (dwCreationFlags bit 2) — create thread but don't run it until `ResumeThread`
-2. Implement `$handle_ResumeThread` in WAT: call host import to unsuspend the thread
-3. Add `resume_thread` host import
+1. Add true `CREATE_SUSPENDED` handling in `lib/thread-manager.js` if another
+   app depends on threads staying suspended until `ResumeThread`.
+2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
+   manager tracks suspend counts.
 
 **Key files:** `lib/thread-manager.js`, `src/09a-handlers.wat`
