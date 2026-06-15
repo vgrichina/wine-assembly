@@ -227,7 +227,11 @@ const TEST_CASES = [
   { exe: 'test/binaries/screensavers/FOXTROT.SCR', name: 'FoxTrot (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/GA_SAVER.SCR', name: 'Garfield (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/PEANUTS.SCR', name: 'Peanuts (screensaver)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/PHODISC.SCR', name: 'PhotoDisc (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/PHODISC.SCR', name: 'PhotoDisc (screensaver)',
+    // Decodes a 640x480 DIB in guest code before its first StretchDIBits.
+    maxBatches: 80, batchSize: 50000,
+    extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    timeoutMs: 30000 },
   // Plus! 98 screensavers — MFC42
   { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'] },
