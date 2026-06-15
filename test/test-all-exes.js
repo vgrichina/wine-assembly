@@ -110,7 +110,13 @@ const TEST_CASES = [
   // Entertainment Pack extras
   { exe: 'test/binaries/entertainment-pack/mspaint.exe', name: 'MSPaint (EP)' },
   // Pinball
-  { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball' },
+  { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball',
+    // Pinball's shutdown repaint path is too expensive for final --png.
+    // Capture the real table window back-canvas after the quick startup blits.
+    maxBatches: 30, batchSize: 500000,
+    extraArgs: ['--args=-quick', '--quiet-blocks', '--stuck-after=5000'],
+    captureHwnd: 0x10002, captureBatch: 20, captureStopBatch: 21,
+    timeoutMs: 90000 },
   { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)' },
   // Winamp extracted app
   { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
@@ -249,6 +255,20 @@ function runExe(testCase, pngPath) {
     return { name: testCase.name, status: 'SKIP', reason: 'expected 16-bit NE' };
   }
 
+  const extraArgs = [...(testCase.extraArgs || [])];
+  const useFinalPng = pngPath && !testCase.captureHwnd;
+  if (pngPath && testCase.captureHwnd) {
+    const captureBatch = testCase.captureBatch || testCase.maxBatches || MAX_BATCHES;
+    const stopBatch = testCase.captureStopBatch || (captureBatch + 1);
+    const captureSpec = `${captureBatch}:hwnd-png-pixels:${testCase.captureHwnd}:${pngPath},${stopBatch}:stop`;
+    const inputIdx = extraArgs.findIndex(a => a.startsWith('--input='));
+    if (inputIdx >= 0) {
+      extraArgs[inputIdx] += `,${captureSpec}`;
+    } else {
+      extraArgs.push(`--input=${captureSpec}`);
+    }
+  }
+
   const args = [
     RUN_JS,
     `--exe=${exePath}`,
@@ -256,8 +276,8 @@ function runExe(testCase, pngPath) {
     `--batch-size=${testCase.batchSize || BATCH_SIZE}`,
     '--no-build',
     '--verbose',
-    ...(pngPath ? [`--png=${pngPath}`] : []),
-    ...(testCase.extraArgs || []),
+    ...(useFinalPng ? [`--png=${pngPath}`] : []),
+    ...extraArgs,
   ];
 
   const result = spawnSync('node', args, {

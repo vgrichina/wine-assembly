@@ -5,6 +5,8 @@
 **Window:** 640x480, title "3D Pinball for Windows - Space Cadet"
 **Status:** Game initializes fully, renders table with correct colors and sprites, enters active PeekMessage game loop at 332 FPS. WaveMix sound init now succeeds (16-bit ALU decoder fix). Score panel fully working: title, score digits, BALL label, mission text, and "Player 1" label all render. PeekMessageA/GetMessageA input double-dispatch fixed (PM_NOREMOVE cache). Use `--batch-size=500000 --max-batches=500` for full game loop.
 
+**All-EXE smoke:** final desktop `--png` forces a shutdown repaint that is too expensive for Pinball. `test/test-all-exes.js` uses `--args=-quick`, captures hwnd `0x10002` via `hwnd-png-pixels` at batch 20, then stops at batch 21. This verifies the rendered table back-canvas without entering the long gameplay/repaint path.
+
 **Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
 
 ## REGRESSION (2026-04-28): LEFT flipper (Z) does not move; RIGHT flipper (/) does
