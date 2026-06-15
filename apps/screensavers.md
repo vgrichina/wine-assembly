@@ -2,7 +2,7 @@
 
 **Binaries:** `test/binaries/screensavers/` (19 screensavers from Plus! 98)
 **Command-line:** `/s` = run screensaver, `/c` = config dialog, `/p <hwnd>` = preview
-**Status:** Config dialogs work for all. 4/7 GDI savers render with sprites. 5 MFC42 savers reach the message loop. 7 D3D/DDraw savers run their game loop but produce only HUD/fade chrome — main mesh-render path is never entered (see Task 3).
+**Status:** Config dialogs work for all. 4/7 GDI savers render with sprites. 5 MFC42 savers reach the message loop. 7 Organic Art D3D/DDraw savers now produce nonblank Direct3DRM smoke frames when given a long asset-load budget.
 
 ## Categories
 
@@ -22,7 +22,19 @@
 | CORBIS / FASHION / HORROR / WOTRAVEL | Black | Need DirectAnimation (DAView/DAStatics). Deferred — large COM surface. |
 
 ### Organic Art (statically-linked DX framework, all 7 are the same 1,005,056-byte PE — `md5 fef9ed080d8cbb34df636f9c71b406cd`)
-ARCHITEC / FALLINGL / GEOMETRY / JAZZ / OASAVER / ROCKROLL / SCIFI: Config OK; `/s` reaches the per-frame loop, but only emits a HUD quad + fade overlay via direct D3D2::DrawPrimitive. d3rm submits a single state-only Execute buffer per frame and never reaches its mesh-emission path. See Task 3.
+ARCHITEC / FALLINGL / GEOMETRY / JAZZ / OASAVER / ROCKROLL / SCIFI: Config OK; `/s` needs a long startup budget while the shared framework reads scene and art assets. With `maxBatches: 7000`, all seven emit nonblank DX smoke frames and the all-EXE harness should treat them as current-stage PASS candidates instead of blank expected failures.
+
+2026-06-14 high-budget smoke metrics:
+
+| Screensaver | PNG | Colors | Top color |
+|-------------|-----|--------|-----------|
+| ARCHITEC | 800x678 | 153 | 82.1% |
+| FALLINGL | 800x600 | 168 | 79.9% |
+| GEOMETRY | 512x512 | 60 | 18.1% |
+| JAZZ | 640x480 | 21 | 99.3% |
+| OASAVER | 800x600 | 15 | 80.8% |
+| ROCKROLL | 800x600 | 15 | 80.8% |
+| SCIFI | 800x600 | 84 | 44.2% |
 
 ## Open Tasks
 
@@ -35,7 +47,9 @@ Inconclusive after 2026-04-20 investigation: the 75×80 character sub-sprites in
 - **PHODISC:** DIB blit no longer wipes canvas (sparse-hash sync fix shipped) — now shows desktop teal but no photos. Asset-load path not traced yet.
 - **CITYSCAP:** Spins in GetMessageA without ever calling SetTimer/InvalidateRect. Render fn never runs. Probably missing a startup message or a registry value that gates rendering.
 
-### 3. d3rm MeshBuilder::Load fails on ProgressiveMesh (HIGH)
+### 3. d3rm MeshBuilder::Load / ProgressiveMesh path (REVALIDATE)
+
+2026-06-14 update: the old Organic Art blank-screen smoke result was primarily a harness budget problem. At 7000 batches all seven Organic Art savers produce nonblank frames. Keep the ProgressiveMesh notes below for the DX SDK `viewer.exe camera.x` repro and deeper D3DRM fidelity work, but do not use the default 80-batch Organic Art blank as evidence for this blocker.
 
 **Test bed:** DX SDK `viewer.exe` loading `camera.x` is the minimal repro for the same d3rm path the Organic Art screensavers use. `IDirect3DRMMeshBuilder::Load` returns `D3DRMERR_NOTFOUND (0x88760311)`; viewer pops "Failed to load camera.x.\n(null)". Same root path is what leaves the screensavers' main mesh-render dead.
 

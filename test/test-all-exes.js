@@ -11,6 +11,13 @@ const ROOT = path.join(__dirname, '..');
 const RUN_JS = path.join(__dirname, 'run.js');
 const PNG_DIR = path.join(ROOT, 'test', 'output', 'all-exes');
 const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in PNG
+const ORGANIC_ART_D3DRM_SMOKE = {
+  // Organic Art spends thousands of small batches reading scene/assets before
+  // its first meaningful Direct3DRM frame, similar to the DX SDK globe sample.
+  maxBatches: 7000,
+  extraArgs: ['--args=/s', '--quiet-blocks'],
+  timeoutMs: 30000,
+};
 
 // Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
 // topShare = fraction of pixels covered by the most common color. A PNG is
@@ -204,14 +211,14 @@ const TEST_CASES = [
   { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  // Plus! 98 screensavers — DirectDraw (expected fail until DDRAW support)
-  { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/GEOMETRY.SCR', name: 'Geometry (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/JAZZ.SCR', name: 'Jazz (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/OASAVER.SCR', name: 'OnlineArt (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/ROCKROLL.SCR', name: 'RockRoll (screensaver, DX)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/SCIFI.SCR', name: 'SciFi (screensaver, DX)', extraArgs: ['--args=/s'] },
+  // Plus! 98 screensavers — DirectDraw/Direct3DRM
+  { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/GEOMETRY.SCR', name: 'Geometry (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/JAZZ.SCR', name: 'Jazz (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/OASAVER.SCR', name: 'OnlineArt (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/ROCKROLL.SCR', name: 'RockRoll (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/SCIFI.SCR', name: 'SciFi (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
   // 16-bit NE binaries — emulator is 32-bit PE only, expected to fail at load
   // time. Kept in the list as SKIP candidates so coverage stays honest.
   { exe: 'test/binaries/win98-16bit/FREECELL.EXE', name: 'FreeCell (16-bit)', expect16bit: true },
