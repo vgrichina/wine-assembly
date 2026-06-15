@@ -81,7 +81,10 @@ const TEST_CASES = [
   { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper (WEP)' },
   // Win98 accessories
   { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad', expectedCrash: 'not a current-stage target' },
-  { exe: 'test/binaries/win98-apps/write.exe', name: 'Write' },
+  { exe: 'test/binaries/win98-apps/write.exe', name: 'Write',
+    // Win98 write.exe is a compatibility launcher for WordPad. It should
+    // ShellExecute wordpad.exe and exit without drawing its own UI.
+    expectOutput: '[API] ShellExecuteA', noPng: true },
   { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player', knownBadRender: 'not meaningful/fixable on web at current stage' },
   { exe: 'test/binaries/win98-apps/mplayer.exe', name: 'Media Player' },
   { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
@@ -394,14 +397,16 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     }
     process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
     const safeName = tc.name.replace(/[^a-zA-Z0-9]+/g, '_');
-    const pngPath = path.join(PNG_DIR, `${safeName}.png`);
-    try { fs.unlinkSync(pngPath); } catch (_) {}
+    const pngPath = tc.noPng ? null : path.join(PNG_DIR, `${safeName}.png`);
+    if (pngPath) {
+      try { fs.unlinkSync(pngPath); } catch (_) {}
+    }
     const r = runExe(tc, pngPath);
 
     // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
     // Two-signal: few unique colors AND >95% of pixels in one color = blank.
     // Cartoon content (few colors but real shapes) passes the second check.
-    if (r.status === 'OK' && fs.existsSync(pngPath)) {
+    if (r.status === 'OK' && pngPath && fs.existsSync(pngPath)) {
       const a = await analyzePng(pngPath);
       if (a) {
         r.colors = a.colors;

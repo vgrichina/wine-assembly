@@ -3,6 +3,16 @@
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
 **Crash:** `ResumeThread` unimplemented (calls `$crash_unimplemented`)
 
+## Write Launcher
+
+**Binary:** `test/binaries/win98-apps/write.exe`
+**Status (2026-06-14):** PASS in the all-EXE smoke matrix.
+
+The Win98 `write.exe` binary is only a compatibility launcher. It calls
+`ShellExecuteA(..., "wordpad.exe", ...)` and exits cleanly without drawing its
+own window, so the smoke harness validates the `ShellExecuteA` call and skips
+the blank-canvas gate for this case.
+
 ## Root Cause
 
 WordPad creates a suspended thread during OLE/COM initialization, then calls `ResumeThread` to start it. The emulator has `CreateThread` support but no `CREATE_SUSPENDED` flag handling or `ResumeThread`.
