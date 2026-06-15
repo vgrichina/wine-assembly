@@ -32,6 +32,26 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; CreatePenIndirect(LOGPEN*) — LOGPEN = { style, POINT width, color }.
+  (func $handle_CreatePenIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local $style i32)
+    (local $width i32)
+    (local $color i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $wa (call $g2w (local.get $arg0)))
+        (local.set $style (i32.load (local.get $wa)))
+        (local.set $width (i32.load offset=4 (local.get $wa)))
+        (local.set $color (i32.load offset=12 (local.get $wa)))
+        (global.set $eax (call $host_gdi_create_pen
+          (local.get $style)
+          (local.get $width)
+          (local.get $color)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 149: CreateSolidBrush(color) — delegate to host GDI
   (func $handle_CreateSolidBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_create_solid_brush (local.get $arg0)))

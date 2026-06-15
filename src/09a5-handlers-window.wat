@@ -649,6 +649,51 @@
     (global.set $eip (global.get $cbt_hook_proc))
     (global.set $steps (i32.const 0))
     (return)))
+    ;; No CBT hook and not a native control: dispatch custom child WM_CREATE
+    ;; synchronously while the caller's CREATESTRUCT is still live, then chain
+    ;; the paired WM_SIZE through CACA0027. This prevents bursts of custom
+    ;; child windows from overwriting the single pending_child_create/size slot
+    ;; before the app enters its message loop (VCL TPanel startup does this).
+    (if (i32.eqz (global.get $cbt_hook_proc))
+      (then
+        (local.set $tmp (call $wnd_table_get (local.get $hwnd)))
+        (if (i32.and
+              (i32.and
+                (i32.and (i32.ne (local.get $tmp) (i32.const 0))
+                         (i32.ne (local.get $tmp) (global.get $WNDPROC_CTRL_NATIVE)))
+                (i32.ne (local.get $tmp) (global.get $WNDPROC_BUILTIN)))
+              (i32.lt_u (local.get $tmp) (i32.const 0xFFFF0000)))
+          (then
+            (local.set $v (global.get $pending_child_size))
+            (if (i32.ne (global.get $pending_child_size_hwnd) (local.get $hwnd))
+              (then (local.set $v (i32.const 0))))
+            (global.set $pending_child_create (i32.const 0))
+            (global.set $pending_child_size (i32.const 0))
+            (global.set $pending_child_size_hwnd (i32.const 0))
+            (global.set $createwnd_saved_hwnd (local.get $hwnd))
+            (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
+            ;; CACA0027 stack frame: saved_ret, saved_hwnd, saved_size.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $v))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x0001))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $child_create_ret_thunk))
+            (global.set $eax (local.get $hwnd))
+            (global.set $eip (local.get $tmp))
+            (global.set $steps (i32.const 0))
+            (return)))))
     ))
     (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
@@ -887,6 +932,25 @@
         ;; keeping our stale update region lets hidden controls draw fragments
         ;; after SW_HIDE.
         (call $paint_clear_subtree (local.get $arg0))))
+    ;; Some VCL apps create hidden utility/application HWNDs before showing the
+    ;; real form. If the stored main window is still invisible, promote the
+    ;; first shown app wndproc window so activation/focus reaches the form.
+    (if (i32.and
+          (i32.and
+            (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                     (i32.ne (local.get $arg0) (global.get $main_hwnd)))
+            (i32.eqz (global.get $show_window_activated)))
+          (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+      (then
+        (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
+        (if (i32.and
+              (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
+                       (i32.ne (local.get $wndproc) (global.get $WNDPROC_BUILTIN)))
+              (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+          (then
+            (global.set $main_hwnd (local.get $arg0))
+            (if (local.get $client_size)
+              (then (global.set $pending_wm_size (local.get $client_size))))))))
     ;; Showing a window should trigger WM_PAINT. Region-driven dispatch only
     ;; sees windows with an update region, so non-main windows must use the
     ;; paint+invalidate helper rather than the legacy paint bit alone.

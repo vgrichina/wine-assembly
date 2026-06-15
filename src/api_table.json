@@ -12175,5 +12175,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3414498658
+  },
+  {
+    "id": 1620,
+    "name": "CreatePenIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3457575310
   }
 ]

@@ -168,7 +168,19 @@
         ;; Clear pending_child_create — WM_CREATE is now delivered synchronously.
         ;; (pending_child_size is kept; it flows through the message loop.)
         (global.set $pending_child_create (i32.const 0))
-        ;; Push saved_hwnd + saved_ret on stack for CACA0027 to pop
+        ;; Push saved_size + saved_hwnd + saved_ret on stack for CACA0027.
+        ;; The child CreateWindowEx path used to keep WM_SIZE in a single
+        ;; global pending slot; burst-created custom children would overwrite
+        ;; each other before the message pump ran. Keep the size with this
+        ;; synchronous create frame so every child gets its own initial size.
+        (local.set $arg0 (i32.const 0))
+        (if (i32.eq (global.get $pending_child_size_hwnd) (global.get $child_cbt_saved_hwnd))
+          (then
+            (local.set $arg0 (global.get $pending_child_size))
+            (global.set $pending_child_size (i32.const 0))
+            (global.set $pending_child_size_hwnd (i32.const 0))))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $arg0))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $child_cbt_saved_hwnd))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -192,12 +204,39 @@
         (global.set $steps (i32.const 0))
         (return)))
 
-    ;; CACA0027: child WM_CREATE returned → pop saved state, hand hwnd back
+    ;; CACA0027: child WM_CREATE returned → optionally deliver the paired
+    ;; initial WM_SIZE, then pop saved state and hand hwnd back.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0027))
       (then
+        (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (local.set $arg1 (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+        (if (local.get $arg1)
+          (then
+            ;; Mark the saved size consumed, then call the child wndproc with
+            ;; WM_SIZE. When it returns to CACA0027 again, the zero size marker
+            ;; falls through to the final return path below.
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0))
+            (if (call $wnd_is_effectively_visible (local.get $arg0))
+              (then (call $nc_flags_set (local.get $arg0) (i32.const 4)))
+              (else (call $defwndproc_do_nccalcsize (local.get $arg0))))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg1))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x0005))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $arg0))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $child_create_ret_thunk))
+            (global.set $eip (call $wnd_table_get (local.get $arg0)))
+            (if (i32.eqz (global.get $eip))
+              (then (global.set $eip (global.get $wndproc_addr))))
+            (global.set $steps (i32.const 0))
+            (return)))
         (global.set $eip (call $gl32 (global.get $esp)))
-        (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (global.set $eax (local.get $arg0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
 
     ;; CACA0029: WM_NCCREATE returned — dispatch WM_CREATE with the same

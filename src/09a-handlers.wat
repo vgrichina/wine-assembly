@@ -2474,6 +2474,27 @@
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    ;; Keep WAT's GWL_STYLE in sync with SetWindowPos visibility flags. Apps
+    ;; such as Tetravex show custom child panels via SWP_SHOWWINDOW instead of
+    ;; ShowWindow; if WS_VISIBLE stays clear here, WAT's paint selector treats
+    ;; their later InvalidateRect calls as hidden-window work and drops them.
+    (if (i32.and (local.get $uFlags) (i32.const 0x0040)) ;; SWP_SHOWWINDOW
+      (then
+        (drop (call $wnd_set_style (local.get $arg0)
+          (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))))
+        (if (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
+          (then
+            (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+              (then
+                (global.set $paint_pending (i32.const 1))
+                (call $update_invalidate_full (local.get $arg0))
+                (call $host_invalidate (local.get $arg0)))
+              (else (call $paint_flag_set_inv (local.get $arg0))))))))
+    (if (i32.and (local.get $uFlags) (i32.const 0x0080)) ;; SWP_HIDEWINDOW
+      (then
+        (drop (call $wnd_set_style (local.get $arg0)
+          (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
+        (call $paint_clear_subtree (local.get $arg0))))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
@@ -4820,9 +4841,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 370: UnrealizeObject — STUB: unimplemented
+  ;; 370: UnrealizeObject — no-op for our immediate-mode GDI object model.
   (func $handle_UnrealizeObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 371: SetBrushOrgEx(hdc, x, y, lppt) — stub, set prev origin to (0,0)
