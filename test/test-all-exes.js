@@ -107,7 +107,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)' },
   { exe: 'test/binaries/win98-apps/telnet.exe', name: 'Telnet' },
   // XP apps
-  { exe: 'test/binaries/xp/claass.exe', name: 'Calculator (XP)' },
+  { exe: 'test/binaries/xp/claass.exe', name: 'Volume Control (XP)' },
   { exe: 'test/binaries/xp/sndrec32.exe', name: 'Sound Recorder (XP)' },
   { exe: 'test/binaries/xp/xp_eos.exe', name: 'XP End of Life' },
   // Entertainment Pack extras

@@ -1655,15 +1655,208 @@
     (global.set $eax (i32.const 437))  ;; CP 437 (OEM United States)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; 825: mixerGetLineInfoW(hmxobj, pmxl, fdwInfo) → MMRESULT
-  ;; Returns MMSYSERR_NODRIVER (6) — no audio mixer available
-  (func $handle_mixerGetLineInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 6))
+  ;; Minimal WINMM mixer model: one mixer, one speaker destination, one
+  ;; wave-out source, and one unsigned stereo volume control.
+  (func $fill_mixer_caps (param $p i32) (param $wide i32) (param $cb i32)
+    (if (i32.eqz (local.get $p)) (then (return)))
+    (if (local.get $cb)
+      (then (call $zero_memory (local.get $p) (local.get $cb)))
+      (else
+        (if (local.get $wide)
+          (then (call $zero_memory (local.get $p) (i32.const 80)))
+          (else (call $zero_memory (local.get $p) (i32.const 48)))))))
+    (i32.store16 (local.get $p) (i32.const 1))                         ;; wMid
+    (i32.store16 (i32.add (local.get $p) (i32.const 2)) (i32.const 1))  ;; wPid
+    (i32.store (i32.add (local.get $p) (i32.const 4)) (i32.const 0x0400))
+    (if (local.get $wide)
+      (then
+        (i32.store16 (i32.add (local.get $p) (i32.const 8)) (i32.const 0x57))  ;; W
+        (i32.store16 (i32.add (local.get $p) (i32.const 10)) (i32.const 0x69)) ;; i
+        (i32.store16 (i32.add (local.get $p) (i32.const 12)) (i32.const 0x6e)) ;; n
+        (i32.store16 (i32.add (local.get $p) (i32.const 14)) (i32.const 0x65)) ;; e
+        (i32.store (i32.add (local.get $p) (i32.const 76)) (i32.const 1)))     ;; cDestinations
+      (else
+        (i32.store (i32.add (local.get $p) (i32.const 8)) (i32.const 0x656e6957)) ;; Wine
+        (i32.store (i32.add (local.get $p) (i32.const 44)) (i32.const 1)))))      ;; cDestinations
+
+  (func $fill_mixer_line (param $p i32) (param $wide i32) (param $component i32)
+    (local $is_source i32) (local $size i32) (local $target i32)
+    (if (i32.eqz (local.get $p)) (then (return)))
+    (local.set $is_source (i32.eq (local.get $component) (i32.const 8))) ;; SRC_WAVEOUT
+    (local.set $size (i32.const 168))
+    (local.set $target (i32.add (local.get $p) (i32.const 120)))
+    (if (local.get $wide)
+      (then
+        (local.set $size (i32.const 280))
+        (local.set $target (i32.add (local.get $p) (i32.const 200)))))
+    (call $zero_memory (local.get $p) (local.get $size))
+    (i32.store offset=0 (local.get $p) (local.get $size))
+    (i32.store offset=12 (local.get $p) (local.get $is_source))          ;; dwLineID
+    (if (local.get $is_source)
+      (then
+        (i32.store offset=16 (local.get $p) (i32.const 0x80000001))      ;; SOURCE|ACTIVE
+        (i32.store offset=24 (local.get $p) (i32.const 8))               ;; SRC_WAVEOUT
+        (i32.store offset=28 (local.get $p) (i32.const 2))               ;; cChannels
+        (i32.store offset=36 (local.get $p) (i32.const 1)))              ;; cControls
+      (else
+        (i32.store offset=16 (local.get $p) (i32.const 1))               ;; ACTIVE
+        (i32.store offset=24 (local.get $p) (i32.const 4))               ;; DST_SPEAKERS
+        (i32.store offset=28 (local.get $p) (i32.const 2))               ;; cChannels
+        (i32.store offset=32 (local.get $p) (i32.const 1))               ;; cConnections
+        (i32.store offset=36 (local.get $p) (i32.const 1))))             ;; cControls
+    (i32.store offset=0 (local.get $target) (i32.const 1))               ;; MIXERLINE_TARGETTYPE_WAVEOUT
+    (i32.store offset=4 (local.get $target) (i32.const 0))               ;; dwDeviceID
+    (i32.store16 offset=8 (local.get $target) (i32.const 1))             ;; wMid
+    (i32.store16 offset=10 (local.get $target) (i32.const 1))            ;; wPid
+    (i32.store offset=12 (local.get $target) (i32.const 0x0400)))        ;; vDriverVersion
+
+  (func $fill_mixer_control (param $p i32) (param $wide i32)
+    (local $size i32) (local $bounds i32) (local $metrics i32)
+    (if (i32.eqz (local.get $p)) (then (return)))
+    (local.set $size (i32.const 148))
+    (local.set $bounds (i32.add (local.get $p) (i32.const 100)))
+    (local.set $metrics (i32.add (local.get $p) (i32.const 124)))
+    (if (local.get $wide)
+      (then
+        (local.set $size (i32.const 228))
+        (local.set $bounds (i32.add (local.get $p) (i32.const 180)))
+        (local.set $metrics (i32.add (local.get $p) (i32.const 204)))))
+    (call $zero_memory (local.get $p) (local.get $size))
+    (i32.store offset=0 (local.get $p) (local.get $size))
+    (i32.store offset=4 (local.get $p) (i32.const 0x1000))               ;; dwControlID
+    (i32.store offset=8 (local.get $p) (i32.const 0x50030001))           ;; VOLUME
+    (i32.store offset=0 (local.get $bounds) (i32.const 0))               ;; min
+    (i32.store offset=4 (local.get $bounds) (i32.const 0xffff))          ;; max
+    (i32.store offset=0 (local.get $metrics) (i32.const 0xffff)))        ;; cSteps
+
+  (func $handle_mixerGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fill_mixer_caps (call $g2w (local.get $arg1)) (i32.const 0) (local.get $arg2))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 826: mixerGetNumDevs() → UINT — returns 0 (no mixer devices)
-  (func $handle_mixerGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_mixerGetDevCapsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fill_mixer_caps (call $g2w (local.get $arg1)) (i32.const 1) (local.get $arg2))
     (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerGetLineInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $component i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $component (i32.load offset=24 (local.get $p)))
+    (if (i32.eq (local.get $arg2) (i32.const 1)) (then (local.set $component (i32.const 8))))
+    (if (i32.eqz (local.get $component)) (then (local.set $component (i32.const 4))))
+    (call $fill_mixer_line (local.get $p) (i32.const 0) (local.get $component))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; 825: mixerGetLineInfoW(hmxobj, pmxl, fdwInfo) -> MMRESULT
+  (func $handle_mixerGetLineInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $component i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $component (i32.load offset=24 (local.get $p)))
+    (if (i32.eq (local.get $arg2) (i32.const 1)) (then (local.set $component (i32.const 8))))
+    (if (i32.eqz (local.get $component)) (then (local.set $component (i32.const 4))))
+    (call $fill_mixer_line (local.get $p) (i32.const 1) (local.get $component))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerGetLineControlsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $ctrl i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $ctrl (call $g2w (i32.load offset=20 (local.get $p))))
+    (i32.store offset=12 (local.get $p) (i32.const 1))
+    (if (i32.eqz (i32.load offset=16 (local.get $p))) (then (i32.store offset=16 (local.get $p) (i32.const 148))))
+    (call $fill_mixer_control (local.get $ctrl) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerGetLineControlsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $ctrl i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $ctrl (call $g2w (i32.load offset=20 (local.get $p))))
+    (i32.store offset=12 (local.get $p) (i32.const 1))
+    (if (i32.eqz (i32.load offset=16 (local.get $p))) (then (i32.store offset=16 (local.get $p) (i32.const 228))))
+    (call $fill_mixer_control (local.get $ctrl) (i32.const 1))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerGetControlDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $details i32) (local $channels i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $channels (i32.load offset=8 (local.get $p)))
+    (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
+    (if (local.get $details)
+      (then
+        (i32.store offset=0 (local.get $details) (i32.const 0xffff))
+        (if (i32.gt_u (local.get $channels) (i32.const 1))
+          (then (i32.store offset=4 (local.get $details) (i32.const 0xffff))))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerGetControlDetailsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $details i32) (local $channels i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $channels (i32.load offset=8 (local.get $p)))
+    (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
+    (if (local.get $details)
+      (then
+        (i32.store offset=0 (local.get $details) (i32.const 0xffff))
+        (if (i32.gt_u (local.get $channels) (i32.const 1))
+          (then (i32.store offset=4 (local.get $details) (i32.const 0xffff))))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerSetControlDetails (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_mixerOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (i32.store (call $g2w (local.get $arg0)) (i32.const 0x00090001))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_mixerClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_mixerMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; SetupAPI/device notifications are optional for sndvol32. Fail the device
+  ;; registration/enumeration path cleanly so the mixer UI can continue.
+  (func $handle_SetupDiCreateDeviceInfoList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0xffffffff))  ;; INVALID_HANDLE_VALUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_SetupDiDestroyDeviceInfoList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_SetupDiOpenDeviceInterfaceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_SetupDiGetDeviceInterfaceDetailW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  (func $handle_SetupDiOpenDevRegKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0xffffffff))  ;; INVALID_HANDLE_VALUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  (func $handle_RegisterDeviceNotificationW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_UnregisterDeviceNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; 826: mixerGetNumDevs() -> UINT
+  (func $handle_mixerGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 827: CreateConsoleScreenBuffer(dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwFlags, lpScreenBufferData) → HANDLE
@@ -1672,10 +1865,11 @@
     (global.set $eax (i32.const 0x00030001))  ;; fake console handle
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 821: mixerGetID(hmxobj, puMxId, fdwId) → MMRESULT
-  ;; Returns MMSYSERR_NODRIVER (6) — no audio mixer device available
+  ;; 821: mixerGetID(hmxobj, puMxId, fdwId) -> MMRESULT
   (func $handle_mixerGetID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 6))
+    (if (local.get $arg1)
+      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 0))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 822: CreateDialogParamW(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)

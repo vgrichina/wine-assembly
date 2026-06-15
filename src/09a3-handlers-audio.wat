@@ -26,6 +26,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
 
+  ;; waveOutGetDevCapsW(uDeviceID, lpCaps, cbCaps) — wide-char variant
+  (func $handle_waveOutGetDevCapsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $wa) (local.get $arg2))
+    ;; wMid=1, wPid=1, vDriverVersion=4.0
+    (i32.store16 (local.get $wa) (i32.const 1))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
+    ;; szPname = "Audio" at offset 8 as WCHAR[32]
+    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x41))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0x75))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x64))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 14)) (i32.const 0x69))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x6f))
+    ;; WAVEOUTCAPSW: dwFormats=72, wChannels=76, dwSupport=80
+    (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 0x00000FFF))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 76)) (i32.const 2))
+    (i32.store (i32.add (local.get $wa) (i32.const 80)) (i32.const 0x0C))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 795: waveOutOpen(phwo, uDeviceID, lpFormat, dwCallback, dwInstance, fdwOpen)
   ;; WAVEFORMATEX: +0 wFormatTag(2), +2 nChannels(2), +4 nSamplesPerSec(4),
   ;;   +8 nAvgBytesPerSec(4), +12 nBlockAlign(2), +14 wBitsPerSample(2)

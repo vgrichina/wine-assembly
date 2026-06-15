@@ -12000,5 +12000,138 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 948803865
+  },
+  {
+    "id": 1595,
+    "name": "mixerClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2138502598
+  },
+  {
+    "id": 1596,
+    "name": "mixerGetControlDetailsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 597403118
+  },
+  {
+    "id": 1597,
+    "name": "mixerGetControlDetailsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 362516452
+  },
+  {
+    "id": 1598,
+    "name": "mixerGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1775246035
+  },
+  {
+    "id": 1599,
+    "name": "mixerGetDevCapsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2144353653
+  },
+  {
+    "id": 1600,
+    "name": "mixerGetLineControlsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2029917045
+  },
+  {
+    "id": 1601,
+    "name": "mixerGetLineControlsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1660809427
+  },
+  {
+    "id": 1602,
+    "name": "mixerGetLineInfoA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1804091731
+  },
+  {
+    "id": 1603,
+    "name": "mixerMessage",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1349377121
+  },
+  {
+    "id": 1604,
+    "name": "mixerOpen",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2994241026
+  },
+  {
+    "id": 1605,
+    "name": "mixerSetControlDetails",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2828572823
+  },
+  {
+    "id": 1606,
+    "name": "waveOutGetDevCapsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 704148643
+  },
+  {
+    "id": 1607,
+    "name": "SetupDiCreateDeviceInfoList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3015217231
+  },
+  {
+    "id": 1608,
+    "name": "SetupDiDestroyDeviceInfoList",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1086391239
+  },
+  {
+    "id": 1609,
+    "name": "SetupDiGetDeviceInterfaceDetailW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2510821746
+  },
+  {
+    "id": 1610,
+    "name": "SetupDiOpenDevRegKey",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2878559033
+  },
+  {
+    "id": 1611,
+    "name": "SetupDiOpenDeviceInterfaceW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1184538507
+  },
+  {
+    "id": 1612,
+    "name": "RegisterDeviceNotificationW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2246796810
+  },
+  {
+    "id": 1613,
+    "name": "UnregisterDeviceNotification",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3439044610
   }
 ]

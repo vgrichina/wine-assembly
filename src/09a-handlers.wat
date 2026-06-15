@@ -8600,9 +8600,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 663: MapDialogRect — STUB: unimplemented
+  ;; 663: MapDialogRect(hDlg, lpRect) — convert dialog units to pixels.
   (func $handle_MapDialogRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $p i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $p (call $g2w (local.get $arg1)))
+    ;; x pixels = MulDiv(dialogX, baseX=6, 4)
+    (i32.store offset=0 (local.get $p)
+      (i32.div_s (i32.mul (i32.load offset=0 (local.get $p)) (i32.const 6)) (i32.const 4)))
+    (i32.store offset=8 (local.get $p)
+      (i32.div_s (i32.mul (i32.load offset=8 (local.get $p)) (i32.const 6)) (i32.const 4)))
+    ;; y pixels = MulDiv(dialogY, baseY=13, 8)
+    (i32.store offset=4 (local.get $p)
+      (i32.div_s (i32.mul (i32.load offset=4 (local.get $p)) (i32.const 13)) (i32.const 8)))
+    (i32.store offset=12 (local.get $p)
+      (i32.div_s (i32.mul (i32.load offset=12 (local.get $p)) (i32.const 13)) (i32.const 8)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 664: GetDialogBaseUnits() → DWORD (loword=X, hiword=Y base units)
@@ -8707,9 +8725,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 671: IsDialogMessageW — STUB: unimplemented
+  ;; 671: IsDialogMessageW — same policy as A: let the app dispatch messages.
   (func $handle_IsDialogMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_IsDialogMessageA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 672: SetMenuItemBitmaps — STUB: unimplemented

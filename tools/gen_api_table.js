@@ -499,6 +499,27 @@ const extra = [
   { name: 'DirectDrawCreateClipper', nargs: 3 },
   // WINMM — MCI command string interface (MIDI/CDAudio). Sequencer commands route to host MIDI.
   { name: 'mciSendStringA', nargs: 4 },
+  // WINMM — minimal mixer device/control surface for Volume Control.
+  { name: 'mixerClose', nargs: 1 },
+  { name: 'mixerGetControlDetailsA', nargs: 3 },
+  { name: 'mixerGetControlDetailsW', nargs: 3 },
+  { name: 'mixerGetDevCapsA', nargs: 3 },
+  { name: 'mixerGetDevCapsW', nargs: 3 },
+  { name: 'mixerGetLineControlsA', nargs: 3 },
+  { name: 'mixerGetLineControlsW', nargs: 3 },
+  { name: 'mixerGetLineInfoA', nargs: 3 },
+  { name: 'mixerMessage', nargs: 4 },
+  { name: 'mixerOpen', nargs: 5 },
+  { name: 'mixerSetControlDetails', nargs: 3 },
+  { name: 'waveOutGetDevCapsW', nargs: 3 },
+  // SETUPAPI / USER32 device notification probes used by XP sndvol32.
+  { name: 'SetupDiCreateDeviceInfoList', nargs: 2 },
+  { name: 'SetupDiDestroyDeviceInfoList', nargs: 1 },
+  { name: 'SetupDiGetDeviceInterfaceDetailW', nargs: 6 },
+  { name: 'SetupDiOpenDevRegKey', nargs: 6 },
+  { name: 'SetupDiOpenDeviceInterfaceW', nargs: 4 },
+  { name: 'RegisterDeviceNotificationW', nargs: 3 },
+  { name: 'UnregisterDeviceNotification', nargs: 1 },
   // USER32 — rect subtraction used by Task Manager update-region math
   { name: 'SubtractRect', nargs: 3 },
   // USER32 — keyboard layout lookup (Tetravex asks before GetKeyState dispatch)
