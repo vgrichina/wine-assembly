@@ -18,6 +18,14 @@ const ORGANIC_ART_D3DRM_SMOKE = {
   extraArgs: ['--args=/s', '--quiet-blocks'],
   timeoutMs: 30000,
 };
+const VOLUME_CONTROL_SMOKE = {
+  // sndvol32 creates a tiny hidden owner first and shows the mixer dialog via
+  // SW_SHOWDEFAULT. Keep it open and capture the dialog back-canvas directly.
+  maxBatches: 140, batchSize: 5000,
+  extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+  captureHwnd: 0x10002, captureBatch: 120, captureStopBatch: 121,
+  timeoutMs: 90000,
+};
 
 // Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
 // topShare = fraction of pixels covered by the most common color. A PNG is
@@ -92,7 +100,8 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging', expectedCrash: 'not a current-stage target' },
   { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview' },
   { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal', expectedCrash: 'not a current-stage target' },
-  { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control' },
+  { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control',
+    ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
   { exe: 'test/binaries/win98-apps/explorer.exe', name: 'Explorer (98)' },
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
@@ -104,10 +113,12 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config', knownBadRender: 'not meaningful/fixable on web at current stage' },
   { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup', knownBadRender: 'not a current-stage target' },
   { exe: 'test/binaries/win98-apps/notepad98.exe', name: 'Notepad (98)' },
-  { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)' },
+  { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)',
+    ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/telnet.exe', name: 'Telnet' },
   // XP apps
-  { exe: 'test/binaries/xp/claass.exe', name: 'Volume Control (XP)' },
+  { exe: 'test/binaries/xp/claass.exe', name: 'Volume Control (XP)',
+    ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/xp/sndrec32.exe', name: 'Sound Recorder (XP)' },
   { exe: 'test/binaries/xp/xp_eos.exe', name: 'XP End of Life' },
   // Entertainment Pack extras
