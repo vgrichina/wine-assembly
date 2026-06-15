@@ -164,7 +164,7 @@
 
   ;; 163: GetObjectA
   (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
+    (local $tmp i32) (local $bits_wa i32) (local $bpp i32)
     (if (i32.gt_u (local.get $arg1) (i32.const 0))
     (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $arg1))))
     ;; Try to fill BITMAP struct if it's a bitmap object
@@ -176,10 +176,23 @@
     (then
     (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $tmp))  ;; bmWidth
     (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (call $host_gdi_get_object_h (local.get $arg0))) ;; bmHeight
+    (local.set $bpp (call $host_gdi_get_object_bpp (local.get $arg0)))
+    (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (i32.const 32))))
     (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
-    (i32.mul (local.get $tmp) (i32.const 4))) ;; bmWidthBytes (assuming 32bpp)
+      (i32.shl
+        (i32.shr_u
+          (i32.add (i32.mul (local.get $tmp) (local.get $bpp)) (i32.const 31))
+          (i32.const 5))
+        (i32.const 2))) ;; bmWidthBytes, DWORD-aligned
     (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))    ;; bmPlanes
-    (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (i32.const 32))   ;; bmBitsPixel
+    (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (local.get $bpp)) ;; bmBitsPixel
+    (local.set $bits_wa (call $host_gdi_get_object_bits (local.get $arg0)))
+    (if (local.get $bits_wa)
+      (then
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 20))
+          (i32.add
+            (i32.sub (local.get $bits_wa) (global.get $GUEST_BASE))
+            (global.get $image_base)))))
     ))))
     (global.set $eax (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)

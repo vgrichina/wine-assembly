@@ -334,6 +334,8 @@
         (then (global.set $child_create_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0028))
         (then (global.set $dialog_cbt_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0029))
+        (then (global.set $createwnd_nccreate_ret_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 

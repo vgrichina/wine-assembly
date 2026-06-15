@@ -4211,9 +4211,30 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 323: lstrcmpiW — STUB: unimplemented
+  ;; 323: lstrcmpiW(lpString1, lpString2) → int, ASCII case-insensitive
   (func $handle_lstrcmpiW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $p1 i32) (local $p2 i32) (local $c1 i32) (local $c2 i32)
+    (local.set $p1 (call $g2w (local.get $arg0)))
+    (local.set $p2 (call $g2w (local.get $arg1)))
+    (block $done (loop $cmp
+      (local.set $c1 (i32.load16_u (local.get $p1)))
+      (local.set $c2 (i32.load16_u (local.get $p2)))
+      (if (i32.and (i32.ge_u (local.get $c1) (i32.const 0x41)) (i32.le_u (local.get $c1) (i32.const 0x5A)))
+        (then (local.set $c1 (i32.or (local.get $c1) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $c2) (i32.const 0x41)) (i32.le_u (local.get $c2) (i32.const 0x5A)))
+        (then (local.set $c2 (i32.or (local.get $c2) (i32.const 0x20)))))
+      (if (i32.lt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const -1))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+      (if (i32.gt_u (local.get $c1) (local.get $c2))
+        (then (global.set $eax (i32.const 1))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+      (br_if $done (i32.eqz (local.get $c1)))
+      (local.set $p1 (i32.add (local.get $p1) (i32.const 2)))
+      (local.set $p2 (i32.add (local.get $p2) (i32.const 2)))
+      (br $cmp)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 324: CharNextW — advance by one wide char

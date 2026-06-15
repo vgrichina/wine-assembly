@@ -122,6 +122,7 @@ const extra = [
   { name: 'LoadMenuW', nargs: 2 },
   { name: 'MessageBoxW', nargs: 4 },
   { name: 'SetWindowTextW', nargs: 2 },
+  { name: 'SetWindowsHookA', nargs: 2 },
   { name: 'GetWindowTextW', nargs: 3 },
   { name: 'SendMessageW', nargs: 4 },
   { name: 'PostMessageW', nargs: 4 },

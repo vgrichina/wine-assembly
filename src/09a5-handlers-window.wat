@@ -576,6 +576,50 @@
         (drop (call $wat_wndproc_dispatch
           (local.get $hwnd) (i32.const 0x0001) (i32.const 0)
           (i32.add (global.get $image_base) (i32.const 0x100))))))
+    ;; COMCTL32's CreateToolbarEx queries GetWindowLong(hwnd, 0)
+    ;; immediately after CreateWindowExA returns. Let the registered toolbar
+    ;; wndproc run WM_NCCREATE/WM_CREATE synchronously so it can install that
+    ;; state before the caller asks for it.
+    (if (i32.and
+          (i32.eqz (global.get $cbt_hook_proc))
+          (i32.and
+            (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+            (i32.and
+              (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x6c6f6f74)) ;; "tool"
+              (i32.and
+                (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                        (i32.const 0x77726162)) ;; "barw"
+                (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                        (i32.const 0x6f646e69)))))) ;; "indo"
+      (then
+        (local.set $tmp (call $wnd_table_get (local.get $hwnd)))
+        (if (i32.and
+              (i32.ne (local.get $tmp) (i32.const 0))
+              (i32.lt_u (local.get $tmp) (i32.const 0xFFFF0000)))
+          (then
+            (global.set $pending_child_create (i32.const 0))
+            (global.set $createwnd_saved_hwnd (local.get $hwnd))
+            (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (i32.const 0x0081))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (local.get $hwnd))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+            (call $gs32 (global.get $esp) (global.get $createwnd_nccreate_ret_thunk))
+            (global.set $eax (local.get $hwnd))
+            (global.set $eip (local.get $tmp))
+            (global.set $steps (i32.const 0))
+            (return)))))
     ;; If a CBT hook is installed, fire HCBT_CREATEWND for this child so MFC
     ;; (and anything else using per-hwnd subclassing) can swap in its real
     ;; wndproc via SetWindowLongA before we start delivering messages.

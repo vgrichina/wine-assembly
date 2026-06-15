@@ -146,6 +146,10 @@
   (import "host" "gdi_create_dib_section" (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
   ;; lpBits_wa, JS re-reads on every BitBlt source resolution so the guest's in-place draws are visible.
+  (import "host" "gdi_get_object_bits" (func $host_gdi_get_object_bits (param i32) (result i32)))
+  ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
+  (import "host" "gdi_get_object_bpp" (func $host_gdi_get_object_bpp (param i32) (result i32)))
+  ;; gdi_get_object_bpp(hBitmap) → bitmap bits-per-pixel, or 0 if unknown.
   (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))
   (import "host" "gdi_delete_object" (func $host_gdi_delete_object (param i32) (result i32)))
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
@@ -983,6 +987,7 @@
   (global $child_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Child CBT hook → dispatch WM_CREATE (CACA0026)
   (global $child_create_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_CREATE returned → hand hwnd back (CACA0027)
   (global $dialog_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Dialog CBT hook → WM_INITDIALOG/return (CACA0028)
+  (global $createwnd_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; WM_NCCREATE returned → dispatch WM_CREATE (CACA0029)
   (global $child_cbt_saved_hwnd (mut i32) (i32.const 0))
   (global $child_cbt_saved_ret  (mut i32) (i32.const 0))
   (global $dialog_cbt_saved_hwnd (mut i32) (i32.const 0))

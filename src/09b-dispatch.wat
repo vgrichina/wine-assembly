@@ -184,6 +184,29 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
 
+    ;; CACA0029: WM_NCCREATE returned — dispatch WM_CREATE with the same
+    ;; CREATESTRUCT while CreateWindowExA's caller stack is still live.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0029))
+      (then
+        (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT.
+        ;; saved_ret + saved_hwnd remain below these args for CACA0001.
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x0001))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $arg0))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+        (global.set $eip (call $wnd_table_get (local.get $arg0)))
+        (if (i32.eqz (global.get $eip))
+          (then (global.set $eip (global.get $wndproc_addr))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     ;; CACA0028: dialog CBT hook returned → dispatch WM_INITDIALOG or
     ;; return the modeless dialog HWND. This mirrors CreateDialogParamA's
     ;; direct path, but lets MFC's WH_CBT hook attach m_hWnd first.
