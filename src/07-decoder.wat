@@ -895,11 +895,40 @@
                 (else (call $emit_load8 (global.get $mr_reg))))))
           (br $decode)))
 
+      ;; ---- 0x8C: MOV r/m16, Sreg ----
+      ;; Flat Win32 code occasionally snapshots SS/CS/FS selectors during CRT
+      ;; startup. Report conventional ring-3 selector values; the emulator
+      ;; still uses flat linear addressing for actual memory accesses.
+      (if (i32.eq (local.get $op) (i32.const 0x8C))
+        (then
+          (call $decode_modrm)
+          (local.set $imm (i32.const 0x23)) ;; ES/SS/DS
+          (if (i32.eq (global.get $mr_reg) (i32.const 1))
+            (then (local.set $imm (i32.const 0x1B)))) ;; CS
+          (if (i32.eq (global.get $mr_reg) (i32.const 4))
+            (then (local.set $imm (i32.const 0x3B)))) ;; FS
+          (if (i32.eq (global.get $mr_reg) (i32.const 5))
+            (then (local.set $imm (i32.const 0)))) ;; GS unused
+          (if (i32.eq (global.get $mr_mod) (i32.const 3))
+            (then
+              (call $te (i32.const 236) (global.get $mr_val))
+              (call $te_raw (local.get $imm)))
+            (else (call $emit_store16_imm (local.get $imm))))
+          (br $decode)))
+
       ;; ---- 0x8D: LEA ----
       (if (i32.eq (local.get $op) (i32.const 0x8D))
         (then
           (call $decode_modrm)
           (call $emit_lea (global.get $mr_reg))
+          (br $decode)))
+
+      ;; ---- 0x8E: MOV Sreg, r/m16 ----
+      ;; Segment loads are ignored in flat mode. Decode ModRM so displacements
+      ;; are consumed and execution continues at the correct next EIP.
+      (if (i32.eq (local.get $op) (i32.const 0x8E))
+        (then
+          (call $decode_modrm)
           (br $decode)))
 
       ;; ---- 0xA0-0xA3: MOV AL/EAX, [abs] / MOV [abs], AL/EAX ----
