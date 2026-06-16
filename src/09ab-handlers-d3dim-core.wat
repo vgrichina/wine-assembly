@@ -574,6 +574,35 @@
       (local.get $count))
     (global.set $eax (i32.const 0)))
 
+  (func $d3dim_vb_draw_indexed_primitive
+    (param $this i32) (param $primType i32) (param $vb i32) (param $start i32) (param $count i32)
+    (param $indices i32) (param $index_count i32)
+    (local $entry i32) (local $data_g i32) (local $size i32) (local $fvf i32)
+    (local $stride i32) (local $max_count i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $vb)) (i32.eqz (local.get $count)))
+          (i32.or (i32.eqz (local.get $indices)) (i32.eqz (local.get $index_count))))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $vb)))
+    (local.set $data_g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    (local.set $fvf (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (local.set $stride (call $d3dim_fvf_stride (local.get $fvf)))
+    (if (i32.or (i32.ne (local.get $stride) (i32.const 32))
+                (i32.eqz (i32.and (local.get $fvf) (i32.const 0x0004))))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $max_count (i32.div_u (local.get $size) (local.get $stride)))
+    (if (i32.ge_u (local.get $start) (local.get $max_count))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.gt_u (local.get $count) (i32.sub (local.get $max_count) (local.get $start)))
+      (then (local.set $count (i32.sub (local.get $max_count) (local.get $start)))))
+    (call $d3dim_draw_indexed_primitive
+      (local.get $this) (local.get $primType) (i32.const 3)
+      (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
+      (local.get $count)
+      (local.get $indices) (local.get $index_count))
+    (global.set $eax (i32.const 0)))
+
   ;; ── Material/background state ─────────────────────────────────
   ;; Material objects keep a private D3DMATERIAL copy at entry+8, with the
   ;; stored byte count at entry+12. Legacy material handles are DX slot ids.
