@@ -1359,6 +1359,7 @@
 
   ;; IDirect3DExecuteBuffer_Unlock — 1 args (incl. this)
   (func $handle_IDirect3DExecuteBuffer_Unlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_execbuf_cache_refresh (local.get $arg0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1564,11 +1565,7 @@
 
   ;; IDirect3DTexture_Load — 2 args (incl. this)
   (func $handle_IDirect3DTexture_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32)
-    (local.set $dst (call $dx_from_this (local.get $arg0)))
-    (if (local.get $arg1) (then
-      (local.set $src (call $dx_from_this (local.get $arg1)))
-      (i32.store (i32.add (local.get $dst) (i32.const 12)) (call $dx_slot_of (local.get $src)))))
+    (call $d3dim_texture_load (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -1618,10 +1615,6 @@
 
   ;; IDirect3DTexture2_Load — 2 args (incl. this)
   (func $handle_IDirect3DTexture2_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32)
-    (local.set $dst (call $dx_from_this (local.get $arg0)))
-    (if (local.get $arg1) (then
-      (local.set $src (call $dx_from_this (local.get $arg1)))
-      (i32.store (i32.add (local.get $dst) (i32.const 12)) (call $dx_slot_of (local.get $src)))))
+    (call $d3dim_texture_load (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
