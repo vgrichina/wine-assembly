@@ -485,6 +485,86 @@
     (if (i32.eqz (local.get $stride)) (then (local.set $stride (i32.const 32))))
     (local.get $stride))
 
+  (func $d3dim_fvf_vtxtype (param $fvf i32) (result i32)
+    (if (i32.and (local.get $fvf) (i32.const 0x0004))
+      (then (return (i32.const 3)))) ;; XYZRHW -> TLVERTEX
+    (if (i32.and (local.get $fvf) (i32.const 0x0002))
+      (then
+        (if (i32.or (i32.and (local.get $fvf) (i32.const 0x0040))
+                    (i32.and (local.get $fvf) (i32.const 0x0080)))
+          (then (return (i32.const 2)))) ;; diffuse/specular -> LVERTEX
+        (return (i32.const 1))))         ;; XYZ[/NORMAL] -> VERTEX
+    (i32.const 0))
+
+  (func $d3dim_pack_fvf_vertices (param $fvf i32) (param $src_g i32) (param $count i32) (result i32)
+    (local $type i32) (local $stride i32) (local $size i32) (local $dst_g i32)
+    (local $src_wa i32) (local $dst_wa i32) (local $i i32) (local $src i32) (local $dst i32)
+    (local $offset i32)
+    (if (i32.or (i32.eqz (local.get $src_g)) (i32.eqz (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $type (call $d3dim_fvf_vtxtype (local.get $fvf)))
+    (if (i32.eqz (local.get $type)) (then (return (i32.const 0))))
+    (local.set $stride (call $d3dim_fvf_stride (local.get $fvf)))
+    (local.set $size (i32.mul (local.get $count) (i32.const 32)))
+    (if (i32.or (i32.eqz (local.get $size)) (i32.gt_u (local.get $size) (i32.const 0x400000)))
+      (then (return (i32.const 0))))
+    (local.set $dst_g (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $dst_g)) (then (return (i32.const 0))))
+    (local.set $src_wa (call $g2w (local.get $src_g)))
+    (local.set $dst_wa (call $g2w (local.get $dst_g)))
+    (call $zero_memory (local.get $dst_wa) (local.get $size))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $src (i32.add (local.get $src_wa) (i32.mul (local.get $i) (local.get $stride))))
+      (local.set $dst (i32.add (local.get $dst_wa) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.eq (local.get $type) (i32.const 3))
+        (then
+          (call $memcpy (local.get $dst) (local.get $src) (i32.const 16))
+          (local.set $offset (i32.const 16))
+          (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0xFFFFFFFF))
+          (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 16))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+          (if (i32.and (local.get $fvf) (i32.const 0x0080)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 20))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+          (if (i32.and (i32.shr_u (local.get $fvf) (i32.const 8)) (i32.const 0xF)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 24))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (i32.store (i32.add (local.get $dst) (i32.const 28))
+              (i32.load (i32.add (local.get $src) (i32.add (local.get $offset) (i32.const 4))))))))
+        (else
+          (call $memcpy (local.get $dst) (local.get $src) (i32.const 12))
+          (local.set $offset (i32.const 12))
+          (if (i32.and (local.get $fvf) (i32.const 0x0010))
+            (then
+              (call $memcpy (i32.add (local.get $dst) (i32.const 12))
+                            (i32.add (local.get $src) (local.get $offset))
+                            (i32.const 12))
+              (local.set $offset (i32.add (local.get $offset) (i32.const 12))))
+            (else
+              (f32.store (i32.add (local.get $dst) (i32.const 20)) (f32.const 1.0))))
+          (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0xFFFFFFFF))
+          (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 16))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+          (if (i32.and (local.get $fvf) (i32.const 0x0080)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 20))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+          (if (i32.and (i32.shr_u (local.get $fvf) (i32.const 8)) (i32.const 0xF)) (then
+            (i32.store (i32.add (local.get $dst) (i32.const 24))
+              (i32.load (i32.add (local.get $src) (local.get $offset))))
+            (i32.store (i32.add (local.get $dst) (i32.const 28))
+              (i32.load (i32.add (local.get $src) (i32.add (local.get $offset) (i32.const 4)))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (local.get $dst_g))
+
   (func $d3dim_create_vb (param $lpDesc i32) (param $ppVB i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
     (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
@@ -1910,14 +1990,40 @@
     (local $rt i32) (local $v_wa i32) (local $i i32) (local $n i32)
     (local $v0 i32) (local $v1 i32) (local $v2 i32)
     (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
-    (local $col i32)
+    (local $col i32) (local $state_guest i32) (local $scratch_g i32) (local $scratch_wa i32) (local $src_wa i32)
+    (local $size i32)
     (if (i32.or (i32.eqz (local.get $lpvVertices)) (i32.eqz (local.get $dwVertexCount)))
       (then (return)))
-    ;; Fail-fast on non-TLVERTEX — until the WVP pipeline is wired into
-    ;; DrawPrimitive, untransformed vertices would render as noise. The
-    ;; crash_unimplemented log names which app hit it and at what EIP.
+    (if (i32.or (i32.lt_u (local.get $vtxType) (i32.const 1))
+                (i32.gt_u (local.get $vtxType) (i32.const 3)))
+      (then (return)))
     (if (i32.ne (local.get $vtxType) (i32.const 3))
-      (then (call $crash_unimplemented (global.get $D3DIM_UNIMPL_DRAW))))
+      (then
+        (local.set $state_guest (call $d3ddev_state (local.get $this)))
+        (if (i32.eqz (local.get $state_guest)) (then (return)))
+        (local.set $size (i32.mul (local.get $dwVertexCount) (i32.const 32)))
+        (if (i32.or (i32.eqz (local.get $size)) (i32.gt_u (local.get $size) (i32.const 0x400000)))
+          (then (return)))
+        (local.set $scratch_g (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $scratch_g)) (then (return)))
+        (call $d3ddev_composite_wvp (local.get $state_guest))
+        (local.set $src_wa (call $g2w (local.get $lpvVertices)))
+        (local.set $scratch_wa (call $g2w (local.get $scratch_g)))
+        (local.set $i (i32.const 0))
+        (block $pdone (loop $plp
+          (br_if $pdone (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
+          (call $d3dim_prepare_draw_vertex
+            (local.get $state_guest)
+            (local.get $vtxType)
+            (i32.add (local.get $src_wa) (i32.mul (local.get $i) (i32.const 32)))
+            (i32.add (local.get $scratch_wa) (i32.mul (local.get $i) (i32.const 32))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $plp)))
+        (call $d3dim_draw_primitive
+          (local.get $this) (local.get $primType) (i32.const 3)
+          (local.get $scratch_g) (local.get $dwVertexCount))
+        (call $heap_free (local.get $scratch_g))
+        (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
     (local.set $v_wa (call $g2w (local.get $lpvVertices)))

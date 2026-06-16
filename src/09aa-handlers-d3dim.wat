@@ -816,34 +816,34 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7::DrawPrimitive(primType, fvf, lpvVerts, dwVtxCount, dwFlags)
-  ;; DX7 replaces the explicit vtxType enum with an FVF bitfield. For the
-  ;; subset we rasterize (XYZRHW-bearing "TL" layout), the FVF is 0x104 =
-  ;; D3DFVF_XYZRHW|D3DFVF_DIFFUSE (16 bytes, no tex coords) or 0x1C4 with 2D
-  ;; tex coords. We detect XYZRHW and treat as TLVERTEX; other FVFs are skipped.
+  ;; DX7 replaces the explicit vtxType enum with an FVF bitfield. Pack FVF
+  ;; records into the 32-byte legacy layouts consumed by the shared renderer.
   (func $handle_IDirect3DDevice7_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dwVertexCount i32) (local $vtxType i32)
+    (local $dwVertexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
-    ;; D3DFVF_XYZRHW = 0x0004 — presence ⇒ treat as TLVERTEX for Phase 2.
-    (local.set $vtxType (i32.const 0))
-    (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
-    (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
-      (local.get $arg3) (local.get $dwVertexCount))
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
+    (local.set $packed (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (if (local.get $packed) (then
+      (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+        (local.get $packed) (local.get $dwVertexCount))
+      (call $heap_free (local.get $packed))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; IDirect3DDevice7_DrawIndexedPrimitive — 7 args (incl. this)
   (func $handle_IDirect3DDevice7_DrawIndexedPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32) (local $vtxType i32)
+    (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $lpwIndices    (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (local.set $vtxType (i32.const 0))
-    (if (i32.and (local.get $arg2) (i32.const 0x0002)) (then (local.set $vtxType (i32.const 1))))
-    (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
-    (call $d3dim_draw_indexed_primitive
-      (local.get $arg0) (local.get $arg1) (local.get $vtxType)
-      (local.get $arg3) (local.get $dwVertexCount)
-      (local.get $lpwIndices) (local.get $dwIndexCount))
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
+    (local.set $packed (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (if (local.get $packed) (then
+      (call $d3dim_draw_indexed_primitive
+        (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+        (local.get $packed) (local.get $dwVertexCount)
+        (local.get $lpwIndices) (local.get $dwIndexCount))
+      (call $heap_free (local.get $packed))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
