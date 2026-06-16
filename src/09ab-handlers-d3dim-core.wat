@@ -28,6 +28,8 @@
   ;;   +3296  execute-buffer clipped TL scratch         (64)
   ;;   +3360  v1 STATETRANSFORM matrix handles W,V,P    (12)
   ;;   +3376  current D3DMATERIAL7 copy                 (68)
+  ;;   +3448  D3DLIGHT7 table guest ptr                 (i32, 4)
+  ;;   +3452  D3DLIGHT7 enable bitmask                  (i32, 4)
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
@@ -41,6 +43,8 @@
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
   (global $D3DIM_OFF_XFORM_HANDLES i32 (i32.const 3360))
   (global $D3DIM_OFF_D3D7_MAT  i32 (i32.const 3376))
+  (global $D3DIM_OFF_D3D7_LIGHTS i32 (i32.const 3448))
+  (global $D3DIM_OFF_D3D7_LIGHT_ENABLE i32 (i32.const 3452))
   (global $D3DIM_OFF_CLIP_STATUS i32 (i32.const 4000))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
@@ -524,6 +528,81 @@
               (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT)))
               (i32.const 68)))
       (else (call $zero_memory (call $g2w (local.get $lpMat)) (i32.const 68))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_light_table (param $state i32) (result i32)
+    (local $sw i32) (local $table i32)
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $table (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHTS))))
+    (if (i32.eqz (local.get $table)) (then
+      (local.set $table (call $heap_alloc (i32.const 832)))
+      (if (local.get $table) (then
+        (call $zero_memory (call $g2w (local.get $table)) (i32.const 832))
+        (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHTS))
+          (local.get $table))))))
+    (local.get $table))
+
+  (func $d3dim_device7_set_light (param $this i32) (param $idx i32) (param $lpLight i32)
+    (local $state i32) (local $table i32)
+    (if (i32.eqz (local.get $lpLight)) (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.ge_u (local.get $idx) (i32.const 8)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (local.set $table (call $d3dim_device7_light_table (local.get $state)))
+    (if (local.get $table)
+      (then (call $memcpy
+              (call $g2w (i32.add (local.get $table) (i32.mul (local.get $idx) (i32.const 104))))
+              (call $g2w (local.get $lpLight))
+              (i32.const 104))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_get_light (param $this i32) (param $idx i32) (param $lpLight i32)
+    (local $state i32) (local $table i32)
+    (if (i32.eqz (local.get $lpLight)) (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.ge_u (local.get $idx) (i32.const 8))
+      (then
+        (call $zero_memory (call $g2w (local.get $lpLight)) (i32.const 104))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then
+        (local.set $table
+          (i32.load
+            (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_D3D7_LIGHTS))))))
+    (if (local.get $table)
+      (then (call $memcpy
+              (call $g2w (local.get $lpLight))
+              (call $g2w (i32.add (local.get $table) (i32.mul (local.get $idx) (i32.const 104))))
+              (i32.const 104)))
+      (else (call $zero_memory (call $g2w (local.get $lpLight)) (i32.const 104))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_light_enable (param $this i32) (param $idx i32) (param $enable i32)
+    (local $state i32) (local $sw i32) (local $mask i32) (local $bit i32)
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.and (local.get $state) (i32.lt_u (local.get $idx) (i32.const 32))) (then
+      (local.set $sw (call $g2w (local.get $state)))
+      (local.set $mask (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))))
+      (local.set $bit (i32.shl (i32.const 1) (local.get $idx)))
+      (if (local.get $enable)
+        (then (local.set $mask (i32.or (local.get $mask) (local.get $bit))))
+        (else (local.set $mask (i32.and (local.get $mask) (i32.xor (local.get $bit) (i32.const -1))))))
+      (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))
+        (local.get $mask))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_get_light_enable (param $this i32) (param $idx i32) (param $out i32)
+    (local $state i32) (local $mask i32) (local $val i32)
+    (if (i32.eqz (local.get $out)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.and (local.get $state) (i32.lt_u (local.get $idx) (i32.const 32))) (then
+      (local.set $mask
+        (i32.load
+          (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $idx)))
+        (then (local.set $val (i32.const 1))))))
+    (call $gs32 (local.get $out) (local.get $val))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_material_pack_color (param $mat_wa i32) (result i32)
