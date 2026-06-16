@@ -209,8 +209,12 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist' },
   { exe: 'test/binaries/dx-sdk/bin/boids.exe', name: 'DX5 D3DIM Boids' },
   { exe: 'test/binaries/dx-sdk/bin/globe.exe', name: 'DX5 D3DIM Globe',
-    // D3DRM loads/parses mesh and texture data before the first visible execute-buffer present.
-    maxBatches: 7000, timeoutMs: 15000 },
+    // D3DRM loads/parses mesh and texture data before the first visible
+    // execute-buffer present; capture after the first primary Blt.
+    maxBatches: 9000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    captureBatch: 8500, captureStopBatch: 8501,
+    timeoutMs: 30000 },
   { exe: 'test/binaries/dx-sdk/bin/bellhop.exe', name: 'DX5 D3DIM Bellhop' },
   { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer' },
   { exe: 'test/binaries/dx-sdk/bin/donut.exe', name: 'DX5 Donut' },
@@ -288,11 +292,15 @@ function runExe(testCase, pngPath) {
   }
 
   const extraArgs = [...(testCase.extraArgs || [])];
-  const useFinalPng = pngPath && !testCase.captureHwnd;
-  if (pngPath && testCase.captureHwnd) {
+  const hasScheduledCapture = pngPath && (testCase.captureHwnd || testCase.captureBatch);
+  const useFinalPng = pngPath && !hasScheduledCapture;
+  if (hasScheduledCapture) {
     const captureBatch = testCase.captureBatch || testCase.maxBatches || MAX_BATCHES;
     const stopBatch = testCase.captureStopBatch || (captureBatch + 1);
-    const captureSpec = `${captureBatch}:hwnd-png-pixels:${testCase.captureHwnd}:${pngPath},${stopBatch}:stop`;
+    const captureAction = testCase.captureHwnd
+      ? `hwnd-png-pixels:${testCase.captureHwnd}:${pngPath}`
+      : `png-pixels:${pngPath}`;
+    const captureSpec = `${captureBatch}:${captureAction},${stopBatch}:stop`;
     const inputIdx = extraArgs.findIndex(a => a.startsWith('--input='));
     if (inputIdx >= 0) {
       extraArgs[inputIdx] += `,${captureSpec}`;
