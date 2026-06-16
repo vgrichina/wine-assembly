@@ -2271,3 +2271,35 @@
       (i32.store (i32.add (local.get $wa) (i32.const 176)) (i32.const 1))
       (i32.store (i32.add (local.get $wa) (i32.const 180)) (i32.const 2048))
       (i32.store (i32.add (local.get $wa) (i32.const 184)) (i32.const 2048)))))
+
+  ;; D3DDEVICEDESC7 has no dwSize member; IDirect3DDevice7::GetCaps receives
+  ;; a fixed 236-byte buffer. Keep the values close to the legacy HEL caps but
+  ;; include the DX7-only texture/FVF limits that samples commonly probe.
+  (func $d3dim_fill_device_desc7 (param $desc i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $desc)) (then (return)))
+    (local.set $wa (call $g2w (local.get $desc)))
+    (call $zero_memory (local.get $wa) (i32.const 236))
+    (i32.store (local.get $wa) (i32.const 0x02A50))                         ;; dwDevCaps
+    (call $fill_primcaps (i32.add (local.get $desc) (i32.const 4)))          ;; dpcLineCaps
+    (call $fill_primcaps (i32.add (local.get $desc) (i32.const 60)))         ;; dpcTriCaps
+    (i32.store (i32.add (local.get $wa) (i32.const 116)) (i32.const 0xD00))  ;; DeviceRenderBitDepth
+    (i32.store (i32.add (local.get $wa) (i32.const 120)) (i32.const 0x500))  ;; DeviceZBufferBitDepth
+    (i32.store (i32.add (local.get $wa) (i32.const 124)) (i32.const 1))      ;; dwMinTextureWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 128)) (i32.const 1))      ;; dwMinTextureHeight
+    (i32.store (i32.add (local.get $wa) (i32.const 132)) (i32.const 2048))   ;; dwMaxTextureWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 136)) (i32.const 2048))   ;; dwMaxTextureHeight
+    (i32.store (i32.add (local.get $wa) (i32.const 140)) (i32.const 2048))   ;; dwMaxTextureRepeat
+    (i32.store (i32.add (local.get $wa) (i32.const 144)) (i32.const 2048))   ;; dwMaxTextureAspectRatio
+    (i32.store (i32.add (local.get $wa) (i32.const 148)) (i32.const 1))      ;; dwMaxAnisotropy
+    (f32.store (i32.add (local.get $wa) (i32.const 152)) (f32.const -8192.0))
+    (f32.store (i32.add (local.get $wa) (i32.const 156)) (f32.const -8192.0))
+    (f32.store (i32.add (local.get $wa) (i32.const 160)) (f32.const 8192.0))
+    (f32.store (i32.add (local.get $wa) (i32.const 164)) (f32.const 8192.0))
+    (f32.store (i32.add (local.get $wa) (i32.const 168)) (f32.const 0.0))
+    (i32.store (i32.add (local.get $wa) (i32.const 176)) (i32.const 8))       ;; dwFVFCaps: 8 texcoord sets
+    (i32.store (i32.add (local.get $wa) (i32.const 180)) (i32.const 0x003FF));; dwTextureOpCaps
+    (i32.store16 (i32.add (local.get $wa) (i32.const 184)) (i32.const 1))    ;; wMaxTextureBlendStages
+    (i32.store16 (i32.add (local.get $wa) (i32.const 186)) (i32.const 1))    ;; wMaxSimultaneousTextures
+    (i32.store (i32.add (local.get $wa) (i32.const 188)) (i32.const 8))      ;; dwMaxActiveLights
+    (f32.store (i32.add (local.get $wa) (i32.const 192)) (f32.const 1.0)))

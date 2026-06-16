@@ -702,6 +702,7 @@
 
   ;; IDirect3DDevice7_GetCaps — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_fill_device_desc7 (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
