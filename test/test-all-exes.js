@@ -222,7 +222,12 @@ const TEST_CASES = [
     maxBatches: 1800, extraArgs: ['--no-close'], timeoutMs: 30000 },
   // Plus! 98 screensavers — pure GDI
   { exe: 'test/binaries/screensavers/CATHY.SCR', name: 'Cathy (screensaver)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)',
+    // Worker thread animates from a captured desktop DIB; give it enough
+    // slices after the main thread reaches GetMessage.
+    maxBatches: 120, batchSize: 10000,
+    extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000', '--thread-slices=500'],
+    timeoutMs: 90000 },
   { exe: 'test/binaries/screensavers/DOONBURY.SCR', name: 'Doonesbury (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/FOXTROT.SCR', name: 'FoxTrot (screensaver)', extraArgs: ['--args=/s'] },
   { exe: 'test/binaries/screensavers/GA_SAVER.SCR', name: 'Garfield (screensaver)', extraArgs: ['--args=/s'] },
