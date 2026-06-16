@@ -137,7 +137,7 @@ const interfaces = [
     { name: 'DrawIndexedPrimitiveStrided',   nargs: 8 },
     { name: 'DrawPrimitiveVB',               nargs: 6 },
     { name: 'DrawIndexedPrimitiveVB',        nargs: 7 },
-    { name: 'ComputeSphereVisibility',       nargs: 5 },
+    { name: 'ComputeSphereVisibility',       nargs: 6 },
     { name: 'GetTexture',                    nargs: 3 },
     { name: 'SetTexture',                    nargs: 3, body: 'SET_TEX' },
     { name: 'GetTextureStageState',          nargs: 4 },

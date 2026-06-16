@@ -4197,8 +4197,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   (func $handle_IDirect3DDevice3_ComputeSphereVisibility (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $out i32) (local $i i32)
+    (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (local.get $out) (then
+      (block $done (loop $lp
+        (br_if $done (i32.ge_u (local.get $i) (local.get $arg3)))
+        (call $gs32 (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 4))) (i32.const 0))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)))))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   (func $handle_IDirect3DDevice3_GetTexture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $d3dim_get_texture (local.get $arg0) (local.get $arg1) (local.get $arg2))
