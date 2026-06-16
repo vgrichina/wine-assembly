@@ -27,6 +27,7 @@
   ;;   +3200  indexed-draw TL vertex scratch           (96)
   ;;   +3296  execute-buffer clipped TL scratch         (64)
   ;;   +3360  v1 STATETRANSFORM matrix handles W,V,P    (12)
+  ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
   (global $D3DIM_OFF_CUR_VP    i32 (i32.const 2816))
@@ -38,6 +39,7 @@
   (global $D3DIM_OFF_VP_SCALE  i32 (i32.const 3104))
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
   (global $D3DIM_OFF_XFORM_HANDLES i32 (i32.const 3360))
+  (global $D3DIM_OFF_CLIP_STATUS i32 (i32.const 4000))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
   ;; WAT-private scratch area so they cannot collide with low system strings
@@ -298,6 +300,32 @@
         (call $g2w (local.get $lpmat)))))
     (global.set $eax (i32.const 0)))
 
+  (func $d3dim_get_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
+    (local $state i32) (local $slot i32)
+    (if (i32.eqz (local.get $lpmat)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
+    (call $memcpy
+      (call $g2w (local.get $lpmat))
+      (call $g2w (i32.add (local.get $state) (i32.mul (local.get $slot) (i32.const 64))))
+      (i32.const 64))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_multiply_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
+    (local $state i32) (local $sw i32) (local $slot i32) (local $dst_wa i32) (local $tmp_wa i32)
+    (if (i32.eqz (local.get $lpmat)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
+    (local.set $dst_wa (i32.add (local.get $sw) (i32.mul (local.get $slot) (i32.const 64))))
+    (local.set $tmp_wa (i32.add (local.get $sw) (i32.const 3136)))
+    (call $mat4_mul (local.get $tmp_wa) (local.get $dst_wa) (call $g2w (local.get $lpmat)))
+    (call $memcpy (local.get $dst_wa) (local.get $tmp_wa) (i32.const 64))
+    (call $d3dim_bind_transform_handle (local.get $this) (local.get $xtype) (i32.const 0))
+    (global.set $eax (i32.const 0)))
+
   (func $d3dim_set_render_state (param $this i32) (param $rs i32) (param $val i32)
     (local $state i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
@@ -309,6 +337,19 @@
               (local.get $val))))
     (global.set $eax (i32.const 0)))
 
+  (func $d3dim_get_render_state (param $this i32) (param $rs i32) (param $out i32)
+    (local $state i32) (local $val i32)
+    (if (i32.eqz (local.get $out)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.and (i32.ne (local.get $state) (i32.const 0))
+                 (i32.lt_u (local.get $rs) (i32.const 512)))
+      (then (local.set $val
+              (call $gl32
+                (i32.add (local.get $state)
+                  (i32.add (i32.const 256) (i32.mul (local.get $rs) (i32.const 4))))))))
+    (call $gs32 (local.get $out) (local.get $val))
+    (global.set $eax (i32.const 0)))
+
   (func $d3dim_set_light_state (param $this i32) (param $ls i32) (param $val i32)
     (local $state i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
@@ -318,6 +359,41 @@
               (i32.add (local.get $state)
                 (i32.add (i32.const 2304) (i32.mul (local.get $ls) (i32.const 4))))
               (local.get $val))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_get_light_state (param $this i32) (param $ls i32) (param $out i32)
+    (local $state i32) (local $val i32)
+    (if (i32.eqz (local.get $out)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.and (i32.ne (local.get $state) (i32.const 0))
+                 (i32.lt_u (local.get $ls) (i32.const 128)))
+      (then (local.set $val
+              (call $gl32
+                (i32.add (local.get $state)
+                  (i32.add (i32.const 2304) (i32.mul (local.get $ls) (i32.const 4))))))))
+    (call $gs32 (local.get $out) (local.get $val))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_set_clip_status (param $this i32) (param $lpClip i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $lpClip)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_CLIP_STATUS)))
+              (call $g2w (local.get $lpClip))
+              (i32.const 24))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_get_clip_status (param $this i32) (param $lpClip i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $lpClip)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w (local.get $lpClip))
+              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_CLIP_STATUS)))
+              (i32.const 24))))
     (global.set $eax (i32.const 0)))
 
   ;; D3D execute buffers may PROCESSVERTICES in-place every frame. Keep the
@@ -512,6 +588,37 @@
       (call $gs32 (i32.add (local.get $state) (global.get $D3DIM_OFF_TEX_STAGE)) (local.get $slot))))
     (global.set $eax (i32.const 0)))
 
+  (func $d3dim_get_texture (param $this i32) (param $stage i32) (param $ppTex i32)
+    (local $state i32) (local $slot i32) (local $tex_entry i32) (local $tex_guest i32)
+    (if (i32.eqz (local.get $ppTex)) (then (global.set $eax (i32.const 0x80004003)) (return)))
+    (if (i32.ne (local.get $stage) (i32.const 0)) (then
+      (call $gs32 (local.get $ppTex) (i32.const 0))
+      (global.set $eax (i32.const 0))
+      (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then
+      (call $gs32 (local.get $ppTex) (i32.const 0))
+      (global.set $eax (i32.const 0))
+      (return)))
+    (local.set $slot (call $gl32 (i32.add (local.get $state) (global.get $D3DIM_OFF_TEX_STAGE))))
+    (if (i32.eqz (local.get $slot)) (then
+      (call $gs32 (local.get $ppTex) (i32.const 0))
+      (global.set $eax (i32.const 0))
+      (return)))
+    (local.set $tex_entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+    (if (i32.eqz (i32.load (local.get $tex_entry))) (then
+      (call $gs32 (local.get $ppTex) (i32.const 0))
+      (global.set $eax (i32.const 0))
+      (return)))
+    (i32.store (i32.add (local.get $tex_entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $tex_entry) (i32.const 4))) (i32.const 1)))
+    (local.set $tex_guest (i32.add
+      (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (call $gs32 (local.get $ppTex) (local.get $tex_guest))
+    (global.set $eax (i32.const 0)))
+
   ;; SetTextureStageState(stage, type, value). Stored at +D3DIM_OFF_TSS_STATE
   ;; in 32-byte per-stage blocks (8 stages × 32 bytes = 256, indexed by `type`).
   (func $d3dim_set_tss (param $this i32) (param $stage i32) (param $type i32) (param $val i32)
@@ -526,6 +633,23 @@
                   (i32.add (i32.mul (local.get $stage) (i32.const 32))
                            (i32.mul (local.get $type) (i32.const 4)))))
               (local.get $val))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_get_tss (param $this i32) (param $stage i32) (param $type i32) (param $out i32)
+    (local $state i32) (local $val i32)
+    (if (i32.eqz (local.get $out)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $state) (i32.const 0))
+                   (i32.lt_u (local.get $stage) (i32.const 8)))
+          (i32.lt_u (local.get $type) (i32.const 8)))
+      (then (local.set $val
+              (call $gl32
+                (i32.add (local.get $state)
+                  (i32.add (global.get $D3DIM_OFF_TSS_STATE)
+                    (i32.add (i32.mul (local.get $stage) (i32.const 32))
+                             (i32.mul (local.get $type) (i32.const 4)))))))))
+    (call $gs32 (local.get $out) (local.get $val))
     (global.set $eax (i32.const 0)))
 
   ;; ── Current viewport binding ──────────────────────────────────

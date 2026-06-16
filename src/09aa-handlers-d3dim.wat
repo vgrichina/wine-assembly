@@ -595,7 +595,7 @@
 
   ;; IDirect3DDevice2_GetRenderState — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_GetRenderState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_render_state (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_SetRenderState — 3 args (incl. this)
@@ -605,7 +605,7 @@
 
   ;; IDirect3DDevice2_GetLightState — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_GetLightState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_light_state (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_SetLightState — 3 args (incl. this)
@@ -620,12 +620,12 @@
 
   ;; IDirect3DDevice2_GetTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_GetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_transform (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_MultiplyTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_MultiplyTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_multiply_transform (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_DrawPrimitive — 6 args (incl. this)
@@ -663,32 +663,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 
   ;; D3DCLIPSTATUS round-trip: Set stores 24 bytes (dwFlags, dwStatus, 4 floats)
-  ;; in the per-device state block at offset 4064 (last 32-byte slice of the
-  ;; 4096-byte block). Get reads it back. Not consumed by the rasterizer today
+  ;; in the per-device state block. Get reads it back. Not consumed by the rasterizer today
   ;; but removes a silent data drop so that apps polling Get-after-Set see the
   ;; value they stored.
   (func $handle_IDirect3DDevice2_SetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $state i32)
-    (if (local.get $arg1) (then
-      (local.set $state (call $d3ddev_state (local.get $arg0)))
-      (if (local.get $state)
-        (then (call $memcpy
-                (call $g2w (i32.add (local.get $state) (i32.const 4064)))
-                (call $g2w (local.get $arg1))
-                (i32.const 24))))))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_set_clip_status (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice2_GetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $state i32)
-    (if (local.get $arg1) (then
-      (local.set $state (call $d3ddev_state (local.get $arg0)))
-      (if (local.get $state)
-        (then (call $memcpy
-                (call $g2w (local.get $arg1))
-                (call $g2w (i32.add (local.get $state) (i32.const 4064)))
-                (i32.const 24))))))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_clip_status (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
 
@@ -764,7 +747,7 @@
 
   ;; IDirect3DDevice7_GetTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_GetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_transform (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_SetViewport — 2 args (incl. this)
@@ -774,7 +757,7 @@
 
   ;; IDirect3DDevice7_MultiplyTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_MultiplyTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_multiply_transform (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_GetViewport — 2 args (incl. this)
@@ -851,12 +834,12 @@
 
   ;; IDirect3DDevice7_SetClipStatus — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_SetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_set_clip_status (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_GetClipStatus — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_clip_status (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_DrawPrimitiveStrided — 6 args (incl. this)
@@ -886,7 +869,7 @@
 
   ;; IDirect3DDevice7_GetTexture — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_GetTexture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_texture (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_SetTexture — 3 args (incl. this)
@@ -896,7 +879,7 @@
 
   ;; IDirect3DDevice7_GetTextureStageState — 4 args (incl. this)
   (func $handle_IDirect3DDevice7_GetTextureStageState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_tss (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DDevice7_SetTextureStageState — 4 args (incl. this)
@@ -966,7 +949,7 @@
 
   ;; IDirect3DDevice7_GetRenderState — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_GetRenderState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_render_state (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
 
