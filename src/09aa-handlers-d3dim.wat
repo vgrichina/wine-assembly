@@ -121,12 +121,7 @@
 
   ;; IDirect3D7_CreateVertexBuffer — 4 args (incl. this)
   (func $handle_IDirect3D7_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 22) (global.get $DX_VTBL_D3DVB7)))
-    (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    (call $gs32 (local.get $arg2) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_create_vb7 (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3D7_EnumZBufferFormats — 4 args (incl. this)
@@ -1388,15 +1383,13 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
+      (then (call $d3dim_vb_free_entry (local.get $entry)) (global.set $eax (i32.const 0)))
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DVertexBuffer_Lock — 4 args (incl. this)
   (func $handle_IDirect3DVertexBuffer_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_vb_lock (local.get $arg0) (local.get $arg2) (local.get $arg3))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DVertexBuffer_Unlock — 1 args (incl. this)
@@ -1411,7 +1404,7 @@
 
   ;; IDirect3DVertexBuffer_GetVertexBufferDesc — 2 args (incl. this)
   (func $handle_IDirect3DVertexBuffer_GetVertexBufferDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_vb_get_desc (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DVertexBuffer_Optimize — 3 args (incl. this)
@@ -1441,15 +1434,13 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
+      (then (call $d3dim_vb_free_entry (local.get $entry)) (global.set $eax (i32.const 0)))
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DVertexBuffer7_Lock — 4 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_vb_lock (local.get $arg0) (local.get $arg2) (local.get $arg3))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DVertexBuffer7_Unlock — 1 args (incl. this)
@@ -1464,7 +1455,7 @@
 
   ;; IDirect3DVertexBuffer7_GetVertexBufferDesc — 2 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_GetVertexBufferDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_vb_get_desc (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DVertexBuffer7_Optimize — 3 args (incl. this)

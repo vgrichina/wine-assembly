@@ -463,6 +463,91 @@
       (call $heap_free (local.get $cache_g))
       (i32.store (local.get $tbl) (i32.const 0)))))
 
+  ;; ── Vertex-buffer backing storage ─────────────────────────────
+  ;; DX7 vertex buffers need at least enough guest memory for Lock callers to
+  ;; upload vertices. We store data at entry+8, byte size at +12, a copied
+  ;; D3DVERTEXBUFFERDESC at +16, and cached FVF/vertex count at +20/+24.
+  (func $d3dim_fvf_stride (param $fvf i32) (result i32)
+    (local $stride i32) (local $tex i32)
+    (if (i32.and (local.get $fvf) (i32.const 0x0004))
+      (then (local.set $stride (i32.const 16)))  ;; XYZRHW
+      (else
+        (if (i32.and (local.get $fvf) (i32.const 0x0002))
+          (then (local.set $stride (i32.const 12)))))) ;; XYZ
+    (if (i32.and (local.get $fvf) (i32.const 0x0010))
+      (then (local.set $stride (i32.add (local.get $stride) (i32.const 12)))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0040))
+      (then (local.set $stride (i32.add (local.get $stride) (i32.const 4)))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0080))
+      (then (local.set $stride (i32.add (local.get $stride) (i32.const 4)))))
+    (local.set $tex (i32.and (i32.shr_u (local.get $fvf) (i32.const 8)) (i32.const 0xF)))
+    (local.set $stride (i32.add (local.get $stride) (i32.mul (local.get $tex) (i32.const 8))))
+    (if (i32.eqz (local.get $stride)) (then (local.set $stride (i32.const 32))))
+    (local.get $stride))
+
+  (func $d3dim_create_vb7 (param $lpDesc i32) (param $ppVB i32)
+    (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
+    (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
+    (if (i32.eqz (local.get $ppVB)) (then (global.set $eax (i32.const 0x80004003)) (return)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 22) (global.get $DX_VTBL_D3DVB7)))
+    (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (if (local.get $lpDesc) (then
+      (local.set $desc_size (call $gl32 (local.get $lpDesc)))
+      (if (i32.lt_u (local.get $desc_size) (i32.const 16)) (then (local.set $desc_size (i32.const 16))))
+      (if (i32.gt_u (local.get $desc_size) (i32.const 32)) (then (local.set $desc_size (i32.const 32))))
+      (local.set $fvf (call $gl32 (i32.add (local.get $lpDesc) (i32.const 8))))
+      (local.set $count (call $gl32 (i32.add (local.get $lpDesc) (i32.const 12))))
+      (local.set $desc_g (call $heap_alloc (i32.const 32)))
+      (if (local.get $desc_g) (then
+        (call $zero_memory (call $g2w (local.get $desc_g)) (i32.const 32))
+        (call $memcpy (call $g2w (local.get $desc_g)) (call $g2w (local.get $lpDesc)) (local.get $desc_size))
+        (call $gs32 (local.get $desc_g) (local.get $desc_size))
+        (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $desc_g))))))
+    (local.set $size (i32.mul (call $d3dim_fvf_stride (local.get $fvf)) (local.get $count)))
+    (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 4096))))
+    (if (i32.gt_u (local.get $size) (i32.const 0x400000)) (then (local.set $size (i32.const 0x400000))))
+    (local.set $data_g (call $heap_alloc (local.get $size)))
+    (if (local.get $data_g) (then
+      (call $zero_memory (call $g2w (local.get $data_g)) (local.get $size))
+      (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $data_g))))
+    (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $size))
+    (i32.store (i32.add (local.get $entry) (i32.const 20)) (local.get $fvf))
+    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $count))
+    (call $gs32 (local.get $ppVB) (local.get $obj))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_vb_free_entry (param $entry i32)
+    (local $ptr i32)
+    (local.set $ptr (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (local.set $ptr (i32.load (i32.add (local.get $entry) (i32.const 16))))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (call $dx_free (local.get $entry)))
+
+  (func $d3dim_vb_lock (param $this i32) (param $ppData i32) (param $pSize i32)
+    (local $entry i32) (local $data_g i32) (local $size i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $data_g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    (if (local.get $ppData) (then (call $gs32 (local.get $ppData) (local.get $data_g))))
+    (if (local.get $pSize) (then (call $gs32 (local.get $pSize) (local.get $size))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_vb_get_desc (param $this i32) (param $lpDesc i32)
+    (local $entry i32) (local $desc_g i32) (local $copy_size i32)
+    (if (i32.eqz (local.get $lpDesc)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $desc_g (i32.load (i32.add (local.get $entry) (i32.const 16))))
+    (local.set $copy_size (call $gl32 (local.get $lpDesc)))
+    (if (i32.lt_u (local.get $copy_size) (i32.const 16)) (then (local.set $copy_size (i32.const 16))))
+    (if (i32.gt_u (local.get $copy_size) (i32.const 32)) (then (local.set $copy_size (i32.const 32))))
+    (if (local.get $desc_g)
+      (then (call $memcpy (call $g2w (local.get $lpDesc)) (call $g2w (local.get $desc_g)) (local.get $copy_size)))
+      (else (call $zero_memory (call $g2w (local.get $lpDesc)) (local.get $copy_size))))
+    (call $gs32 (local.get $lpDesc) (local.get $copy_size))
+    (global.set $eax (i32.const 0)))
+
   ;; ── Material/background state ─────────────────────────────────
   ;; Material objects keep a private D3DMATERIAL copy at entry+8, with the
   ;; stored byte count at entry+12. Legacy material handles are DX slot ids.
