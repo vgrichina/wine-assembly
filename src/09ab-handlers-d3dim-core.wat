@@ -693,21 +693,31 @@
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_pack_strided_tl (param $fvf i32) (param $strided i32) (param $count i32) (result i32)
-    (local $size i32) (local $dst_g i32) (local $dst_wa i32) (local $i i32)
+    (local $type i32) (local $size i32) (local $dst_g i32) (local $dst_wa i32) (local $i i32)
     (local $pos_g i32) (local $pos_stride i32) (local $pos_wa i32)
+    (local $norm_g i32) (local $norm_stride i32) (local $norm_wa i32)
     (local $diff_g i32) (local $diff_stride i32) (local $diff_wa i32)
     (local $spec_g i32) (local $spec_stride i32) (local $spec_wa i32)
     (local $tex_g i32) (local $tex_stride i32) (local $tex_wa i32)
     (local $src i32) (local $dst i32)
+    (local.set $type (call $d3dim_fvf_vtxtype (local.get $fvf)))
     (if (i32.or
           (i32.or (i32.eqz (local.get $strided)) (i32.eqz (local.get $count)))
-          (i32.eqz (i32.and (local.get $fvf) (i32.const 0x0004))))
+          (i32.eqz (local.get $type)))
       (then (return (i32.const 0))))
     (local.set $pos_g (call $gl32 (local.get $strided)))
     (local.set $pos_stride (call $gl32 (i32.add (local.get $strided) (i32.const 4))))
     (if (i32.eqz (local.get $pos_g)) (then (return (i32.const 0))))
-    (if (i32.eqz (local.get $pos_stride)) (then (local.set $pos_stride (i32.const 16))))
+    (if (i32.eqz (local.get $pos_stride)) (then
+      (if (i32.eq (local.get $type) (i32.const 3))
+        (then (local.set $pos_stride (i32.const 16)))
+        (else (local.set $pos_stride (i32.const 12))))))
     (local.set $pos_wa (call $g2w (local.get $pos_g)))
+    (if (i32.and (local.get $fvf) (i32.const 0x0010)) (then
+      (local.set $norm_g (call $gl32 (i32.add (local.get $strided) (i32.const 8))))
+      (local.set $norm_stride (call $gl32 (i32.add (local.get $strided) (i32.const 12))))
+      (if (i32.eqz (local.get $norm_stride)) (then (local.set $norm_stride (i32.const 12))))
+      (if (local.get $norm_g) (then (local.set $norm_wa (call $g2w (local.get $norm_g)))))))
     (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
       (local.set $diff_g (call $gl32 (i32.add (local.get $strided) (i32.const 16))))
       (local.set $diff_stride (call $gl32 (i32.add (local.get $strided) (i32.const 20))))
@@ -729,24 +739,35 @@
     (local.set $dst_g (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $dst_g)) (then (return (i32.const 0))))
     (local.set $dst_wa (call $g2w (local.get $dst_g)))
+    (call $zero_memory (local.get $dst_wa) (local.get $size))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $dst (i32.add (local.get $dst_wa) (i32.mul (local.get $i) (i32.const 32))))
       (local.set $src (i32.add (local.get $pos_wa) (i32.mul (local.get $i) (local.get $pos_stride))))
-      (f32.store (local.get $dst) (f32.load (local.get $src)))
-      (f32.store (i32.add (local.get $dst) (i32.const 4)) (f32.load (i32.add (local.get $src) (i32.const 4))))
-      (f32.store (i32.add (local.get $dst) (i32.const 8)) (f32.load (i32.add (local.get $src) (i32.const 8))))
-      (f32.store (i32.add (local.get $dst) (i32.const 12)) (f32.load (i32.add (local.get $src) (i32.const 12))))
+      (if (i32.eq (local.get $type) (i32.const 3))
+        (then
+          (f32.store (local.get $dst) (f32.load (local.get $src)))
+          (f32.store (i32.add (local.get $dst) (i32.const 4)) (f32.load (i32.add (local.get $src) (i32.const 4))))
+          (f32.store (i32.add (local.get $dst) (i32.const 8)) (f32.load (i32.add (local.get $src) (i32.const 8))))
+          (f32.store (i32.add (local.get $dst) (i32.const 12)) (f32.load (i32.add (local.get $src) (i32.const 12)))))
+        (else
+          (f32.store (local.get $dst) (f32.load (local.get $src)))
+          (f32.store (i32.add (local.get $dst) (i32.const 4)) (f32.load (i32.add (local.get $src) (i32.const 4))))
+          (f32.store (i32.add (local.get $dst) (i32.const 8)) (f32.load (i32.add (local.get $src) (i32.const 8))))
+          (if (local.get $norm_wa)
+            (then
+              (local.set $src (i32.add (local.get $norm_wa) (i32.mul (local.get $i) (local.get $norm_stride))))
+              (call $memcpy (i32.add (local.get $dst) (i32.const 12)) (local.get $src) (i32.const 12)))
+            (else
+              (f32.store (i32.add (local.get $dst) (i32.const 20)) (f32.const 1.0))))))
       (if (local.get $diff_wa)
         (then
           (i32.store (i32.add (local.get $dst) (i32.const 16))
             (i32.load (i32.add (local.get $diff_wa) (i32.mul (local.get $i) (local.get $diff_stride))))))
         (else (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0xFFFFFFFF))))
-      (if (local.get $spec_wa)
-        (then
-          (i32.store (i32.add (local.get $dst) (i32.const 20))
-            (i32.load (i32.add (local.get $spec_wa) (i32.mul (local.get $i) (local.get $spec_stride))))))
-        (else (i32.store (i32.add (local.get $dst) (i32.const 20)) (i32.const 0))))
+      (if (local.get $spec_wa) (then
+        (i32.store (i32.add (local.get $dst) (i32.const 20))
+          (i32.load (i32.add (local.get $spec_wa) (i32.mul (local.get $i) (local.get $spec_stride)))))))
       (if (local.get $tex_wa) (then
         (local.set $src (i32.add (local.get $tex_wa) (i32.mul (local.get $i) (local.get $tex_stride))))
         (f32.store (i32.add (local.get $dst) (i32.const 24)) (f32.load (local.get $src)))
@@ -757,11 +778,12 @@
 
   (func $d3dim_draw_primitive_strided
     (param $this i32) (param $primType i32) (param $fvf i32) (param $strided i32) (param $count i32)
-    (local $scratch i32)
+    (local $scratch i32) (local $vtxType i32)
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $fvf)))
     (local.set $scratch (call $d3dim_pack_strided_tl (local.get $fvf) (local.get $strided) (local.get $count)))
     (if (local.get $scratch) (then
       (call $d3dim_draw_primitive
-        (local.get $this) (local.get $primType) (i32.const 3)
+        (local.get $this) (local.get $primType) (local.get $vtxType)
         (local.get $scratch) (local.get $count))
       (call $heap_free (local.get $scratch))))
     (global.set $eax (i32.const 0)))
@@ -769,11 +791,12 @@
   (func $d3dim_draw_indexed_primitive_strided
     (param $this i32) (param $primType i32) (param $fvf i32) (param $strided i32) (param $count i32)
     (param $indices i32) (param $index_count i32)
-    (local $scratch i32)
+    (local $scratch i32) (local $vtxType i32)
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $fvf)))
     (local.set $scratch (call $d3dim_pack_strided_tl (local.get $fvf) (local.get $strided) (local.get $count)))
     (if (local.get $scratch) (then
       (call $d3dim_draw_indexed_primitive
-        (local.get $this) (local.get $primType) (i32.const 3)
+        (local.get $this) (local.get $primType) (local.get $vtxType)
         (local.get $scratch) (local.get $count)
         (local.get $indices) (local.get $index_count))
       (call $heap_free (local.get $scratch))))
