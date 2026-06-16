@@ -60,6 +60,78 @@
   ;; buffer block is [buf_guest, buf_size, reserved, reserved, original bytes...].
   (global $D3DIM_EB_CACHE_PTRS i32 (i32.const 0x07FEB040))
   (global $D3DIM_EB_CACHE_MAX  i32 (i32.const 512))
+  ;; D3D7 state blocks: 32 entries × [snapshot_guest, dev_slot, reserved].
+  (global $D3DIM_STATEBLOCKS i32 (i32.const 0x07FEB840))
+  (global $D3DIM_STATEBLOCK_MAX i32 (i32.const 32))
+  (global $d3dim_stateblock_record_dev (mut i32) (i32.const 0))
+
+  (func $d3dim_stateblock_entry (param $handle i32) (result i32)
+    (if (i32.or
+          (i32.eqz (local.get $handle))
+          (i32.gt_u (local.get $handle) (global.get $D3DIM_STATEBLOCK_MAX)))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $D3DIM_STATEBLOCKS)
+      (i32.mul (i32.sub (local.get $handle) (i32.const 1)) (i32.const 12))))
+
+  (func $d3dim_stateblock_create (param $dev_this i32) (result i32)
+    (local $state_guest i32) (local $snapshot_guest i32) (local $entry i32)
+    (local $dev_entry i32) (local $dev_slot i32) (local $i i32)
+    (local.set $state_guest (call $d3ddev_state (local.get $dev_this)))
+    (if (i32.eqz (local.get $state_guest)) (then (return (i32.const 0))))
+    (local.set $dev_entry (call $dx_from_this (local.get $dev_this)))
+    (local.set $dev_slot (call $dx_slot_of (local.get $dev_entry)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $D3DIM_STATEBLOCK_MAX)))
+      (local.set $entry (i32.add (global.get $D3DIM_STATEBLOCKS)
+        (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.eqz (i32.load (local.get $entry)))
+        (then
+          (local.set $snapshot_guest (call $heap_alloc (i32.const 4096)))
+          (if (i32.eqz (local.get $snapshot_guest)) (then (return (i32.const 0))))
+          (call $memcpy
+            (call $g2w (local.get $snapshot_guest))
+            (call $g2w (local.get $state_guest))
+            (i32.const 4096))
+          (i32.store (local.get $entry) (local.get $snapshot_guest))
+          (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $dev_slot))
+          (return (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $d3dim_stateblock_apply (param $dev_this i32) (param $handle i32)
+    (local $entry i32) (local $snapshot_guest i32) (local $state_guest i32)
+    (local.set $entry (call $d3dim_stateblock_entry (local.get $handle)))
+    (if (i32.eqz (local.get $entry)) (then (return)))
+    (local.set $snapshot_guest (i32.load (local.get $entry)))
+    (if (i32.eqz (local.get $snapshot_guest)) (then (return)))
+    (local.set $state_guest (call $d3ddev_state (local.get $dev_this)))
+    (if (i32.eqz (local.get $state_guest)) (then (return)))
+    (call $memcpy
+      (call $g2w (local.get $state_guest))
+      (call $g2w (local.get $snapshot_guest))
+      (i32.const 4096)))
+
+  (func $d3dim_stateblock_capture (param $dev_this i32) (param $handle i32)
+    (local $entry i32) (local $snapshot_guest i32) (local $state_guest i32)
+    (local.set $entry (call $d3dim_stateblock_entry (local.get $handle)))
+    (if (i32.eqz (local.get $entry)) (then (return)))
+    (local.set $snapshot_guest (i32.load (local.get $entry)))
+    (if (i32.eqz (local.get $snapshot_guest)) (then (return)))
+    (local.set $state_guest (call $d3ddev_state (local.get $dev_this)))
+    (if (i32.eqz (local.get $state_guest)) (then (return)))
+    (call $memcpy
+      (call $g2w (local.get $snapshot_guest))
+      (call $g2w (local.get $state_guest))
+      (i32.const 4096)))
+
+  (func $d3dim_stateblock_delete (param $handle i32)
+    (local $entry i32) (local $snapshot_guest i32)
+    (local.set $entry (call $d3dim_stateblock_entry (local.get $handle)))
+    (if (i32.eqz (local.get $entry)) (then (return)))
+    (local.set $snapshot_guest (i32.load (local.get $entry)))
+    (if (local.get $snapshot_guest) (then (call $heap_free (local.get $snapshot_guest))))
+    (call $zero_memory (local.get $entry) (i32.const 12)))
 
   ;; ── QueryInterface upgrade routing ────────────────────────────
   ;; Recognizes versioned IIDs by their first DWORD and writes the matching
