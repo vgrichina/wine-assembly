@@ -4010,11 +4010,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DDevice3_BeginScene (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_begin_scene (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DDevice3_EndScene (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_end_scene (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DDevice3_GetDirect3D (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4031,15 +4031,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_GetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_current_viewport (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_SetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_set_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DDevice3_GetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_Begin (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

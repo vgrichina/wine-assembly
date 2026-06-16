@@ -544,17 +544,77 @@
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_get_current_viewport (param $this i32) (param $ppVp i32)
-    (local $state i32) (local $slot i32) (local $obj_guest i32)
+    (local $state i32) (local $slot i32) (local $vp_entry i32) (local $obj_guest i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
-    (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $ppVp)))
+    (if (i32.eqz (local.get $ppVp))
       (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (call $gs32 (local.get $ppVp) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (return)))
     (local.set $slot (call $gl32 (i32.add (local.get $state) (global.get $D3DIM_OFF_CUR_VP))))
+    (if (i32.eqz (local.get $slot))
+      (then
+        (call $gs32 (local.get $ppVp) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $vp_entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+    (if (i32.eqz (i32.load (local.get $vp_entry)))
+      (then
+        (call $gs32 (local.get $ppVp) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (i32.store (i32.add (local.get $vp_entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $vp_entry) (i32.const 4))) (i32.const 1)))
     ;; reconstruct guest ptr from slot: COM_WRAPPERS + slot*8 → guest addr
     (local.set $obj_guest (i32.add
       (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8)))
                (global.get $GUEST_BASE))
       (global.get $image_base)))
     (call $gs32 (local.get $ppVp) (local.get $obj_guest))
+    (global.set $eax (i32.const 0)))
+
+  ;; ── Render-target binding ────────────────────────────────────
+  ;; The device entry stores its current DDSurface slot at +8. CreateDevice
+  ;; seeds it; SetRenderTarget updates it for apps that switch back buffers.
+  (func $d3dim_set_render_target (param $this i32) (param $rt_surf i32)
+    (local $entry i32) (local $rt_entry i32) (local $rt_slot i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.eqz (local.get $rt_surf)) (then
+      (i32.store (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))
+      (global.set $eax (i32.const 0))
+      (return)))
+    (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
+    (if (i32.eqz (i32.load (local.get $rt_entry))) (then
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
+    (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $rt_slot))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_get_render_target (param $this i32) (param $ppRt i32)
+    (local $entry i32) (local $slot i32) (local $rt_entry i32) (local $rt_guest i32)
+    (if (i32.eqz (local.get $ppRt))
+      (then (global.set $eax (i32.const 0x80004003)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $slot (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.eqz (local.get $slot)) (then
+      (call $gs32 (local.get $ppRt) (i32.const 0))
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (local.set $rt_entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
+    (if (i32.eqz (i32.load (local.get $rt_entry))) (then
+      (call $gs32 (local.get $ppRt) (i32.const 0))
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (i32.store (i32.add (local.get $rt_entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $rt_entry) (i32.const 4))) (i32.const 1)))
+    (local.set $rt_guest (i32.add
+      (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (call $gs32 (local.get $ppRt) (local.get $rt_guest))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_viewport_set_background (param $this i32) (param $handle i32)

@@ -558,30 +558,14 @@
 
   ;; IDirect3DDevice2_SetRenderTarget — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_SetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_set_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice2_GetRenderTarget — 2 args (incl. this)
   ;; Writes the bound render-target surface ptr to *arg1 and AddRefs it.
   ;; rt_slot is stashed at entry+8 by d3dim_create_device.
   (func $handle_IDirect3DDevice2_GetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $slot i32) (local $rt_entry i32) (local $rt_guest i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $slot (i32.load (i32.add (local.get $entry) (i32.const 8))))
-    (if (i32.eqz (local.get $slot)) (then
-      (call $gs32 (local.get $arg1) (i32.const 0))
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-      (return)))
-    (local.set $rt_entry (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $slot) (i32.const 32))))
-    (i32.store (i32.add (local.get $rt_entry) (i32.const 4))
-      (i32.add (i32.load (i32.add (local.get $rt_entry) (i32.const 4))) (i32.const 1)))
-    (local.set $rt_guest (i32.add
-      (i32.sub (i32.add (global.get $COM_WRAPPERS) (i32.mul (local.get $slot) (i32.const 8)))
-               (global.get $GUEST_BASE))
-      (global.get $image_base)))
-    (call $gs32 (local.get $arg1) (local.get $rt_guest))
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice2_Begin — 4 args (incl. this)
@@ -760,12 +744,12 @@
 
   ;; IDirect3DDevice7_SetRenderTarget — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_SetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_set_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_GetRenderTarget — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_Clear — 6 args (incl. this)
