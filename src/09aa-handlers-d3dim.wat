@@ -774,12 +774,12 @@
 
   ;; IDirect3DDevice7_SetMaterial — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_SetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_set_material (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_GetMaterial — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_get_material (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_SetLight — 3 args (incl. this)

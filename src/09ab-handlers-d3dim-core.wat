@@ -27,6 +27,7 @@
   ;;   +3200  indexed-draw TL vertex scratch           (96)
   ;;   +3296  execute-buffer clipped TL scratch         (64)
   ;;   +3360  v1 STATETRANSFORM matrix handles W,V,P    (12)
+  ;;   +3376  current D3DMATERIAL7 copy                 (68)
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
@@ -39,6 +40,7 @@
   (global $D3DIM_OFF_VP_SCALE  i32 (i32.const 3104))
   (global $D3DIM_OFF_VP_ORIGIN i32 (i32.const 3120))
   (global $D3DIM_OFF_XFORM_HANDLES i32 (i32.const 3360))
+  (global $D3DIM_OFF_D3D7_MAT  i32 (i32.const 3376))
   (global $D3DIM_OFF_CLIP_STATUS i32 (i32.const 4000))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
@@ -499,6 +501,29 @@
     (if (local.get $lpHandle) (then
       (local.set $entry (call $dx_from_this (local.get $this)))
       (call $gs32 (local.get $lpHandle) (call $dx_slot_of (local.get $entry)))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_set_material (param $this i32) (param $lpMat i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $lpMat)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT)))
+              (call $g2w (local.get $lpMat))
+              (i32.const 68))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_get_material (param $this i32) (param $lpMat i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $lpMat)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w (local.get $lpMat))
+              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT)))
+              (i32.const 68)))
+      (else (call $zero_memory (call $g2w (local.get $lpMat)) (i32.const 68))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_material_pack_color (param $mat_wa i32) (result i32)
