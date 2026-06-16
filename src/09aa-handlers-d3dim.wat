@@ -857,7 +857,8 @@
 
   ;; IDirect3DDevice7_DrawPrimitiveVB — 6 args (incl. this)
   (func $handle_IDirect3DDevice7_DrawPrimitiveVB (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_vb_draw_primitive
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; IDirect3DDevice7_DrawIndexedPrimitiveVB — 7 args (incl. this)
