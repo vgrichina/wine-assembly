@@ -30,6 +30,7 @@
   ;;   +3376  current D3DMATERIAL7 copy                 (68)
   ;;   +3448  D3DLIGHT7 table guest ptr                 (i32, 4)
   ;;   +3452  D3DLIGHT7 enable bitmask                  (i32, 4)
+  ;;   +3456  D3D7 user clip planes[6]                  (96)
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
@@ -45,6 +46,7 @@
   (global $D3DIM_OFF_D3D7_MAT  i32 (i32.const 3376))
   (global $D3DIM_OFF_D3D7_LIGHTS i32 (i32.const 3448))
   (global $D3DIM_OFF_D3D7_LIGHT_ENABLE i32 (i32.const 3452))
+  (global $D3DIM_OFF_D3D7_CLIP_PLANES i32 (i32.const 3456))
   (global $D3DIM_OFF_CLIP_STATUS i32 (i32.const 4000))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
@@ -603,6 +605,41 @@
       (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $idx)))
         (then (local.set $val (i32.const 1))))))
     (call $gs32 (local.get $out) (local.get $val))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_set_clip_plane (param $this i32) (param $idx i32) (param $plane i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $plane)) (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.ge_u (local.get $idx) (i32.const 6)) (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w
+                (i32.add
+                  (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_CLIP_PLANES))
+                  (i32.mul (local.get $idx) (i32.const 16))))
+              (call $g2w (local.get $plane))
+              (i32.const 16))))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_device7_get_clip_plane (param $this i32) (param $idx i32) (param $plane i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $plane)) (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.ge_u (local.get $idx) (i32.const 6))
+      (then
+        (call $zero_memory (call $g2w (local.get $plane)) (i32.const 16))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state)
+      (then (call $memcpy
+              (call $g2w (local.get $plane))
+              (call $g2w
+                (i32.add
+                  (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_CLIP_PLANES))
+                  (i32.mul (local.get $idx) (i32.const 16))))
+              (i32.const 16)))
+      (else (call $zero_memory (call $g2w (local.get $plane)) (i32.const 16))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_material_pack_color (param $mat_wa i32) (result i32)

@@ -936,12 +936,12 @@
 
   ;; IDirect3DDevice7_SetClipPlane — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_SetClipPlane (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_set_clip_plane (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_GetClipPlane — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_GetClipPlane (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_get_clip_plane (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice7_GetInfo — 4 args (incl. this)
