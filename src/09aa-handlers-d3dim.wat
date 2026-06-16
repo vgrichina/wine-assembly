@@ -978,6 +978,12 @@
 
   ;; IDirect3DDevice7_GetInfo — 4 args (incl. this)
   (func $handle_IDirect3DDevice7_GetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $size i32)
+    (local.set $size (local.get $arg3))
+    (if (i32.gt_u (local.get $size) (i32.const 4096))
+      (then (local.set $size (i32.const 4096))))
+    (if (i32.and (local.get $arg2) (local.get $size))
+      (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $size))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
