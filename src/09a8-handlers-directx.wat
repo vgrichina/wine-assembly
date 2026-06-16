@@ -528,6 +528,18 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
+    ;; IDirect3D7 — keep this separate so the legacy D3D1/2/3 path remains
+    ;; unchanged for d3drm.dll, which is sensitive to QueryInterface HRESULTs.
+    (if (i32.eq (local.get $iid_dword) (i32.const 0xF5049E77))
+      (then
+        (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D7)))
+        (i32.store
+          (i32.add (call $dx_from_this (local.get $obj)) (i32.const 8))
+          (call $dx_slot_of (call $dx_from_this (local.get $arg0))))
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     ;; Unsupported interface — *ppvObj = NULL, return E_NOINTERFACE
     (call $gs32 (local.get $arg2) (i32.const 0))
     (global.set $eax (i32.const 0x80004002))
