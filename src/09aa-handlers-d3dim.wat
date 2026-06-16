@@ -126,8 +126,14 @@
 
   ;; IDirect3D7_EnumZBufferFormats — 4 args (incl. this)
   (func $handle_IDirect3D7_EnumZBufferFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg2)) (then
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $d3d_enum_zbuf_invoke (local.get $arg2) (local.get $arg3) (local.get $ret_addr)))
 
   ;; IDirect3D7_EvictManagedTextures — 1 args (incl. this)
   (func $handle_IDirect3D7_EvictManagedTextures (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
