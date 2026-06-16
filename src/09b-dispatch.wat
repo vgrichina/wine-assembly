@@ -669,6 +669,12 @@
         (call $d3d_enum_zbuf_continue)
         (return)))
 
+    ;; D3D EnumTextureFormats continuation — callback returned, try next format
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000F))
+      (then
+        (call $d3d_enum_tex_continue)
+        (return)))
+
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then

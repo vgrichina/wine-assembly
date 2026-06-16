@@ -324,6 +324,8 @@
         (then (global.set $d3d_enum_dev_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA000C))
         (then (global.set $bsearch_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA000F))
+        (then (global.set $d3d_enum_tex_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0022))
         (then (global.set $createwnd_activate_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0023))

@@ -115,6 +115,12 @@
   (global $d3d_enum_zbuf_format   (mut i32) (i32.const 0))
   (global $d3d_enum_zbuf_ret      (mut i32) (i32.const 0))
   (global $d3d_enum_zbuf_thunk    (mut i32) (i32.const 0)) ;; CACA000D thunk guest addr
+  (global $d3d_enum_tex_callback (mut i32) (i32.const 0))
+  (global $d3d_enum_tex_context  (mut i32) (i32.const 0))
+  (global $d3d_enum_tex_format   (mut i32) (i32.const 0))
+  (global $d3d_enum_tex_idx      (mut i32) (i32.const 0))
+  (global $d3d_enum_tex_ret      (mut i32) (i32.const 0))
+  (global $d3d_enum_tex_thunk    (mut i32) (i32.const 0)) ;; CACA000F thunk guest addr
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
@@ -1047,6 +1053,68 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (global.set $eip (global.get $d3d_enum_zbuf_ret))
     (global.set $eax (i32.const 0)))
+
+  ;; ── IDirect3DDevice7::EnumTextureFormats — common RGB texture formats ──
+  ;; Callback signature: EnumTextureFormatsCallback(lpDDPixelFormat, lpContext).
+  (func $d3d_fill_texture_format (param $fmt i32) (param $idx i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $fmt)))
+    (call $zero_memory (local.get $wa) (i32.const 32))
+    (i32.store (local.get $wa) (i32.const 32))                         ;; dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x40)) ;; DDPF_RGB
+    (if (i32.eq (local.get $idx) (i32.const 0))
+      (then
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))
+        (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0xF800))
+        (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x07E0))
+        (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x001F)))
+      (else
+        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 32))
+        (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x00FF0000))
+        (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x0000FF00))
+        (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x000000FF)))))
+
+  (func $d3d_enum_tex_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+    (global.set $d3d_enum_tex_callback (local.get $cb))
+    (global.set $d3d_enum_tex_context  (local.get $ctx))
+    (global.set $d3d_enum_tex_ret      (local.get $ret_addr))
+    (global.set $d3d_enum_tex_format   (call $heap_alloc (i32.const 32)))
+    (global.set $d3d_enum_tex_idx      (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (call $d3d_enum_tex_dispatch))
+
+  (func $d3d_enum_tex_dispatch
+    (if (i32.ge_u (global.get $d3d_enum_tex_idx) (i32.const 2))
+      (then
+        (global.set $d3d_enum_tex_ret (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (global.set $eip (global.get $d3d_enum_tex_ret))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (call $d3d_fill_texture_format (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx))
+    ;; Push callback args right-to-left: ctx, lpDDPixelFormat.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_tex_context))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_tex_format))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_tex_thunk))
+    (global.set $eip (global.get $d3d_enum_tex_callback))
+    (global.set $steps (i32.const 0)))
+
+  ;; CACA000F: texture-format callback returned. DDENUMRET_CANCEL (0) stops;
+  ;; any non-zero result advances to the next format.
+  (func $d3d_enum_tex_continue
+    (if (i32.eqz (global.get $eax))
+      (then
+        (global.set $d3d_enum_tex_ret (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (global.set $eip (global.get $d3d_enum_tex_ret))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (global.set $d3d_enum_tex_idx (i32.add (global.get $d3d_enum_tex_idx) (i32.const 1)))
+    (call $d3d_enum_tex_dispatch))
 
   ;; Fill D3DDEVICEDESC (DX5-style 252-byte layout).
   ;; is_hal=1 sets HWRASTERIZATION + vidmem caps; is_hal=0 is HEL (software).
