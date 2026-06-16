@@ -467,7 +467,7 @@
 
   ;; IDirect3DDevice_GetDirect3D — 2 args (incl. this)
   (func $handle_IDirect3DDevice_GetDirect3D (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_direct3d (local.get $arg0) (local.get $arg1) (global.get $DX_VTBL_D3D))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
 
@@ -550,7 +550,7 @@
 
   ;; IDirect3DDevice2_GetDirect3D — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_GetDirect3D (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_direct3d (local.get $arg0) (local.get $arg1) (global.get $DX_VTBL_D3D2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice2_SetCurrentViewport — 2 args (incl. this)
@@ -736,7 +736,7 @@
 
   ;; IDirect3DDevice7_GetDirect3D — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetDirect3D (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_direct3d (local.get $arg0) (local.get $arg1) (global.get $DX_VTBL_D3D7))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_SetRenderTarget — 3 args (incl. this)

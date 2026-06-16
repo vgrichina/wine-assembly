@@ -278,13 +278,22 @@
   ;; 4KB state block on guest heap). For D3D2/D3D7 we use the same
   ;; underlying type — the only externally-visible difference is the vtable
   ;; the caller sees on the returned object, and QI handles upgrades.
+  ;; Device entry fields: +8 = current render-target slot, +12 = creator
+  ;; D3D slot + 1 (0 means no parent, e.g. surface-QI-created device).
   (func $d3dim_create_device (param $this i32) (param $rt_surf i32) (param $ppDev i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
+    (local $parent_entry i32) (local $parent_slot i32)
     (local.set $obj (call $dx_create_com_obj (i32.const 20) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj)) (then
       (global.set $eax (i32.const 0x80004005))
       (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (if (local.get $this) (then
+      (local.set $parent_entry (call $dx_from_this (local.get $this)))
+      (if (i32.ne (i32.load (local.get $parent_entry)) (i32.const 0)) (then
+        (local.set $parent_slot (call $dx_slot_of (local.get $parent_entry)))
+        (i32.store (i32.add (local.get $entry) (i32.const 12))
+          (i32.add (local.get $parent_slot) (i32.const 1)))))))
     (if (local.get $rt_surf) (then
       (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
       (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
@@ -293,6 +302,34 @@
     (call $d3ddev_init_state (local.get $state))
     (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $state))
     (call $gs32 (local.get $ppDev) (local.get $obj))
+    (global.set $eax (i32.const 0)))
+
+  (func $d3dim_get_direct3d (param $this i32) (param $ppD3D i32) (param $vtbl i32)
+    (local $entry i32) (local $parent_idx i32) (local $parent_slot i32) (local $parent_entry i32)
+    (if (i32.eqz (local.get $ppD3D)) (then
+      (global.set $eax (i32.const 0x80004003))
+      (return)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $parent_idx (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    (if (i32.eqz (local.get $parent_idx)) (then
+      (call $gs32 (local.get $ppD3D) (i32.const 0))
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (local.set $parent_slot (i32.sub (local.get $parent_idx) (i32.const 1)))
+    (if (i32.ge_u (local.get $parent_slot) (global.get $DX_MAX)) (then
+      (call $gs32 (local.get $ppD3D) (i32.const 0))
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (local.set $parent_entry (i32.add (global.get $DX_OBJECTS)
+      (i32.mul (local.get $parent_slot) (i32.const 32))))
+    (if (i32.eqz (i32.load (local.get $parent_entry))) (then
+      (call $gs32 (local.get $ppD3D) (i32.const 0))
+      (global.set $eax (i32.const 0x80004005))
+      (return)))
+    (i32.store (i32.add (local.get $parent_entry) (i32.const 4))
+      (i32.add (i32.load (i32.add (local.get $parent_entry) (i32.const 4))) (i32.const 1)))
+    (call $gs32 (local.get $ppD3D)
+      (call $dx_get_wrapper_for_vtbl (local.get $parent_slot) (local.get $vtbl)))
     (global.set $eax (i32.const 0)))
 
   ;; ── BeginScene / EndScene ─────────────────────────────────────

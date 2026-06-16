@@ -3517,16 +3517,23 @@
 
   ;; IDirect3D3::CreateDevice(this, refclsid, lpDDSurface, lplpD3DDevice, pUnkOuter) — 5 args
   ;; refclsid is the device-type GUID (HAL / RGB / etc). We ignore it and always
-  ;; return a software RGB device. lpDDSurface is the render-target DD surface;
-  ;; we store its DX slot on the device for future Phase 1+ rendering.
+  ;; return a software RGB device. lpDDSurface is the render-target DD surface.
+  ;; Device entry fields: +8 = current render-target slot, +12 = creator
+  ;; D3D slot + 1 for GetDirect3D.
   (func $handle_IDirect3D3_CreateDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
+    (local $parent_entry i32) (local $parent_slot i32)
     (local.set $obj (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV3)))
     (if (i32.eqz (local.get $obj)) (then
       (global.set $eax (i32.const 0x80004005))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
       (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (local.set $parent_entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (i32.load (local.get $parent_entry)) (i32.const 0)) (then
+      (local.set $parent_slot (call $dx_slot_of (local.get $parent_entry)))
+      (i32.store (i32.add (local.get $entry) (i32.const 12))
+        (i32.add (local.get $parent_slot) (i32.const 1)))))
     ;; Record render-target DDSurface slot on the device entry at +8.
     (if (local.get $arg2) (then
       (local.set $rt_entry (call $dx_from_this (local.get $arg2)))
@@ -4154,7 +4161,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DDevice3_GetDirect3D (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_get_direct3d (local.get $arg0) (local.get $arg1) (global.get $DX_VTBL_D3D3))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_SetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
