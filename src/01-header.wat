@@ -1254,6 +1254,7 @@
   (global $d3d_enum_dev_cb    (mut i32) (i32.const 0))
   (global $d3d_enum_dev_ctx   (mut i32) (i32.const 0))
   (global $d3d_enum_dev_ret   (mut i32) (i32.const 0))
+  (global $d3d_enum_dev_mode  (mut i32) (i32.const 0)) ;; 0=legacy D3D1/2/3, 7=D3D7
 
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir

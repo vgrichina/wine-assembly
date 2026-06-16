@@ -828,6 +828,7 @@
     ;; Push saved caller ret once (stays on stack across all iterations).
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $d3d_enum_dev_mode (i32.const 0))
     (global.set $d3d_enum_dev_cb  (local.get $cb))
     (global.set $d3d_enum_dev_ctx (local.get $ctx))
     (global.set $d3d_enum_dev_ret (local.get $ret_addr))
@@ -941,10 +942,77 @@
       (then
         (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; pop saved ret
         (global.set $eip (global.get $d3d_enum_dev_ret))
+        (global.set $d3d_enum_dev_mode (i32.const 0))
         (global.set $eax (i32.const 0))
         (return)))
     (global.set $d3d_enum_dev_idx (i32.add (global.get $d3d_enum_dev_idx) (i32.const 1)))
+    (if (i32.eq (global.get $d3d_enum_dev_mode) (i32.const 7))
+      (then
+        (call $d3d_enum_devices7_dispatch)
+        (return)))
     (call $d3d_enum_devices_dispatch))
+
+  ;; D3D7 EnumDevices callback signature:
+  ;; EnumDevicesCallback(lpDeviceDescription, lpDeviceName, lpD3DDeviceDesc7, lpContext).
+  (func $d3d_enum_devices7_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $d3d_enum_dev_mode (i32.const 7))
+    (global.set $d3d_enum_dev_cb  (local.get $cb))
+    (global.set $d3d_enum_dev_ctx (local.get $ctx))
+    (global.set $d3d_enum_dev_ret (local.get $ret_addr))
+    (global.set $d3d_enum_dev_idx (i32.const 0))
+    (call $d3d_enum_devices7_dispatch))
+
+  (func $d3d_enum_devices7_dispatch
+    (local $idx i32) (local $desc i32) (local $name i32) (local $caps i32)
+    (local.set $idx (global.get $d3d_enum_dev_idx))
+    ;; 0=HAL, 1=RGB software. D3D7 exposes no GUID in the callback.
+    (if (i32.ge_u (local.get $idx) (i32.const 2))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; pop saved ret
+        (global.set $eip (global.get $d3d_enum_dev_ret))
+        (global.set $d3d_enum_dev_mode (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $desc (call $heap_alloc (i32.const 32)))
+    (local.set $name (call $heap_alloc (i32.const 16)))
+    (if (i32.eq (local.get $idx) (i32.const 0))
+      (then
+        ;; "Direct3D HAL\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x65726944))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x44337463))
+        (i32.store (i32.add (call $g2w (local.get $desc)) (i32.const 8))   (i32.const 0x4C414820))
+        (i32.store8 (i32.add (call $g2w (local.get $desc)) (i32.const 12)) (i32.const 0))
+        ;; "hal\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x006C6168))))
+    (if (i32.eq (local.get $idx) (i32.const 1))
+      (then
+        ;; "RGB Emulation\0"
+        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20424752))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
+        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
+        ;; "rgb\0"
+        (i32.store (call $g2w (local.get $name)) (i32.const 0x00626772))))
+    (local.set $caps (call $heap_alloc (i32.const 236)))
+    (call $d3dim_fill_device_desc7 (local.get $caps))
+    (if (i32.eq (local.get $idx) (i32.const 0))
+      (then
+        (i32.store (call $g2w (local.get $caps)) (i32.const 0x8AEA0)))) ;; HAL-style dev caps
+    ;; Push callback args right-to-left: ctx, caps7, name, desc.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_dev_ctx))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $caps))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $d3d_enum_dev_thunk))
+    (global.set $eip (global.get $d3d_enum_dev_cb))
+    (global.set $steps (i32.const 0)))
 
   ;; ── IDirect3D3::EnumZBufferFormats — report a single 16-bit Z format ──
   ;; Callback signature: EnumZBufferFormatsCallback(lpDDPixelFormat, lpContext).

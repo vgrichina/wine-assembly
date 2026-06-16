@@ -111,8 +111,14 @@
 
   ;; IDirect3D7_EnumDevices — 3 args (incl. this)
   (func $handle_IDirect3D7_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0x80070057))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $d3d_enum_devices7_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3D7_CreateDevice — 4 args (incl. this)
   (func $handle_IDirect3D7_CreateDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
