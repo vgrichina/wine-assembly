@@ -218,7 +218,13 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/bellhop.exe', name: 'DX5 D3DIM Bellhop' },
   { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer' },
   { exe: 'test/binaries/dx-sdk/bin/donut.exe', name: 'DX5 Donut' },
-  { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts' },
+  { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts',
+    // The attract screen renders early, then the sample enters a heavy
+    // DirectDraw presentation loop. Capture the title frame and stop cleanly.
+    maxBatches: 20, batchSize: 1000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    captureBatch: 10, captureStopBatch: 11,
+    timeoutMs: 30000 },
   { exe: 'test/binaries/dx-sdk/bin/flip3dtl.exe', name: 'DX5 D3DIM Flip3DTL' },
   { exe: 'test/binaries/dx-sdk/bin/wormhole.exe', name: 'DX5 D3DIM Wormhole' },
   { exe: 'test/binaries/dx-sdk/foxbear/foxbear.exe', name: 'DX5 FoxBear (DDraw sprite demo)',
