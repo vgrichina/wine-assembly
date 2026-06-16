@@ -127,6 +127,7 @@
   (global $d3d_enum_tex_idx      (mut i32) (i32.const 0))
   (global $d3d_enum_tex_ret      (mut i32) (i32.const 0))
   (global $d3d_enum_tex_thunk    (mut i32) (i32.const 0)) ;; CACA000F thunk guest addr
+  (global $d3d_enum_tex_desc_mode (mut i32) (i32.const 0))
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
@@ -1092,12 +1093,41 @@
         (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x0000FF00))
         (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x000000FF)))))
 
+  ;; Direct3D v1 EnumTextureFormats passes LPDDSURFACEDESC, not LPDDPIXELFORMAT.
+  (func $d3d_fill_texture_desc (param $ddsd i32) (param $idx i32)
+    (local $wa i32) (local $bpp i32) (local $pitch i32)
+    (local.set $wa (call $g2w (local.get $ddsd)))
+    (local.set $bpp (select (i32.const 16) (i32.const 32) (i32.eq (local.get $idx) (i32.const 0))))
+    (local.set $pitch (i32.and
+      (i32.add (i32.mul (i32.const 8) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
+      (i32.const 0xFFFFFFFC)))
+    (call $zero_memory (local.get $wa) (i32.const 108))
+    (i32.store (local.get $wa) (i32.const 108))                         ;; dwSize
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x100F)) ;; CAPS|HEIGHT|WIDTH|PITCH|PIXELFORMAT
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 8))    ;; dwHeight
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 8))   ;; dwWidth
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (local.get $pitch))
+    (call $d3d_fill_texture_format (i32.add (local.get $ddsd) (i32.const 72)) (local.get $idx))
+    (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x1840))) ;; TEXTURE|SYSTEMMEMORY|OFFSCREENPLAIN
+
   (func $d3d_enum_tex_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
     (global.set $d3d_enum_tex_callback (local.get $cb))
     (global.set $d3d_enum_tex_context  (local.get $ctx))
     (global.set $d3d_enum_tex_ret      (local.get $ret_addr))
     (global.set $d3d_enum_tex_format   (call $heap_alloc (i32.const 32)))
     (global.set $d3d_enum_tex_idx      (i32.const 0))
+    (global.set $d3d_enum_tex_desc_mode (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (call $d3d_enum_tex_dispatch))
+
+  (func $d3d_enum_tex_desc_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+    (global.set $d3d_enum_tex_callback (local.get $cb))
+    (global.set $d3d_enum_tex_context  (local.get $ctx))
+    (global.set $d3d_enum_tex_ret      (local.get $ret_addr))
+    (global.set $d3d_enum_tex_format   (call $heap_alloc (i32.const 108)))
+    (global.set $d3d_enum_tex_idx      (i32.const 0))
+    (global.set $d3d_enum_tex_desc_mode (i32.const 1))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
     (call $d3d_enum_tex_dispatch))
@@ -1109,9 +1139,14 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (global.set $eip (global.get $d3d_enum_tex_ret))
         (global.set $eax (i32.const 0))
+        (global.set $d3d_enum_tex_desc_mode (i32.const 0))
         (return)))
-    (call $d3d_fill_texture_format (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx))
-    ;; Push callback args right-to-left: ctx, lpDDPixelFormat.
+    (if (global.get $d3d_enum_tex_desc_mode)
+      (then
+        (call $d3d_fill_texture_desc (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx)))
+      (else
+        (call $d3d_fill_texture_format (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx))))
+    ;; Push callback args right-to-left: ctx, lpDDPixelFormat or lpDDSurfaceDesc.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $d3d_enum_tex_context))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -1130,6 +1165,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (global.set $eip (global.get $d3d_enum_tex_ret))
         (global.set $eax (i32.const 0))
+        (global.set $d3d_enum_tex_desc_mode (i32.const 0))
         (return)))
     (global.set $d3d_enum_tex_idx (i32.add (global.get $d3d_enum_tex_idx) (i32.const 1)))
     (call $d3d_enum_tex_dispatch))
@@ -4226,8 +4262,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DDevice3_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $ret_addr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $d3d_enum_tex_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   (func $handle_IDirect3DDevice3_BeginScene (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $d3dim_begin_scene (local.get $arg0))
