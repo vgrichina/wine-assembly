@@ -121,7 +121,7 @@
 
   ;; IDirect3D7_CreateVertexBuffer — 4 args (incl. this)
   (func $handle_IDirect3D7_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_create_vb7 (local.get $arg1) (local.get $arg2))
+    (call $d3dim_create_vb (local.get $arg1) (local.get $arg2) (global.get $DX_VTBL_D3DVB7))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3D7_EnumZBufferFormats — 4 args (incl. this)

@@ -3421,7 +3421,7 @@
 
   ;; IDirect3D3::CreateVertexBuffer(this, lpVBDesc, lplpD3DVertexBuffer, dwFlags, pUnkOuter) — 5 args
   (func $handle_IDirect3D3_CreateVertexBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
+    (call $d3dim_create_vb (local.get $arg1) (local.get $arg2) (global.get $DX_VTBL_D3DVB))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; IDirect3D3::EnumZBufferFormats(this, refclsid, lpCallback, lpContext)

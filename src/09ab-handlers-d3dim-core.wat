@@ -485,11 +485,11 @@
     (if (i32.eqz (local.get $stride)) (then (local.set $stride (i32.const 32))))
     (local.get $stride))
 
-  (func $d3dim_create_vb7 (param $lpDesc i32) (param $ppVB i32)
+  (func $d3dim_create_vb (param $lpDesc i32) (param $ppVB i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
     (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
     (if (i32.eqz (local.get $ppVB)) (then (global.set $eax (i32.const 0x80004003)) (return)))
-    (local.set $obj (call $dx_create_com_obj (i32.const 22) (global.get $DX_VTBL_D3DVB7)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 22) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005)) (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (if (local.get $lpDesc) (then
