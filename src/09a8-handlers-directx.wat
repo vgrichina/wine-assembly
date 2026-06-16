@@ -4217,6 +4217,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DDevice3_ValidateDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 1))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
