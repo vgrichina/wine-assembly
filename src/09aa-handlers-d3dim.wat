@@ -735,10 +735,16 @@
     (call $d3dim_get_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; IDirect3DDevice7_Clear — 6 args (incl. this)
+  ;; IDirect3DDevice7_Clear — 7 args (incl. this)
   (func $handle_IDirect3DDevice7_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dvZ_bits i32)
+    ;; Stack: ret,this,count,rects,flags,color,dvZ,stencil.
+    (local.set $dvZ_bits (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (call $d3dim_device7_clear
+      (local.get $arg0) (local.get $arg3) (local.get $arg4)
+      (f32.reinterpret_i32 (local.get $dvZ_bits)))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   ;; IDirect3DDevice7_SetTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice7_SetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -752,7 +758,7 @@
 
   ;; IDirect3DDevice7_SetViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_SetViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_set_viewport (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_MultiplyTransform — 3 args (incl. this)
@@ -762,7 +768,7 @@
 
   ;; IDirect3DDevice7_GetViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice7_GetViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $d3dim_device7_get_viewport (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice7_SetMaterial — 2 args (incl. this)

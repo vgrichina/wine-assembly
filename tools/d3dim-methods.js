@@ -116,7 +116,7 @@ const interfaces = [
     { name: 'GetDirect3D',                   nargs: 2 },
     { name: 'SetRenderTarget',               nargs: 3 },
     { name: 'GetRenderTarget',               nargs: 2 },
-    { name: 'Clear',                         nargs: 6 },
+    { name: 'Clear',                         nargs: 7 },
     { name: 'SetTransform',                  nargs: 3, body: 'SET_XFORM' },
     { name: 'GetTransform',                  nargs: 3 },
     { name: 'SetViewport',                   nargs: 2 },
