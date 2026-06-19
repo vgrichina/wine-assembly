@@ -976,16 +976,18 @@
         ;; so visible statics/progress/list controls don't remain blank.
         (drop (call $paint_drain_native_control_paints))
         (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
-    ;; SW_MAXIMIZE (cmd=3): host already resized — replace pending_wm_size
-    ;; with the new client dimensions so GetMessageA delivers correct values.
+    ;; SW_MAXIMIZE (cmd=3): host already resized. Queue the actual
+    ;; maximized move/size pair before paint and discard the stale
+    ;; create-time pending size from CW_USEDEFAULT.
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
                  (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then
         (call $wnd_max_set (local.get $arg0) (i32.const 1))
-        (global.set $pending_wm_size (local.get $client_size))))
+        (global.set $pending_wm_size (i32.const 0))
+        (call $post_resize_messages (local.get $arg0) (i32.const 2)))))
     ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
-    ;; chain: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS. WM_SIZE (from
-    ;; pending_wm_size) is delivered later by GetMessageA's drain.
+    ;; chain: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS. Non-maximized
+    ;; startup still uses pending_wm_size; maximized startup queued resize above.
     (if (i32.and (i32.and (i32.ne (local.get $arg1) (i32.const 0))
                           (i32.eq (local.get $arg0) (global.get $main_hwnd)))
                  (i32.eqz (global.get $show_window_activated)))

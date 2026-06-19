@@ -135,11 +135,14 @@
     ;; before any message loop / PostMessage'd command runs.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0024))
       (then
-        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_RESTORED(0), lParam=pending_wm_size
+        (local.set $arg0 (call $host_get_window_client_size (global.get $main_hwnd)))
+        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_*, lParam=current client size.
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $pending_wm_size))  ;; lParam = cx|(cy<<16)
+        (call $gs32 (global.get $esp) (local.get $arg0))              ;; lParam = cx|(cy<<16)
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0))                  ;; wParam = SIZE_RESTORED
+        (call $gs32 (global.get $esp)
+          (select (i32.const 2) (i32.const 0)
+                  (call $wnd_max_get (global.get $main_hwnd))))       ;; wParam = SIZE_MAXIMIZED/RESTORED
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0x0005))             ;; WM_SIZE
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
