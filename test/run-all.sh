@@ -75,6 +75,7 @@ E2E=(
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-cruel-maximized-launch-layout.js
+  test/test-skifree-showwindow-startup.js
   test/test-spider-deal-menu.js
   test/test-spider-drag.js
   test/test-spider-maximized-canvas-resize.js

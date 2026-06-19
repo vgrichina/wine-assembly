@@ -135,8 +135,13 @@
     ;; before any message loop / PostMessage'd command runs.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0024))
       (then
-        (local.set $arg0 (call $host_get_window_client_size (global.get $main_hwnd)))
-        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_*, lParam=current client size.
+        ;; Restored startup uses the create-time pending size. Some Win98 apps
+        ;; make fragile first-show decisions from that exact value. Maximized
+        ;; startup must instead use the host-resized client size.
+        (if (call $wnd_max_get (global.get $main_hwnd))
+          (then (local.set $arg0 (call $host_get_window_client_size (global.get $main_hwnd))))
+          (else (local.set $arg0 (global.get $pending_wm_size))))
+        ;; Push WndProc args: hwnd, WM_SIZE(0x0005), SIZE_*, lParam=client size.
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $arg0))              ;; lParam = cx|(cy<<16)
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))

@@ -984,7 +984,7 @@
       (then
         (call $wnd_max_set (local.get $arg0) (i32.const 1))
         (global.set $pending_wm_size (i32.const 0))
-        (call $post_resize_messages (local.get $arg0) (i32.const 2)))))
+        (call $post_resize_messages (local.get $arg0) (i32.const 2))))
     ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
     ;; chain: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS. Non-maximized
     ;; startup still uses pending_wm_size; maximized startup queued resize above.
