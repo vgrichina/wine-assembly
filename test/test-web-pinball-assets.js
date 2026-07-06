@@ -146,11 +146,11 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=161'), 'web host should cache-bust renderer input after desktop changes');
-assert(indexHtml.includes('lib/host-imports.js?v=161'), 'web host should cache-bust host-imports after browser host changes');
+assert(indexHtml.includes('lib/renderer-input.js?v=162'), 'web host should cache-bust renderer input after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=162'), 'web host should cache-bust host-imports after browser host changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(indexHtml.includes('host.js?v=161'), 'web host should cache-bust host.js after WAT/API source changes');
-assert(hostJs.includes("SOURCE_VERSION = '161'"), 'host.js should define the current WAT/API cache-buster');
+assert(indexHtml.includes('host.js?v=162'), 'web host should cache-bust host.js after WAT/API source changes');
+assert(hostJs.includes("SOURCE_VERSION = '162'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes("this._audioCtx.state === 'closed'"), 'web host should not reuse a closed browser AudioContext');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
@@ -168,8 +168,9 @@ assert(indexHtml.includes('Starting run slice=${runSlice}'), 'web launcher shoul
 assert(!/function selectedRunSlice\(appKey\)\s*\{\s*return 100000;\s*\}/.test(indexHtml), 'slice dropdown should not be ignored');
 assert(indexHtml.includes("document.getElementById('slice-size-select')"), 'slice picker should drive the run-loop slice size');
 assert(indexHtml.includes('function hasWasmTailCalls()'), 'auto slice should detect no-tail-call browser dispatch');
-assert(indexHtml.includes('return compatDispatch ? 1000 : 25000;'), 'auto slice should cap Spider/card games for no-tail-call browsers');
-assert(indexHtml.includes('return compatDispatch ? 2000 : 100000;'), 'auto slice should cap default apps for no-tail-call browsers');
+assert(indexHtml.includes('return compatDispatch ? 100 : 25000;'), 'auto slice should cap Spider/card games for no-tail-call browsers');
+assert(indexHtml.includes('return compatDispatch ? 500 : 100000;'), 'auto slice should cap default apps for no-tail-call browsers');
+assert(indexHtml.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');
 assert(!/case 'winamp':\s*return 1;/.test(indexHtml), 'Winamp auto slice should not rely on slice=1 startup masking');
 assert(indexHtml.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
 assert(indexHtml.includes('unlockRunningAudio();\n        if (renderer._exclusiveFullscreen)'), 'mouse/touch input should resume audio before guest dispatch');

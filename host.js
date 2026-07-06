@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '161';
+  static SOURCE_VERSION = '162';
 
   constructor() {
     this.instance = null;

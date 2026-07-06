@@ -506,7 +506,7 @@
       <button onclick="stopAllApps()">Stop All</button>
       <span class="debug-slice">
         <label>Slice:</label>
-        <select id="slice-size-select" onchange="applyRunSlice()">
+        <select id="slice-size-select" onchange="applyRunSlice()" autocomplete="off">
           <option value="auto" selected>Auto</option>
           <option value="5000">5k</option>
           <option value="10000">10k</option>
@@ -577,21 +577,21 @@ Resource-aware Win98 emulator
     });
   </script>
 
-  <script src="lib/mem-utils.js?v=161"></script>
-  <script src="lib/dib.js?v=161"></script>
-  <script src="lib/resources-icon.js?v=161"></script>
-  <script src="lib/renderer-input.js?v=161"></script>
-  <script src="lib/renderer.js?v=161"></script>
-  <script src="lib/dll-loader.js?v=161"></script>
-  <script src="lib/storage.js?v=161"></script>
-  <script src="lib/filesystem.js?v=161"></script>
-  <script src="lib/hlp-parser.js?v=161"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=161"></script>
-  <script src="lib/host-imports.js?v=161"></script>
-  <script src="lib/compile-wat.js?v=161"></script>
-  <script src="lib/thread-manager.js?v=161"></script>
-  <script src="host.js?v=161"></script>
-  <script src="lib/recorder.js?v=161"></script>
+  <script src="lib/mem-utils.js?v=162"></script>
+  <script src="lib/dib.js?v=162"></script>
+  <script src="lib/resources-icon.js?v=162"></script>
+  <script src="lib/renderer-input.js?v=162"></script>
+  <script src="lib/renderer.js?v=162"></script>
+  <script src="lib/dll-loader.js?v=162"></script>
+  <script src="lib/storage.js?v=162"></script>
+  <script src="lib/filesystem.js?v=162"></script>
+  <script src="lib/hlp-parser.js?v=162"></script>
+  <script src="lib/vendor/webaudio-tinysynth.js?v=162"></script>
+  <script src="lib/host-imports.js?v=162"></script>
+  <script src="lib/compile-wat.js?v=162"></script>
+  <script src="lib/thread-manager.js?v=162"></script>
+  <script src="host.js?v=162"></script>
+  <script src="lib/recorder.js?v=162"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -1366,7 +1366,7 @@ Resource-aware Win98 emulator
       try {
         if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
         const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=161');
+        const response = await fetch(url + '?v=162');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!midiContainerKind(bytes)) {
@@ -1786,14 +1786,7 @@ Resource-aware Win98 emulator
         WineAssembly.supportsWasmTailCalls();
     }
 
-    function selectedRunSlice(appKey) {
-      const select = document.getElementById('slice-size-select');
-      const raw = select && select.value ? select.value : 'auto';
-      if (raw !== 'auto') {
-        const selected = parseInt(raw, 10);
-        if (Number.isFinite(selected) && selected > 0) return selected;
-      }
-      const compatDispatch = !hasWasmTailCalls();
+    function autoRunSliceFor(appKey, compatDispatch) {
       switch (appKey) {
         case 'spider':
         case 'sol':
@@ -1805,10 +1798,24 @@ Resource-aware Win98 emulator
         case 'winmine':
         case 'reversi':
         case 'tictac':
-          return compatDispatch ? 1000 : 25000;
+          return compatDispatch ? 100 : 25000;
         default:
-          return compatDispatch ? 2000 : 100000;
+          return compatDispatch ? 500 : 100000;
       }
+    }
+
+    function selectedRunSlice(appKey) {
+      const compatDispatch = !hasWasmTailCalls();
+      const autoSlice = autoRunSliceFor(appKey, compatDispatch);
+      const select = document.getElementById('slice-size-select');
+      const raw = select && select.value ? select.value : 'auto';
+      if (raw !== 'auto') {
+        const selected = parseInt(raw, 10);
+        if (Number.isFinite(selected) && selected > 0) {
+          return compatDispatch ? Math.min(selected, autoSlice) : selected;
+        }
+      }
+      return autoSlice;
     }
 
     function applyRunSlice() {
