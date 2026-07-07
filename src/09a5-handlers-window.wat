@@ -935,12 +935,19 @@
     ;; Some VCL apps create hidden utility/application HWNDs before showing the
     ;; real form. If the stored main window is still invisible, promote the
     ;; first shown app wndproc window so activation/focus reaches the form.
+    ;; Owned popups, such as EmPipe's initially shown Next button, must not be
+    ;; promoted or later resize/input routing will target a control instead of
+    ;; the real frame.
     (if (i32.and
           (i32.and
-            (i32.and (i32.ne (local.get $arg1) (i32.const 0))
-                     (i32.ne (local.get $arg0) (global.get $main_hwnd)))
-            (i32.eqz (global.get $show_window_activated)))
-          (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+            (i32.and
+              (i32.and
+                (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                         (i32.ne (local.get $arg0) (global.get $main_hwnd)))
+                (i32.eqz (global.get $show_window_activated)))
+              (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+            (i32.eqz (call $wnd_get_parent (local.get $arg0))))
+          (i32.eqz (call $wnd_get_owner (local.get $arg0))))
       (then
         (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
         (if (i32.and

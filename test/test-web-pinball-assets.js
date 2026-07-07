@@ -146,11 +146,11 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=162'), 'web host should cache-bust renderer input after desktop changes');
-assert(indexHtml.includes('lib/host-imports.js?v=162'), 'web host should cache-bust host-imports after browser host changes');
+assert(indexHtml.includes('lib/renderer-input.js?v=163'), 'web host should cache-bust renderer input after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=163'), 'web host should cache-bust host-imports after browser host changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(indexHtml.includes('host.js?v=162'), 'web host should cache-bust host.js after WAT/API source changes');
-assert(hostJs.includes("SOURCE_VERSION = '162'"), 'host.js should define the current WAT/API cache-buster');
+assert(indexHtml.includes('host.js?v=163'), 'web host should cache-bust host.js after WAT/API source changes');
+assert(hostJs.includes("SOURCE_VERSION = '163'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(hostJs.includes("this._audioCtx.state === 'closed'"), 'web host should not reuse a closed browser AudioContext');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
