@@ -362,9 +362,19 @@
 
   ;; 174: SetMenu
   (func $handle_SetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; SetMenu changes the non-client layout. Install the menu in WAT before
+    ;; later GetDC/GetClientRect/ShowWindow paths ask for client geometry;
+    ;; several WEP games attach their menu after CreateWindowExA and paint
+    ;; immediately.
+    (call $menu_load (local.get $arg0) (local.get $arg1))
+    (call $defwndproc_do_nccalcsize (local.get $arg0))
     (call $host_set_menu
     (local.get $arg0)                                       ;; hWnd
     (i32.and (local.get $arg1) (i32.const 0xFFFF)))         ;; resource ID from HMENU
+    (if (call $wnd_is_effectively_visible (local.get $arg0))
+      (then
+        (call $defwndproc_do_ncpaint (local.get $arg0))
+        (call $paint_flag_set_inv (local.get $arg0))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
