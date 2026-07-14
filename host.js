@@ -977,9 +977,11 @@ class WineAssembly {
 
   async handleLoadLibrary() {
     const exports = this.instance.exports;
+    const _resumeAfterLoadLibraryYield = (typeof DllLoader !== 'undefined' && DllLoader.resumeAfterLoadLibraryYield) || null;
     const nameWA = exports.get_loadlib_name ? exports.get_loadlib_name() : 0;
     if (!nameWA) {
       exports.set_eax && exports.set_eax(0);
+      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
       exports.clear_yield && exports.clear_yield();
       return;
     }
@@ -1017,6 +1019,7 @@ class WineAssembly {
     if (!dllBytes) {
       console.error(`[LoadLibrary] DLL not found: ${fileName}`);
       exports.set_eax && exports.set_eax(0);
+      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
       exports.clear_yield && exports.clear_yield();
       return;
     }
@@ -1026,6 +1029,7 @@ class WineAssembly {
     const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
     if (!_loadDll) {
       exports.set_eax && exports.set_eax(0);
+      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
       exports.clear_yield && exports.clear_yield();
       return;
     }
@@ -1037,13 +1041,16 @@ class WineAssembly {
       if (_patchDllImports) {
         _patchDllImports(exports, this.memory.buffer, [{ name: fileName, bytes: dllBytes }], [result], console.log);
       }
+      exports.clear_yield && exports.clear_yield();
       if (result.dllMain && _callDllMain) {
         _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
       }
       exports.set_eax && exports.set_eax(result.loadAddr);
+      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
     } catch (e) {
       console.error('[LoadLibrary] load error:', e);
       exports.set_eax && exports.set_eax(0);
+      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
     }
     exports.clear_yield && exports.clear_yield();
   }

@@ -453,6 +453,7 @@
         ;; DLL file found — yield to JS for loading
         (global.set $loadlib_name_ptr (call $g2w (local.get $arg0)))
         (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $handler_set_eip (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (global.set $yield_reason (i32.const 5))
         (global.set $yield_flag (i32.const 1))
@@ -1096,6 +1097,12 @@
     (global.set $tick_count (call $host_get_ticks))
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+  )
+
+  ;; GetDoubleClickTime() → UINT. Win32 default is 500 ms unless customized.
+  (func $handle_GetDoubleClickTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 500))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 59: FindResourceA
@@ -4192,14 +4199,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 312: SaveDC — STUB: unimplemented
+  ;; 312: SaveDC(hdc) → saved state index. We do not maintain a full DC stack
+  ;; yet; return a non-zero token so callers proceed and RestoreDC can succeed.
   (func $handle_SaveDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 313: RestoreDC — STUB: unimplemented
+  ;; 313: RestoreDC(hdc, nSavedDC) → BOOL. See SaveDC note above.
   (func $handle_RestoreDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 314: GetTextMetricsW — zero-fill, return 1
@@ -4900,14 +4910,19 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 377: EnumFontFamiliesExW — STUB: unimplemented
+  ;; 377: EnumFontFamiliesExW(hdc, lpLogfont, proc, lParam, flags) → INT.
+  ;; Font enumeration callbacks are not emulated yet. Return 0 entries, which
+  ;; is the documented "no fonts enumerated" result and lets callers fall back
+  ;; to the currently selected/default font.
   (func $handle_EnumFontFamiliesExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 378: EnumFontFamiliesW — STUB: unimplemented
+  ;; 378: EnumFontFamiliesW(hdc, lpszFamily, proc, lParam) → INT.
   (func $handle_EnumFontFamiliesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 379: CallNextHookEx — no next hook in chain, return 0
@@ -5478,6 +5493,11 @@
     (global.set $eax (i32.const 0x0409))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
+  ;; GetSystemDefaultLangID() -> LANGID. Match US English locale stubs.
+  (func $handle_GetSystemDefaultLangID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x0409))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
   ;; 414: FileTimeToSystemTime — STUB: unimplemented
   (func $handle_FileTimeToSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; FileTimeToSystemTime(lpFileTime, lpSystemTime) — 2 args
@@ -6040,9 +6060,42 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
   )
 
-  ;; 459: GetCaretPos — STUB: unimplemented
+  ;; 459: GetCaretPos(lpPoint) — no visible caret is emulated yet. Report a
+  ;; stable origin position so RichEdit/control code can continue.
   (func $handle_GetCaretPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg0)
+      (then
+        (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+        (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
+  )
+
+  ;; Caret APIs — headless renderer no-ops. These maintain Win32 success
+  ;; semantics for controls that hide/show/update caret state during layout.
+  (func $handle_CreateCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args stdcall
+  )
+
+  (func $handle_DestroyCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; 0 args stdcall
+  )
+
+  (func $handle_HideCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
+  )
+
+  (func $handle_ShowCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
+  )
+
+  (func $handle_SetCaretPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; 2 args stdcall
   )
 
   ;; 460: GetUpdateRect(hwnd, lpRect, bErase) — writes updateRgn bbox if present;
@@ -7227,9 +7280,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 551: GlobalFindAtomW — STUB: unimplemented
+  ;; FindAtomA/W(lpString) — local atom table is not modeled. Return 0
+  ;; (not found), which is the documented failure result and lets IME/RichEdit
+  ;; probes fall back cleanly.
+  (func $handle_FindAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  (func $handle_FindAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 551: GlobalFindAtomW(lpString) — global atom table is not modeled. Return
+  ;; 0 (not found), matching Win32 failure semantics.
   (func $handle_GlobalFindAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 552: CreateMetaFileW — STUB: unimplemented
@@ -7263,9 +7331,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 557: GetMapMode — STUB: unimplemented
+  ;; 557: GetMapMode(hdc) → MM_TEXT. The host renderer uses pixel/text
+  ;; coordinates, so MM_TEXT is the stable default.
   (func $handle_GetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 558: CreateDIBPatternBrushPt — STUB: unimplemented
@@ -7288,9 +7358,75 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 562: GetObjectType — STUB: unimplemented
+  ;; 562: GetObjectType(h) → OBJ_* type. Host GDI owns the full object table,
+  ;; but common handles have stable ranges/sentinels. Report enough type data
+  ;; for code that distinguishes DC/metafile/font/brush/bitmap paths.
   (func $handle_GetObjectType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Palette handles from CreatePalette: 0x000A0001+
+    (if (i32.and
+          (i32.ge_u (local.get $arg0) (i32.const 0x000A0001))
+          (i32.lt_u (local.get $arg0) (i32.const 0x000A0100)))
+      (then
+        (global.set $eax (i32.const 5)) ;; OBJ_PAL
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Explicit/surface DC handles.
+    (if (i32.and
+          (i32.ge_u (local.get $arg0) (i32.const 0x00200000))
+          (i32.lt_u (local.get $arg0) (i32.const 0x00400000)))
+      (then
+        (global.set $eax (i32.const 3)) ;; OBJ_DC
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Legacy window DC encodings: hwnd + 0x40000 / hwnd + 0xC0000.
+    (if (i32.and
+          (i32.ge_u (local.get $arg0) (i32.const 0x00040000))
+          (i32.lt_u (local.get $arg0) (i32.const 0x00100000)))
+      (then
+        (global.set $eax (i32.const 3)) ;; OBJ_DC
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Stock/default object sentinels.
+    (if (i32.or
+          (i32.eq (local.get $arg0) (i32.const 0x00030001))
+          (i32.eq (local.get $arg0) (i32.const 0x00030007)))
+      (then
+        (global.set $eax (i32.const 7)) ;; OBJ_BITMAP
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.or
+          (i32.eq (local.get $arg0) (i32.const 0x00030002))
+          (i32.and
+            (i32.ge_u (local.get $arg0) (i32.const 0x00030010))
+            (i32.le_u (local.get $arg0) (i32.const 0x00030015))))
+      (then
+        (global.set $eax (i32.const 2)) ;; OBJ_BRUSH
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.and
+          (i32.ge_u (local.get $arg0) (i32.const 0x00030016))
+          (i32.le_u (local.get $arg0) (i32.const 0x00030018)))
+      (then
+        (global.set $eax (i32.const 1)) ;; OBJ_PEN
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.and
+          (i32.ge_u (local.get $arg0) (i32.const 0x0003001a))
+          (i32.le_u (local.get $arg0) (i32.const 0x00030022)))
+      (then
+        (global.set $eax (i32.const 6)) ;; OBJ_FONT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Allocated GDI objects live at 0x400001+. Without host type import,
+    ;; report a non-metafile drawable object; callers that only reject metafile
+    ;; types take the ordinary rendering path.
+    (global.set $eax (i32.const 7)) ;; OBJ_BITMAP
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 563: PlayMetaFileRecord — STUB: unimplemented
@@ -7567,9 +7703,28 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 603: GetCharWidthW — STUB: unimplemented
+  ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
   (func $handle_GetCharWidthW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $packed i32) (local $width i32) (local $count i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $arg3)) (i32.lt_u (local.get $arg2) (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
+    (local.set $width (i32.shr_u (local.get $packed) (i32.const 16)))
+    (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 8))))
+    (local.set $count (i32.add (i32.sub (local.get $arg2) (local.get $arg1)) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (call $gs32
+        (i32.add (local.get $arg3) (i32.shl (local.get $i) (i32.const 2)))
+        (local.get $width))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 604: GetTextExtentPoint32W — font-aware wide text measurement
@@ -7600,9 +7755,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 606: GetTextFaceW — STUB: unimplemented
+  ;; 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
   (func $handle_GetTextFaceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $buf i32) (local $limit i32)
+    (if (i32.and (local.get $arg1) (local.get $arg2))
+      (then
+        (local.set $buf (call $g2w (local.get $arg2)))
+        (local.set $limit (i32.sub (local.get $arg1) (i32.const 1)))
+        (if (i32.gt_u (local.get $limit) (i32.const 5))
+          (then (local.set $limit (i32.const 5))))
+        (if (i32.gt_u (local.get $limit) (i32.const 0))
+          (then (i32.store16 (local.get $buf) (i32.const 65))))        ;; A
+        (if (i32.gt_u (local.get $limit) (i32.const 1))
+          (then (i32.store16 (i32.add (local.get $buf) (i32.const 2)) (i32.const 114)))) ;; r
+        (if (i32.gt_u (local.get $limit) (i32.const 2))
+          (then (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 105)))) ;; i
+        (if (i32.gt_u (local.get $limit) (i32.const 3))
+          (then (i32.store16 (i32.add (local.get $buf) (i32.const 6)) (i32.const 97))))  ;; a
+        (if (i32.gt_u (local.get $limit) (i32.const 4))
+          (then (i32.store16 (i32.add (local.get $buf) (i32.const 8)) (i32.const 108)))) ;; l
+        (i32.store16
+          (i32.add (local.get $buf) (i32.shl (local.get $limit) (i32.const 1)))
+          (i32.const 0))))
+    (global.set $eax (i32.const 5))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 607: MsgWaitForMultipleObjects(nCount, pHandles, fWaitAll, dwMilliseconds, dwWakeMask) → DWORD
@@ -8881,9 +9057,48 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 670: ScrollWindowEx — STUB: unimplemented
+  ;; 670: ScrollWindowEx(hWnd, dx, dy, prcScroll, prcClip, hrgnUpdate,
+  ;;                     prcUpdate, flags) → region complexity.
+  ;; Scroll the host backing store when possible, report the invalidated area,
+  ;; and mark the window for repaint. Region/clip details are approximated.
   (func $handle_ScrollWindowEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+    (local $wa i32) (local $cs i32) (local $prcUpdate i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (drop (call $host_gdi_scroll_window (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (if (local.get $arg3)
+      (then
+        (local.set $wa (call $g2w (local.get $arg3)))
+        (local.set $l (i32.load (local.get $wa)))
+        (local.set $t (i32.load offset=4 (local.get $wa)))
+        (local.set $r (i32.load offset=8 (local.get $wa)))
+        (local.set $b (i32.load offset=12 (local.get $wa))))
+      (else
+        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+        (local.set $l (i32.const 0))
+        (local.set $t (i32.const 0))
+        (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
+        (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+    ;; prcUpdate is the 7th argument at [esp+28].
+    (local.set $prcUpdate (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (local.get $prcUpdate)
+      (then
+        (local.set $wa (call $g2w (local.get $prcUpdate)))
+        (i32.store (local.get $wa) (local.get $l))
+        (i32.store offset=4 (local.get $wa) (local.get $t))
+        (i32.store offset=8 (local.get $wa) (local.get $r))
+        (i32.store offset=12 (local.get $wa) (local.get $b))))
+    (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
+    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+      (then (global.set $paint_pending (i32.const 1)))
+      (else (call $paint_flag_set (local.get $arg0))))
+    (call $host_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 2)) ;; SIMPLEREGION
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
   ;; 671: IsDialogMessageW — same policy as A: let the app dispatch messages.
@@ -10050,6 +10265,16 @@
   ;; 953: PrintDlgA(lppd) — show placeholder modal dialog
   (func $handle_PrintDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32) (local $owner i32)
+    ;; PD_RETURNDEFAULT (0x400) is a noninteractive default-printer probe.
+    ;; There is no printer device in the web runtime, so report no defaults;
+    ;; displaying the placeholder here incorrectly blocks MFC's printer-setup
+    ;; worker during application startup (WordPad is the canonical caller).
+    (if (i32.and (call $gl32 (i32.add (local.get $arg0) (i32.const 20)))
+                 (i32.const 0x00000400))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))

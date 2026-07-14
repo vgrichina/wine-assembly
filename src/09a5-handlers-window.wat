@@ -5,6 +5,7 @@
   ;; 67: CreateWindowExA
   (func $handle_CreateWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
+    (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $detected_class i32) (local $name_w i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
@@ -13,6 +14,22 @@
     (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
     (global.set $eax (local.get $hwnd))
     (local.set $parent_hwnd (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (local.set $win_x (local.get $arg4))
+    (local.set $win_y (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    ;; CW_USEDEFAULT (0x80000000) is common for top-level app windows. The
+    ;; renderer needs concrete geometry immediately, before WM_SIZE is delivered.
+    (if (i32.eq (local.get $win_x) (i32.const 0x80000000))
+      (then (local.set $win_x (i32.const 20))))
+    (if (i32.eq (local.get $win_y) (i32.const 0x80000000))
+      (then (local.set $win_y (i32.const 20))))
+    (if (i32.eq (local.get $win_cx) (i32.const 0x80000000))
+      (then
+        (local.set $win_cx (i32.const 400))
+        (local.set $win_cy (i32.const 300))))
+    (if (i32.eq (local.get $win_cy) (i32.const 0x80000000))
+      (then (local.set $win_cy (i32.const 300))))
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
     (if (i32.and
@@ -140,10 +157,10 @@
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
     (local.get $arg3)                                           ;; style
-    (local.get $arg4)                                           ;; x
-    (call $gl32 (i32.add (global.get $esp) (i32.const 24)))    ;; y
-    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))    ;; cx
-    (call $gl32 (i32.add (global.get $esp) (i32.const 32)))    ;; cy
+    (local.get $win_x)                                         ;; x
+    (local.get $win_y)                                         ;; y
+    (local.get $win_cx)                                        ;; cx
+    (local.get $win_cy)                                        ;; cy
     (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
     (local.get $tmp)                                            ;; resolved menu
     ))
@@ -435,15 +452,8 @@
     (if (i32.eqz (i32.and (local.get $arg3) (i32.const 0x40000000)))
     (then
     ;; Store window outer dimensions for WM_SIZE delivery later
-    ;; Handle CW_USEDEFAULT (0x80000000) — use defaults matching renderer (400x300).
-    ;; When cx=CW_USEDEFAULT, Windows ignores cy and defaults both — so also default cy.
-    (global.set $main_win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (global.set $main_win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    (if (i32.eq (global.get $main_win_cx) (i32.const 0x80000000))
-      (then (global.set $main_win_cx (i32.const 400))
-            (global.set $main_win_cy (i32.const 300))))
-    (if (i32.eq (global.get $main_win_cy) (i32.const 0x80000000))
-      (then (global.set $main_win_cy (i32.const 300))))
+    (global.set $main_win_cx (local.get $win_cx))
+    (global.set $main_win_cy (local.get $win_cy))
     ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
     (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
       (i32.ne (local.get $menu_id) (i32.const 0))))

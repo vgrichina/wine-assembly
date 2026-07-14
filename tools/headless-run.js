@@ -407,6 +407,12 @@ async function main() {
         const p = path.join(dir, base);
         if (fs.existsSync(p)) { data = new Uint8Array(fs.readFileSync(p)); break; }
       }
+      const resumeLoadLibrary = () => {
+        try {
+          const { resumeAfterLoadLibraryYield } = require('../lib/dll-loader');
+          if (resumeAfterLoadLibraryYield) resumeAfterLoadLibraryYield(e, memory.buffer);
+        } catch (_) {}
+      };
       if (data) {
         const { loadDll, patchDllImports, callDllMain } = require('../lib/dll-loader');
         const r = loadDll(instance.exports, memory.buffer, data);
@@ -421,10 +427,13 @@ async function main() {
           }
         } catch (_) {}
         patchDllImports(instance.exports, memory.buffer, [{ name: base, bytes: data }], [r], () => {});
+        e.clear_yield();
         if (r.dllMain && callDllMain) callDllMain(instance.exports, r.loadAddr, r.dllMain, () => {});
         e.set_eax(r.loadAddr);
+        resumeLoadLibrary();
       } else {
         e.set_eax(0);
+        resumeLoadLibrary();
       }
       e.clear_yield();
     }

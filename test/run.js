@@ -3385,6 +3385,10 @@ async function main() {
 
     // Handle LoadLibraryA yield (yield_reason=5)
     if (instance.exports.get_yield_reason() === 5) {
+      if (TRACE_YIELD) {
+        console.log(`[yield] T0 reason=5 (load_library) eip=${hex(instance.exports.get_eip())} ` +
+          `esp=${hex(instance.exports.get_esp())} syncDepth=${instance.exports.get_sync_msg_depth ? instance.exports.get_sync_msg_depth() : 0}`);
+      }
       const nameWA = instance.exports.get_loadlib_name();
       const mem8 = new Uint8Array(memory.buffer);
       let nameStr = '';
@@ -3427,7 +3431,7 @@ async function main() {
       }
       if (dllData) {
         const dllBytesArr = new Uint8Array(dllData);
-        const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm } = require('../lib/dll-loader');
+        const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm, resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
         const result = ld(instance.exports, memory.buffer, dllBytesArr);
         console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
         try {
@@ -3466,11 +3470,17 @@ async function main() {
         // Call DllMain(DLL_PROCESS_ATTACH). Some DLLs (e.g. d3dxof) initialize
         // critical state here — the template registry. callDllMain saves/restores
         // EIP/ESP so it's safe to invoke from the LoadLibrary yield handler.
+        instance.exports.clear_yield();
         if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
         instance.exports.set_eax(result.loadAddr);
+        if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
       } else {
         console.log(`[LoadLibrary] DLL not found: ${fileName}`);
         instance.exports.set_eax(0);
+        try {
+          const { resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
+          if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
+        } catch (_) {}
       }
       // ESP and EIP already adjusted by WAT handler before yield
       instance.exports.clear_yield();

@@ -269,6 +269,42 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
+  ;; GetCharWidthA(hdc, first, last, widths) — fill INT widths for a range.
+  (func $handle_GetCharWidthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $packed i32) (local $width i32) (local $count i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $arg3)) (i32.lt_u (local.get $arg2) (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
+    (local.set $width (i32.shr_u (local.get $packed) (i32.const 16)))
+    (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 8))))
+    (local.set $count (i32.add (i32.sub (local.get $arg2) (local.get $arg1)) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (call $gs32
+        (i32.add (local.get $arg3) (i32.shl (local.get $i) (i32.const 2)))
+        (local.get $width))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; GetOutlineTextMetricsA/W(hdc, cbData, lpOTM) — outline metrics unavailable.
+  ;; Returning 0 makes callers use their bitmap-font fallback path.
+  (func $handle_GetOutlineTextMetricsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_GetOutlineTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 165: GetTextExtentPointA — font-aware text measurement via host
   (func $handle_GetTextExtentPointA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32)
@@ -285,6 +321,50 @@
   (func $handle_GetTextCharset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; GetTextCharsetInfo(hdc, lpSig, flags) — ANSI charset with no Unicode ranges.
+  (func $handle_GetTextCharsetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 24))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; TranslateCharsetInfo(src, CHARSETINFO*, flags) — ANSI/Western defaults.
+  (func $handle_TranslateCharsetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 32))
+        (call $gs32 (local.get $arg1) (i32.const 0))       ;; ciCharset = ANSI_CHARSET
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1252)))) ;; ciACP
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; GetTextFaceA(hdc, cch, face) — report the selected font face.
+  ;; We do not expose host font names here; use a stable Win32-compatible face.
+  (func $handle_GetTextFaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $limit i32)
+    (if (i32.and (local.get $arg1) (local.get $arg2))
+      (then
+        (local.set $buf (call $g2w (local.get $arg2)))
+        (local.set $limit (i32.sub (local.get $arg1) (i32.const 1)))
+        (if (i32.gt_u (local.get $limit) (i32.const 5))
+          (then (local.set $limit (i32.const 5))))
+        (if (i32.gt_u (local.get $limit) (i32.const 0))
+          (then (i32.store8 (local.get $buf) (i32.const 65))))        ;; A
+        (if (i32.gt_u (local.get $limit) (i32.const 1))
+          (then (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 114)))) ;; r
+        (if (i32.gt_u (local.get $limit) (i32.const 2))
+          (then (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 105)))) ;; i
+        (if (i32.gt_u (local.get $limit) (i32.const 3))
+          (then (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 97))))  ;; a
+        (if (i32.gt_u (local.get $limit) (i32.const 4))
+          (then (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 108)))) ;; l
+        (i32.store8 (i32.add (local.get $buf) (local.get $limit)) (i32.const 0))))
+    (global.set $eax (i32.const 5))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 167: CreateFontIndirectA — LOGFONT at arg0
@@ -379,9 +459,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 175: SetMapMode — STUB: unimplemented
+  ;; 175: SetMapMode(hdc, fnMapMode) → previous map mode. We render in MM_TEXT
+  ;; coordinates; accept requests and report the previous/default mode.
   (func $handle_SetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1)) ;; MM_TEXT
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 176: SetWindowExtEx — STUB: unimplemented

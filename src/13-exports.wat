@@ -64,7 +64,9 @@
       ;; Exit if a blocking API yielded. JS owns resuming these waits.
       (br_if $halt (i32.or
         (i32.eq (global.get $yield_reason) (i32.const 1))
-        (i32.eq (global.get $yield_reason) (i32.const 7))))
+        (i32.or
+          (i32.eq (global.get $yield_reason) (i32.const 5))
+          (i32.eq (global.get $yield_reason) (i32.const 7)))))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
