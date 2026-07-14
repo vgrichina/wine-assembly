@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '164';
+  static SOURCE_VERSION = '165';
 
   constructor() {
     this.instance = null;
@@ -358,7 +358,8 @@ class WineAssembly {
     };
     h.dialog_loaded = (hwnd, parentHwnd) => {
       if (self.verbose) console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
-      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd, self.instance, self.memory);
+      const ownerInstance = ctx.instance || self.instance;
+      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd, ownerInstance, self.memory);
     };
 
     h.set_window_text = (hwnd, textPtr) => {

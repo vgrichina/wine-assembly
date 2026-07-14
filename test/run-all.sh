@@ -89,6 +89,7 @@ E2E=(
   test/test-pinball-flipper.js
   test/test-aoe-menu.js
   test/test-tworld-launch.js
+  test/test-winamp-about-web.js
 )
 
 SMOKE=(

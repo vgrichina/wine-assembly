@@ -347,6 +347,7 @@
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
+    (local $pe_off i32)
     (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
@@ -354,6 +355,14 @@
       (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     (global.set $image_base (local.get $img_base))
+    ;; Resource lookup state is instance-local. The main instance populates
+    ;; $rsrc_rva while loading the PE, but worker instances start with zero.
+    ;; The mapped DOS/PE headers live in shared memory, so recover the same
+    ;; resource-directory RVA when initializing each worker.
+    (local.set $pe_off (i32.add (local.get $img_base)
+      (i32.load (call $g2w (i32.add (local.get $img_base) (i32.const 0x3C))))))
+    (global.set $rsrc_rva
+      (i32.load (call $g2w (i32.add (local.get $pe_off) (i32.const 136)))))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
