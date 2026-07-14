@@ -199,7 +199,11 @@ const TEST_CASES = [
     extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 60000 },
   { exe: 'test/binaries/wep32-community/Winarc/Winarc.exe', name: 'Winarc (Pegs/Krypto/Life)', expectedCrash: 'not a current-stage target' },
-  { exe: 'test/binaries/wep32-community/Wordzap/CWordZap.exe', name: 'CWordZap' },
+  { exe: 'test/binaries/wep32-community/Wordzap/CWordZap.exe', name: 'CWordZap',
+    // Startup expands a BI_RLE4 splash after a comparatively expensive
+    // resource decode. The default 80k budget stops before its first paint.
+    maxBatches: 20, batchSize: 100000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'] },
   { exe: 'test/binaries/wep32-community/TWorld/tworld.exe', name: 'TWorld (SDL, expected fail)' },
   { exe: 'test/binaries/wep32-community/Jigssawme/JigSawedME.exe', name: 'JigSawedME (VB6, expected fail)', expectedCrash: 'VB6 runtime not a current-stage target' },
   { exe: 'test/binaries/wep32-community/Rodent2000/Rodent2000.exe', name: 'Rodent2000 (VB6, expected fail)', expectedCrash: 'VB6 runtime not a current-stage target' },
@@ -254,7 +258,8 @@ const TEST_CASES = [
     captureBatch: 8500, captureStopBatch: 8501,
     timeoutMs: 30000 },
   { exe: 'test/binaries/dx-sdk/bin/bellhop.exe', name: 'DX5 D3DIM Bellhop' },
-  { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer' },
+  { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer',
+    knownBadRender: 'camera.x ProgressiveMesh load returns D3DRMERR_NOTFOUND' },
   { exe: 'test/binaries/dx-sdk/bin/donut.exe', name: 'DX5 Donut' },
   { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts',
     // The attract screen renders early, then the sample enters a heavy

@@ -2103,9 +2103,14 @@
 
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
   ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
+  ;; A same-size MoveWindow is a geometry no-op and must not enqueue another
+  ;; WM_SIZE. Some applications enforce an aspect ratio from WM_SIZE by calling
+  ;; MoveWindow with the dimensions they already have; requeueing in that case
+  ;; creates an infinite WM_SIZE -> MoveWindow loop and starves paint/timers.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cx i32) (local $cy i32) (local $cs i32) (local $dlg_rec i32)
+    (local $cx i32) (local $cy i32) (local $cs i32) (local $old_cs i32) (local $dlg_rec i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    (local.set $old_cs (call $host_get_window_client_size (local.get $arg0)))
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
@@ -2122,15 +2127,18 @@
       (global.set $main_win_cx (local.get $arg3))
       (global.set $main_win_cy (local.get $arg4))
       (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-      (global.set $pending_wm_size (local.get $cs)))
+      (if (i32.ne (local.get $cs) (local.get $old_cs))
+        (then (global.set $pending_wm_size (local.get $cs)))))
     (else
       (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
       (local.set $cx (i32.and (local.get $cs) (i32.const 0xFFFF)))
       (local.set $cy (i32.shr_u (local.get $cs) (i32.const 16)))
-      (global.set $movewindow_pending_hwnd (local.get $arg0))
-      (global.set $movewindow_pending_size
-        (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
-                (i32.shl (local.get $cy) (i32.const 16)))))))
+      (if (i32.ne (local.get $cs) (local.get $old_cs))
+        (then
+          (global.set $movewindow_pending_hwnd (local.get $arg0))
+          (global.set $movewindow_pending_size
+            (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
+                    (i32.shl (local.get $cy) (i32.const 16))))))))
     (global.set $eax (i32.const 1))
     (return)
   )

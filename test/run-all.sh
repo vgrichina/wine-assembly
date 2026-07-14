@@ -72,6 +72,7 @@ E2E=(
   test/test-bricks-drag.js
   test/test-empipe-start.js
   test/test-empipe-stage-transition.js
+  test/test-cwordzap-render.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-cruel-maximized-launch-layout.js
