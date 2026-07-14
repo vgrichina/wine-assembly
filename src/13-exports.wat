@@ -136,6 +136,7 @@
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
+  (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))

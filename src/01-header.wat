@@ -1000,6 +1000,9 @@
   ;; Synchronous WM_CREATE: continuation thunk + saved state
   (global $createwnd_ret_thunk (mut i32) (i32.const 0))
   (global $sync_msg_ret_thunk (mut i32) (i32.const 0))
+  ;; Non-zero while $wnd_send_message is recursively executing an x86 wndproc.
+  ;; Host waits in this scope must not yield away the nested guest call frame.
+  (global $sync_msg_depth (mut i32) (i32.const 0))
   (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation (CACA0002)
   (global $child_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Child CBT hook → dispatch WM_CREATE (CACA0026)
   (global $child_create_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_CREATE returned → hand hwnd back (CACA0027)

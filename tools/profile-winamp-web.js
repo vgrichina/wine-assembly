@@ -2044,6 +2044,7 @@ async function main() {
   await wait(CREDIT_TAB_WAIT_MS);
   await evalExpr(`(() => {
     const r = window.sharedRenderer || runningApps[0].wine.renderer;
+    if (r.repaint) r.repaint();
     const sampleCanvas = (canvas) => {
       if (!canvas || !canvas.getContext) return null;
       const w = canvas.width | 0;
@@ -2061,15 +2062,47 @@ async function main() {
       }
       return { w, h, sampledColors: colors.size, sampledInk: ink };
     };
+    const sampleRect = (canvas, x, y, w, h) => {
+      if (!canvas || !canvas.getContext) return null;
+      const left = Math.max(0, x | 0);
+      const top = Math.max(0, y | 0);
+      const right = Math.min(canvas.width | 0, (x + w) | 0);
+      const bottom = Math.min(canvas.height | 0, (y + h) | 0);
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+      if (!width || !height) return null;
+      const data = canvas.getContext('2d').getImageData(left, top, width, height).data;
+      const colors = new Set();
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        const a = data[i + 3];
+        if (!a) continue;
+        const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+        colors.add(rgb);
+        if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+      }
+      return { x: left, y: top, w: width, h: height, sampledColors: colors.size, sampledInk: ink };
+    };
     window.__waProfile.creditsSnapshot = Object.values(r.windows)
       .filter(w => w && w.visible)
-      .map(w => ({
-        hwnd: w.hwnd,
-        title: w.title || '',
-        x: w.x, y: w.y, w: w.w, h: w.h,
-        isDialog: !!w.isDialog,
-        back: sampleCanvas(w._backCanvas),
-      }));
+      .map(w => {
+        const pos = r._windowOriginForComposite(w);
+        return {
+          hwnd: w.hwnd,
+          title: w.title || '',
+          x: w.x, y: w.y, w: w.w, h: w.h,
+          isDialog: !!w.isDialog,
+          isChild: !!w.isChild,
+          parentHwnd: w.parentHwnd || 0,
+          back: sampleCanvas(w._backCanvas),
+          screen: sampleRect(r.canvas, pos.x, pos.y, w.w, w.h),
+        };
+      });
+    const e = runningApps[0].wine.instance.exports;
+    window.__waProfile.workerHandlesAtCredits = {
+      about: e.guest_read32(0x44f8f8) >>> 0,
+      credits: e.guest_read32(0x44f8f4) >>> 0,
+    };
     return 1;
   })()`);
   await evalExpr(`(() => {
@@ -2082,6 +2115,7 @@ async function main() {
   const result = await evalExpr(`(() => {
     const p = window.__waProfile;
     const r = window.sharedRenderer || runningApps[0].wine.renderer;
+    if (r.repaint) r.repaint();
     const sampleCanvas = (canvas) => {
       if (!canvas || !canvas.getContext) return null;
       const w = canvas.width | 0;
@@ -2099,7 +2133,34 @@ async function main() {
       }
       return { w, h, sampledColors: colors.size, sampledInk: ink };
     };
-    const out = { marks: p.marks, counters: {}, samples: p.samples, creditsSnapshot: p.creditsSnapshot || null };
+    const sampleRect = (canvas, x, y, w, h) => {
+      if (!canvas || !canvas.getContext) return null;
+      const left = Math.max(0, x | 0);
+      const top = Math.max(0, y | 0);
+      const right = Math.min(canvas.width | 0, (x + w) | 0);
+      const bottom = Math.min(canvas.height | 0, (y + h) | 0);
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+      if (!width || !height) return null;
+      const data = canvas.getContext('2d').getImageData(left, top, width, height).data;
+      const colors = new Set();
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        const a = data[i + 3];
+        if (!a) continue;
+        const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+        colors.add(rgb);
+        if (rgb !== 0xc0c0c0 && rgb !== 0x000000 && rgb !== 0xffffff) ink++;
+      }
+      return { x: left, y: top, w: width, h: height, sampledColors: colors.size, sampledInk: ink };
+    };
+    const out = {
+      marks: p.marks,
+      counters: {},
+      samples: p.samples,
+      creditsSnapshot: p.creditsSnapshot || null,
+      workerHandlesAtCredits: p.workerHandlesAtCredits || null,
+    };
     for (const [k, v] of Object.entries(p.counters)) {
       out.counters[k] = {
         count: v.count,
@@ -2113,18 +2174,29 @@ async function main() {
       windows: Object.keys(r.windows).length,
       inputQueue: r.inputQueue.length,
       mainYield: runningApps[0].wine.instance.exports.get_yield_reason(),
-      visibleWindows: Object.values(r.windows).filter(w => w && w.visible).map(w => ({
-        hwnd: w.hwnd,
-        title: w.title || '',
-        x: w.x, y: w.y, w: w.w, h: w.h,
-        isDialog: !!w.isDialog,
-        isAboutDialog: !!w.isAboutDialog,
-        back: sampleCanvas(w._backCanvas),
-      })),
+      visibleWindows: Object.values(r.windows).filter(w => w && w.visible).map(w => {
+        const pos = r._windowOriginForComposite(w);
+        return {
+          hwnd: w.hwnd,
+          title: w.title || '',
+          x: w.x, y: w.y, w: w.w, h: w.h,
+          isDialog: !!w.isDialog,
+          isAboutDialog: !!w.isAboutDialog,
+          isChild: !!w.isChild,
+          parentHwnd: w.parentHwnd || 0,
+          back: sampleCanvas(w._backCanvas),
+          screen: sampleRect(r.canvas, pos.x, pos.y, w.w, w.h),
+        };
+      }),
+      workerHandles: {
+        about: runningApps[0].wine.instance.exports.guest_read32(0x44f8f8) >>> 0,
+        credits: runningApps[0].wine.instance.exports.guest_read32(0x44f8f4) >>> 0,
+      },
     };
     return out;
   })()`, 5000);
 
+  if (DUMP_CONSOLE) result.consoleEvents = consoleEventSummary(cdp.events);
   console.log(JSON.stringify(result, null, 2));
   await saveScreenshot();
   cdp.close();

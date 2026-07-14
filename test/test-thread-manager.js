@@ -147,7 +147,47 @@ assert.deepStrictEqual(exitNotifications[0], {
 });
 assert.strictEqual(exitTm._audioThreadHotUntil.has(3), false, 'exited audio-marked threads should be removed from hot priority');
 
+const cooperativeTm = makeThreadManager();
+const cooperativeHandle = 0xe1010;
+let cooperativeRuns = 0;
+const cooperativeThread = makeRunnableThread(1, () => {
+  cooperativeRuns++;
+  cooperativeTm._markThreadExited(cooperativeHandle, cooperativeThread, 0, 'cooperative wait test');
+});
+cooperativeThread.sleepUntil = Date.now() + 10000;
+cooperativeThread.sleepCount = 4;
+cooperativeTm.threads.set(cooperativeHandle, cooperativeThread);
+assert.strictEqual(
+  cooperativeTm.waitSingleCooperative(cooperativeHandle, 0xFFFFFFFF),
+  0,
+  'nested infinite wait should synchronously observe worker exit'
+);
+assert.strictEqual(cooperativeRuns, 1, 'nested infinite wait should wake and run its sleeping target worker');
+assert.strictEqual(cooperativeThread.sleepUntil, 0, 'nested infinite wait should clear the target sleep gate');
+
+const finiteWaitTm = makeThreadManager();
+let finiteRuns = 0;
+finiteWaitTm.threads.set(0xe1011, makeRunnableThread(1, () => { finiteRuns++; }));
+assert.strictEqual(
+  finiteWaitTm.waitSingleCooperative(0xe1011, 10),
+  0xFFFF,
+  'finite waits should retain normal cooperative scheduler semantics'
+);
+assert.strictEqual(finiteRuns, 0, 'finite waits should not synchronously pump workers');
+
+const reentrantWaitTm = makeThreadManager();
+let reentrantRuns = 0;
+reentrantWaitTm.threads.set(0xe1012, makeRunnableThread(1, () => { reentrantRuns++; }));
+reentrantWaitTm._runningThreadHandle = 0xe1012;
+assert.strictEqual(
+  reentrantWaitTm.waitSingleCooperative(0xe1012, 0xFFFFFFFF),
+  0xFFFFFFFF,
+  'nested wait should fail instead of recursively entering an active worker instance'
+);
+assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');
+console.log('PASS  ThreadManager completes nested infinite waits without losing callback state');

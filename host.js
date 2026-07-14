@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '165';
+  static SOURCE_VERSION = '166';
 
   constructor() {
     this.instance = null;
@@ -443,7 +443,14 @@ class WineAssembly {
     h.create_event = (m, i) => self.threadManager ? self.threadManager.createEvent(m, i) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
-    h.wait_single = (handle, t) => self.threadManager ? self.threadManager.waitSingle(handle, t) : 0;
+    h.wait_single = (handle, t) => {
+      if (!self.threadManager) return 0;
+      const e = ctx.exports;
+      const nestedSyncMessage = !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
+      return nestedSyncMessage
+        ? self.threadManager.waitSingleCooperative(handle, t)
+        : self.threadManager.waitSingle(handle, t);
+    };
     h.wait_multiple = (n, ha, wa, t) => self.threadManager ? self.threadManager.waitMultiple(n, ha, wa, t) : 0;
     h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;
     h.release_semaphore = (handle, count, prev) => self.threadManager ? self.threadManager.releaseSemaphore(handle, count, prev) : 0;
@@ -1230,7 +1237,10 @@ class WineAssembly {
                   ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : 4)
                   : (mainThreadWaiting ? 16 : 12);
                 self.threadManager.runBudgeted({
-                  maxTotalSteps: threadBudget,
+                  // Non-audio UI workers should be limited by the wall-clock
+                  // budget, not by one nominal interpreter slice. Credits
+                  // needs several quanta before it can present its first frame.
+                  maxTotalSteps: audioHot ? threadBudget : threadBudget * 4,
                   quantumSteps,
                   maxWallMs,
                   prioritizeAudioThreads: audioHot && !menuOpen,

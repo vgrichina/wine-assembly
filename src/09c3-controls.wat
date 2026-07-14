@@ -7091,7 +7091,9 @@
     (global.set $steps (i32.const 0))
     (global.set $yield_reason (i32.const 0))
     (global.set $yield_flag (i32.const 0))
+    (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
     (call $run (i32.const 1000000))
+    (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (global.get $eax))
     (global.set $eip (local.get $old_eip))
