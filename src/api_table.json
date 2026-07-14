@@ -2413,7 +2413,23 @@
     "name": "GetScrollInfo",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3406540758
+    "hash": 3406540758,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "bar",
+        "type": "INT"
+      },
+      {
+        "name": "si",
+        "type": "LPSCROLLINFO",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 299,
@@ -4585,7 +4601,43 @@
     "name": "ScrollWindowEx",
     "nargs": 8,
     "convention": "stdcall",
-    "hash": 3069051189
+    "hash": 3069051189,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "dx",
+        "type": "INT"
+      },
+      {
+        "name": "dy",
+        "type": "INT"
+      },
+      {
+        "name": "scrollRect",
+        "type": "LPRECT"
+      },
+      {
+        "name": "clipRect",
+        "type": "LPRECT"
+      },
+      {
+        "name": "hrgnUpdate",
+        "type": "HANDLE"
+      },
+      {
+        "name": "updateRect",
+        "type": "LPRECT",
+        "out": true
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 577,
@@ -5121,7 +5173,26 @@
     "name": "SetScrollInfo",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 304085122
+    "hash": 304085122,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "bar",
+        "type": "INT"
+      },
+      {
+        "name": "si",
+        "type": "LPSCROLLINFO"
+      },
+      {
+        "name": "redraw",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 644,
@@ -12199,49 +12270,174 @@
     "name": "IDirectAnimationDAView_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 719961167
+    "hash": 719961167,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppv",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1622,
     "name": "IDirectAnimationDAView_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1235159396
+    "hash": 1235159396,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1623,
     "name": "IDirectAnimationDAView_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 356827845
+    "hash": 356827845,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1624,
     "name": "IDirectAnimationDAView_GetTypeInfoCount",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3281589903
+    "hash": 3281589903,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pctinfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1625,
     "name": "IDirectAnimationDAView_GetTypeInfo",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 1318994848
+    "hash": 1318994848,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "iTInfo",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppTInfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1626,
     "name": "IDirectAnimationDAView_GetIDsOfNames",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 3385180605
+    "hash": 3385180605,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "names",
+        "type": "LPOLESTRARRAY"
+      },
+      {
+        "name": "cNames",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "dispids",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1627,
     "name": "IDirectAnimationDAView_Invoke",
     "nargs": 9,
     "convention": "stdcall",
-    "hash": 3393823400
+    "hash": 3393823400,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dispid",
+        "type": "INT"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "params",
+        "type": "DISPPARAMS"
+      },
+      {
+        "name": "result",
+        "type": "DWORD"
+      },
+      {
+        "name": "excep",
+        "type": "DWORD"
+      },
+      {
+        "name": "argErr",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1628,
@@ -12353,49 +12549,174 @@
     "name": "IDirectAnimationDAStatics_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2607791209
+    "hash": 2607791209,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppv",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1644,
     "name": "IDirectAnimationDAStatics_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1971740442
+    "hash": 1971740442,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1645,
     "name": "IDirectAnimationDAStatics_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 892484151
+    "hash": 892484151,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1646,
     "name": "IDirectAnimationDAStatics_GetTypeInfoCount",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3400608841
+    "hash": 3400608841,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pctinfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1647,
     "name": "IDirectAnimationDAStatics_GetTypeInfo",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 1343976194
+    "hash": 1343976194,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "iTInfo",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "ppTInfo",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1648,
     "name": "IDirectAnimationDAStatics_GetIDsOfNames",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 3929333159
+    "hash": 3929333159,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "names",
+        "type": "LPOLESTRARRAY"
+      },
+      {
+        "name": "cNames",
+        "type": "UINT"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "dispids",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1649,
     "name": "IDirectAnimationDAStatics_Invoke",
     "nargs": 9,
     "convention": "stdcall",
-    "hash": 863614302
+    "hash": 863614302,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dispid",
+        "type": "INT"
+      },
+      {
+        "name": "riid",
+        "type": "DWORD"
+      },
+      {
+        "name": "lcid",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "params",
+        "type": "DISPPARAMS"
+      },
+      {
+        "name": "result",
+        "type": "DWORD"
+      },
+      {
+        "name": "excep",
+        "type": "DWORD"
+      },
+      {
+        "name": "argErr",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1650,
@@ -15260,5 +15581,12 @@
     "convention": "stdcall",
     "hash": 3737355168,
     "ret": "WORD"
+  },
+  {
+    "id": 2041,
+    "name": "GetStringTypeExA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 4263157666
   }
 ]

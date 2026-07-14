@@ -432,12 +432,15 @@
       (then (call $title_table_set (local.get $hwnd)
                 (call $g2w (local.get $arg2))
                 (call $guest_strlen (local.get $arg2)))))
+    ;; Seed client geometry immediately. The renderer may query it before
+    ;; deferred visible-window NC work runs, and child controls depend on their
+    ;; own local client rect for input/paint targeting.
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
     ;; Queue initial NC work for visible windows. Hidden windows still need
     ;; client geometry, but Win98 does not dispatch deferred non-client messages
     ;; into their app wndprocs while their visible region is empty.
     (if (call $wnd_is_effectively_visible (local.get $hwnd))
-      (then (call $nc_flags_set (local.get $hwnd) (i32.const 7)))
-      (else (call $defwndproc_do_nccalcsize (local.get $hwnd))))
+      (then (call $nc_flags_set (local.get $hwnd) (i32.const 7))))
     ;; Eagerly load the menu blob now that the WND_RECORDS slot exists —
     ;; otherwise a CheckMenuItem fired from WM_CREATE (e.g. FreeCell
     ;; initialising the Messages toggle) would see an empty blob and the
@@ -1121,9 +1124,9 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
+    (call $defwndproc_do_nccalcsize (global.get $pending_child_size_hwnd))
     (if (call $wnd_is_effectively_visible (global.get $pending_child_size_hwnd))
-      (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4)))
-      (else (call $defwndproc_do_nccalcsize (global.get $pending_child_size_hwnd))))
+      (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Hardware input (host_check_input) BEFORE post_queue — pinball self-posts
@@ -1327,9 +1330,9 @@
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then
         (global.set $pending_child_size (i32.const 0))
+        (call $defwndproc_do_nccalcsize (global.get $pending_child_size_hwnd))
         (if (call $wnd_is_effectively_visible (global.get $pending_child_size_hwnd))
-          (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4)))
-          (else (call $defwndproc_do_nccalcsize (global.get $pending_child_size_hwnd))))))
+          (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4)))))))
     (call $gs32 (local.get $arg0) (global.get $pending_child_size_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))

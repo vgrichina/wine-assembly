@@ -896,81 +896,85 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
   )
 
-  ;; 45: GetStringTypeA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType) — single-byte CT_CTYPE1 classification.
-  (func $handle_GetStringTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $ch i32) (local $ct i32) (local $out i32) (local $src i32) (local $count i32)
-    (local.set $src (call $g2w (local.get $arg2)))
-    (local.set $out (call $g2w (local.get $arg4)))
-    (local.set $count (local.get $arg3))
+  ;; ASCII CT_CTYPE1 classification used by GetStringTypeA/W and the Ex
+  ;; variants. CT_CTYPE1 bits: C1_UPPER=1 C1_LOWER=2 C1_DIGIT=4
+  ;; C1_SPACE=8 C1_PUNCT=16 C1_CNTRL=32 C1_ALPHA=256.
+  (func $ctype1_ascii_flags (param $ch i32) (result i32)
+    (local $ct i32)
+    (if (i32.le_u (local.get $ch) (i32.const 31))
+      (then (local.set $ct (i32.const 0x20))))
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
+          (i32.or (i32.eq (local.get $ch) (i32.const 9))
+            (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x08)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x04)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 33)) (i32.le_u (local.get $ch) (i32.const 47)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 58)) (i32.le_u (local.get $ch) (i32.const 64)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 91)) (i32.le_u (local.get $ch) (i32.const 96)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 123)) (i32.le_u (local.get $ch) (i32.const 126)))
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+    (local.get $ct)
+  )
+
+  (func $get_string_type_a_core (param $src_guest i32) (param $count_in i32) (param $out_guest i32) (result i32)
+    (local $i i32) (local $ch i32) (local $out i32) (local $src i32) (local $count i32)
+    (if (i32.eqz (local.get $src_guest)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $out_guest)) (then (return (i32.const 0))))
+    (local.set $src (call $g2w (local.get $src_guest)))
+    (local.set $out (call $g2w (local.get $out_guest)))
+    (local.set $count (local.get $count_in))
     (if (i32.eq (local.get $count) (i32.const -1))
       (then (local.set $count (i32.add (call $strlen_a (local.get $src)) (i32.const 1)))))
     (local.set $i (i32.const 0))
     (block $done (loop $next
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
-      (local.set $ct (i32.const 0))
-      (if (i32.le_u (local.get $ch) (i32.const 31))
-        (then (local.set $ct (i32.const 0x20))))
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
-            (i32.or (i32.eq (local.get $ch) (i32.const 9))
-              (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x08)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x04)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 33)) (i32.le_u (local.get $ch) (i32.const 47)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 58)) (i32.le_u (local.get $ch) (i32.const 64)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
-      (i32.store16 (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2))) (local.get $ct))
+      (i32.store16
+        (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2)))
+        (call $ctype1_ascii_flags (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $next)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+    (i32.const 1)
   )
 
-  ;; 46: GetStringTypeW(dwInfoType, lpSrcStr, cchSrc, lpCharType) — classify chars
-  ;; CT_CTYPE1=1: C1_UPPER=1 C1_LOWER=2 C1_DIGIT=4 C1_SPACE=8 C1_PUNCT=16 C1_CNTRL=32 C1_ALPHA=256
-  (func $handle_GetStringTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $ch i32) (local $ct i32) (local $out i32) (local $src i32) (local $count i32)
-    ;; arg0=dwInfoType, arg1=lpSrcStr, arg2=cchSrc, arg3=lpCharType
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $out (call $g2w (local.get $arg3)))
-    (local.set $count (local.get $arg2))
+  (func $get_string_type_w_core (param $src_guest i32) (param $count_in i32) (param $out_guest i32) (result i32)
+    (local $i i32) (local $ch i32) (local $out i32) (local $src i32) (local $count i32)
+    (if (i32.eqz (local.get $src_guest)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $out_guest)) (then (return (i32.const 0))))
+    (local.set $src (call $g2w (local.get $src_guest)))
+    (local.set $out (call $g2w (local.get $out_guest)))
+    (local.set $count (local.get $count_in))
+    (if (i32.eq (local.get $count) (i32.const -1))
+      (then (local.set $count (i32.add (call $strlen_w (local.get $src)) (i32.const 1)))))
     (local.set $i (i32.const 0))
     (block $done (loop $next
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
-      (local.set $ct (i32.const 0))
-      ;; Control chars 0-31
-      (if (i32.le_u (local.get $ch) (i32.const 31))
-        (then (local.set $ct (i32.const 0x20))))
-      ;; Space/tab/newline
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
-            (i32.or (i32.eq (local.get $ch) (i32.const 9))
-              (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x08)))))
-      ;; Digits 0-9
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x04)))))
-      ;; Uppercase A-Z
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
-      ;; Lowercase a-z
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
-      ;; Punctuation 33-47, 58-64, 91-96, 123-126
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 33)) (i32.le_u (local.get $ch) (i32.const 47)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 58)) (i32.le_u (local.get $ch) (i32.const 64)))
-        (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
-      (i32.store16 (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2))) (local.get $ct))
+      (i32.store16
+        (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2)))
+        (call $ctype1_ascii_flags (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $next)))
-    (global.set $eax (i32.const 1))
+    (i32.const 1)
+  )
+
+  ;; 45: GetStringTypeA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType) — single-byte CT_CTYPE1 classification.
+  (func $handle_GetStringTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_string_type_a_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; 46: GetStringTypeW(dwInfoType, lpSrcStr, cchSrc, lpCharType) — classify chars.
+  (func $handle_GetStringTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_string_type_w_core (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -1387,7 +1391,28 @@
   (func $handle_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $screen i32)
     ;; Return reasonable defaults for common caps
-    ;; HORZRES=8, VERTRES=10, LOGPIXELSX=88, LOGPIXELSY=90
+    ;; TECHNOLOGY=2, HORZSIZE=4, VERTSIZE=6, HORZRES=8, VERTRES=10,
+    ;; RASTERCAPS=38, ASPECT*=40/42/44, LOGPIXELSX=88, LOGPIXELSY=90.
+    ;; Unknown caps default to 0. Leaving EAX untouched here leaks unrelated
+    ;; previous API return values into layout code (RichEdit queries several
+    ;; display caps while positioning typed text).
+    (global.set $eax (i32.const 0))
+    (if (i32.eq (local.get $arg1) (i32.const 2))
+    (then (global.set $eax (i32.const 1))))   ;; TECHNOLOGY: DT_RASDISPLAY
+    (if (i32.eq (local.get $arg1) (i32.const 4))
+    (then
+      (local.set $screen (call $host_get_screen_size))
+      (global.set $eax
+        (i32.div_u
+          (i32.mul (i32.and (local.get $screen) (i32.const 0xFFFF)) (i32.const 254))
+          (i32.const 960)))))                ;; HORZSIZE in millimeters
+    (if (i32.eq (local.get $arg1) (i32.const 6))
+    (then
+      (local.set $screen (call $host_get_screen_size))
+      (global.set $eax
+        (i32.div_u
+          (i32.mul (i32.shr_u (local.get $screen) (i32.const 16)) (i32.const 254))
+          (i32.const 960)))))                ;; VERTSIZE in millimeters
     (if (i32.or (i32.eq (local.get $arg1) (i32.const 8)) (i32.eq (local.get $arg1) (i32.const 10)))
     (then
     (local.set $screen (call $host_get_screen_size))
@@ -1404,13 +1429,21 @@
     (if (i32.eq (local.get $arg1) (i32.const 14))
     (then (global.set $eax (i32.const 1))))   ;; PLANES
     (if (i32.eq (local.get $arg1) (i32.const 24))
-    (then (global.set $eax (i32.const 256)))) ;; NUMCOLORS (0x18) — not exact but close
+    (then (global.set $eax (i32.const -1))))  ;; NUMCOLORS — -1 = >256 colors
+    (if (i32.eq (local.get $arg1) (i32.const 36))
+    (then (global.set $eax (i32.const 1))))   ;; CLIPCAPS: CP_RECTANGLE
+    (if (i32.eq (local.get $arg1) (i32.const 38))
+    (then (global.set $eax (i32.const 15033)))) ;; RASTERCAPS: common raster ops
     (if (i32.eq (local.get $arg1) (i32.const 40))
-    (then (global.set $eax (i32.const -1))))  ;; NUMCOLORS (0x28) — -1 = >256 colors
+    (then (global.set $eax (i32.const 36))))  ;; ASPECTX
     (if (i32.eq (local.get $arg1) (i32.const 42))
-    (then (global.set $eax (i32.const 24))))  ;; COLORRES (0x2A) — 24-bit color
+    (then (global.set $eax (i32.const 36))))  ;; ASPECTY
+    (if (i32.eq (local.get $arg1) (i32.const 44))
+    (then (global.set $eax (i32.const 51))))  ;; ASPECTXY
     (if (i32.eq (local.get $arg1) (i32.const 104))
-    (then (global.set $eax (i32.const 32))))  ;; SIZEPALETTE (0x68)
+    (then (global.set $eax (i32.const 0))))   ;; SIZEPALETTE: no palette device
+    (if (i32.eq (local.get $arg1) (i32.const 108))
+    (then (global.set $eax (i32.const 24))))  ;; COLORRES — 24-bit color
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -1558,15 +1591,43 @@
 
   ;; 91: GetClientRect
   (func $handle_GetClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $style i32) (local $cw i32) (local $ch i32)
     ;; Controls live entirely in WAT (CONTROL_GEOM) — asking the host for
     ;; their client size falls back to the 640×480 desktop default because
     ;; child hwnds aren't in renderer.windows[], which then corrupts any
     ;; size calc the guest does from it (calc's dialog resize is one such
     ;; path). For controls, read the size directly from CONTROL_GEOM.
+    ;; Generic child HWNDs (RichEdit, MFC views, etc.) also need WAT-owned
+    ;; geometry. Their JS window objects are parent-relative surfaces, while
+    ;; host_get_window_client_size returns top-level/client fallback sizes.
     (if (call $ctrl_table_get_class (local.get $arg0))
       (then (local.set $cs (call $ctrl_get_wh_packed (local.get $arg0))))
-      (else (local.set $cs (call $host_get_window_client_size (local.get $arg0)))))
+      (else
+        (local.set $style (call $wnd_get_style (local.get $arg0)))
+        (if (i32.and
+              (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
+              (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+          (then
+            (call $defwndproc_do_nccalcsize (local.get $arg0))
+            (local.set $cw
+              (i32.sub
+                (call $client_rect_get_r (local.get $arg0))
+                (call $client_rect_get_l (local.get $arg0))))
+            (local.set $ch
+              (i32.sub
+                (call $client_rect_get_b (local.get $arg0))
+                (call $client_rect_get_t (local.get $arg0))))
+            (if (i32.or
+                  (i32.le_s (local.get $cw) (i32.const 0))
+                  (i32.le_s (local.get $ch) (i32.const 0)))
+              (then (local.set $cs (call $ctrl_get_wh_packed (local.get $arg0))))
+              (else
+                (local.set $cs
+                  (i32.or
+                    (i32.and (local.get $cw) (i32.const 0xFFFF))
+                    (i32.shl (local.get $ch) (i32.const 16)))))))
+          (else
+            (local.set $cs (call $host_get_window_client_size (local.get $arg0)))))))
     (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
     (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
@@ -4214,10 +4275,26 @@
 
   ;; 314: GetTextMetricsW — zero-fill, return 1
   (func $handle_GetTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $packed i32) (local $h i32) (local $aveW i32)
+    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
+    (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 60))
-    ;; Set tmHeight=16, tmAveCharWidth=8
-    (call $gs32 (local.get $arg1) (i32.const 16))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (i32.const 8))
+    (call $gs32 (local.get $arg1) (local.get $h))                                    ;; tmHeight
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+      (i32.sub (local.get $h) (i32.const 3)))                                        ;; tmAscent
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 3))             ;; tmDescent
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (local.get $aveW))        ;; tmAveCharWidth
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 24))
+      (i32.mul (local.get $aveW) (i32.const 2)))                                     ;; tmMaxCharWidth
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 28)) (i32.const 400))          ;; tmWeight
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 36)) (i32.const 96))           ;; tmDigitizedAspectX
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 40)) (i32.const 96))           ;; tmDigitizedAspectY
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 44)) (i32.const 32))           ;; tmFirstChar
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 46)) (i32.const 255))          ;; tmLastChar
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 48)) (i32.const 31))           ;; tmDefaultChar
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 50)) (i32.const 32))           ;; tmBreakChar
+    (i32.store8 (i32.add (call $g2w (local.get $arg1)) (i32.const 55)) (i32.const 0x26)) ;; tmPitchAndFamily
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -6925,10 +7002,15 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 520: GetStringTypeExW — STUB: unimplemented
+  ;; GetStringTypeExA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
+  (func $handle_GetStringTypeExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_string_type_a_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; 520: GetStringTypeExW(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
   (func $handle_GetStringTypeExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $get_string_type_w_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 521: GetThreadLocale() → LCID — returns US English
   (func $handle_GetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8231,7 +8313,8 @@
 
   ;; 628: SetScrollInfo(hwnd, nBar, lpsi, bRedraw) → pos
   (func $handle_SetScrollInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $slot i32) (local $base i32) (local $lpsi i32) (local $fMask i32)
+    (local $slot i32) (local $base i32) (local $aux i32) (local $lpsi i32) (local $fMask i32)
+    (local $smin i32) (local $smax i32) (local $page i32) (local $pos i32) (local $max_pos i32)
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (local.set $lpsi (call $g2w (local.get $arg2)))
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
@@ -8240,22 +8323,56 @@
         (local.set $base (i32.add (global.get $SCROLL_TABLE)
           (i32.add (i32.mul (local.get $slot) (i32.const 24))
             (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 16))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 8)))))
         ;; SIF_RANGE = 0x01
         (if (i32.and (local.get $fMask) (i32.const 1))
           (then
             (i32.store offset=4 (local.get $base) (i32.load offset=8 (local.get $lpsi)))
             (i32.store offset=8 (local.get $base) (i32.load offset=12 (local.get $lpsi)))))
+        ;; SIF_PAGE = 0x02
+        (if (i32.and (local.get $fMask) (i32.const 2))
+          (then
+            (i32.store (local.get $aux) (i32.load offset=16 (local.get $lpsi)))))
         ;; SIF_POS = 0x04
         (if (i32.and (local.get $fMask) (i32.const 4))
           (then
             (i32.store (local.get $base) (i32.load offset=20 (local.get $lpsi)))))
+        ;; SIF_TRACKPOS = 0x10. Real SetScrollInfo does not make the thumb
+        ;; position from nTrackPos, but preserving it lets later GetScrollInfo
+        ;; calls see coherent state.
+        (if (i32.and (local.get $fMask) (i32.const 16))
+          (then
+            (i32.store offset=4 (local.get $aux) (i32.load offset=24 (local.get $lpsi)))))
+        ;; Clamp the stored position to the Win32 scrollbar range. With a page
+        ;; size, the largest useful position is nMax - max(nPage - 1, 0).
+        (local.set $smin (i32.load offset=4 (local.get $base)))
+        (local.set $smax (i32.load offset=8 (local.get $base)))
+        (local.set $page (i32.load (local.get $aux)))
+        (local.set $max_pos (local.get $smax))
+        (if (i32.gt_u (local.get $page) (i32.const 1))
+          (then
+            (local.set $max_pos
+              (if (result i32)
+                (i32.gt_s
+                  (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1)))
+                  (local.get $smin))
+                (then (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1))))
+                (else (local.get $smin))))))
+        (local.set $pos (i32.load (local.get $base)))
+        (if (i32.lt_s (local.get $pos) (local.get $smin))
+          (then (local.set $pos (local.get $smin))))
+        (if (i32.gt_s (local.get $pos) (local.get $max_pos))
+          (then (local.set $pos (local.get $max_pos))))
+        (i32.store (local.get $base) (local.get $pos))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 629: GetScrollInfo(hwnd, nBar, lpsi) → BOOL
   (func $handle_GetScrollInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $slot i32) (local $base i32) (local $lpsi i32) (local $fMask i32)
+    (local $slot i32) (local $base i32) (local $aux i32) (local $lpsi i32) (local $fMask i32)
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (local.set $lpsi (call $g2w (local.get $arg2)))
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
@@ -8264,6 +8381,9 @@
         (local.set $base (i32.add (global.get $SCROLL_TABLE)
           (i32.add (i32.mul (local.get $slot) (i32.const 24))
             (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
+          (i32.add (i32.mul (local.get $slot) (i32.const 16))
+            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 8)))))
         ;; SIF_RANGE = 0x01
         (if (i32.and (local.get $fMask) (i32.const 1))
           (then
@@ -8273,10 +8393,14 @@
         (if (i32.and (local.get $fMask) (i32.const 4))
           (then
             (i32.store offset=20 (local.get $lpsi) (i32.load (local.get $base)))))
-        ;; SIF_PAGE = 0x02 — not tracked, return 0
+        ;; SIF_PAGE = 0x02
         (if (i32.and (local.get $fMask) (i32.const 2))
           (then
-            (i32.store offset=16 (local.get $lpsi) (i32.const 0))))
+            (i32.store offset=16 (local.get $lpsi) (i32.load (local.get $aux)))))
+        ;; SIF_TRACKPOS = 0x10
+        (if (i32.and (local.get $fMask) (i32.const 16))
+          (then
+            (i32.store offset=24 (local.get $lpsi) (i32.load offset=4 (local.get $aux)))))
         (global.set $eax (i32.const 1)))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))

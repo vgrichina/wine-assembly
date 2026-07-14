@@ -609,7 +609,7 @@
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
   ;; 0x07F9B000 256KB    HOT_BLOCK_HIST (32768 entries x {eip,count})
   ;; 0x07FDB000 64KB     SIB_CONSUMER_HIST (8192 entries x {key,count})
-  ;; 0x07FEB000  ...     Reserved high WAT-private scratch
+  ;; 0x07FEB000  4KB     SCROLL_AUX_TABLE (256 entries × 16 bytes, ends 0x07FEC000)
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -854,6 +854,14 @@
   ;;   +20  v_max     SB_VERT range max
   (global $SCROLL_TABLE i32 (i32.const 0x0000D170))
   (global $SCROLL_TABLE_SIZE i32 (i32.const 0x00001800))
+  ;; SCROLL_AUX_TABLE — extra SCROLLINFO fields that do not fit in the legacy
+  ;; low-memory SCROLL_TABLE layout. Per WND_RECORDS slot:
+  ;;   +0   h_page    SB_HORZ nPage
+  ;;   +4   h_track   SB_HORZ nTrackPos
+  ;;   +8   v_page    SB_VERT nPage
+  ;;   +12  v_track   SB_VERT nTrackPos
+  (global $SCROLL_AUX_TABLE i32 (i32.const 0x07FEB000))
+  (global $SCROLL_AUX_TABLE_SIZE i32 (i32.const 0x00001000))
   ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte = 0x100 (0xE970..0xEA70)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)

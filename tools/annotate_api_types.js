@@ -89,6 +89,9 @@ const TYPED = {
   SetDlgItemTextA: { args: [{ name: 'hwnd', type: 'HWND' }, { name: 'id', type: 'INT' }, { name: 'text', type: 'LPCSTR' }], ret: 'BOOL' },
   LoadStringA:     { args: [{ name: 'hInst', type: 'HANDLE' }, { name: 'id', type: 'UINT' }, { name: 'buf', type: 'LPSTR', out: true }, { name: 'max', type: 'INT' }], ret: 'INT' },
   MessageBoxA:     { args: [{ name: 'hwnd', type: 'HWND' }, { name: 'text', type: 'LPCSTR' }, { name: 'caption', type: 'LPCSTR' }, { name: 'type', type: 'flags:MB' }], ret: 'INT' },
+  SetScrollInfo:   { args: [{ name: 'hwnd', type: 'HWND' }, { name: 'bar', type: 'INT' }, { name: 'si', type: 'LPSCROLLINFO' }, { name: 'redraw', type: 'BOOL' }], ret: 'INT' },
+  GetScrollInfo:   { args: [{ name: 'hwnd', type: 'HWND' }, { name: 'bar', type: 'INT' }, { name: 'si', type: 'LPSCROLLINFO', out: true }], ret: 'BOOL' },
+  ScrollWindowEx:  { args: [{ name: 'hwnd', type: 'HWND' }, { name: 'dx', type: 'INT' }, { name: 'dy', type: 'INT' }, { name: 'scrollRect', type: 'LPRECT' }, { name: 'clipRect', type: 'LPRECT' }, { name: 'hrgnUpdate', type: 'HANDLE' }, { name: 'updateRect', type: 'LPRECT', out: true }, { name: 'flags', type: 'DWORD' }], ret: 'INT' },
 
   // — ini / profile —
   GetPrivateProfileStringA: { args: [{ name: 'section', type: 'LPCSTR' }, { name: 'key', type: 'LPCSTR' }, { name: 'def', type: 'LPCSTR' }, { name: 'buf', type: 'LPSTR', out: true }, { name: 'size', type: 'DWORD' }, { name: 'file', type: 'LPCSTR' }], ret: 'DWORD' },
