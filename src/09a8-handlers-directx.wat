@@ -17,12 +17,13 @@
   (global $DX_OBJECTS_SIZE i32 (i32.const 0x00008000))
   (global $DX_MAX i32 (i32.const 1024))
   ;; D3DIM matrix handle table (Immediate Mode): 256 slots × 64 bytes.
-  ;; Handle value = slot_idx + 1 (0 is invalid). A slot whose 64-byte body
-  ;; is entirely zero is considered free; CreateMatrix fills with the 4x4
-  ;; identity so subsequent scans skip it. DeleteMatrix zeroes it again.
+  ;; Handle value = slot_idx + 1 (0 is invalid). Allocation state is kept in
+  ;; a separate byte table because SetMatrix may legitimately store an all-zero
+  ;; matrix; matrix contents therefore cannot serve as the ownership marker.
   (global $D3DIM_MATRICES i32 (i32.const 0x07FEC000))
   (global $D3DIM_MATRICES_SIZE i32 (i32.const 0x00004000))
   (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
+  (global $D3DIM_MATRIX_USED i32 (i32.const 0x07FEBF00))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))

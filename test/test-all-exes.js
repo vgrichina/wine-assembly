@@ -26,6 +26,20 @@ const VOLUME_CONTROL_SMOKE = {
   captureHwnd: 0x10002, captureBatch: 120, captureStopBatch: 121,
   timeoutMs: 90000,
 };
+const DX5_TEXTURED_EXECUTE_SMOKE = {
+  // Tunnel/Twist parse several large ASCII PPM textures in guest code before
+  // their first execute-buffer frame. The default 80k-instruction smoke budget
+  // stops during that decode and captures an apparently healthy window with a
+  // black viewport.
+  maxBatches: 18, batchSize: 100000,
+  extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+  timeoutMs: 30000,
+  // This rectangle is the intersection of the app viewport in the renderer
+  // canvas and in the final DirectDraw primary capture. It excludes all chrome
+  // and FPS/format text is too sparse to satisfy the threshold by itself.
+  contentRegion: { x: 23, y: 61, width: 294, height: 254 },
+  minRegionNonBlackPixels: 3000,
+};
 
 // Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
 // topShare = fraction of pixels covered by the most common color. A PNG is
@@ -33,7 +47,7 @@ const VOLUME_CONTROL_SMOKE = {
 // Sparse text on a solid fill (e.g. ddex3's "Even Screen" title) is a real
 // render with 3 colors but ~95% background and must PASS — so the cutoff
 // is tighter than 0.95.
-async function analyzePng(pngPath) {
+async function analyzePng(pngPath, contentRegion) {
   try {
     const img = await loadImage(pngPath);
     const w = img.width, h = img.height;
@@ -46,6 +60,7 @@ async function analyzePng(pngPath) {
     let total = 0;
     let centerTotal = 0;
     const centerHist = new Map();
+    let regionNonBlack = 0;
     const centerX0 = Math.floor(w * 0.25), centerX1 = Math.ceil(w * 0.75);
     const centerY0 = Math.floor(h * 0.20), centerY1 = Math.ceil(h * 0.80);
     for (let i = 0; i < data.length; i += 4) {
@@ -55,6 +70,12 @@ async function analyzePng(pngPath) {
       if (x >= centerX0 && x < centerX1 && y >= centerY0 && y < centerY1) {
         centerHist.set(k, (centerHist.get(k) || 0) + 1);
         centerTotal++;
+      }
+      if (contentRegion &&
+          x >= contentRegion.x && x < contentRegion.x + contentRegion.width &&
+          y >= contentRegion.y && y < contentRegion.y + contentRegion.height &&
+          (data[i] > 8 || data[i+1] > 8 || data[i+2] > 8)) {
+        regionNonBlack++;
       }
       total++;
     }
@@ -66,7 +87,7 @@ async function analyzePng(pngPath) {
       }
     }
     const centerContent = centerTotal - (centerHist.get(topColor) || 0);
-    return { colors: hist.size, topShare: total ? top / total : 1, centerContent };
+    return { colors: hist.size, topShare: total ? top / total : 1, centerContent, regionNonBlack };
   } catch (_) {
     return null;
   }
@@ -220,8 +241,10 @@ const TEST_CASES = [
   { exe: 'test/binaries/dx-sdk/bin/flip2d.exe', name: 'DX5 Flip2D' },
   { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette' },
   { exe: 'test/binaries/dx-sdk/bin/stretch.exe', name: 'DX5 Stretch' },
-  { exe: 'test/binaries/dx-sdk/bin/tunnel.exe', name: 'DX5 D3DIM Tunnel (DrawPrimitive)' },
-  { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist' },
+  { exe: 'test/binaries/dx-sdk/bin/tunnel.exe', name: 'DX5 D3DIM Tunnel (DrawPrimitive)',
+    ...DX5_TEXTURED_EXECUTE_SMOKE },
+  { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist',
+    ...DX5_TEXTURED_EXECUTE_SMOKE },
   { exe: 'test/binaries/dx-sdk/bin/boids.exe', name: 'DX5 D3DIM Boids' },
   { exe: 'test/binaries/dx-sdk/bin/globe.exe', name: 'DX5 D3DIM Globe',
     // D3DRM loads/parses mesh and texture data before the first visible
@@ -468,7 +491,7 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     // Two-signal: few unique colors AND >95% of pixels in one color = blank.
     // Cartoon content (few colors but real shapes) passes the second check.
     if (r.status === 'OK' && pngPath && fs.existsSync(pngPath)) {
-      const a = await analyzePng(pngPath);
+      const a = await analyzePng(pngPath, tc.contentRegion);
       if (a) {
         r.colors = a.colors;
         const isBlank = a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.97;
@@ -484,6 +507,13 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
           r.reason = `${r.reason} — CENTER_BLANK (${a.centerContent} content pixels, expected at least ${tc.minCenterContentPixels})`;
         } else if (tc.minCenterContentPixels) {
           r.reason = `${r.reason}, ${a.centerContent} center content pixels`;
+        }
+        if (r.status === 'OK' && tc.minRegionNonBlackPixels &&
+            a.regionNonBlack < tc.minRegionNonBlackPixels) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — VIEWPORT_BLANK (${a.regionNonBlack} non-black pixels, expected at least ${tc.minRegionNonBlackPixels})`;
+        } else if (tc.minRegionNonBlackPixels) {
+          r.reason = `${r.reason}, ${a.regionNonBlack} viewport pixels`;
         }
       }
     }

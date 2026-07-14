@@ -1700,7 +1700,7 @@
   ;; vin_wa: position xyz (12 bytes) at offset 0; FVF tail ignored for now.
   ;; vout_wa: 16-byte (sx, sy, z_ndc, inv_w) f32.
   (func $vertex_project (param $state_guest i32) (param $vin_wa i32) (param $vout_wa i32)
-    (local $sw i32) (local $vec_wa i32) (local $clip_wa i32) (local $inv_w f32)
+    (local $sw i32) (local $vec_wa i32) (local $clip_wa i32) (local $w f32) (local $inv_w f32)
     (if (i32.eqz (local.get $state_guest)) (then (return)))
     (local.set $sw (call $g2w (local.get $state_guest)))
     ;; Pack input into a 16-byte (x,y,z,1) vec on the call stack region we own.
@@ -1719,10 +1719,15 @@
     (call $mat4_transform_vec4 (local.get $clip_wa)
       (i32.add (local.get $sw) (i32.const 192))
       (local.get $vec_wa))
-    ;; inv_w = 1 / w  (guard against w==0 with a tiny epsilon)
-    (local.set $inv_w (f32.load (i32.add (local.get $clip_wa) (i32.const 12))))
-    (if (f32.eq (local.get $inv_w) (f32.const 0)) (then (local.set $inv_w (f32.const 0.0000001))))
-    (local.set $inv_w (f32.div (f32.const 1.0) (local.get $inv_w)))
+    ;; inv_w = 1 / w. Clamp a near-zero divisor while preserving its sign;
+    ;; otherwise a vertex on the eye plane produces +/-inf screen coordinates
+    ;; and traps the integer scanline rasterizer before clipping can reject it.
+    (local.set $w (f32.load (i32.add (local.get $clip_wa) (i32.const 12))))
+    (if (f32.lt (f32.abs (local.get $w)) (f32.const 0.001)) (then
+      (if (f32.lt (local.get $w) (f32.const 0.0))
+        (then (local.set $w (f32.const -0.001)))
+        (else (local.set $w (f32.const 0.001))))))
+    (local.set $inv_w (f32.div (f32.const 1.0) (local.get $w)))
     ;; NDC: x/w, y/w, z/w
     ;; Screen: sx = origin.x + (x_ndc) * scale.x ; sy = origin.y - (y_ndc) * scale.y
     (f32.store (local.get $vout_wa)
@@ -2809,6 +2814,12 @@
         (f32.sub (f32.const 0.05) (f32.load (i32.add (local.get $a) (i32.const 12))))
         (f32.sub (f32.load (i32.add (local.get $b) (i32.const 12)))
                  (f32.load (i32.add (local.get $a) (i32.const 12))))))
+    ;; This is an approximation in already-projected TL space. Keep its edge
+    ;; parameter on the actual segment so nearly parallel eye-plane crossings
+    ;; cannot generate NaN/inf or enormous coordinates.
+    (if (f32.ne (local.get $t) (local.get $t)) (then (local.set $t (f32.const 0.0))))
+    (if (f32.lt (local.get $t) (f32.const 0.0)) (then (local.set $t (f32.const 0.0))))
+    (if (f32.gt (local.get $t) (f32.const 1.0)) (then (local.set $t (f32.const 1.0))))
     (local.set $av (f32.load (local.get $a)))
     (local.set $bv (f32.load (local.get $b)))
     (f32.store (local.get $out) (f32.add (local.get $av) (f32.mul (f32.sub (local.get $bv) (local.get $av)) (local.get $t))))

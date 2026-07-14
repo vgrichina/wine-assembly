@@ -379,10 +379,10 @@
     (call $d3d_enum_tex_desc_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3DDevice_CreateMatrix(this, lpHandle) — 2 args (incl. this)
-  ;; Linear scan for a zero-filled slot in D3DIM_MATRICES, write slot+1 to
-  ;; *lpHandle, and initialize the slot with the 4x4 identity so subsequent
-  ;; scans consider it occupied. d3drm invokes SetMatrix immediately after,
-  ;; but identity is also the correct "just created" semantic for D3D apps.
+  ;; Linear scan for a free entry in D3DIM_MATRIX_USED, write slot+1 to
+  ;; *lpHandle, mark it occupied independently of its contents, and initialize
+  ;; the matrix with the 4x4 identity. Keeping ownership separate is required
+  ;; because SetMatrix may legitimately replace the identity with all zeroes.
   (func $handle_IDirect3DDevice_CreateMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $i i32) (local $slot_wa i32) (local $found i32)
     (if (i32.eqz (local.get $arg1)) (then (call $crash_unimplemented (local.get $name_ptr))))
@@ -390,10 +390,7 @@
     (local.set $found (i32.const -1))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (global.get $D3DIM_MATRIX_MAX)))
-      (local.set $slot_wa
-        (i32.add (global.get $D3DIM_MATRICES) (i32.mul (local.get $i) (i32.const 64))))
-      ;; "Free" = first dword is zero (identity's first dword is 0x3F800000).
-      (if (i32.eqz (i32.load (local.get $slot_wa)))
+      (if (i32.eqz (i32.load8_u (i32.add (global.get $D3DIM_MATRIX_USED) (local.get $i))))
         (then (local.set $found (local.get $i)) (br $done)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
@@ -405,6 +402,7 @@
         (return)))
     (local.set $slot_wa
       (i32.add (global.get $D3DIM_MATRICES) (i32.mul (local.get $found) (i32.const 64))))
+    (i32.store8 (i32.add (global.get $D3DIM_MATRIX_USED) (local.get $found)) (i32.const 1))
     ;; Identity: m00=m11=m22=m33=1.0 (0x3F800000), rest 0.
     (call $zero_memory (local.get $slot_wa) (i32.const 64))
     (f32.store (i32.add (local.get $slot_wa) (i32.const 0))  (f32.const 1.0))
@@ -453,6 +451,9 @@
       (i32.add (global.get $D3DIM_MATRICES)
                (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
       (i32.const 64))
+    (i32.store8
+      (i32.add (global.get $D3DIM_MATRIX_USED) (i32.sub (local.get $arg1) (i32.const 1)))
+      (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
