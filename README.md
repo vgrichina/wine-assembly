@@ -51,6 +51,10 @@ Select an application from the dropdown and click Launch.
 
 On iPhone/iPad, open the live demo in Safari and use **Share → Add to Home Screen** to launch it as a standalone web app without Safari tabs/address bar. Touch input is mapped to the Win98 mouse, and text input uses a hidden keyboard proxy so the iOS software keyboard can type into canvas-backed controls like Notepad.
 
+#### Safari Private Browsing
+
+Safari Private Browsing's advanced tracking and fingerprinting protections can make Wasm execution extremely slow. Bricks and Spider may look hung for roughly a minute even though they are still progressing. In Safari, choose **View → Reload Reducing Privacy Protections** for the affected page, or use a non-private window. For measurements, ruled-out causes, and the local probe, see [docs/safari-private-browsing.md](docs/safari-private-browsing.md).
+
 ### CLI
 
 ```bash
