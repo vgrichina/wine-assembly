@@ -44,14 +44,29 @@ async function analyzePng(pngPath) {
     const data = ctx.getImageData(0, 0, w, h).data;
     const hist = new Map();
     let total = 0;
+    let centerTotal = 0;
+    const centerHist = new Map();
+    const centerX0 = Math.floor(w * 0.25), centerX1 = Math.ceil(w * 0.75);
+    const centerY0 = Math.floor(h * 0.20), centerY1 = Math.ceil(h * 0.80);
     for (let i = 0; i < data.length; i += 4) {
       const k = (data[i] << 16) | (data[i+1] << 8) | data[i+2];
       hist.set(k, (hist.get(k) || 0) + 1);
+      const x = total % w, y = Math.floor(total / w);
+      if (x >= centerX0 && x < centerX1 && y >= centerY0 && y < centerY1) {
+        centerHist.set(k, (centerHist.get(k) || 0) + 1);
+        centerTotal++;
+      }
       total++;
     }
-    let top = 0;
-    for (const n of hist.values()) if (n > top) top = n;
-    return { colors: hist.size, topShare: total ? top / total : 1 };
+    let top = 0, topColor = 0;
+    for (const [color, n] of hist) {
+      if (n > top) {
+        top = n;
+        topColor = color;
+      }
+    }
+    const centerContent = centerTotal - (centerHist.get(topColor) || 0);
+    return { colors: hist.size, topShare: total ? top / total : 1, centerContent };
   } catch (_) {
     return null;
   }
@@ -225,7 +240,10 @@ const TEST_CASES = [
     extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
     captureBatch: 10, captureStopBatch: 11,
     timeoutMs: 30000 },
-  { exe: 'test/binaries/dx-sdk/bin/flip3dtl.exe', name: 'DX5 D3DIM Flip3DTL' },
+  { exe: 'test/binaries/dx-sdk/bin/flip3dtl.exe', name: 'DX5 D3DIM Flip3DTL',
+    // The FPS/menu HUD alone has enough colors to pass the generic blank gate.
+    // Require actual cube pixels in the middle of the frame as well.
+    minCenterContentPixels: 1000 },
   { exe: 'test/binaries/dx-sdk/bin/wormhole.exe', name: 'DX5 D3DIM Wormhole' },
   { exe: 'test/binaries/dx-sdk/foxbear/foxbear.exe', name: 'DX5 FoxBear (DDraw sprite demo)',
     // Loads hundreds of art-file sprites before the full scene appears.
@@ -459,6 +477,13 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
           r.reason = `${r.reason} — BLANK (${a.colors} colors, ${(a.topShare*100).toFixed(1)}% one color)`;
         } else {
           r.reason = `${r.reason}, ${a.colors} colors`;
+        }
+        if (r.status === 'OK' && tc.minCenterContentPixels &&
+            a.centerContent < tc.minCenterContentPixels) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — CENTER_BLANK (${a.centerContent} content pixels, expected at least ${tc.minCenterContentPixels})`;
+        } else if (tc.minCenterContentPixels) {
+          r.reason = `${r.reason}, ${a.centerContent} center content pixels`;
         }
       }
     }

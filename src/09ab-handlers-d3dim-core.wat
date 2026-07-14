@@ -2236,15 +2236,22 @@
     (i32.lt_s (local.get $cross) (i32.const 0)))
 
   (func $d3dim_draw_tri_culled
-    (param $this i32) (param $rt i32) (param $use_z i32)
+    (param $this i32) (param $rt i32) (param $use_z i32) (param $honor_cull i32)
     (param $x0 i32) (param $y0 i32) (param $z0 f32)
     (param $x1 i32) (param $y1 i32) (param $z1 f32)
     (param $x2 i32) (param $y2 i32) (param $z2 f32)
     (param $color i32)
     (local $state i32) (local $zbuf i32) (local $zval f32) (local $alpha i32) (local $blend i32)
-    ;; Disable culling until the software path has full clip/winding parity.
-    ;; D3DRM meshes otherwise disappear when their explicit cull mode disagrees
-    ;; with our current screen-space winding convention.
+    ;; Direct DrawPrimitive callers rely on culling when they do not use a
+    ;; z-buffer: otherwise later back faces overwrite the visible faces.  Keep
+    ;; the old no-cull workaround scoped to execute-buffer/D3DRM triangles,
+    ;; whose transformed winding still does not have full clip parity.
+    (if (local.get $honor_cull) (then
+      (if (call $d3dim_cull_tri (local.get $this)
+            (local.get $x0) (local.get $y0)
+            (local.get $x1) (local.get $y1)
+            (local.get $x2) (local.get $y2))
+        (then (return)))))
     (if (local.get $use_z) (then
       (local.set $state (call $d3ddev_state (local.get $this)))
       (if (local.get $state) (then
@@ -2555,7 +2562,7 @@
         (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
         (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
         (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
-        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0)
+        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
           (local.get $x0) (local.get $y0)
           (f32.load (i32.add (local.get $v0) (i32.const 8)))
           (local.get $x1) (local.get $y1)
@@ -2587,7 +2594,7 @@
         ;; sees a consistent front/back sign.
         (if (i32.and (local.get $i) (i32.const 1))
           (then
-            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0)
+            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
               (local.get $x1) (local.get $y1)
               (f32.load (i32.add (local.get $v1) (i32.const 8)))
               (local.get $x0) (local.get $y0)
@@ -2596,7 +2603,7 @@
               (f32.load (i32.add (local.get $v2) (i32.const 8)))
               (local.get $col)))
           (else
-            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0)
+            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
               (local.get $x0) (local.get $y0)
               (f32.load (i32.add (local.get $v0) (i32.const 8)))
               (local.get $x1) (local.get $y1)
@@ -2625,7 +2632,7 @@
         (br_if $fdone (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $v1 (i32.add (local.get $v_wa) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
         (local.set $v2 (i32.add (local.get $v1) (i32.const 32)))
-        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0)
+        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
           (i32.trunc_f32_s (f32.load (local.get $v0)))
           (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
           (f32.load (i32.add (local.get $v0) (i32.const 8)))
@@ -2701,7 +2708,7 @@
           (local.get $state_guest) (local.get $vbase_wa) (local.get $ibase_wa)
           (local.get $dwVertexCount) (local.get $vtxType) (local.get $idx2) (local.get $t2)))
       (then (return)))
-    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0)
+    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
       (i32.trunc_f32_s (f32.load (local.get $t0)))
       (i32.trunc_f32_s (f32.load (i32.add (local.get $t0) (i32.const 4))))
       (f32.load (i32.add (local.get $t0) (i32.const 8)))
@@ -2822,7 +2829,7 @@
   (func $d3dim_draw_tl_triangle
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
-    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z)
+    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 0)
       (i32.trunc_f32_s (f32.load (local.get $v0)))
       (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
       (f32.load (i32.add (local.get $v0) (i32.const 8)))
