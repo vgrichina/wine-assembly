@@ -14,21 +14,22 @@ Focused typing probe:
 ```text
 click editor, type "hello world"
 focus: RichEdit child hwnd=0x10002
-result: keyboard input reaches the native RichEdit wndproc, but the typed text
-        paints offscreen after RichEdit scrolls to the bottom of a bogus
-        ~4368px virtual document.
+result: PASS for basic text entry — "hello world" is inserted and visible in
+        the RichEdit editor.
 ```
 
-Current evidence from the 2026-07-14 probe:
+Current evidence from the 2026-07-14 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
   the blocker.
 - `WM_CHAR` inserts through the native RichEdit path.
-- RichEdit calls `ScrollWindowEx(hwnd=0x10002, dx=-195, dy=-4121, ...)` after
-  the first character and later paints the glyph at approximately
-  `ExtTextOutA(x=-182, y=-4121, "h")`, outside the visible edit surface.
-- Screenshot: `/private/tmp/wordpad-hello-final-status.png` shows the editor
-  still blank after typing.
+- The `32767 twips` RichEdit sentinel is clamped during the exact screen-DPI
+  `MulDiv(32767, 96, 1440)` conversion, so text no longer paints at a large
+  negative y coordinate.
+- `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills, so RichEdit's erase bands
+  clear to the DC background instead of leaving black memory-DC strips.
+- Screenshot: `/private/tmp/wordpad-eto-opaque-hello.png` shows visible
+  `hello world` text in the editor.
 
 ## Write Launcher
 
@@ -54,9 +55,8 @@ blocker.
    app depends on threads staying suspended until `ResumeThread`.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
-3. Fix native RichEdit layout/scroll state so a single typed line stays at the
-   top of the visible client area instead of scrolling to the bottom of the
-   default virtual document.
+3. Expand WordPad coverage beyond basic insertion: selection, deletion, line
+   wrapping, formatting changes, and save/load still need focused probes.
 
 **Key files:** `lib/thread-manager.js`, `lib/renderer-input.js`,
-`src/09a-handlers.wat`, `src/09a5-handlers-window.wat`
+`lib/host-imports.js`, `src/09a-handlers.wat`, `src/09a5-handlers-window.wat`

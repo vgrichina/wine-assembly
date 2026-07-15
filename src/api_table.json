@@ -207,7 +207,19 @@
     "name": "ClientToScreen",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3392836223
+    "hash": 3392836223,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "point",
+        "type": "LPPOINT",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 30,
@@ -558,14 +570,28 @@
     "name": "CreateFontIndirectA",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3621314973
+    "hash": 3621314973,
+    "args": [
+      {
+        "name": "lf",
+        "type": "LPLOGFONTA"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 72,
     "name": "CreateFontIndirectW",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3789091163
+    "hash": 3789091163,
+    "args": [
+      {
+        "name": "lf",
+        "type": "LPLOGFONTW"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 73,
@@ -593,14 +619,52 @@
     "name": "CreateICA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3703743972
+    "hash": 3703743972,
+    "args": [
+      {
+        "name": "driver",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "device",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "output",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "init",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 77,
     "name": "CreateICW",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3938630638
+    "hash": 3938630638,
+    "args": [
+      {
+        "name": "driver",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "device",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "output",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "init",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 78,
@@ -1516,7 +1580,26 @@
     "name": "GetCharWidthW",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 951316194
+    "hash": 951316194,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "first",
+        "type": "UINT"
+      },
+      {
+        "name": "last",
+        "type": "UINT"
+      },
+      {
+        "name": "widths",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 187,
@@ -1544,7 +1627,19 @@
     "name": "GetClientRect",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 4005541366
+    "hash": 4005541366,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "rect",
+        "type": "LPRECT",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 191,
@@ -1677,7 +1772,14 @@
     "name": "GetDC",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3360662078
+    "hash": 3360662078,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 210,
@@ -1726,7 +1828,18 @@
     "name": "GetDeviceCaps",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2615561328
+    "hash": 2615561328,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "index",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 217,
@@ -1999,7 +2112,14 @@
     "name": "GetMapMode",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3456273776
+    "hash": 3456273776,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 255,
@@ -2196,7 +2316,23 @@
     "name": "GetObjectA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3035458063
+    "hash": 3035458063,
+    "args": [
+      {
+        "name": "object",
+        "type": "HANDLE"
+      },
+      {
+        "name": "bytes",
+        "type": "INT"
+      },
+      {
+        "name": "buffer",
+        "type": "LPLOGFONTA",
+        "out": true
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 277,
@@ -2210,7 +2346,23 @@
     "name": "GetObjectW",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2733460921
+    "hash": 2733460921,
+    "args": [
+      {
+        "name": "object",
+        "type": "HANDLE"
+      },
+      {
+        "name": "bytes",
+        "type": "INT"
+      },
+      {
+        "name": "buffer",
+        "type": "LPLOGFONTW",
+        "out": true
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 279,
@@ -2492,7 +2644,14 @@
     "name": "GetStockObject",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2242687504
+    "hash": 2242687504,
+    "args": [
+      {
+        "name": "object",
+        "type": "INT"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 308,
@@ -2688,14 +2847,38 @@
     "name": "GetTextMetricsA",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 947919340
+    "hash": 947919340,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "tm",
+        "type": "LPTEXTMETRICA",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 336,
     "name": "GetTextMetricsW",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1182806006
+    "hash": 1182806006,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "tm",
+        "type": "LPTEXTMETRICW",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 337,
@@ -2856,7 +3039,19 @@
     "name": "GetWindowRect",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 441405769
+    "hash": 441405769,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "rect",
+        "type": "LPRECT",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 360,
@@ -3089,7 +3284,23 @@
     "name": "InflateRect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3462931362
+    "hash": 3462931362,
+    "args": [
+      {
+        "name": "rect",
+        "type": "LPRECT",
+        "out": true
+      },
+      {
+        "name": "dx",
+        "type": "INT"
+      },
+      {
+        "name": "dy",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 391,
@@ -3145,7 +3356,23 @@
     "name": "IntersectRect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3941284116
+    "hash": 3941284116,
+    "args": [
+      {
+        "name": "dst",
+        "type": "LPRECT",
+        "out": true
+      },
+      {
+        "name": "src1",
+        "type": "LPRECT"
+      },
+      {
+        "name": "src2",
+        "type": "LPRECT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 399,
@@ -3599,7 +3826,27 @@
     "name": "MapWindowPoints",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 1196237498
+    "hash": 1196237498,
+    "args": [
+      {
+        "name": "from",
+        "type": "HWND"
+      },
+      {
+        "name": "to",
+        "type": "HWND"
+      },
+      {
+        "name": "points",
+        "type": "LPPOINT",
+        "out": true
+      },
+      {
+        "name": "count",
+        "type": "UINT"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 460,
@@ -3713,7 +3960,22 @@
     "name": "MulDiv",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1980932412
+    "hash": 1980932412,
+    "args": [
+      {
+        "name": "number",
+        "type": "INT"
+      },
+      {
+        "name": "numerator",
+        "type": "INT"
+      },
+      {
+        "name": "denominator",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 472,
@@ -3734,7 +3996,23 @@
     "name": "OffsetRect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1146643928
+    "hash": 1146643928,
+    "args": [
+      {
+        "name": "rect",
+        "type": "LPRECT",
+        "out": true
+      },
+      {
+        "name": "dx",
+        "type": "INT"
+      },
+      {
+        "name": "dy",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 475,
@@ -4405,7 +4683,18 @@
     "name": "ReleaseDC",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 692780823
+    "hash": 692780823,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "hdc",
+        "type": "HDC"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 550,
@@ -4580,7 +4869,19 @@
     "name": "ScreenToClient",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2422352415
+    "hash": 2422352415,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "point",
+        "type": "LPPOINT",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 574,
@@ -4665,7 +4966,18 @@
     "name": "SelectObject",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2373253186
+    "hash": 2373253186,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "object",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 581,
@@ -5068,7 +5380,18 @@
     "name": "SetMapMode",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3813429468
+    "hash": 3813429468,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "mode",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 629,
@@ -5152,7 +5475,31 @@
     "name": "SetRect",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3197453845
+    "hash": 3197453845,
+    "args": [
+      {
+        "name": "rect",
+        "type": "LPRECT",
+        "out": true
+      },
+      {
+        "name": "left",
+        "type": "INT"
+      },
+      {
+        "name": "top",
+        "type": "INT"
+      },
+      {
+        "name": "right",
+        "type": "INT"
+      },
+      {
+        "name": "bottom",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 641,
@@ -6828,7 +7175,18 @@
     "name": "GetCurrentObject",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3418506431
+    "hash": 3418506431,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "objectType",
+        "type": "INT"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 852,
@@ -15492,7 +15850,25 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 582208576,
-    "ret": "BOOL"
+    "ret": "BOOL",
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "first",
+        "type": "UINT"
+      },
+      {
+        "name": "last",
+        "type": "UINT"
+      },
+      {
+        "name": "widths",
+        "type": "DWORD"
+      }
+    ]
   },
   {
     "id": 2030,
