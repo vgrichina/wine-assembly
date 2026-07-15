@@ -1615,8 +1615,11 @@ async function main() {
     };
     if (funpackApps[exeName]) {
       try {
-        const { setRegValue } = require('../lib/storage');
+        const { setRegValue, setIniValue } = require('../lib/storage');
         setRegValue(`HKCU\\Software\\Funpack Software\\${funpackApps[exeName]}\\Options`, 'GetStarted', 4, 0);
+        if (exeName === 'pyramid.exe') {
+          setIniValue('win.ini', 'intl', 'iCDateCount', -1);
+        }
       } catch (_) {}
     }
 

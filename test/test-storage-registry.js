@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const assert = require('assert');
-const { createStorageImports } = require('../lib/storage');
+const { createStorageImports, setIniValue } = require('../lib/storage');
 const { g2w, readStrA } = require('../lib/mem-utils');
 
 const IMAGE_BASE = 0x400000;
@@ -53,4 +53,24 @@ assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0
 assert.strictEqual(readStrA(memory, g2w(outGA, IMAGE_BASE)), 'Ada');
 assert.strictEqual(readGuestU32(cbGA), 4);
 
+const iniSectionGA = IMAGE_BASE + 0x1600;
+const iniKeyGA = IMAGE_BASE + 0x1700;
+const iniFileGA = IMAGE_BASE + 0x1800;
+writeGuestString(iniSectionGA, 'intl');
+writeGuestString(iniKeyGA, 'iCDateCount');
+writeGuestString(iniFileGA, 'win.ini');
+setIniValue('win.ini', 'intl', 'iCDateCount', -1);
+assert.strictEqual(
+  storage.ini_get_int(
+    g2w(iniSectionGA, IMAGE_BASE),
+    g2w(iniKeyGA, IMAGE_BASE),
+    0,
+    g2w(iniFileGA, IMAGE_BASE),
+    0
+  ),
+  -1,
+  'setIniValue should seed app startup INI values'
+);
+
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
+console.log('PASS  app startup INI values are visible to profile APIs');
