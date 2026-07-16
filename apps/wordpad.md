@@ -58,5 +58,8 @@ blocker.
 3. Expand WordPad coverage beyond basic insertion: selection, deletion, line
    wrapping, formatting changes, and save/load still need focused probes.
 
+RichEdit implementation scope is tracked in
+[`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
+
 **Key files:** `lib/thread-manager.js`, `lib/renderer-input.js`,
 `lib/host-imports.js`, `src/09a-handlers.wat`, `src/09a5-handlers-window.wat`
