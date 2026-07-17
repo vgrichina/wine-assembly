@@ -76,6 +76,8 @@ const DESKTOP_BINARY_FILES = new Set([
   'binaries/plugins/out_wave.dll',
   'binaries/plugins/candidates/vis_w.dll',
   'binaries/demo.mp3',
+  'binaries/winamp.ini',
+  'binaries/winamp.m3u',
   'binaries/whatsnew.txt',
   'binaries/wep32-community/Bricks/bricks.exe',
   'binaries/wep32-community/Bricks/brk1.dll',
@@ -102,7 +104,7 @@ const DESKTOP_BINARY_PREFIXES = [
 ];
 
 // Binary extensions to include
-const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.dat', '.inf', '.txt', '.png']);
+const BINARY_EXTS = new Set(['.exe', '.dll', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png']);
 
 function walk(dir, base, filter) {
   const results = [];
