@@ -64,6 +64,7 @@
   (global $D3DIM_STATEBLOCKS i32 (i32.const 0x07FEB840))
   (global $D3DIM_STATEBLOCK_MAX i32 (i32.const 32))
   (global $d3dim_stateblock_record_dev (mut i32) (i32.const 0))
+  (global $d3dim_dbg_vproj_count (mut i32) (i32.const 0))
 
   (func $d3dim_stateblock_entry (param $handle i32) (result i32)
     (if (i32.or
@@ -1744,7 +1745,22 @@
           (f32.load (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 4)))))))
     (f32.store (i32.add (local.get $vout_wa) (i32.const 8))
       (f32.mul (f32.load (i32.add (local.get $clip_wa) (i32.const 8))) (local.get $inv_w)))
-    (f32.store (i32.add (local.get $vout_wa) (i32.const 12)) (local.get $inv_w)))
+    (f32.store (i32.add (local.get $vout_wa) (i32.const 12)) (local.get $inv_w))
+    (if (i32.lt_u (global.get $d3dim_dbg_vproj_count) (i32.const 12)) (then
+      (call $host_log_i32 (i32.const 0xD3D17000))
+      (call $host_log_i32 (global.get $d3dim_dbg_vproj_count))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (local.get $vin_wa))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $vin_wa) (i32.const 4)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $vin_wa) (i32.const 8)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (local.get $clip_wa))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $clip_wa) (i32.const 4)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $clip_wa) (i32.const 8)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $clip_wa) (i32.const 12)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (local.get $vout_wa))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $vout_wa) (i32.const 4)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $vout_wa) (i32.const 8)))))
+      (call $host_log_i32 (i32.reinterpret_f32 (f32.load (i32.add (local.get $vout_wa) (i32.const 12)))))
+      (global.set $d3dim_dbg_vproj_count (i32.add (global.get $d3dim_dbg_vproj_count) (i32.const 1))))))
 
   ;; ── Test export: known-answer check helpers ──────────────────
   ;; mat_set_identity(out_wa) and mat_set_translate(out_wa, tx, ty, tz)
