@@ -11,6 +11,7 @@ const hostJs = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const hostImportsJs = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 const rendererJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer.js'), 'utf8');
 const rendererInputJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer-input.js'), 'utf8');
+const recorderJs = fs.readFileSync(path.join(ROOT, 'lib', 'recorder.js'), 'utf8');
 const deployJs = fs.readFileSync(path.join(ROOT, 'tools', 'deploy-berrry.js'), 'utf8');
 const sourcesMd = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'SOURCES.md'), 'utf8');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
@@ -44,6 +45,8 @@ assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/winmine\.exe'/s.test(deployJs), 'deploy should include desktop Minesweeper binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.EXE'/s.test(deployJs), 'deploy should include desktop Spider binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.CHM'/s.test(deployJs), 'deploy should include Spider help file');
+assert(/'comctl32\.dll':\s*'binaries\/dlls\/comctl32\.dll'/.test(indexHtml), 'web DLL auto-loader should map comctl32.dll');
+assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/dlls\/comctl32\.dll'/s.test(deployJs), 'deploy should include comctl32.dll for Pinball');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should include desktop Winamp binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/demo\.mp3'/s.test(deployJs), 'deploy should include Winamp demo MP3');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/whatsnew\.txt'/s.test(deployJs), 'deploy should include Winamp version history text');
@@ -74,6 +77,12 @@ assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MI
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
+assert(indexHtml.includes('id="start-record-item"'), 'Start menu should expose screen recording');
+assert(indexHtml.includes('id="record-btn" onclick="toggleRecording()"'), 'debug toolbar recorder should use default screen capture');
+assert(indexHtml.includes("if (typeof toggleRecording === 'function') toggleRecording();"), 'Start menu recorder should use default screen capture');
+assert(recorderJs.includes("let recordTarget = 'screen'"), 'recorder should default to the whole emulator screen');
+assert(recorderJs.includes("recordTarget = options && options.target === 'window' ? 'window' : 'screen'"), 'recorder should only crop to an active window when explicitly requested');
+assert(recorderJs.includes("document.getElementById('start-record-label')"), 'recorder should keep Start menu recording state in sync');
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(indexHtml), 'default desktop whitelist should include Pinball');
 assert(/\[\s*'spider'\s*,\s*'Spider'/.test(indexHtml), 'default desktop whitelist should include Spider');
 assert(/\[\s*'bricks'\s*,\s*'Bricks'/.test(indexHtml), 'default desktop whitelist should include Bricks');
@@ -102,6 +111,8 @@ for (const rel of [
 }
 assert(/\[\s*'funtris'\s*,\s*'Funtris'/.test(indexHtml), 'default desktop whitelist should include Funtris');
 assert(/\[\s*'pyramid'\s*,\s*'Pyramid'/.test(indexHtml), 'default desktop whitelist should include Pyramid');
+assert(/funtris:\s*\{[\s\S]*Funtris\\\\Options'[\s\S]*GetStarted'[\s\S]*data:\s*0[\s\S]*dismissStartupDialog:\s*\{\s*title:\s*'Funtris',\s*command:\s*1\s*\}/s.test(indexHtml), 'Funtris browser launch should suppress startup nag dialogs');
+assert(/peaks:\s*\{[\s\S]*Peaks\\\\Options'[\s\S]*GetStarted'[\s\S]*data:\s*0/s.test(indexHtml), 'Peaks browser launch should suppress startup nag dialogs');
 assert(/pyramid:\s*\{[\s\S]*iCDateCount'[\s\S]*value:\s*-1[\s\S]*GetStarted'[\s\S]*data:\s*0/s.test(indexHtml), 'Pyramid browser launch should suppress startup nag dialogs');
 assert(indexHtml.includes('StorageImports.setIniValue(entry.fileName, entry.section, entry.key, entry.value)'), 'web launcher should apply app-scoped startup INI values');
 assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelist should include Winamp');
@@ -189,6 +200,7 @@ console.log('PASS  deploy filters include .mid/.wav/.inf/DAT and Pinball asset d
 console.log('PASS  Pinball sound uses bundled assets instead of a run-loop EIP hack');
 console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
+console.log('PASS  Start menu exposes screen recording');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');
 console.log('PASS  default desktop whitelist includes Spider');

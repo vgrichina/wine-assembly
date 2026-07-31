@@ -216,6 +216,9 @@
       white-space: nowrap;
     }
     #start-menu .item:hover { background: #000080; color: #fff; }
+    #start-menu .item.recording { font-weight: bold; }
+    #start-menu .item.recording .ico { color: #c00000; }
+    #start-menu .item.recording:hover .ico { color: #fff; }
     #start-menu .item .ico { font-size: 16px; width: 18px; text-align: center; }
     #start-menu .sep { height: 1px; background: #808080; border-bottom: 1px solid #fff; margin: 3px 4px; }
     .win-flag { display: inline-grid; grid-template-columns: 5px 5px; gap: 1px; }
@@ -557,10 +560,18 @@ Resource-aware Win98 emulator
       <a class="item" href="https://berrry.app/create?remix=wine-assembly" target="_blank" rel="noopener"><span class="ico">&#127827;</span>Remix on Berrry</a>
       <a class="item" href="https://github.com/vgrichina/wine-assembly" target="_blank" rel="noopener"><span class="ico">&#128187;</span>Source on GitHub</a>
       <div class="sep"></div>
+      <a class="item" href="#" id="start-record-item" onclick="toggleRecordingFromStart(event)" title="Record screen + audio to video"><span class="ico" id="start-record-ico">&#9679;</span><span id="start-record-label">Record Screen</span></a>
+      <div class="sep"></div>
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
     </div>
   </div>
   <script>
+    function closeStartMenu() {
+      const m = document.getElementById('start-menu');
+      const b = document.getElementById('start-btn');
+      m.classList.remove('open');
+      b.classList.remove('open');
+    }
     function toggleStartMenu(e) {
       if (e) e.stopPropagation();
       const m = document.getElementById('start-menu');
@@ -568,12 +579,19 @@ Resource-aware Win98 emulator
       const open = m.classList.toggle('open');
       b.classList.toggle('open', open);
     }
+    function toggleRecordingFromStart(e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeStartMenu();
+      if (typeof toggleRecording === 'function') toggleRecording();
+    }
     document.addEventListener('click', (e) => {
       const m = document.getElementById('start-menu');
       if (!m.classList.contains('open')) return;
       if (e.target.closest('#start-menu') || e.target.closest('#start-btn')) return;
-      m.classList.remove('open');
-      document.getElementById('start-btn').classList.remove('open');
+      closeStartMenu();
     });
   </script>
 
@@ -1151,8 +1169,21 @@ Resource-aware Win98 emulator
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
       pinball:  { exe: 'binaries/pinball/pinball.exe', files: pinballFiles },
       pinball_plus95: { exe: 'binaries/pinball-plus95/pinball.exe', files: pinballPlus95Files },
-      funtris:    { exe: 'binaries/wep32-community/Funpack/Funtris.exe',    dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
-      peaks:      { exe: 'binaries/wep32-community/Funpack/Peaks.exe',      dlls: ['binaries/wep32-community/Funpack/FunPack.dll'] },
+      funtris:    {
+        exe: 'binaries/wep32-community/Funpack/Funtris.exe',
+        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
+        startupRegistry: [
+          { keyPath: 'HKCU\\Software\\Funpack Software\\Funtris\\Options', valueName: 'GetStarted', type: 4, data: 0 },
+        ],
+        dismissStartupDialog: { title: 'Funtris', command: 1 },
+      },
+      peaks:      {
+        exe: 'binaries/wep32-community/Funpack/Peaks.exe',
+        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
+        startupRegistry: [
+          { keyPath: 'HKCU\\Software\\Funpack Software\\Peaks\\Options', valueName: 'GetStarted', type: 4, data: 0 },
+        ],
+      },
       pyramid:    {
         exe: 'binaries/wep32-community/Funpack/Pyramid.exe',
         dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
@@ -1900,6 +1931,35 @@ Resource-aware Win98 emulator
       appendDebugLog(lines.join('\n'));
     }
 
+    function scheduleStartupDialogDismiss(app, wine) {
+      const pending = app && (app.dismissStartupDialogs || app.dismissStartupDialog);
+      const configs = Array.isArray(pending) ? pending.slice() : (pending ? [pending] : []);
+      if (!configs.length || !wine || !wine.instance || !wine.instance.exports || !sharedRenderer) return;
+      const e = wine.instance.exports;
+      if (!e.send_message) return;
+      let tries = 0;
+      const maxTries = Math.max(...configs.map(cfg => cfg.tries || 80));
+      const intervalMs = Math.min(...configs.map(cfg => cfg.intervalMs || 50));
+      const timer = setInterval(() => {
+        tries++;
+        const stillRunning = runningApps.some(r => r && r.wine === wine);
+        const dialogs = Object.values(sharedRenderer.windows || {})
+          .filter(w => w && w.visible && w.isDialog)
+          .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+        const idx = configs.findIndex(cfg =>
+          dialogs.some(w => !cfg.title || String(w.title || '').includes(cfg.title)));
+        if (idx >= 0) {
+          const cfg = configs[idx];
+          const dlg = dialogs.find(w => !cfg.title || String(w.title || '').includes(cfg.title));
+          e.send_message(dlg.hwnd | 0, 0x0111, cfg.command || 1, 0);
+          configs.splice(idx, 1);
+          if (!configs.length) clearInterval(timer);
+        } else if (!stillRunning || tries >= maxTries) {
+          clearInterval(timer);
+        }
+      }, intervalMs);
+    }
+
     async function launchApp() {
       const sel = document.getElementById('app-select').value;
       const app = apps[sel];
@@ -2024,6 +2084,7 @@ Resource-aware Win98 emulator
             log.textContent += `Detected DLLs: ${required.join(', ')}\n`;
           }
           const availableDlls = {
+            'comctl32.dll': 'binaries/dlls/comctl32.dll',
             'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
             'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
             'mfc42.dll': 'binaries/dlls/mfc42.dll',
@@ -2052,6 +2113,7 @@ Resource-aware Win98 emulator
         log.textContent += `Starting run slice=${runSlice}\n`;
         log.scrollTop = log.scrollHeight;
         wine.run(runSlice);
+        scheduleStartupDialogDismiss(app, wine);
       } else {
         document.getElementById('status').textContent = 'Failed to load';
       }

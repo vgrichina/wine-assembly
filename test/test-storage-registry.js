@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const assert = require('assert');
-const { createStorageImports, setIniValue } = require('../lib/storage');
+const { createStorageImports, setIniValue, setRegValue } = require('../lib/storage');
 const { g2w, readStrA } = require('../lib/mem-utils');
 
 const IMAGE_BASE = 0x400000;
@@ -53,6 +53,17 @@ assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0
 assert.strictEqual(readStrA(memory, g2w(outGA, IMAGE_BASE)), 'Ada');
 assert.strictEqual(readGuestU32(cbGA), 4);
 
+setRegValue('HKCU\\ParentMaterialize\\Child\\Leaf', 'Enabled', 4, 7);
+writeGuestString(subKeyGA, 'ParentMaterialize');
+assert(storage.reg_open_key(0x80000001, g2w(subKeyGA, IMAGE_BASE), 0), 'setRegValue should create top-level parent registry keys');
+writeGuestString(subKeyGA, 'ParentMaterialize\\Child\\Leaf');
+const leafHKey = storage.reg_open_key(0x80000001, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(leafHKey, 'setRegValue should create parent registry keys so RegOpenKey can reach the leaf');
+writeGuestString(valueNameGA, 'Enabled');
+writeGuestU32(cbGA, 4);
+assert.strictEqual(storage.reg_query_value(leafHKey, g2w(valueNameGA, IMAGE_BASE), 0, valueGA, cbGA, 0), 0);
+assert.strictEqual(readGuestU32(valueGA), 7);
+
 const iniSectionGA = IMAGE_BASE + 0x1600;
 const iniKeyGA = IMAGE_BASE + 0x1700;
 const iniFileGA = IMAGE_BASE + 0x1800;
@@ -73,4 +84,5 @@ assert.strictEqual(
 );
 
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
+console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  app startup INI values are visible to profile APIs');

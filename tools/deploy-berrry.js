@@ -53,6 +53,7 @@ const LARGE_OK_PATHS = new Set([
 const DESKTOP_BINARY_FILES = new Set([
   'binaries/notepad.exe',
   'binaries/calc.exe',
+  'binaries/dlls/comctl32.dll',
   'binaries/dlls/msvcrt.dll',
   'binaries/entertainment-pack/cards.dll',
   'binaries/entertainment-pack/freecell.exe',
