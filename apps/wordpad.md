@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-07-14):** PARTIAL.
+**Status (2026-08-01):** PARTIAL.
 
 WordPad opens and renders in the focused smoke:
 
@@ -18,17 +18,24 @@ result: PASS for basic text entry — "hello world" is inserted and visible in
         the RichEdit editor.
 ```
 
-Current evidence from the 2026-07-14 follow-up probe:
+Current evidence from the 2026-08-01 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
   the blocker.
 - `WM_CHAR` inserts through the native RichEdit path.
+- Worker-thread thunk metadata is synchronized before/after thread slices, so a
+  worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
+  imported KERNEL32 thunk table.
+- `EnumFontFamiliesExW` / `EnumFontFamiliesW` now enumerate one basic
+  TrueType-style `Arial` face through the app callback. This unblocks WordPad's
+  font-list startup path before `ShowWindow`.
 - The `32767 twips` RichEdit sentinel is clamped during the exact screen-DPI
   `MulDiv(32767, 96, 1440)` conversion, so text no longer paints at a large
   negative y coordinate.
 - `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills, so RichEdit's erase bands
   clear to the DC background instead of leaving black memory-DC strips.
-- Screenshot: `/private/tmp/wordpad-eto-opaque-hello.png` shows visible
+- Regression test: `node test/test-wordpad-richedit.js` passes 9/9 and writes
+  `test/output/wordpad-richedit/hello-world.png`, which shows visible
   `hello world` text in the editor.
 
 ## Write Launcher
@@ -55,8 +62,12 @@ blocker.
    app depends on threads staying suspended until `ResumeThread`.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
-3. Expand WordPad coverage beyond basic insertion: selection, deletion, line
-   wrapping, formatting changes, and save/load still need focused probes.
+3. Expand WordPad coverage beyond basic insertion: deletion, Enter/newline,
+   navigation, visible selection, scrolling/wrapping, formatting changes, and
+   save/load still need focused probes.
+4. Add a generic native RichEdit state dump if deeper assertions are needed;
+   the current WordPad regression uses screenshot evidence because the existing
+   edit-state dump only reads WAT-native EDIT controls.
 
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).

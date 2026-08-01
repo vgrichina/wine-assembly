@@ -155,6 +155,8 @@
   (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
   (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_rectangle(hdc, left, top, right, bottom)
+  (import "host" "gdi_round_rect" (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_round_rect(hdc, left, top, right, bottom, ellipseWidth, ellipseHeight)
   (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_draw_edge" (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_draw_focus_rect(hdc, left, top, right, bottom) — 1px dotted black rect.
@@ -175,6 +177,8 @@
   ;; gdi_offset_rgn(hrgn, dx, dy) -> region complexity
   (import "host" "gdi_fill_rgn" (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
+  (import "host" "gdi_frame_rgn" (func $host_gdi_frame_rgn (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_frame_rgn(hdc, hrgn, hbrush, width, height) -> bool
   (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
   (import "host" "gdi_select_clip_rgn" (func $host_gdi_select_clip_rgn (param i32 i32) (result i32)))
@@ -227,9 +231,15 @@
   (import "host" "gdi_set_viewport_org" (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32)))
   (import "host" "gdi_get_viewport_org_x" (func $host_gdi_get_viewport_org_x (param i32) (result i32)))
   (import "host" "gdi_get_viewport_org_y" (func $host_gdi_get_viewport_org_y (param i32) (result i32)))
+  (import "host" "gdi_set_viewport_ext" (func $host_gdi_set_viewport_ext (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_get_viewport_ext_x" (func $host_gdi_get_viewport_ext_x (param i32) (result i32)))
+  (import "host" "gdi_get_viewport_ext_y" (func $host_gdi_get_viewport_ext_y (param i32) (result i32)))
   (import "host" "gdi_set_window_org" (func $host_gdi_set_window_org (param i32 i32 i32) (result i32)))
   (import "host" "gdi_get_window_org_x" (func $host_gdi_get_window_org_x (param i32) (result i32)))
   (import "host" "gdi_get_window_org_y" (func $host_gdi_get_window_org_y (param i32) (result i32)))
+  (import "host" "gdi_set_window_ext" (func $host_gdi_set_window_ext (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_get_window_ext_x" (func $host_gdi_get_window_ext_x (param i32) (result i32)))
+  (import "host" "gdi_get_window_ext_y" (func $host_gdi_get_window_ext_y (param i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
@@ -1158,6 +1168,7 @@
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   (global $mm_timer_saved_esp (mut i32) (i32.const 0)) ;; ESP before callback injection
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
+  (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated

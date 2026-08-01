@@ -131,6 +131,7 @@ const extra = [
   { name: 'wsprintfA', nargs: -1 },  // varargs, handled specially
   { name: 'GetPrivateProfileStringA', nargs: 6 },
   { name: 'PaintRgn', nargs: 2 },
+  { name: 'FrameRgn', nargs: 5 },
   { name: 'CharUpperA', nargs: 1 },
   { name: 'CharLowerA', nargs: 1 },
   { name: 'CharLowerBuffA', nargs: 2 },

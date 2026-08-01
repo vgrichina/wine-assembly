@@ -3431,9 +3431,16 @@
     (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
-  ;; 249: SetViewportExtEx — STUB: unimplemented
+  ;; 249: SetViewportExtEx(hdc, x, y, lpSize) → BOOL
   (func $handle_SetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg3)
+      (then
+        (call $gs32 (local.get $arg3)
+          (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
+        (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+          (call $host_gdi_get_viewport_ext_y (local.get $arg0)))))
+    (global.set $eax (call $host_gdi_set_viewport_ext (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 250: lstrcmpiA
@@ -5020,19 +5027,94 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; Minimal font enumeration callback. Enumerate one stable TrueType-style
+  ;; face ("Arial") with enough ENUMLOGFONTEXW / NEWTEXTMETRICEXW fields for
+  ;; MFC/WordPad font-list startup code.
+  (func $font_enum_dispatch_one_w (param $callback i32) (param $lparam i32) (param $ret_addr i32)
+    (local $lf_guest i32) (local $lf_wa i32) (local $tm_guest i32) (local $tm_wa i32)
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $lf_guest (call $heap_alloc (i32.const 384)))
+    (local.set $tm_guest (call $heap_alloc (i32.const 128)))
+    (local.set $lf_wa (call $g2w (local.get $lf_guest)))
+    (local.set $tm_wa (call $g2w (local.get $tm_guest)))
+    (call $zero_memory (local.get $lf_wa) (i32.const 384))
+    (call $zero_memory (local.get $tm_wa) (i32.const 128))
+
+    ;; LOGFONTW at ENUMLOGFONTEXW+0.
+    (i32.store (local.get $lf_wa) (i32.const -12))                         ;; lfHeight
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 16)) (i32.const 400)) ;; lfWeight
+    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 23)) (i32.const 0))  ;; ANSI_CHARSET
+    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 27)) (i32.const 0x22)) ;; VARIABLE_PITCH|FF_SWISS
+    ;; lfFaceName = L"Arial".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 28)) (i32.const 0x00720041))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 32)) (i32.const 0x00610069))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 36)) (i32.const 0x0000006c))
+    ;; elfFullName = L"Arial".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 92)) (i32.const 0x00720041))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 96)) (i32.const 0x00610069))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 100)) (i32.const 0x0000006c))
+    ;; elfStyle = L"Regular".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 220)) (i32.const 0x00650052))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 224)) (i32.const 0x00750067))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 228)) (i32.const 0x0061006c))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 232)) (i32.const 0x00000072))
+    ;; elfScript = L"Western".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 284)) (i32.const 0x00650057))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 288)) (i32.const 0x00740073))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 292)) (i32.const 0x00720065))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 296)) (i32.const 0x0000006e))
+
+    ;; TEXTMETRICW / NEWTEXTMETRICW prefix.
+    (i32.store (local.get $tm_wa) (i32.const 16))                         ;; tmHeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 4)) (i32.const 13))  ;; tmAscent
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 8)) (i32.const 3))   ;; tmDescent
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 20)) (i32.const 8))  ;; tmAveCharWidth
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 24)) (i32.const 16)) ;; tmMaxCharWidth
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 28)) (i32.const 400)) ;; tmWeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 36)) (i32.const 96))
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 40)) (i32.const 96))
+    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 44)) (i32.const 32))
+    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 46)) (i32.const 255))
+    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 48)) (i32.const 31))
+    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 50)) (i32.const 32))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 55)) (i32.const 0x22))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 56)) (i32.const 0))
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 64)) (i32.const 16)) ;; ntmSizeEM
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 68)) (i32.const 16)) ;; ntmCellHeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 72)) (i32.const 8))  ;; ntmAvgWidth
+
+    ;; Save original return address above the stdcall callback frame.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push FONTENUMPROCW args right-to-left:
+    ;; lParam, FontType=TRUETYPE_FONTTYPE, lpntme, lpelfe.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $lparam))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 4))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $tm_guest))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $lf_guest))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0)))
+
   ;; 377: EnumFontFamiliesExW(hdc, lpLogfont, proc, lParam, flags) → INT.
-  ;; Font enumeration callbacks are not emulated yet. Return 0 entries, which
-  ;; is the documented "no fonts enumerated" result and lets callers fall back
-  ;; to the currently selected/default font.
   (func $handle_EnumFontFamiliesExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (call $font_enum_dispatch_one_w (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 24))))
   )
 
   ;; 378: EnumFontFamiliesW(hdc, lpszFamily, proc, lParam) → INT.
   (func $handle_EnumFontFamiliesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $font_enum_dispatch_one_w (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 20))))
   )
 
   ;; 379: CallNextHookEx — no next hook in chain, return 0
@@ -5431,9 +5513,61 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; 401: UnionRect — STUB: unimplemented
+  ;; 401: UnionRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL
   (func $handle_UnionRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $dst i32) (local $s1 i32) (local $s2 i32)
+    (local $s1l i32) (local $s1t i32) (local $s1r i32) (local $s1b i32)
+    (local $s2l i32) (local $s2t i32) (local $s2r i32) (local $s2b i32)
+    (local $e1 i32) (local $e2 i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (local.set $s1 (call $g2w (local.get $arg1)))
+    (local.set $s2 (call $g2w (local.get $arg2)))
+    (local.set $s1l (i32.load (local.get $s1)))
+    (local.set $s1t (i32.load offset=4 (local.get $s1)))
+    (local.set $s1r (i32.load offset=8 (local.get $s1)))
+    (local.set $s1b (i32.load offset=12 (local.get $s1)))
+    (local.set $s2l (i32.load (local.get $s2)))
+    (local.set $s2t (i32.load offset=4 (local.get $s2)))
+    (local.set $s2r (i32.load offset=8 (local.get $s2)))
+    (local.set $s2b (i32.load offset=12 (local.get $s2)))
+    (local.set $e1 (i32.or
+      (i32.ge_s (local.get $s1l) (local.get $s1r))
+      (i32.ge_s (local.get $s1t) (local.get $s1b))))
+    (local.set $e2 (i32.or
+      (i32.ge_s (local.get $s2l) (local.get $s2r))
+      (i32.ge_s (local.get $s2t) (local.get $s2b))))
+    (if (i32.and (local.get $e1) (local.get $e2))
+      (then
+        (i32.store (local.get $dst) (i32.const 0))
+        (i32.store offset=4 (local.get $dst) (i32.const 0))
+        (i32.store offset=8 (local.get $dst) (i32.const 0))
+        (i32.store offset=12 (local.get $dst) (i32.const 0))
+        (global.set $eax (i32.const 0)))
+      (else
+        (if (local.get $e1)
+          (then
+            (i32.store (local.get $dst) (local.get $s2l))
+            (i32.store offset=4 (local.get $dst) (local.get $s2t))
+            (i32.store offset=8 (local.get $dst) (local.get $s2r))
+            (i32.store offset=12 (local.get $dst) (local.get $s2b)))
+          (else
+            (if (local.get $e2)
+              (then
+                (i32.store (local.get $dst) (local.get $s1l))
+                (i32.store offset=4 (local.get $dst) (local.get $s1t))
+                (i32.store offset=8 (local.get $dst) (local.get $s1r))
+                (i32.store offset=12 (local.get $dst) (local.get $s1b)))
+              (else
+                (i32.store (local.get $dst)
+                  (select (local.get $s1l) (local.get $s2l) (i32.lt_s (local.get $s1l) (local.get $s2l))))
+                (i32.store offset=4 (local.get $dst)
+                  (select (local.get $s1t) (local.get $s2t) (i32.lt_s (local.get $s1t) (local.get $s2t))))
+                (i32.store offset=8 (local.get $dst)
+                  (select (local.get $s1r) (local.get $s2r) (i32.gt_s (local.get $s1r) (local.get $s2r))))
+                (i32.store offset=12 (local.get $dst)
+                  (select (local.get $s1b) (local.get $s2b) (i32.gt_s (local.get $s1b) (local.get $s2b))))))))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; SubtractRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL. Only well-defined when src2 fully covers
@@ -5859,6 +5993,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; FrameRgn(hdc, hrgn, hbrush, nWidth, nHeight) -> BOOL
+  (func $handle_FrameRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_frame_rgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
   ;; 439: GetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_GetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_get_dib_color_table
@@ -6076,9 +6217,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args + ret
   )
 
-  ;; 452: RoundRect — STUB: unimplemented
+  ;; 452: RoundRect(hdc, left, top, right, bottom, width, height) — 7 args stdcall
   (func $handle_RoundRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_round_rect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
   ;; 453: ExtFloodFill — STUB: unimplemented
@@ -7425,9 +7570,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 554: DPtoLP — STUB: unimplemented
+  ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL. Mapping is currently identity.
   (func $handle_DPtoLP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 555: CombineRgn — call host to merge region objects
@@ -7724,14 +7870,48 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 589: ScaleWindowExtEx — STUB: unimplemented
+  ;; 589: ScaleWindowExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $old_x i32) (local $old_y i32) (local $lp_size i32)
+    (local.set $old_x (call $host_gdi_get_window_ext_x (local.get $arg0)))
+    (local.set $old_y (call $host_gdi_get_window_ext_y (local.get $arg0)))
+    (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (local.get $lp_size)
+      (then
+        (call $gs32 (local.get $lp_size) (local.get $old_x))
+        (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
+    (if (i32.and (local.get $arg2) (local.get $arg4))
+      (then
+        (drop (call $host_gdi_set_window_ext
+          (local.get $arg0)
+          (i32.div_s (i32.mul (local.get $old_x) (local.get $arg1)) (local.get $arg2))
+          (i32.div_s (i32.mul (local.get $old_y) (local.get $arg3)) (local.get $arg4))))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 590: ScaleViewportExtEx — STUB: unimplemented
+  ;; 590: ScaleViewportExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $old_x i32) (local $old_y i32) (local $lp_size i32)
+    (local.set $old_x (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
+    (local.set $old_y (call $host_gdi_get_viewport_ext_y (local.get $arg0)))
+    (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (local.get $lp_size)
+      (then
+        (call $gs32 (local.get $lp_size) (local.get $old_x))
+        (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
+    (if (i32.and (local.get $arg2) (local.get $arg4))
+      (then
+        (drop (call $host_gdi_set_viewport_ext
+          (local.get $arg0)
+          (i32.div_s (i32.mul (local.get $old_x) (local.get $arg1)) (local.get $arg2))
+          (i32.div_s (i32.mul (local.get $old_y) (local.get $arg3)) (local.get $arg4))))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   ;; 591: OffsetViewportOrgEx(hdc, dx, dy, lpPoint) → BOOL
@@ -7763,19 +7943,34 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 593: GetViewportExtEx — STUB: unimplemented
+  ;; 593: GetViewportExtEx(hdc, lpSize) → BOOL
   (func $handle_GetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1)
+          (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+          (call $host_gdi_get_viewport_ext_y (local.get $arg0)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 594: GetROP2 — STUB: unimplemented
+  ;; 594: GetROP2(hdc) → R2_COPYPEN
   (func $handle_GetROP2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 13))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 595: GetWindowExtEx — STUB: unimplemented
+  ;; 595: GetWindowExtEx(hdc, lpSize) → BOOL
   (func $handle_GetWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1)
+          (call $host_gdi_get_window_ext_x (local.get $arg0)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+          (call $host_gdi_get_window_ext_y (local.get $arg0)))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; GetTextAlign(hdc) — return current alignment flags.
@@ -8671,8 +8866,13 @@
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
       (return)))
+    (local.set $tmp (call $gl32 (global.get $esp)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (global.set $eip (local.get $tmp))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (return)
   )
 
   ;; 637: SendDlgItemMessageW — STUB: unimplemented

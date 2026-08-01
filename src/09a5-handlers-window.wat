@@ -1332,7 +1332,7 @@
         (global.set $pending_child_size (i32.const 0))
         (call $defwndproc_do_nccalcsize (global.get $pending_child_size_hwnd))
         (if (call $wnd_is_effectively_visible (global.get $pending_child_size_hwnd))
-          (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4)))))))
+          (then (call $nc_flags_set (global.get $pending_child_size_hwnd) (i32.const 4))))))
     (call $gs32 (local.get $arg0) (global.get $pending_child_size_hwnd))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
@@ -1512,8 +1512,16 @@
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    (local.set $tmp (call $gl32 (global.get $esp)))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+    (global.set $eip (local.get $tmp))
+    ;; Native idle loops commonly spin on PeekMessage(..., PM_NOREMOVE) until
+    ;; a message arrives. Yield after an empty peek so JS can pump timers/input
+    ;; instead of burning a whole run() slice in one guest loop.
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (return)
   )
 
   ;; 75: DispatchMessageA

@@ -1612,6 +1612,7 @@ async function main() {
       'funtris.exe': 'Funtris',
       'peaks.exe': 'Peaks',
       'pyramid.exe': 'Pyramid',
+      'fourstones.exe': 'Four Stones',
     };
     if (funpackApps[exeName]) {
       try {
@@ -1620,6 +1621,19 @@ async function main() {
         if (exeName === 'pyramid.exe') {
           setIniValue('win.ini', 'intl', 'iCDateCount', -1);
         }
+      } catch (_) {}
+    }
+    if (exeName === 'quickblackjack.exe') {
+      try {
+        const { setRegValue } = require('../lib/storage');
+        const purse = Number.isFinite(Number(process.env.QBLACKJACK_PURSE))
+          ? Number(process.env.QBLACKJACK_PURSE)
+          : -1000;
+        const change = Number.isFinite(Number(process.env.QBLACKJACK_CHANGE))
+          ? Number(process.env.QBLACKJACK_CHANGE)
+          : 1000;
+        setRegValue('HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', 'Purse', 4, purse);
+        setRegValue('HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', 'Change', 4, change);
       } catch (_) {}
     }
 

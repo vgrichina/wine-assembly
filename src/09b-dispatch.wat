@@ -683,6 +683,13 @@
         (call $d3d_enum_tex_continue)
         (return)))
 
+    ;; EnumFontFamilies callback returned — return the callback's result.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
+      (then
+        (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then
@@ -728,13 +735,29 @@
       (else
         (local.set $name_ptr (i32.add (global.get $GUEST_BASE) (i32.add (local.get $name_rva) (i32.const 2))))
         (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))
-
     ;; Load args from guest stack
     (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
     (local.set $arg1 (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (local.set $arg2 (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
     (local.set $arg3 (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
     (local.set $arg4 (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+
+    ;; Hot message pumps exercise PeekMessage often enough that a direct path
+    ;; avoids large br_table edge cases and keeps idle loops from corrupting ESP.
+    (if (i32.eq (local.get $api_id) (i32.const 490))
+      (then
+        (call $handle_PeekMessageA
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (call $host_log_api_exit)
+        (return)))
+    (if (i32.eq (local.get $api_id) (i32.const 491))
+      (then
+        (call $handle_PeekMessageW
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (call $host_log_api_exit)
+        (return)))
 
     ;; Delegate to generated br_table
     (call $dispatch_api_table (local.get $api_id) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

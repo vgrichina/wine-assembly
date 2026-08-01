@@ -271,54 +271,61 @@ async function main() {
     e.post_message_q(e.get_main_hwnd(), 0x0111, 40001, 0);
     return 1;
   })()`);
-  await wait(1800);
-
-  const result = await evalExpr(`(() => {
-    const r = sharedRenderer;
-    const windows = Object.values((r && r.windows) || {})
-      .filter(w => w && w.visible)
-      .map(w => ({
-        hwnd: w.hwnd >>> 0,
-        title: w.title || '',
-        x: w.x | 0,
-        y: w.y | 0,
-        w: w.w | 0,
-        h: w.h | 0,
-        isChild: !!w.isChild,
-        isDialog: !!w.isDialog,
-      }));
-    const canvas = document.getElementById('screen');
-    if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
-    const ctx = canvas.getContext('2d');
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    const count = (rect, pred) => {
-      let n = 0;
-      for (let y = rect.y0; y < Math.min(rect.y1, canvas.height); y++) {
-        for (let x = rect.x0; x < Math.min(rect.x1, canvas.width); x++) {
-          const i = (y * canvas.width + x) * 4;
-          if (pred(data[i], data[i + 1], data[i + 2])) n++;
+  const result = await evalExpr(`new Promise(resolve => {
+    const started = performance.now();
+    const sample = () => {
+      const r = sharedRenderer;
+      const windows = Object.values((r && r.windows) || {})
+        .filter(w => w && w.visible)
+        .map(w => ({
+          hwnd: w.hwnd >>> 0,
+          title: w.title || '',
+          x: w.x | 0,
+          y: w.y | 0,
+          w: w.w | 0,
+          h: w.h | 0,
+          isChild: !!w.isChild,
+          isDialog: !!w.isDialog,
+        }));
+      const canvas = document.getElementById('screen');
+      if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const count = (rect, pred) => {
+        let n = 0;
+        for (let y = rect.y0; y < Math.min(rect.y1, canvas.height); y++) {
+          for (let x = rect.x0; x < Math.min(rect.x1, canvas.width); x++) {
+            const i = (y * canvas.width + x) * 4;
+            if (pred(data[i], data[i + 1], data[i + 2])) n++;
+          }
         }
+        return n;
+      };
+      const playfieldBlack = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
+        (r, g, b) => r === 0 && g === 0 && b === 0);
+      const fallingBrick = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
+        (r, g, b) =>
+          (r > 120 && g < 110 && b < 110) ||
+          (g > 120 && r < 110 && b < 110) ||
+          (b > 120 && r < 110 && g < 110) ||
+          (r > 150 && g > 150 && b < 100));
+      const result = {
+        status: document.getElementById('status').textContent,
+        log: document.getElementById('log').textContent.slice(-3000),
+        registry: localStorage.getItem('reg:HKCU\\\\Software\\\\Funpack Software\\\\Funtris\\\\Options'),
+        windows,
+        runningApps: runningApps.length,
+        playfieldBlack,
+        fallingBrick,
+      };
+      if ((playfieldBlack > 20000 && fallingBrick > 100) || performance.now() - started > 6000) {
+        resolve(result);
+      } else {
+        setTimeout(sample, 100);
       }
-      return n;
     };
-    const playfieldBlack = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
-      (r, g, b) => r === 0 && g === 0 && b === 0);
-    const fallingBrick = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
-      (r, g, b) =>
-        (r > 120 && g < 110 && b < 110) ||
-        (g > 120 && r < 110 && b < 110) ||
-        (b > 120 && r < 110 && g < 110) ||
-        (r > 150 && g > 150 && b < 100));
-    return {
-      status: document.getElementById('status').textContent,
-      log: document.getElementById('log').textContent.slice(-3000),
-      registry: localStorage.getItem('reg:HKCU\\\\Software\\\\Funpack Software\\\\Funtris\\\\Options'),
-      windows,
-      runningApps: runningApps.length,
-      playfieldBlack,
-      fallingBrick,
-    };
-  })()`);
+    sample();
+  })`, 8000);
   result.consoleEvents = consoleEventSummary(cdp.events);
   cdp.close();
 

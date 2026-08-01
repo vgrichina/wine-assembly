@@ -64,6 +64,17 @@ That means these pieces are already good enough for basic insertion:
 This does not mean RichEdit is feature complete. It only proves the first
 native-editing path is alive.
 
+### 2026-08-01 implementation progress
+
+- Added cross-instance thunk metadata sync for worker-thread WASM instances, so
+  stale worker globals cannot allocate a dynamic thunk over DLL import thunks
+  created later by the main instance.
+- Added minimal `EnumFontFamiliesExW` / `EnumFontFamiliesW` callback support
+  with one `Arial` face. This unblocks WordPad's startup font enumeration path
+  before `ShowWindow`.
+- Added `test/test-wordpad-richedit.js`, a bounded screenshot-based regression
+  covering launch, RichEdit focus, `hello world` typing, and visible text paint.
+
 ## Problem statement
 
 Several important Win9x apps do not use the plain EDIT control for document text.

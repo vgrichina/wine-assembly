@@ -69,11 +69,15 @@ E2E=(
   test/test-funtris-options.js
   test/test-funtris-new-game.js
   test/test-funtris-web-launch.js
+  test/test-local-candidate-desktop-web.js
+  test/test-local-candidates-playability.js
   test/test-pyramid-menu.js
   test/test-bricks-drag.js
   test/test-empipe-start.js
   test/test-empipe-stage-transition.js
   test/test-cwordzap-render.js
+  test/test-mspaint-draw.js
+  test/test-wordpad-richedit.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-cruel-maximized-launch-layout.js

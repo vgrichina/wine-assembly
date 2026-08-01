@@ -468,14 +468,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 176: SetWindowExtEx — STUB: unimplemented
+  ;; 176: SetWindowExtEx(hdc, x, y, lpSize) → BOOL
   (func $handle_SetWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg3)
+      (then
+        (call $gs32 (local.get $arg3)
+          (call $host_gdi_get_window_ext_x (local.get $arg0)))
+        (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
+          (call $host_gdi_get_window_ext_y (local.get $arg0)))))
+    (global.set $eax (call $host_gdi_set_window_ext (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 177: LPtoDP — STUB: unimplemented
+  ;; 177: LPtoDP(hdc, lpPoints, nCount) → BOOL. Mapping is currently identity.
   (func $handle_LPtoDP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 178: StartDocA — STUB: unimplemented

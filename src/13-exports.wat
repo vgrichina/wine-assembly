@@ -151,6 +151,10 @@
     (global.set $thunk_guest_end
       (i32.add (global.get $thunk_guest_base)
         (i32.mul (global.get $num_thunks) (i32.const 8)))))
+  (func (export "sync_thunk_state") (param $thunk_ge i32) (param $num_th i32)
+    (global.set $thunk_guest_end (local.get $thunk_ge))
+    (global.set $num_thunks (local.get $num_th))
+    (call $sync_thread_thunk_globals))
 
   ;; Flag debugging exports
   (func (export "get_flag_res") (result i32) (global.get $flag_res))
@@ -329,6 +333,8 @@
         (then (global.set $bsearch_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA000F))
         (then (global.set $d3d_enum_tex_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0011))
+        (then (global.set $font_enum_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0022))
         (then (global.set $createwnd_activate_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0023))

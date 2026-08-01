@@ -17,6 +17,7 @@ if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
 
 const N = apiTable.length;
 const out = [];
+const PAGE_SIZE = 256;
 
 function handlerCall(api) {
   const daSlot = api.name.match(/^IDirectAnimationDA(View|Statics|Behavior)_DirectSlot(\d+)$/);
@@ -35,32 +36,42 @@ out.push('  ;; Hand-written dispatch wrapper is in 09b-dispatch.wat');
 out.push('  ;; ============================================================');
 out.push('  (func $dispatch_api_table (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)');
 out.push('');
-out.push('    ;; === O(1) br_table dispatch ===');
-
-// Block declarations: fallback outermost, then N-1 down to 0 innermost
-out.push('    (block $fallback');
-for (let id = N - 1; id >= 0; id--) {
-  out.push(`    (block $api_${id}`);
+out.push('    ;; === Paged br_table dispatch ===');
+for (let base = 0, page = 0; base < N; base += PAGE_SIZE, page++) {
+  const end = Math.min(base + PAGE_SIZE, N);
+  out.push(`    (if (i32.lt_u (local.get $api_id) (i32.const ${end}))`);
+  out.push('      (then');
+  out.push(`        (call $dispatch_api_table_page_${page} (i32.sub (local.get $api_id) (i32.const ${base})) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`);
+  out.push('        (return)))');
 }
-
-// br_table line
-let br = '      (br_table';
-for (let id = 0; id < N; id++) br += ` $api_${id}`;
-br += ' $fallback (local.get $api_id))';
-out.push(br);
-
-// Handler call slots
-for (let id = 0; id < N; id++) {
-  const api = apiTable[id];
-  out.push(`    ) ;; ${id}: ${api.name}`);
-  out.push(handlerCall(api));
-  out.push('      (return)');
-}
-
-// Fallback
-out.push('    ) ;; fallback');
 out.push('    (call $handle_fallback (local.get $name_ptr) (local.get $api_id))');
 out.push('  )');
+
+for (let base = 0, page = 0; base < N; base += PAGE_SIZE, page++) {
+  const end = Math.min(base + PAGE_SIZE, N);
+  const count = end - base;
+  out.push('');
+  out.push(`  (func $dispatch_api_table_page_${page} (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)`);
+  out.push(`    ;; api ids ${base}..${end - 1}`);
+  out.push('    (block $fallback');
+  for (let slot = count - 1; slot >= 0; slot--) {
+    out.push(`    (block $api_${slot}`);
+  }
+  let br = '      (br_table';
+  for (let slot = 0; slot < count; slot++) br += ` $api_${slot}`;
+  br += ' $fallback (local.get $api_id))';
+  out.push(br);
+  for (let slot = 0; slot < count; slot++) {
+    const id = base + slot;
+    const api = apiTable[id];
+    out.push(`    ) ;; ${id}: ${api.name}`);
+    out.push(handlerCall(api));
+    out.push('      (return)');
+  }
+  out.push('    ) ;; fallback');
+  out.push(`    (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const ${base})))`);
+  out.push('  )');
+}
 
 // ── Generate $init_dx_com_thunks from api_table.json ────────────────
 // COM interfaces: prefix → WAT global name.  Order matters (parent before child).
