@@ -1,148 +1,302 @@
-# RichEdit Compatibility Design
+# RichEdit Compatibility Task Design
 
-Status: active design note for the next RichEdit work after WordPad basic text
-entry started working.
+Last updated: 2026-08-01.
+
+Status: active task design for making native RichEdit usable across WordPad,
+installers, and other Win9x-era apps.
 
 ## ASCII TLDR
 
 ```text
-Goal: make native RichEdit useful for real Win9x apps without pretending this is
-      a full RichEdit clone.
+Whole task:
 
-                 implement now                            postpone later
-        +--------------------------------+        +--------------------------------+
-        | app-visible editor basics      |        | full RichEdit fidelity         |
-        |                                |        |                                |
-App --> | focus / keys / mouse           |        | OLE embedded objects           |
-        | insertion / delete / enter     |        | tables, images, advanced RTF   |
-        | caret / selection / scrolling  |        | IME, bidi, complex shaping     |
-        | opaque text erase / clipping   |        | print layout / pagination      |
-        | plain text + basic RTF I/O     |        | TOM/COM, accessibility, D&D    |
-        | simple font/size/color style   |        | high-fidelity undo/layout      |
-        +--------------------------------+        +--------------------------------+
-                         |
-                         v
-              WordPad and installer text panes
-              should type, edit, select, save, and redraw correctly.
+  make native RichEdit app-useful inside wine-assembly
+  without building a full RichEdit clone.
+
+                       +----------------------+
+Win app / installer -->| native RichEdit code |
+                       +----------+-----------+
+                                  |
+             +--------------------+--------------------+
+             |                    |                    |
+             v                    v                    v
+      USER messages          GDI rendering        stream callbacks
+      focus / keys           text / erase         plain text / RTF
+      mouse / caret          clips / scroll       save / load
+             |                    |                    |
+             +--------------------+--------------------+
+                                  |
+                                  v
+                WordPad and installer license panes
+                type, edit, select, scroll, save, redraw
 ```
 
-Runtime shape:
-
 ```text
-Win app / installer / WordPad
-        |
-        v
-native RichEdit window proc
-        |
-        +--> WM_* / EM_* messages --------> USER/window state shims
-        |
-        +--> GDI text + erase calls ------> JS canvas renderer
-        |
-        +--> stream callbacks ------------> host memory/file bridge
-        |
-        +--> font + metric queries -------> bounded GDI metric compatibility
+Implement now                                 Postpone later
+
++--------------------------------+            +-------------------------------+
+| bounded WordPad/RichEdit probe |            | images / tables / OLE        |
+| delete / enter / movement      |            | advanced RTF layout          |
+| visible selection              |            | IME / bidi / complex shaping |
+| scroll / wrap sanity           |            | print pagination             |
+| plain text stream I/O          |            | TOM/COM / accessibility / D&D|
+| basic RTF + basic formatting   |            | exact version quirks         |
++--------------------------------+            +-------------------------------+
 ```
 
 ## Current baseline
 
-WordPad now passes the smallest useful RichEdit probe:
+WordPad passes the smallest useful RichEdit probe:
 
 ```text
-click editor -> type "hello world" -> visible text in editor
+launch WordPad -> click editor -> type "hello world" -> visible text appears
 ```
 
-That validates focus handoff, keyboard routing, `WM_CHAR` insertion through the
-native RichEdit path, `ETO_OPAQUE` erase fills, and the specific RichEdit
-`32767 twips` font-height sentinel that previously moved text offscreen.
+That means these pieces are already good enough for basic insertion:
 
-This is not feature complete. The next work should target the editor behaviors
-that users and installers actually exercise before chasing full RichEdit parity.
+- focus can reach the RichEdit child;
+- keyboard input routes to the focused child instead of the frame;
+- `WM_CHAR` insertion reaches native RichEdit;
+- `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
+- the observed RichEdit `32767 twips` font-height sentinel no longer moves
+  text far offscreen.
 
-## Implement now
+This does not mean RichEdit is feature complete. It only proves the first
+native-editing path is alive.
 
-### 1. Focused RichEdit test harness
+## Problem statement
 
-Add a bounded probe that can run WordPad and a minimal RichEdit fixture with
-screenshots and text-state checks. The probe should cover:
+Several important Win9x apps do not use the plain EDIT control for document text.
+They use RichEdit directly or through dialogs. WordPad is the obvious example,
+and installers commonly use RichEdit for license text.
 
-- click-to-focus and keyboard focus transfer;
-- typing printable ASCII;
-- Backspace, Delete, Enter, arrow keys, Home, End;
-- Shift+arrow selection and mouse-drag selection;
-- copy, cut, paste if clipboard plumbing is cheap enough to expose;
-- save/reopen for plain text and basic RTF;
-- screenshot assertions for caret, selection, wrapping, and redraw.
+The emulator already runs native RichEdit code. The remaining work is mostly the
+compatibility layer around it:
 
-Emulator-style probes should use explicit timeouts because these are the tests
-most likely to hang.
+- USER focus, keyboard, mouse, child-window, and message-order behavior;
+- GDI text drawing, clipping, erase, metrics, and scroll invalidation;
+- stream callbacks and text/RTF transfer messages;
+- enough formatting messages for visible WordPad toolbar actions.
 
-### 2. Editing and selection semantics
+The target is app-useful compatibility, not exact implementation parity with
+every RichEdit version.
 
-Keep using native RichEdit for the real edit buffer. Fill in the surrounding
-message behavior it expects from USER/GDI:
+## Goals
 
-- route keyboard and mouse messages to the RichEdit child consistently;
-- verify `WM_KEYDOWN`, `WM_CHAR`, `WM_LBUTTON*`, `WM_SETFOCUS`, and
-  `WM_KILLFOCUS` order;
-- support deletion, newline insertion, caret movement, and scroll-to-caret;
-- implement enough selection state rendering for selected text to be visible;
-- avoid app-specific hooks unless a trace proves there is no generic behavior.
+- WordPad supports everyday text editing:
+  typing, deletion, newlines, navigation, selection, wrapping, scrolling, and
+  visible caret/selection behavior.
+- WordPad can save and reopen plain text, then simple RTF.
+- Basic formatting is visible:
+  bold, italic, underline, font size, font face, and text color.
+- Installer license RichEdit panes render, clip, and scroll reliably.
+- The behavior is covered by bounded tests and screenshots so later GDI/USER
+  changes do not silently regress it.
 
-### 3. Paint and layout support
+## Non-goals for the next phase
 
-The recent `ETO_OPAQUE` and font-height fixes are the start, not the end.
-Continue with the GDI behaviors RichEdit leans on:
+These are valid RichEdit features, but they should not block the next app-status
+push:
 
-- honor text clip rectangles and update regions;
-- keep memory-DC erase/fill behavior coherent with the target DC background;
-- support the `ExtTextOut` flags RichEdit uses in traces;
-- handle `lpDx` spacing well enough for proportional fonts;
-- regression-test Notepad and WordPad after every GDI text change.
+- embedded OLE objects and in-place activation;
+- image rendering/editing through `\pict`, metafiles, or bitmap objects;
+- tables, high-fidelity layout, and complex RTF style sheets;
+- IME composition, bidi layout, complex script shaping, and script-specific
+  line breaking;
+- print layout, pagination, rulers, and printer-device metric fidelity;
+- TOM/COM surfaces, deep accessibility, and drag/drop editing;
+- exact behavioral differences between RichEdit 1.0, 2.0, 3.0, and later.
 
-### 4. Text I/O and streaming
+## Suggested implementation slice
 
-Many apps use RichEdit as a document or license viewer. Implement the common
-message surface first:
+Implement the next part as a bounded probe plus the first failing edit fixes.
+This gives a stable loop before touching more RichEdit internals.
 
+```text
+Part A: test harness
+
+  test/test-wordpad-richedit.js
+       |
+       v
+  test/run.js --exe=test/binaries/win98-apps/wordpad.exe
+       |
+       v
+  scheduled input:
+    click editor
+    type text
+    Backspace / Delete / Enter
+    Arrow / Home / End
+    Shift+arrow
+    drag selection
+    png snapshots
+    dump visible edit state
+       |
+       v
+  assertions:
+    text state changed correctly
+    selection/caret/scroll state sane
+    screenshots written
+    no crash / no UNIMPLEMENTED API
+```
+
+### Deliverables for Part A
+
+- Add `test/test-wordpad-richedit.js`, modeled on
+  `test/test-notepad-editing.js`.
+- Use `test/run.js` scheduled input instead of manual interaction.
+- Capture screenshots under `test/output/` or `/private/tmp/`.
+- Keep a wall-clock timeout inside the Node test because emulator tests can
+  hang.
+- Update `apps/wordpad.md` with the current pass/fail state after the probe.
+
+### Existing test-runner pieces to reuse
+
+`test/run.js` already supports most of the required input actions:
+
+- `focus-main-window`;
+- `keypress:CODE`;
+- `keydown:VK` / `keyup:VK`;
+- `click:X:Y`, `mousedown:X:Y`, `mousemove:X:Y`, `mouseup:X:Y`;
+- `dump-main-edit-state[:LABEL]`;
+- `drag-main-edit:X1:Y1:X2:Y2`;
+- `wheel-main-edit:DELTA`;
+- `png:PATH`.
+
+The first version should reuse these. If WordPad needs better targeting, add a
+generic selector action instead of a WordPad-specific hack. Example:
+
+```text
+focus-visible-edit
+dump-visible-edit-state[:LABEL]
+drag-visible-edit:X1:Y1:X2:Y2
+```
+
+The selector should find the visible native edit/RichEdit child under the active
+top-level window, not hard-code `0x10002`.
+
+### Initial probe flow
+
+```text
+1. Launch WordPad.
+2. Click inside the RichEdit client area.
+3. Type: alpha beta
+4. Dump state: text should be "alpha beta".
+5. Press Backspace.
+6. Dump state: text should be "alpha bet".
+7. Press Enter, type gamma.
+8. Dump state: multiline text should include alpha bet + gamma.
+9. Ctrl+A, type delta.
+10. Dump state: text should be "delta".
+11. Shift+Left a few chars.
+12. Dump state: cursor and selection should differ.
+13. Capture screenshot for text/caret/selection evidence.
+14. Run no-crash/no-unimplemented checks.
+```
+
+Command shape:
+
+```text
+node test/test-wordpad-richedit.js
+```
+
+The test itself should call `test/run.js` with a bounded child-process timeout,
+for example `execSync(cmd, { timeout: 120000 })`.
+
+## Fixes likely needed after the probe
+
+### 1. Delete, Enter, and navigation
+
+Expected touchpoints:
+
+- `lib/renderer-input.js` for key event normalization and focus routing;
+- `src/09a5-handlers-window.wat` for window message dispatch;
+- EDIT/RichEdit message handlers in WAT for `WM_KEYDOWN`, `WM_CHAR`, and
+  `EM_*` behavior;
+- `test/run.js` only if the harness cannot observe the needed state generically.
+
+Acceptance:
+
+```text
+[ ] Backspace removes the previous character
+[ ] Delete removes the next character
+[ ] Enter creates a visible new line
+[ ] Left/Right/Home/End move the caret without corrupting text
+[ ] typing over selection replaces the selected range
+```
+
+### 2. Visible selection
+
+Expected touchpoints:
+
+- edit selection state exports used by the test runner;
+- text rendering paths in `src/09a-handlers.wat` and `lib/host-imports.js`;
+- invalidation and repaint behavior for selection changes.
+
+Acceptance:
+
+```text
+[ ] Shift+arrow produces a non-empty selection
+[ ] mouse drag produces a non-empty selection
+[ ] selected text is visibly highlighted in a screenshot
+[ ] replacing selected text leaves the expected buffer contents
+```
+
+### 3. Scroll and wrapping
+
+Expected touchpoints:
+
+- `EM_GETFIRSTVISIBLELINE`, `EM_LINESCROLL`, `WM_MOUSEWHEEL`;
+- child/client rect and clip calculations;
+- invalidation when first visible line changes.
+
+Acceptance:
+
+```text
+[ ] long multiline text inserts without truncation
+[ ] wheel scroll changes first visible line
+[ ] scrollbar drag changes first visible line
+[ ] text stays clipped to the RichEdit client rect
+```
+
+### 4. Text I/O
+
+Expected message surface:
+
+- `WM_GETTEXT`, `WM_SETTEXT`, `WM_GETTEXTLENGTH`;
 - `EM_GETTEXTEX`, `EM_SETTEXTEX`, `EM_GETTEXTRANGE`;
-- `EM_STREAMIN` and `EM_STREAMOUT` for plain text and basic RTF;
-- text length and selection range queries;
-- CR/LF normalization compatible with Win9x-era controls.
+- `EM_STREAMIN`, `EM_STREAMOUT`;
+- selection range queries and CR/LF normalization.
 
-The goal is enough fidelity for WordPad save/load and installer license text,
-not a complete RTF engine.
+Acceptance:
+
+```text
+[ ] plain text save/reopen works in WordPad
+[ ] basic RTF save/reopen preserves simple formatting
+[ ] installer license RichEdit text streams in and scrolls
+```
 
 ### 5. Basic formatting
 
-Implement the visible formatting subset that WordPad and common apps expose:
+Expected message surface:
 
 - `EM_SETCHARFORMAT` / `EM_GETCHARFORMAT`;
 - `EM_SETPARAFORMAT` / `EM_GETPARAFORMAT`;
-- font face, size, bold, italic, underline, text color;
-- paragraph alignment and simple bullets if traces show WordPad needs them.
+- basic font, size, bold, italic, underline, color, and alignment fields.
 
-Prefer trace-driven support. If a formatting field is not rendered yet, preserve
-it through stream out when practical so files do not lose data unnecessarily.
+Acceptance:
 
-## Postpone later
+```text
+[ ] bold / italic / underline are visible
+[ ] font size changes affect layout predictably
+[ ] text color renders
+[ ] simple RTF round-trips without losing basic formatting
+```
 
-These are real RichEdit features, but they should not block the next app-status
-push:
-
-- OLE embedded objects and in-place activation;
-- tables, images, hyperlinks, and high-fidelity RTF import/export;
-- complex text shaping, IME composition, bidi layout, and script-specific line
-  breaking;
-- printing, pagination, ruler fidelity, and printer-device metrics;
-- TOM/COM interfaces and deep accessibility integration;
-- drag/drop editing and rich clipboard formats beyond plain text/basic RTF;
-- high-fidelity undo grouping and advanced layout edge cases;
-- exact version differences across RichEdit 1.0, 2.0, 3.0, and later.
-
-## Acceptance matrix
+## Whole-task acceptance matrix
 
 ```text
 [x] WordPad accepts focus and inserts visible "hello world"
+[ ] Automated WordPad/RichEdit probe exists
 [ ] Backspace/Delete edit visible text correctly
 [ ] Enter creates a visible new line
 [ ] Arrow/Home/End movement tracks the caret
@@ -153,28 +307,35 @@ push:
 [ ] Basic RTF save/reopen works without data loss for simple styling
 [ ] Bold/italic/underline/font-size/color are visible in WordPad
 [ ] Installer/license RichEdit panes render and scroll
+[ ] App status docs are updated from current screenshots/probes
 ```
 
 ## Implementation order
 
 ```text
-1. Add bounded RichEdit/WordPad probes with screenshots.
-2. Fix deletion, Enter, caret navigation, and scroll-to-caret.
-3. Add visible selection rendering.
-4. Add plain text stream in/out, then basic RTF.
-5. Add basic character formatting and paragraph formatting.
-6. Re-check broader EXE matrix and update app status docs.
+1. Add `test/test-wordpad-richedit.js` and capture baseline screenshots.
+2. Add generic test-runner targeting if existing edit-state actions are not
+   enough for WordPad.
+3. Fix Backspace, Delete, Enter, and caret navigation.
+4. Fix visible selection rendering and replacement.
+5. Fix multiline wrapping, scroll, and clip invalidation.
+6. Add plain text stream in/out.
+7. Add basic RTF stream in/out.
+8. Add basic character and paragraph formatting.
+9. Re-run WordPad, Notepad, and installer RichEdit probes.
+10. Update app status docs with screenshots and pass/fail state.
 ```
 
-## Compatibility constraints
+## Risk controls
 
-- Treat this as compatibility around native RichEdit, not a greenfield editor.
-- Keep hacks narrow. The existing `MulDiv(32767, 96, 1440)` clamp is acceptable
-  as a compatibility guard for the observed RichEdit sentinel, but broad GDI
-  math clamps should require trace evidence.
-- Prefer app-agnostic USER/GDI/message fixes over WordPad-specific branches.
-- Every text-rendering fix needs Notepad and WordPad regression coverage because
-  both exercise the same lower-level paths.
-- Keep screenshots as evidence for visual behavior. Text-state probes alone will
-  miss paint, erase, caret, and selection bugs.
-
+- Keep compatibility fixes generic unless traces prove an app-specific exception
+  is required.
+- Avoid broad GDI metric clamps. The observed `MulDiv(32767, 96, 1440)` clamp is
+  a narrow compatibility guard for a RichEdit sentinel; wider math changes need
+  regression evidence.
+- Run Notepad editing coverage after RichEdit text changes because both share
+  lower-level edit, input, and GDI paths.
+- Keep screenshots for visual assertions. Text dumps do not catch erase,
+  clipping, caret, or selection-paint bugs.
+- Do not make emulator tests unbounded. Use explicit timeouts around scripts
+  that launch apps.
