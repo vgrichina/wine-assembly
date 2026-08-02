@@ -49,7 +49,11 @@ Implement now                                 Postpone later
 WordPad passes the smallest useful RichEdit probe:
 
 ```text
-launch WordPad -> click editor -> type "hello world" -> visible text appears
+launch WordPad -> click editor -> type "hello world"
+              -> WM_GETTEXT returns "hello world"
+              -> Backspace, Enter, type "again"
+              -> WM_GETTEXT returns "hello worl\r\nagain"
+              -> visible edited text appears
 ```
 
 That means these pieces are already good enough for basic insertion:
@@ -57,6 +61,9 @@ That means these pieces are already good enough for basic insertion:
 - focus can reach the RichEdit child;
 - keyboard input routes to the focused child instead of the frame;
 - `WM_CHAR` insertion reaches native RichEdit;
+- synchronous `WM_GETTEXT` can read the focused native RichEdit buffer through
+  the test harness;
+- Backspace and Enter update that native buffer in the current probe;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
@@ -72,8 +79,11 @@ native-editing path is alive.
 - Added minimal `EnumFontFamiliesExW` / `EnumFontFamiliesW` callback support
   with one `Arial` face. This unblocks WordPad's startup font enumeration path
   before `ShowWindow`.
-- Added `test/test-wordpad-richedit.js`, a bounded screenshot-based regression
-  covering launch, RichEdit focus, `hello world` typing, and visible text paint.
+- Added `test/run.js` `dump-focus-text`, which reads WAT EDIT controls directly
+  and native controls through `WM_GETTEXT`.
+- Expanded `test/test-wordpad-richedit.js`, a bounded regression covering
+  launch, RichEdit focus, `hello world` typing, native text readback,
+  Backspace, Enter/newline, and visible text paint.
 
 ## Problem statement
 
@@ -307,9 +317,10 @@ Acceptance:
 
 ```text
 [x] WordPad accepts focus and inserts visible "hello world"
-[ ] Automated WordPad/RichEdit probe exists
-[ ] Backspace/Delete edit visible text correctly
-[ ] Enter creates a visible new line
+[x] Automated WordPad/RichEdit probe exists
+[x] Backspace edits visible text correctly
+[ ] Delete-forward edits visible text correctly
+[x] Enter creates a visible new line
 [ ] Arrow/Home/End movement tracks the caret
 [ ] Shift+arrow and mouse-drag selection render visibly
 [ ] Copy/Cut/Paste work for plain text
@@ -318,7 +329,7 @@ Acceptance:
 [ ] Basic RTF save/reopen works without data loss for simple styling
 [ ] Bold/italic/underline/font-size/color are visible in WordPad
 [ ] Installer/license RichEdit panes render and scroll
-[ ] App status docs are updated from current screenshots/probes
+[x] App status docs are updated from current screenshots/probes
 ```
 
 ## Implementation order

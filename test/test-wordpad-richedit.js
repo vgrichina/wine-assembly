@@ -3,11 +3,9 @@
 //   - WordPad reaches ShowWindow with a visible top-level editor window
 //   - mouse focus lands on the RichEdit child
 //   - keypresses route to that child
-//   - typed text is visibly painted in the editor screenshot
-//
-// This intentionally uses screenshot evidence for text. WordPad's RichEdit
-// child is native/subclassed (not a WAT EDIT control), so the existing
-// dump-main-edit-state helper cannot read its buffer.
+//   - typed text is present in RichEdit's own WM_GETTEXT buffer
+//   - Backspace and Enter update that buffer
+//   - edited text is visibly painted in the editor screenshot
 
 const fs = require('fs');
 const path = require('path');
@@ -18,7 +16,7 @@ const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
-const PNG_OUT = path.join(OUT_DIR, 'hello-world.png');
+const PNG_OUT = path.join(OUT_DIR, 'hello-world-edited.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  wordpad.exe not found at', EXE);
@@ -38,8 +36,19 @@ for (const ch of text) {
   b += 1;
 }
 seq.push('95:dump-focus:typed');
-seq.push('105:dump-windows:final');
-seq.push(`110:png:${PNG_OUT}`);
+seq.push('96:dump-focus-text:typed');
+seq.push('100:keydown:8');
+seq.push('101:keyup:8');
+seq.push('104:keydown:13');
+seq.push('105:keyup:13');
+b = 108;
+for (const ch of 'again') {
+  seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
+  b += 1;
+}
+seq.push('120:dump-focus-text:edited');
+seq.push('125:dump-windows:final');
+seq.push(`130:png:${PNG_OUT}`);
 
 const args = [
   RUN,
@@ -70,6 +79,7 @@ try {
 const interesting = out.split('\n').filter(l =>
   l.includes('ShowWindow') ||
   l.includes('dump-focus') ||
+  l.includes('dump-focus-text') ||
   l.includes('dump-windows') ||
   l.includes('window:final') ||
   l.includes('[check_input_hwnd] keyboard') ||
@@ -104,14 +114,18 @@ function check(name, pass) { checks.push({ name, pass: !!pass }); }
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const darkPixels = pngExists ? countDarkTextPixels(PNG_OUT) : 0;
 const keyboardFocusHits = (out.match(/\[check_input_hwnd\] keyboard → focus 0x10002/g) || []).length;
+const typedTextOk = /dump-focus-text typed: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=11 text="hello world"/.test(out);
+const editedTextOk = /dump-focus-text edited: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nagain"/.test(out);
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('top-level WordPad window visible', /window:final hwnd=65537 .*visible=true .*title="Document - WordPad"/.test(out));
 check('click focused native RichEdit child', /dump-focus clicked: hwnd=0x10002 class=0 id=59648 parent=0x10001/.test(out));
-check('keypresses routed to RichEdit child', keyboardFocusHits >= text.length);
+check('keypresses routed to RichEdit child', keyboardFocusHits >= text.length + 'again'.length);
 check('focus remained on native RichEdit after typing', /dump-focus typed: hwnd=0x10002 class=0 id=59648 parent=0x10001/.test(out));
-check('typed-text screenshot written', pngExists);
-check(`typed text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
+check('typed text is readable with WM_GETTEXT', typedTextOk);
+check('Backspace and Enter update RichEdit text', editedTextOk);
+check('edited-text screenshot written', pngExists);
+check(`edited text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code/.test(out));
 

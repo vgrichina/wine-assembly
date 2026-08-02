@@ -303,6 +303,7 @@ async function main() {
   //   B:dump-main-edit      — log main edit text
   //   B:focus-main-window   — set WAT focus to the top-level main window
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
+  //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
@@ -347,6 +348,8 @@ async function main() {
       } else if (kind === 'dump-focus') {
         // B:dump-focus[:LABEL] — log get_focus_hwnd + ctrl class/id.
         scheduledInput.push({ batch, action: 'dump-focus', label: parts[2] || '' });
+      } else if (kind === 'dump-focus-text') {
+        scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
       } else if (kind === 'class-cmd') {
         // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
         // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
@@ -2217,6 +2220,36 @@ async function main() {
         }
         const tag = ev.label ? ` ${ev.label}` : '';
         logs.push(`[input] dump-focus${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id}${extra} at batch ${batch}`);
+      } else if (ev.action === 'dump-focus-text') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        let txt = '';
+        let n = 0;
+        if (!h) {
+          logs.push(`[input] dump-focus-text${tag}: NO FOCUS at batch ${batch}`);
+        } else if (cls === 2 && we.get_edit_text && we.guest_alloc) {
+          const scratchG = we.guest_alloc(8192);
+          n = we.get_edit_text(h, scratchG, 8191) | 0;
+          const wa = g2w(scratchG);
+          const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, n));
+          txt = Buffer.from(bytes).toString('latin1');
+          logs.push(`[input] dump-focus-text${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cap = 8192;
+          const scratchG = we.guest_alloc(cap);
+          n = we.send_message(h, 0x000D, cap, scratchG) | 0; // WM_GETTEXT
+          const wa = g2w(scratchG);
+          const viewLen = Math.max(0, Math.min(n, cap - 1));
+          const bytes = new Uint8Array(memory.buffer, wa, viewLen);
+          txt = Buffer.from(bytes).toString('latin1');
+          logs.push(`[input] dump-focus-text${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-focus-text${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO TEXT API at batch ${batch}`);
+        }
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its
         // filename edit child (ctrl id 0x442), WM_SETTEXT a heap-alloc'd
