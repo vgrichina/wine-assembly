@@ -6,12 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { PNG: PNGJS } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
-const PNG = path.join(OUT_DIR, 'format-accelerators.png');
+const PLAIN_PNG = path.join(OUT_DIR, 'format-accelerators-plain.png');
+const FORMATTED_PNG = path.join(OUT_DIR, 'format-accelerators.png');
 const TEXT = 'style';
 
 if (!fs.existsSync(EXE)) {
@@ -31,29 +33,32 @@ for (const ch of TEXT) {
 }
 seq.push('84:dump-focus-state:typed');
 seq.push('86:dump-focus-charformat:plain');
-seq.push('90:keydown:17');
-seq.push('91:keydown:65');
-seq.push('92:keyup:65');
-seq.push('93:keyup:17');
-seq.push('96:dump-focus-state:selected');
-seq.push('100:keydown:17');
-seq.push('101:keydown:66');
-seq.push('102:keyup:66');
-seq.push('103:keyup:17');
-seq.push('112:dump-focus-charformat:bold');
-seq.push('116:keydown:17');
-seq.push('117:keydown:73');
-seq.push('118:keyup:73');
-seq.push('119:keyup:17');
-seq.push('128:dump-focus-charformat:bold-italic');
-seq.push('132:keydown:17');
-seq.push('133:keydown:85');
-seq.push('134:keyup:85');
-seq.push('135:keyup:17');
-seq.push('144:dump-focus-charformat:bold-italic-underline');
-seq.push('148:dump-focus-state:final');
-seq.push(`152:png:${PNG}`);
-seq.push('156:stop');
+seq.push(`88:png:${PLAIN_PNG}`);
+seq.push('94:keydown:17');
+seq.push('95:keydown:65');
+seq.push('96:keyup:65');
+seq.push('97:keyup:17');
+seq.push('100:dump-focus-state:selected');
+seq.push('104:keydown:17');
+seq.push('105:keydown:66');
+seq.push('106:keyup:66');
+seq.push('107:keyup:17');
+seq.push('116:dump-focus-charformat:bold');
+seq.push('120:keydown:17');
+seq.push('121:keydown:73');
+seq.push('122:keyup:73');
+seq.push('123:keyup:17');
+seq.push('132:dump-focus-charformat:bold-italic');
+seq.push('136:keydown:17');
+seq.push('137:keydown:85');
+seq.push('138:keyup:85');
+seq.push('139:keyup:17');
+seq.push('148:dump-focus-charformat:bold-italic-underline');
+seq.push('152:keydown:39');
+seq.push('153:keyup:39');
+seq.push('158:dump-focus-state:final');
+seq.push(`162:png:${FORMATTED_PNG}`);
+seq.push('166:stop');
 
 const args = [
   RUN,
@@ -107,6 +112,64 @@ const bold = line('bold');
 const boldItalic = line('bold-italic');
 const all = line('bold-italic-underline');
 
+function readPng(file) {
+  return PNGJS.sync.read(fs.readFileSync(file));
+}
+
+function compareTextBand(beforePath, afterPath) {
+  if (!fs.existsSync(beforePath) || !fs.existsSync(afterPath)) return null;
+
+  const before = readPng(beforePath);
+  const after = readPng(afterPath);
+  if (before.width !== after.width || before.height !== after.height) {
+    return { mismatch: true };
+  }
+
+  // WordPad's edit surface begins just under the toolbar in the fixed-size test
+  // window. Keep the region tight around the typed word so caret/window chrome
+  // noise does not satisfy the visual formatting assertion.
+  const x0 = 0;
+  const y0 = 45;
+  const x1 = Math.min(220, before.width);
+  const y1 = Math.min(95, before.height);
+  let changedPixels = 0;
+  let darkBefore = 0;
+  let darkAfter = 0;
+  let diffSum = 0;
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * before.width + x) * 4;
+      const dr = Math.abs(before.data[i] - after.data[i]);
+      const dg = Math.abs(before.data[i + 1] - after.data[i + 1]);
+      const db = Math.abs(before.data[i + 2] - after.data[i + 2]);
+      const delta = dr + dg + db;
+      if (delta > 30) changedPixels++;
+      diffSum += delta;
+
+      if (before.data[i] < 120 && before.data[i + 1] < 120 && before.data[i + 2] < 120 && before.data[i + 3]) {
+        darkBefore++;
+      }
+      if (after.data[i] < 120 && after.data[i + 1] < 120 && after.data[i + 2] < 120 && after.data[i + 3]) {
+        darkAfter++;
+      }
+    }
+  }
+
+  return {
+    changedPixels,
+    darkBefore,
+    darkAfter,
+    darkDelta: darkAfter - darkBefore,
+    diffSum,
+  };
+}
+
+const visual = compareTextBand(PLAIN_PNG, FORMATTED_PNG);
+if (visual) {
+  console.log(`visual text-band diff: changed=${visual.changedPixels} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} darkDelta=${visual.darkDelta} diffSum=${visual.diffSum}`);
+}
+
 check('WordPad reached ShowWindow', /ShowWindow\] hwnd=0x10001/.test(out));
 check('typed text reached native RichEdit', /text="style"/.test(typed));
 check('plain text starts without bold/italic/underline effects',
@@ -121,7 +184,14 @@ check('Ctrl+U accelerator toggled selected text underline without dropping prior
   /bold=1 .*italic=1 .*underline=1/.test(all));
 check('formatting accelerators did not insert literal shortcut letters',
   /text="style"/.test(final));
-check('formatting screenshot written', fs.existsSync(PNG) && fs.statSync(PNG).size > 0);
+check('plain formatting screenshot written', fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
+check('formatted screenshot written', fs.existsSync(FORMATTED_PNG) && fs.statSync(FORMATTED_PNG).size > 0);
+check('bold/italic/underline formatting changes visible text pixels',
+  visual &&
+  !visual.mismatch &&
+  visual.changedPixels >= 80 &&
+  visual.darkDelta >= 20 &&
+  visual.diffSum >= 20000);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 

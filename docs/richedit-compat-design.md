@@ -143,7 +143,8 @@ native-editing path is alive.
   swallowed as plain RichEdit keydowns. Added `dump-focus-charformat` to
   `test/run.js` and `test/test-wordpad-format-accelerators.js`; the focused
   probe confirms selected native RichEdit text reports bold, italic, and
-  underline effects through `EM_GETCHARFORMAT(SCF_SELECTION)`.
+  underline effects through `EM_GETCHARFORMAT(SCF_SELECTION)`, and now compares
+  plain/formatted screenshots to assert visible B/I/U text pixels.
 - Added `test/test-wordpad-format-roundtrip.js`, which proves a simple
   WordPad RTF Save As -> New -> Open round-trip preserves selected text plus
   bold, italic, and underline effects in native RichEdit charformat state.
@@ -406,7 +407,7 @@ Acceptance:
 
 ```text
 [x] WordPad Ctrl+B / Ctrl+I / Ctrl+U toggle RichEdit charformat effects
-[ ] bold / italic / underline have explicit visual/pixel assertions
+[x] bold / italic / underline have explicit visual/pixel assertions
 [ ] font size changes affect layout predictably
 [ ] text color renders
 [x] simple RTF round-trips without losing bold/italic/underline effects
@@ -434,7 +435,8 @@ Acceptance:
 [ ] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Bold/italic/underline command state toggles in WordPad
-[ ] Bold/italic/underline/font-size/color are visibly asserted in WordPad
+[x] Bold/italic/underline are visibly asserted in WordPad
+[ ] Font-size/color are visibly asserted in WordPad
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```

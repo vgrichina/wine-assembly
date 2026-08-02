@@ -67,9 +67,10 @@ Focused formatting accelerator probe:
 type "style", Ctrl+A, then Ctrl+B / Ctrl+I / Ctrl+U
 accelerator: TranslateAcceleratorA now matches Ctrl/Shift/Alt modifier bits
 RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
-result:      PASS for WordPad formatting command dispatch and native RichEdit
-             CHARFORMAT state. Exact visual/pixel fidelity and RTF style
-             round-trip are still later work.
+pixels:      plain vs formatted screenshots differ in the typed-word band
+result:      PASS for WordPad formatting command dispatch, native RichEdit
+             CHARFORMAT state, and visible B/I/U text rendering. Font
+             size/color/paragraph formatting are still later work.
 ```
 
 Focused formatting round-trip probe:
@@ -136,11 +137,13 @@ Current evidence from the 2026-08-02 follow-up probe:
   `TranslateAcceleratorA`: it now matches `FVIRTKEY` entries with exact
   Shift/Ctrl/Alt modifier state instead of skipping modifier accelerators.
   `EM_GETCHARFORMAT(SCF_SELECTION)` confirms the selected native RichEdit text
-  has bold, italic, and underline effects after the shortcuts.
+  has bold, italic, and underline effects after the shortcuts. The focused
+  regression also compares plain/formatted editor screenshots and confirms the
+  typed-word pixels visibly change.
 - WordPad can save and reopen a simple RTF document with bold/italic/underline
   effects preserved in RichEdit charformat state. This is still bounded to
-  simple character formatting; exact visual pixel fidelity, font size/color,
-  paragraph formatting, and advanced RTF remain follow-up work.
+  simple character formatting; font size/color, paragraph formatting, and
+  advanced RTF remain follow-up work.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -163,8 +166,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   paths.
 - Regression test: `node test/test-wordpad-reopen-saved.js` passes 22/22 and
   covers Save As -> New -> Open of the saved simple RichEdit document.
-- Regression test: `node test/test-wordpad-format-accelerators.js` passes 11/11
-  and writes `test/output/wordpad-richedit/format-accelerators.png`.
+- Regression test: `node test/test-wordpad-format-accelerators.js` passes 13/13
+  and writes `test/output/wordpad-richedit/format-accelerators-plain.png` plus
+  `test/output/wordpad-richedit/format-accelerators.png`; the typed-word band
+  shows 236 changed pixels and 62 more dark pixels after B/I/U formatting.
 - Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
   and writes `test/output/wordpad-richedit/format-roundtrip.png`.
 
