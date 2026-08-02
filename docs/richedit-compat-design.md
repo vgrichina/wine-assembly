@@ -132,6 +132,11 @@ native-editing path is alive.
   buffer instead of only resetting the title. The Open path now proves the
   common dialog, `CreateFileA` / `ReadFile` stream, `GetFileTitleA`, title
   update, and native RichEdit readback for `sources.md`.
+- Fixed `wvsprintfA` to pass the `va_list` as a guest address to the shared
+  formatter. The previous host-pointer conversion made RichEdit stream corrupt
+  RTF with `(null)` placeholders in the header during WordPad Save As. Added
+  `test/test-wordpad-reopen-saved.js`, which proves simple text saved by
+  WordPad reopens as editor text instead of raw corrupted RTF.
 
 ### 2026-08-01 implementation progress
 
@@ -354,7 +359,8 @@ Expected message surface:
 Acceptance:
 
 ```text
-[ ] plain text save/reopen works in WordPad
+[x] WordPad saved RTF reopens with simple plain text content
+[ ] plain text save/reopen through the text filter works in WordPad
 [ ] basic RTF save/reopen preserves simple formatting
 [ ] installer license RichEdit text streams in and scrolls
 ```
@@ -412,7 +418,8 @@ Acceptance:
 [ ] Menu Copy/Cut/Paste has explicit coverage
 [x] Native RichEdit wheel changes first visible line
 [ ] Line wrapping and scrollbar scrolling stay coherent
-[ ] Plain text save/reopen works
+[x] WordPad saved RTF reopens with simple plain text content
+[ ] Plain text save/reopen through the text filter works
 [ ] Basic RTF save/reopen works without data loss for simple styling
 [ ] Bold/italic/underline/font-size/color are visible in WordPad
 [ ] Installer/license RichEdit panes render and scroll

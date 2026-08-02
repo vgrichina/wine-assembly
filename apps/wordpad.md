@@ -41,13 +41,24 @@ Focused Save As probe:
 
 ```text
 type "save me", invoke command 57604 (Save As), pick wordpad-save-probe.txt
-file path: CreateFileA -> GetFileTime -> WriteFile(0x97 bytes) -> CloseHandle
+file path: CreateFileA -> GetFileTime -> non-empty WriteFile -> CloseHandle
 OLE path:  CreateFileMoniker -> GetRunningObjectTable -> ROT Register/Release
 title:     "wordpad-save-probe.txt - WordPad"
 then File New, accept the "New document type" dialog, verify RichEdit len=0
 then File Open, pick sources.md, verify ReadFile streaming and loaded text
 result:    PASS for Save As, New/clear, and Open/load through WordPad's MFC
            command paths without missing exports or null ROT calls.
+```
+
+Focused saved-document reopen probe:
+
+```text
+type "save me", Save As wordpad-reopen-saved.txt, File New, then File Open
+the saved document again
+formatter: wvsprintfA va_list arguments stay in guest-address space while
+           RichEdit streams RTF out
+result:    PASS: reopened RichEdit text is exactly "save me"; the previous
+           raw "{\(null)..." corrupted RTF header is no longer exposed.
 ```
 
 Current evidence from the 2026-08-02 follow-up probe:
@@ -96,6 +107,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   `CreateFileA` / `ReadFile` streaming, and `GetFileTitleA`; the native
   RichEdit buffer then contains the opened file text and the title updates to
   the opened filename.
+- WordPad can reopen a document saved through its own Save As path for simple
+  typed text. The blocking bug was `wvsprintfA`: it passed a `va_list` through
+  `g2w` even though the shared formatter reads guest addresses with `gl32`,
+  corrupting RichEdit's streamed RTF header with `(null)` placeholders.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -116,6 +131,8 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-save-as.js` passes 32/32 and covers
   WordPad's Save As, New/clear, and Open/load command/file/OLE bookkeeping
   paths.
+- Regression test: `node test/test-wordpad-reopen-saved.js` passes 22/22 and
+  covers Save As -> New -> Open of the saved simple RichEdit document.
 
 ## Write Launcher
 
@@ -143,8 +160,8 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, formatting changes, and reopen-saved-file still need focused
-   probes.
+   wrapping, formatting changes, and filter-specific plain-text save still need
+   focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

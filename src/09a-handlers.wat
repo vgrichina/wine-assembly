@@ -3566,8 +3566,9 @@
 
   ;; wvsprintfA(buf, fmt, arglist) — stdcall, 3 args
   (func $handle_wvsprintfA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; wsprintf_impl expects arg_ptr as a guest address and reads args with gl32.
     (global.set $eax (call $wsprintf_impl
-      (local.get $arg0) (local.get $arg1) (call $g2w (local.get $arg2))))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
