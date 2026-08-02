@@ -95,7 +95,7 @@ RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
 pixels:      plain vs formatted screenshots differ in the typed-word band
 result:      PASS for WordPad formatting command dispatch, native RichEdit
              CHARFORMAT state, and visible B/I/U text rendering. Paragraph
-             formatting is still later work.
+             alignment has separate focused coverage below.
 ```
 
 Focused formatting toolbar-button probe:
@@ -123,6 +123,21 @@ scope:       The VFS write boundary rewrites RichEdit's native RTF sentinels
              `\up3276` / `\fs3277` to `\up0` / `\fs48` from the latest
              explicit 24pt size hint. This is a simple selected-run path, not
              a full mixed-run formatting model.
+```
+
+Focused paragraph alignment round-trip probe:
+
+```text
+type "align", Ctrl+A, Ctrl+E, Save As .rtf, File New, then reopen the saved
+.rtf and reselect the text
+RichEdit:    EM_GETPARAFORMAT reports alignment=1 before the command and
+             alignment=3 after Ctrl+E, after Save As, and after reopening
+RTF:         the saved stream preserves centered paragraph state (`\qc`)
+pixels:      centered screenshot shifts the typed-word band from x=17..40 to
+             x=287..310 relative to the left-aligned screenshot
+result:      PASS for WordPad paragraph center alignment dispatch,
+             native RichEdit PARAFORMAT state, visible centered rendering, and
+             simple RTF paragraph alignment round-trip.
 ```
 
 Focused Font dialog probe:
@@ -259,7 +274,14 @@ Current evidence from the 2026-08-02 follow-up probe:
   focused round-trip now covers Arial / Bold Italic / Underline / 24pt / Blue.
   The VFS write boundary rewrites RichEdit's native `\up3276` / `\fs3277`
   sentinels to `\up0` / `\fs48` from the latest explicit size hint; mixed-size
-  runs, paragraph formatting, and advanced RTF remain follow-up work.
+  runs and advanced RTF remain follow-up work.
+- WordPad paragraph center alignment now routes through the app command path
+  and survives a simple RTF Save As -> New -> Open round-trip. The focused
+  regression verifies `EM_GETPARAFORMAT` reports `alignment=3` after Ctrl+E,
+  after Save As, and after reopening; the saved stream includes centered
+  paragraph state and screenshot pixels show the word shifted to the centered
+  page position. Indents, tabs, numbering, and advanced paragraph formatting
+  remain follow-up work.
 - WordPad Format > Font now opens the WAT `ChooseFontA` dialog and returns the
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
@@ -335,6 +357,13 @@ Current evidence from the 2026-08-02 follow-up probe:
   and writes `test/output/wordpad-richedit/format-roundtrip.png`; it covers
   Save As -> New -> Open of a simple RTF document with Arial / Bold Italic /
   Underline / 24pt / Blue preserved on the reopened selected text.
+- Regression test: `node test/test-wordpad-paragraph-align.js` passes 26/26
+  and writes `test/output/wordpad-richedit/paragraph-align-left.png`,
+  `test/output/wordpad-richedit/paragraph-align-center.png`, and
+  `test/output/wordpad-richedit/paragraph-align-reopen.png`; it covers Ctrl+E
+  center alignment, `EM_GETPARAFORMAT` readback, visible centered rendering, and
+  Save As -> New -> Open of a simple RTF document with paragraph center
+  alignment preserved.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
@@ -379,9 +408,10 @@ blocker.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
    wrapping, advanced toolbar UI state, mixed-run size reporting, and paragraph
-   formatting still need focused probes. Font dialog face/style/point-size
-   handoff, concrete latest-size `EM_GETCHARFORMAT` reporting, visible 24pt
-   rendering, simple RTF face/style/size/color round-trip, visible toolbar
+   indents/tabs/numbering still need focused probes. Font dialog
+   face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
+   reporting, visible 24pt rendering, simple RTF face/style/size/color
+   round-trip, simple paragraph center-alignment round-trip, visible toolbar
    layout, first-toolbar-button command routing, formatting-toolbar B/I/U mouse
    commands, and direct RichEdit color rendering are now covered, and WordPad's
    own toolbar color UI now applies Blue through the covered dynamic-popup path.

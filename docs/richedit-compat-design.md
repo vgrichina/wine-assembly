@@ -42,6 +42,7 @@ Implement now                                 Postpone later
 | mouse selection / wheel scroll |            | TOM/COM / accessibility / D&D|
 | plain text stream I/O          |            | exact version quirks         |
 | basic RTF + basic formatting   |            | rich clipboard fidelity      |
+| simple paragraph alignment     |            | indents / tabs / numbering   |
 | basic toolbar command fidelity |            | advanced toolbar UI state    |
 +--------------------------------+            +-------------------------------+
 ```
@@ -70,6 +71,7 @@ launch WordPad -> click editor -> type "hello world"
               -> formatting toolbar B/I/U buttons update selected text
               -> simple RTF save/reopen preserves Arial Bold Italic Underline
                  24pt Blue
+              -> simple RTF save/reopen preserves centered paragraph alignment
               -> visible edited text appears
 ```
 
@@ -99,6 +101,9 @@ That means these pieces are already good enough for basic insertion:
   selected run's face/style/size/color state: Arial / Bold Italic / Underline /
   24pt / Blue, with reopened `EM_GETCHARFORMAT` reporting `underline=1`,
   `yHeight=480`, `color=0xff0000`, and face `Arial`;
+- a simple WordPad RTF Save As -> New -> Open round-trip preserves selected
+  paragraph center alignment, with reopened `EM_GETPARAFORMAT` reporting
+  `alignment=3`;
 - keyboard routing preserves focused native RichEdit before using the WAT EDIT
   fallback, so toolbar combobox edit children do not steal document typing;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
@@ -244,6 +249,16 @@ native-editing path is alive.
   available, `WriteFile` data replaces `\up3276` / `\fs3277` with `\up0` /
   `\fsNN` before the bytes enter the virtual filesystem. This fixes the simple
   WordPad font-size round-trip without claiming a full mixed-run RTF model.
+- Added `dump-focus-paraformat` and `set-focus-paraformat-align` harness
+  actions for focused native RichEdit controls, then added
+  `test/test-wordpad-paragraph-align.js`. The bounded probe verifies WordPad's
+  Ctrl+E command path sets `EM_GETPARAFORMAT` alignment from left (`1`) to
+  center (`3`), screenshots show the typed word moving from x=17..40 to
+  x=287..310, the exported saved RTF contains `\qc`, and
+  Save As -> New -> Open preserves the centered paragraph in simple RTF.
+  No emulator RichEdit format code change was needed for this
+  slice; the native control already handles the covered
+  `EM_SETPARAFORMAT`/`EM_GETPARAFORMAT` and `\qc` round-trip path.
 
 ### 2026-08-01 implementation progress
 
@@ -471,6 +486,7 @@ Acceptance:
 [x] plain text save/reopen through the text filter works in WordPad
 [x] basic RTF save/reopen preserves bold/italic/underline charformat
 [x] basic RTF save/reopen preserves one selected run's font face/size/color
+[x] basic RTF save/reopen preserves selected paragraph center alignment
 [ ] installer license RichEdit text streams in and scrolls
 ```
 
@@ -518,7 +534,8 @@ Acceptance:
 [x] WordPad toolbar/menu color command route applies Blue through app UI
 [x] simple RTF round-trips without losing basic character-format effects
 [x] simple RTF round-trips one selected run's font size/color
-[ ] simple RTF round-trips paragraph formatting
+[x] simple RTF round-trips selected paragraph center alignment
+[ ] paragraph indents/tabs/numbering round-trip correctly
 ```
 
 ## Whole-task acceptance matrix
@@ -542,6 +559,7 @@ Acceptance:
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Basic RTF save/reopen preserves selected font size/color state
+[x] Basic RTF save/reopen preserves selected paragraph alignment state
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
