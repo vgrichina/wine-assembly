@@ -66,14 +66,11 @@ const VK_DOWN   = 40;
 const VK_MENU   = 18; // Alt
 const VK_F      = 70;
 
-// Notepad's main window cascades to (20, 20) 600x400 in createWindow.
-// Menu bar starts at canvas x≈23, y=42 (h=18). The bar items are
-// File / Edit / Search / Help, but the actual widths come from
-// $bar_item_width (text-width + 12) and the default font is wide
-// enough that File ≈ 23..90, Edit ≈ 90..170, Search ≈ 170..230, Help ≈ 230..280.
-// Pick coords solidly inside each item.
-const FILE_X = 35, FILE_Y = 50;
-const EDIT_X = 140, EDIT_Y = 50;
+// In the CLI renderer Notepad's top-level frame is created at y=0, so the menu
+// bar is near canvas y≈23..40. Pick coords inside the labels rather than the
+// edit client below the bar.
+const FILE_X = 35, FILE_Y = 31;
+const EDIT_X = 75, EDIT_Y = 31;
 
 const inputSpec = [
   `40:png:${beforePng}`,
