@@ -61,6 +61,17 @@ result:    PASS: reopened RichEdit text is exactly "save me"; the previous
            raw "{\(null)..." corrupted RTF header is no longer exposed.
 ```
 
+Focused plain-text filter Save/Open probe:
+
+```text
+type "plain text", Save As, select "Text Document" in Files of type,
+confirm WordPad's text-only warning, File New, then reopen the saved file
+dialog:   common Open/Save dialog mirrors the filter combobox selection into
+          OPENFILENAME.nFilterIndex
+result:   PASS: WriteFile writes exactly 10 plain-text bytes, not an RTF-sized
+          payload, and reopened RichEdit text is exactly "plain text".
+```
+
 Focused formatting accelerator probe:
 
 ```text
@@ -144,6 +155,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   effects preserved in RichEdit charformat state. This is still bounded to
   simple character formatting; font size/color, paragraph formatting, and
   advanced RTF remain follow-up work.
+- The shared Open/Save dialog now exposes a `Files of type` combobox from
+  `OPENFILENAME.lpstrFilter` and writes the selected item back to
+  `OPENFILENAME.nFilterIndex`. WordPad's `Text Document` selection shows the
+  expected text-only warning, writes the exact plain-text byte count, and
+  reopens through File Open as native RichEdit text.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -166,6 +182,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   paths.
 - Regression test: `node test/test-wordpad-reopen-saved.js` passes 22/22 and
   covers Save As -> New -> Open of the saved simple RichEdit document.
+- Regression test: `node test/test-wordpad-plain-text-filter.js` passes 22/22
+  and writes `test/output/wordpad-richedit/plain-text-filter.png`; it covers
+  WordPad Save As -> `Text Document` filter -> text-only warning -> exact
+  plain-text write -> New -> Open of the saved `.txt`.
 - Regression test: `node test/test-wordpad-format-accelerators.js` passes 13/13
   and writes `test/output/wordpad-richedit/format-accelerators-plain.png` plus
   `test/output/wordpad-richedit/format-accelerators.png`; the typed-word band
@@ -199,9 +219,8 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, font size/color changes, paragraph formatting, exact formatting
-   pixel assertions, and filter-specific plain-text save still need focused
-   probes.
+   wrapping, font size/color changes, and paragraph formatting still need
+   focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

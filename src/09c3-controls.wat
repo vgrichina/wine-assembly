@@ -1388,6 +1388,8 @@
   ;;   id 0x441  file listbox (LB_ADDSTRING-populated from fs_find_*)
   ;;   id 0xFFFF "File name:" static
   ;;   id 0x442  filename edit
+  ;;   id 0xFFFF "Files of type:" static (when OFN.lpstrFilter exists)
+  ;;   id 0x445  filter combobox (when OFN.lpstrFilter exists)
   ;;   id 1      Open / Save button (IDOK)
   ;;   id 2      Cancel button (IDCANCEL)
   ;;
@@ -1398,10 +1400,13 @@
   ;;   +0x00  lStructSize
   ;;   +0x04  hwndOwner
   ;;   +0x0C  lpstrFilter
-  ;;   +0x18  lpstrFile        — guest ptr to writable buffer
-  ;;   +0x1C  nMaxFile         — capacity
-  ;;   +0x24  lpstrInitialDir
-  ;;   +0x28  lpstrTitle
+  ;;   +0x18  nFilterIndex     — 1-based selected filter
+  ;;   +0x1C  lpstrFile        — guest ptr to writable buffer
+  ;;   +0x20  nMaxFile         — capacity
+  ;;   +0x24  lpstrFileTitle
+  ;;   +0x28  nMaxFileTitle
+  ;;   +0x2C  lpstrInitialDir
+  ;;   +0x30  lpstrTitle
 
   ;; ---- Listbox population helper ----
   ;;
@@ -1472,6 +1477,45 @@
     (call $heap_free (local.get $tmp_g))
     (call $heap_free (local.get $fd_g)))
 
+  ;; Populate the common-dialog filter combobox from OPENFILENAME.lpstrFilter.
+  ;; The filter buffer is a double-NUL-terminated sequence of display/pattern
+  ;; pairs: "Rich Text Format\0*.rtf\0Text Document\0*.txt\0\0". The combobox
+  ;; shows only display strings and mirrors OPENFILENAME.nFilterIndex, which is
+  ;; 1-based in Win32.
+  (func $opendlg_populate_filter_combo (param $cb i32) (param $ofn i32)
+    (local $ofn_w i32) (local $filter_g i32) (local $p_g i32) (local $p_w i32)
+    (local $slen i32) (local $count i32) (local $sel i32)
+    (if (i32.or (i32.eqz (local.get $cb)) (i32.eqz (local.get $ofn)))
+      (then (return)))
+    (local.set $ofn_w (call $g2w (local.get $ofn)))
+    (local.set $filter_g (i32.load offset=12 (local.get $ofn_w)))
+    (if (i32.eqz (local.get $filter_g)) (then (return)))
+    (local.set $p_g (local.get $filter_g))
+    (local.set $p_w (call $g2w (local.get $p_g)))
+    (local.set $count (i32.const 0))
+    (block $done (loop $scan
+      ;; Empty display string marks the double-NUL terminator.
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p_w))))
+      (drop (call $wnd_send_message (local.get $cb) (i32.const 0x0143) ;; CB_ADDSTRING
+              (i32.const 0) (local.get $p_g)))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      ;; Skip display string.
+      (local.set $slen (call $strlen (local.get $p_w)))
+      (local.set $p_g (i32.add (local.get $p_g) (i32.add (local.get $slen) (i32.const 1))))
+      (local.set $p_w (call $g2w (local.get $p_g)))
+      ;; Skip pattern string. Malformed filter lists with a missing pattern end
+      ;; at the same double-NUL sentinel on the next loop.
+      (local.set $slen (call $strlen (local.get $p_w)))
+      (local.set $p_g (i32.add (local.get $p_g) (i32.add (local.get $slen) (i32.const 1))))
+      (local.set $p_w (call $g2w (local.get $p_g)))
+      (br $scan)))
+    (if (i32.eqz (local.get $count)) (then (return)))
+    (local.set $sel (i32.load offset=24 (local.get $ofn_w))) ;; nFilterIndex, 1-based
+    (if (i32.or (i32.eqz (local.get $sel)) (i32.gt_u (local.get $sel) (local.get $count)))
+      (then (local.set $sel (i32.const 1))))
+    (drop (call $wnd_send_message (local.get $cb) (i32.const 0x014E) ;; CB_SETCURSEL
+            (i32.sub (local.get $sel) (i32.const 1)) (i32.const 0))))
+
   ;; ---- Open dialog wndproc ----
   (func $opendlg_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -1479,6 +1523,7 @@
     (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
     (local $text_len i32) (local $text_src_w i32)
     (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
+    (local $filter_cb i32) (local $filter_sel i32)
 
     (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
       (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
@@ -1536,6 +1581,16 @@
                                           (local.get $text_src_w)
                                           (local.get $text_len))))))
                 (i32.store8 (i32.add (local.get $dst_w) (local.get $text_len)) (i32.const 0))))))
+        (local.set $filter_cb (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x445)))
+        (if (local.get $filter_cb)
+          (then
+            (local.set $filter_sel (call $wnd_send_message
+              (local.get $filter_cb) (i32.const 0x0147) ;; CB_GETCURSEL
+              (i32.const 0) (i32.const 0)))
+            (if (i32.ge_s (local.get $filter_sel) (i32.const 0))
+              (then
+                (i32.store offset=24 (local.get $ofn_w)
+                  (i32.add (local.get $filter_sel) (i32.const 1)))))))
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
 
@@ -1746,7 +1801,7 @@
   ;;          OK handler can write back lpstrFile.
   (func $create_open_dialog (param $dlg i32) (param $owner i32) (param $kind i32) (param $ofn i32)
     (local $w i32) (local $h i32) (local $title_wa i32) (local $btn_g i32)
-    (local $lb i32)
+    (local $lb i32) (local $ofn_w i32) (local $filter_g i32) (local $filter_cb i32)
     (local.set $w (i32.const 360))
     (local.set $h (i32.const 240))
     ;; Title goes to JS (WASM offset). Button text goes through
@@ -1804,6 +1859,22 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x442)
             (i32.const 76) (i32.const 166) (i32.const 200) (i32.const 18)
             (i32.const 0x50810000) (i32.const 0)))
+    (if (local.get $ofn)
+      (then
+        (local.set $ofn_w (call $g2w (local.get $ofn)))
+        (local.set $filter_g (i32.load offset=12 (local.get $ofn_w)))))
+    (if (local.get $filter_g)
+      (then
+        ;; "Files of type:" static + dropdownlist populated from OFN.lpstrFilter.
+        (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                (i32.const 12) (i32.const 194) (i32.const 80) (i32.const 16)
+                (i32.const 0x50000000)
+                (call $wat_str_to_heap (i32.const 0x1107C) (i32.const 14))))
+        (local.set $filter_cb
+          (call $ctrl_create_child (local.get $dlg) (i32.const 5) (i32.const 0x445)
+            (i32.const 96) (i32.const 190) (i32.const 180) (i32.const 72)
+            (i32.const 0x50010003) (i32.const 0)))
+        (call $opendlg_populate_filter_combo (local.get $filter_cb) (local.get $ofn))))
     ;; Open / Save button (id IDOK = 1)
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 286) (i32.const 8) (i32.const 64) (i32.const 22)

@@ -463,6 +463,10 @@ async function main() {
         // B:open-dlg-pick:FILENAME — find the open-dialog parent (class 12),
         // set its filename edit (id 0x442) text to FILENAME, then fire IDOK.
         scheduledInput.push({ batch, action: 'open-dlg-pick', filename: parts.slice(2).join(':') });
+      } else if (kind === 'open-dlg-filter') {
+        // B:open-dlg-filter:INDEX — find the open/save dialog filter ComboBox
+        // (id 0x445) and set its 1-based selection index.
+        scheduledInput.push({ batch, action: 'open-dlg-filter', index: parseInt(parts[2]) });
       } else if (kind === 'edit-ok') {
         // B:edit-ok:CTRL_ID:TEXT — find an Edit control (class 2) with
         // matching ctrl id, WM_SETTEXT with TEXT, then fire IDOK on its
@@ -2365,6 +2369,41 @@ async function main() {
             logs.push(`[input] open-dlg-pick: ${name} at batch ${batch}`);
           }
         }
+      } else if (ev.action === 'open-dlg-filter') {
+        const we = instance.exports;
+        let dlg = 0;
+        for (let s = 0; s < 256; s++) {
+          const h = we.wnd_slot_hwnd(s);
+          if (h && we.ctrl_get_class(h) === 12) { dlg = h; break; }
+        }
+        if (!dlg) {
+          logs.push(`[input] open-dlg-filter: no class-12 dialog at batch ${batch}`);
+        } else {
+          let combo = 0;
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(dlg, s)) !== -1) {
+            const h = we.wnd_slot_hwnd(s);
+            if (we.ctrl_get_class(h) === 5 && we.ctrl_get_id(h) === 0x445) { combo = h; break; }
+            s++;
+          }
+          if (!combo) {
+            logs.push(`[input] open-dlg-filter: no filter combo at batch ${batch}`);
+          } else {
+            const oneBased = ev.index | 0;
+            const zeroBased = Math.max(0, oneBased - 1);
+            const ret = we.send_message(combo, 0x014E, zeroBased, 0); // CB_SETCURSEL
+            const cur = we.send_message(combo, 0x0147, 0, 0) | 0; // CB_GETCURSEL
+            let text = '';
+            if (we.combobox_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.combobox_get_text(combo, buf, 256);
+              const wa = g2w(buf);
+              const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+              text = Buffer.from(bytes).toString('latin1');
+            }
+            logs.push(`[input] open-dlg-filter: requested=${oneBased} ret=${ret} selected=${cur + 1} text=${JSON.stringify(text)} at batch ${batch}`);
+          }
+        }
       } else if (ev.action === 'edit-ok') {
         // Find an Edit (class 2) with ctrl_id == ev.ctrlId, WM_SETTEXT with
         // ev.text, then WM_COMMAND IDOK=1 to its parent dialog. Parent is
@@ -2627,6 +2666,13 @@ async function main() {
               const wa = g2w(buf);
               const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
               text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+            } else if (cls === 5 && we.combobox_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.combobox_get_text(ch, buf, 256);
+              const wa = g2w(buf);
+              const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+              const cur = we.combobox_get_cur_sel ? we.combobox_get_cur_sel(ch) : -1;
+              text = ' sel=' + cur + ' text="' + Buffer.from(bytes).toString('latin1') + '"';
             }
             let checked = '';
             if (cls === 1 && we.send_message) {
@@ -2908,6 +2954,13 @@ async function main() {
                 const wa = g2w(buf);
                 const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
                 text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+              } else if (cls === 5 && we.combobox_get_text && we.guest_alloc) {
+                const buf = we.guest_alloc(256);
+                const len = we.combobox_get_text(ch, buf, 256);
+                const wa = g2w(buf);
+                const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
+                const cur = we.combobox_get_cur_sel ? we.combobox_get_cur_sel(ch) : -1;
+                text = ' sel=' + cur + ' text="' + Buffer.from(bytes).toString('latin1') + '"';
               }
               let checked = '';
               if (cls === 1 && we.send_message) {

@@ -137,6 +137,12 @@ native-editing path is alive.
   RTF with `(null)` placeholders in the header during WordPad Save As. Added
   `test/test-wordpad-reopen-saved.js`, which proves simple text saved by
   WordPad reopens as editor text instead of raw corrupted RTF.
+- Added a real `Files of type` combobox to the WAT Open/Save common dialog.
+  It is populated from `OPENFILENAME.lpstrFilter` and writes the selected
+  1-based index back to `OPENFILENAME.nFilterIndex` on OK. Added
+  `test/test-wordpad-plain-text-filter.js`, which proves WordPad's
+  `Text Document` filter shows the expected warning, writes exact plain-text
+  bytes, and reopens the saved `.txt` as native RichEdit text.
 - Added modifier-aware accelerator matching in `TranslateAcceleratorA/W`.
   Accelerator entries now require exact Shift/Ctrl/Alt state, which lets
   WordPad's Ctrl+B / Ctrl+I / Ctrl+U commands reach the frame instead of being
@@ -371,7 +377,7 @@ Acceptance:
 
 ```text
 [x] WordPad saved RTF reopens with simple plain text content
-[ ] plain text save/reopen through the text filter works in WordPad
+[x] plain text save/reopen through the text filter works in WordPad
 [x] basic RTF save/reopen preserves bold/italic/underline charformat
 [ ] installer license RichEdit text streams in and scrolls
 ```
@@ -432,7 +438,7 @@ Acceptance:
 [x] Native RichEdit wheel changes first visible line
 [ ] Line wrapping and scrollbar scrolling stay coherent
 [x] WordPad saved RTF reopens with simple plain text content
-[ ] Plain text save/reopen through the text filter works
+[x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
