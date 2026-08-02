@@ -956,6 +956,21 @@
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
     (i32.load offset=4 (call $g2w (local.get $s))))
 
+  ;; USER caret state, used by the renderer to composite native-control carets
+  ;; after normal window back-canvas painting.
+  (func (export "get_caret_hwnd") (result i32)
+    (global.get $caret_hwnd))
+  (func (export "get_caret_x") (result i32)
+    (global.get $caret_x))
+  (func (export "get_caret_y") (result i32)
+    (global.get $caret_y))
+  (func (export "get_caret_w") (result i32)
+    (global.get $caret_w))
+  (func (export "get_caret_h") (result i32)
+    (global.get $caret_h))
+  (func (export "get_caret_visible") (result i32)
+    (global.get $caret_visible))
+
   ;; ============================================================
   ;; Child-window enumeration + control read-back exports
   ;; ============================================================

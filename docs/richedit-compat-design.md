@@ -82,6 +82,8 @@ That means these pieces are already good enough for basic insertion:
 - `WM_CHAR` insertion reaches native RichEdit;
 - synchronous `WM_GETTEXT` can read the focused native RichEdit buffer through
   the test harness;
+- native RichEdit USER caret API calls (`CreateCaret`, `SetCaretPos`,
+  `ShowCaret`) are tracked and composited as a visible caret stroke;
 - Backspace, Delete-forward, Enter, Left, Home, and End update that native
   buffer/insertion position in the current probe;
 - Shift+Left selection is visible through `EM_GETSEL`, and typing replacement
@@ -157,6 +159,15 @@ native-editing path is alive.
   types `select me`, captures a plain screenshot, sends Ctrl+A, verifies
   `EM_GETSEL` reports a non-empty selection, captures the selected screenshot,
   and asserts the RichEdit text band gains blue-dominant selection pixels.
+- Added minimal USER caret state for native controls and renderer-side caret
+  compositing. `CreateCaret`, `SetCaretPos`, `ShowCaret`, `HideCaret`,
+  `DestroyCaret`, and `GetCaretPos` now maintain caret owner/position/size
+  state; `lib/renderer.js` paints the visible caret after normal window
+  back-canvas composition so native RichEdit child coordinates use the renderer
+  window tree. Added `test/test-wordpad-caret.js`, which types `caret`, traces
+  RichEdit's caret API calls, captures `test/output/wordpad-richedit/caret.png`,
+  and verifies a dark vertical caret stroke at the expected document coordinate.
+  Blink cadence and XOR-style erasure remain later fidelity work.
 - Added WordPad Save As coverage and the minimal compatibility it needed:
   `GetFileTime`, `CreateFileMoniker`, `GetRunningObjectTable`, an
   `IRunningObjectTable` no-op vtable, and failure-returning storage/OLE
@@ -566,7 +577,8 @@ Acceptance:
 [x] Delete-forward edits visible text correctly
 [x] Enter creates a visible new line
 [x] Arrow/Home/End movement tracks insertion position
-[ ] Visible caret paint and blink stay coherent
+[x] Visible caret paint is covered
+[ ] Caret blink/XOR cadence stays coherent
 [x] Shift+arrow selection changes replacement range
 [x] Visible selection highlight renders coherently
 [x] Mouse-drag selection changes selection range

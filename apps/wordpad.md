@@ -51,6 +51,19 @@ pixels:    selected screenshot gains ~1.9k blue-dominant pixels in the
 result:    PASS for visible native RichEdit selection highlight.
 ```
 
+Focused caret probe:
+
+```text
+type "caret", trace CreateCaret / SetCaretPos / ShowCaret, dump RichEdit
+window geometry, capture screenshot
+caret:  native RichEdit creates a USER caret and sets it to x=48, y=3 after
+        typing "caret"
+pixels: screenshot has a dark 13px vertical caret stroke at the expected
+        RichEdit client coordinate
+result: PASS for visible native RichEdit caret paint. Blink/XOR cadence is
+        still deferred.
+```
+
 Focused toolbar layout/command probe:
 
 ```text
@@ -368,6 +381,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A
   selects the native RichEdit text and the screenshot gains a visible blue
   selection band.
+- Regression test: `node test/test-wordpad-caret.js` passes 11/11 and writes
+  `test/output/wordpad-richedit/caret.png`; it verifies native RichEdit USER
+  caret API calls are tracked and composited as a visible vertical caret
+  stroke in the document band.
 - Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering visible
@@ -448,14 +465,14 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   visible caret assertions, scrollbar drag, wrapping, advanced toolbar UI
+   caret blink/XOR cadence, scrollbar drag, wrapping, advanced toolbar UI
    state, mixed-run size reporting, and paragraph
    indents/tabs/numbering still need focused probes. Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
    round-trip, simple paragraph center-alignment round-trip, Edit-menu
    Select All/Copy/Cut/Paste plain-text commands, visible selection highlight,
-   visible toolbar layout, first-toolbar-button command routing,
+   visible caret paint, visible toolbar layout, first-toolbar-button command routing,
    formatting-toolbar B/I/U mouse commands, and direct RichEdit color rendering
    are now covered, and WordPad's own toolbar color UI now applies Blue through
    the covered dynamic-popup path.

@@ -6506,40 +6506,82 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
   )
 
-  ;; 459: GetCaretPos(lpPoint) — no visible caret is emulated yet. Report a
-  ;; stable origin position so RichEdit/control code can continue.
+  (func $caret_schedule_repaint
+    (local $hwnd i32) (local $top i32)
+    (local.set $hwnd (global.get $caret_hwnd))
+    (if (i32.eqz (local.get $hwnd))
+      (then (return)))
+    (local.set $top (call $wnd_top_level (local.get $hwnd)))
+    (if (i32.eqz (local.get $top))
+      (then (local.set $top (local.get $hwnd))))
+    ;; The renderer composites USER caret state after normal back-canvas paint.
+    ;; Scheduling the top-level repaint is enough; direct GDI fills here can land
+    ;; before native child layout has settled and then get erased by repaint.
+    (call $host_invalidate (local.get $top))
+  )
+
+  ;; 459: GetCaretPos(lpPoint) — report the last USER caret coordinates.
   (func $handle_GetCaretPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg0)
       (then
-        (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
-        (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (i32.const 0))))
+        (i32.store (call $g2w (local.get $arg0)) (global.get $caret_x))
+        (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (global.get $caret_y))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
-  ;; Caret APIs — headless renderer no-ops. These maintain Win32 success
-  ;; semantics for controls that hide/show/update caret state during layout.
+  ;; Caret APIs — enough USER caret state for native controls such as RichEdit
+  ;; to leave a visible caret stroke in the renderer. Blink cadence and XOR
+  ;; erasure are intentionally deferred; repainting the control clears stale
+  ;; strokes in normal text-edit paths.
   (func $handle_CreateCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $caret_hwnd (local.get $arg0))
+    (global.set $caret_x (i32.const 0))
+    (global.set $caret_y (i32.const 0))
+    (if (i32.gt_s (local.get $arg2) (i32.const 0))
+      (then (global.set $caret_w (local.get $arg2)))
+      (else (global.set $caret_w (i32.const 1))))
+    (if (i32.gt_s (local.get $arg3) (i32.const 0))
+      (then (global.set $caret_h (local.get $arg3)))
+      (else (global.set $caret_h (i32.const 13))))
+    (global.set $caret_visible (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args stdcall
   )
 
   (func $handle_DestroyCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $caret_visible (i32.const 0))
+    (call $caret_schedule_repaint)
+    (global.set $caret_hwnd (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; 0 args stdcall
   )
 
   (func $handle_HideCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or
+          (i32.eqz (local.get $arg0))
+          (i32.eq (local.get $arg0) (global.get $caret_hwnd)))
+      (then
+        (global.set $caret_visible (i32.const 0))
+        (call $caret_schedule_repaint)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
   (func $handle_ShowCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (global.set $caret_hwnd (local.get $arg0))))
+    (global.set $caret_visible (i32.const 1))
+    (call $caret_schedule_repaint)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
   (func $handle_SetCaretPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $caret_x (local.get $arg0))
+    (global.set $caret_y (local.get $arg1))
+    (if (global.get $caret_visible)
+      (then (call $caret_schedule_repaint)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; 2 args stdcall
   )

@@ -1120,6 +1120,12 @@
   (global $capture_hwnd (mut i32) (i32.const 0))      ;; hwnd that has mouse capture (SetCapture/ReleaseCapture)
   (global $cursor_count (mut i32) (i32.const 0))      ;; ShowCursor display count (>=0 = visible)
   (global $current_cursor (mut i32) (i32.const 0x67F00)) ;; HCURSOR last set by SetCursor (default IDC_ARROW)
+  (global $caret_hwnd (mut i32) (i32.const 0))        ;; USER caret owner hwnd
+  (global $caret_x (mut i32) (i32.const 0))           ;; USER caret client x
+  (global $caret_y (mut i32) (i32.const 0))           ;; USER caret client y
+  (global $caret_w (mut i32) (i32.const 1))           ;; USER caret width
+  (global $caret_h (mut i32) (i32.const 13))          ;; USER caret height
+  (global $caret_visible (mut i32) (i32.const 0))     ;; ShowCaret-visible latch
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
