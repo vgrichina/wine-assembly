@@ -55,6 +55,8 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns "hello worl\r\nagain"
               -> Left, Left, Delete, Home, type "X", End, type "Y"
               -> WM_GETTEXT returns "hello worl\r\nXaganY"
+              -> Shift+Left twice, type "Z"
+              -> EM_GETSEL reports selected range, WM_GETTEXT returns "hello worl\r\nXagaZ"
               -> visible edited text appears
 ```
 
@@ -67,6 +69,8 @@ That means these pieces are already good enough for basic insertion:
   the test harness;
 - Backspace, Delete-forward, Enter, Left, Home, and End update that native
   buffer/insertion position in the current probe;
+- Shift+Left selection is visible through `EM_GETSEL`, and typing replacement
+  updates/collapses the selected range;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
@@ -87,7 +91,7 @@ native-editing path is alive.
 - Expanded `test/test-wordpad-richedit.js`, a bounded regression covering
   launch, RichEdit focus, `hello world` typing, native text readback,
   Backspace, Delete-forward, Enter/newline, Left/Home/End insertion movement,
-  and visible text paint.
+  Shift+Left selection/replacement, and visible text paint.
 
 ## Problem statement
 
@@ -327,7 +331,9 @@ Acceptance:
 [x] Enter creates a visible new line
 [x] Arrow/Home/End movement tracks insertion position
 [ ] Visible caret paint and blink stay coherent
-[ ] Shift+arrow and mouse-drag selection render visibly
+[x] Shift+arrow selection changes replacement range
+[ ] Visible selection highlight renders coherently
+[ ] Mouse-drag selection changes selection range
 [ ] Copy/Cut/Paste work for plain text
 [ ] Line wrapping and vertical scrolling stay coherent
 [ ] Plain text save/reopen works

@@ -304,6 +304,7 @@ async function main() {
   //   B:focus-main-window   — set WAT focus to the top-level main window
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
+  //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
@@ -350,6 +351,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus', label: parts[2] || '' });
       } else if (kind === 'dump-focus-text') {
         scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
+      } else if (kind === 'dump-focus-state') {
+        scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
       } else if (kind === 'class-cmd') {
         // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
         // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
@@ -2249,6 +2252,37 @@ async function main() {
           logs.push(`[input] dump-focus-text${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-text${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO TEXT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-focus-state') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] dump-focus-state${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cap = 8192;
+          const textG = we.guest_alloc(cap);
+          const n = we.send_message(h, 0x000D, cap, textG) | 0; // WM_GETTEXT
+          const wa = g2w(textG);
+          const viewLen = Math.max(0, Math.min(n, cap - 1));
+          const bytes = new Uint8Array(memory.buffer, wa, viewLen);
+          const txt = Buffer.from(bytes).toString('latin1');
+          const startG = we.guest_alloc(4);
+          const endG = we.guest_alloc(4);
+          const dv = new DataView(memory.buffer);
+          dv.setUint32(g2w(startG), 0, true);
+          dv.setUint32(g2w(endG), 0, true);
+          const selRet = we.send_message(h, 0x00B0, startG, endG) >>> 0; // EM_GETSEL
+          const selStart = dv.getUint32(g2w(startG), true) >>> 0;
+          const selEnd = dv.getUint32(g2w(endG), true) >>> 0;
+          const lineCount = we.send_message(h, 0x00BA, 0, 0) | 0; // EM_GETLINECOUNT
+          const firstVisible = we.send_message(h, 0x00CE, 0, 0) | 0; // EM_GETFIRSTVISIBLELINE
+          logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
         }
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its

@@ -6,6 +6,7 @@
 //   - typed text is present in RichEdit's own WM_GETTEXT buffer
 //   - Backspace and Enter update that buffer
 //   - Delete-forward, Left, Home, and End update insertion position
+//   - Shift+Left selection is visible through EM_GETSEL and replacement text
 //   - edited text is visibly painted in the editor screenshot
 
 const fs = require('fs');
@@ -63,14 +64,23 @@ seq.push('154:keydown:35');
 seq.push('155:keyup:35');
 seq.push('158:keypress:89');
 seq.push('162:dump-focus-text:end');
-seq.push('170:dump-windows:final');
-seq.push(`175:png:${PNG_OUT}`);
+seq.push('166:keydown:16');
+seq.push('168:keydown:37');
+seq.push('169:keyup:37');
+seq.push('172:keydown:37');
+seq.push('173:keyup:37');
+seq.push('176:dump-focus-state:selected');
+seq.push('178:keyup:16');
+seq.push('182:keypress:90');
+seq.push('186:dump-focus-state:replace');
+seq.push('194:dump-windows:final');
+seq.push(`200:png:${PNG_OUT}`);
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=190',
+  '--max-batches=220',
   '--batch-size=50000',
   '--quiet-api',
   '--no-close',
@@ -135,6 +145,11 @@ const editedTextOk = /dump-focus-text edited: hwnd=0x10002 class=0 id=59648 pare
 const deleteTextOk = /dump-focus-text delete: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nagan"/.test(out);
 const homeTextOk = /dump-focus-text home: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nXagan"/.test(out);
 const endTextOk = /dump-focus-text end: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nXaganY"/.test(out);
+// Native RichEdit reports EM_GETSEL character positions with the CRLF newline
+// folded differently from WM_GETTEXT's byte count, so the second visual line is
+// one position lower than the JSON text length suggests.
+const selectionStateOk = /dump-focus-state selected: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=18 sel=15\.\.17 .*lineCount=2 text="hello worl\\r?\\nXaganY"/.test(out);
+const replacementTextOk = /dump-focus-state replace: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('top-level WordPad window visible', /window:final hwnd=65537 .*visible=true .*title="Document - WordPad"/.test(out));
@@ -146,6 +161,8 @@ check('Backspace and Enter update RichEdit text', editedTextOk);
 check('Delete-forward updates RichEdit text', deleteTextOk);
 check('Home changes insertion position', homeTextOk);
 check('End changes insertion position', endTextOk);
+check('Shift+Left updates RichEdit selection range', selectionStateOk);
+check('selection replacement updates RichEdit text', replacementTextOk);
 check('edited-text screenshot written', pngExists);
 check(`edited text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
