@@ -81,7 +81,8 @@ RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
 pixels:      plain vs formatted screenshots differ in the typed-word band
 result:      PASS for WordPad formatting command dispatch, native RichEdit
              CHARFORMAT state, and visible B/I/U text rendering. Font
-             size/color/paragraph formatting are still later work.
+             size, paragraph formatting, and WordPad's own color UI command
+             route are still later work.
 ```
 
 Focused formatting round-trip probe:
@@ -107,6 +108,22 @@ result:      PASS for Font dialog face/style/point-size handoff and visible
              face/style rendering. RichEdit still reports the selected size as
              the existing 32767 sentinel, so predictable visible font-size
              layout remains follow-up work.
+```
+
+Focused direct RichEdit color probe:
+
+```text
+type "color", Ctrl+A, apply EM_SETCHARFORMAT(CFM_COLOR) directly to the
+focused native RichEdit child
+RichEdit:    EM_GETCHARFORMAT reports effects=0 and color=0xff0000
+renderer:    SetTextColor sees COLORREF 0x00ff0000, which is blue in Win32
+             0x00BBGGRR order
+pixels:      before/after screenshots differ in the typed-word band, with
+             blue pixels appearing only after the format apply
+result:      PASS for the native RichEdit color/rendering path. This bypasses
+             WordPad's toolbar/menu color UI; that route remains open because
+             the format toolbar is currently zero-sized and direct color menu
+             IDs do not yet carry WordPad's palette state correctly.
 ```
 
 Current evidence from the 2026-08-02 follow-up probe:
@@ -179,6 +196,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   screenshots differ visibly. The size path is not done: `EM_GETCHARFORMAT`
   still reports the existing 32767 sentinel after the apply, so visible font
   sizing remains open.
+- A direct focused RichEdit color probe now applies
+  `EM_SETCHARFORMAT(CFM_COLOR)` to the selected WordPad text. Native RichEdit
+  reports `color=0xff0000` with autocolor cleared, `SetTextColor` receives that
+  COLORREF, and the screenshot shows blue text pixels. This validates the
+  RichEdit color/rendering path only; WordPad's own toolbar/menu color command
+  route still needs UI/state work.
 - The shared Open/Save dialog now exposes a `Files of type` combobox from
   `OPENFILENAME.lpstrFilter` and writes the selected item back to
   `OPENFILENAME.nFilterIndex`. WordPad's `Text Document` selection shows the
@@ -221,6 +244,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
   246 changed pixels and 74 more dark pixels after applying Arial Bold Italic
   through Format > Font.
+- Regression test: `node test/test-wordpad-richedit-color.js` passes 12/12 and
+  writes `test/output/wordpad-richedit/richedit-color-plain.png` plus
+  `test/output/wordpad-richedit/richedit-color-blue.png`; the typed-word band
+  shows 139 changed pixels and 50 blue pixels after applying direct
+  `CFM_COLOR`.
 
 ## Write Launcher
 
@@ -248,9 +276,10 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, RichEdit font-size layout, text color, and paragraph formatting
-   still need focused probes. Font dialog face/style/point-size handoff is now
-   covered, but visible size application is not.
+   wrapping, RichEdit font-size layout, WordPad's toolbar/menu color route, and
+   paragraph formatting still need focused probes. Font dialog
+   face/style/point-size handoff and direct RichEdit color rendering are now
+   covered, but visible size application and the app's own color UI are not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

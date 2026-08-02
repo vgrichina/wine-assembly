@@ -164,6 +164,15 @@ native-editing path is alive.
   This is not yet a full font-size fix: after the apply, RichEdit still reports
   the existing 32767 size sentinel, so predictable visible size layout remains
   open.
+- Added a focused `set-focus-charformat-color` harness action and
+  `test/test-wordpad-richedit-color.js`. The bounded probe applies
+  `EM_SETCHARFORMAT(CFM_COLOR)` directly to the focused WordPad RichEdit child,
+  verifies `EM_GETCHARFORMAT` reports `color=0xff0000` with autocolor cleared,
+  sees `SetTextColor(..., 0xff0000)`, and compares screenshots to assert blue
+  text pixels. This proves the native RichEdit color/rendering path, not
+  WordPad's toolbar/menu color UI: the format toolbar is still zero-sized in the
+  current window, and direct WordPad color command IDs currently route fixed
+  colors as black unless the app's palette state is initialized through UI.
 - Added focused API trace formatting for `SendMessageA/W` calls carrying
   `EM_GETCHARFORMAT` / `EM_SETCHARFORMAT`, so future WordPad/RichEdit probes
   show decoded CHARFORMAT fields instead of only raw pointers.
@@ -431,7 +440,8 @@ Acceptance:
     WordPad's `EM_SETCHARFORMAT`
 [x] WordPad Font dialog face/style application has visible/pixel assertions
 [ ] font size changes affect layout predictably
-[ ] text color renders
+[x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
+[ ] WordPad toolbar/menu color command route works through app UI
 [x] simple RTF round-trips without losing bold/italic/underline effects
 [ ] simple RTF round-trips font size/color/paragraph formatting
 ```
@@ -459,7 +469,9 @@ Acceptance:
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
-[ ] Font-size layout and text color are visibly asserted in WordPad
+[ ] Font-size layout is visibly asserted in WordPad
+[x] Direct RichEdit text color rendering is visibly asserted in WordPad
+[ ] WordPad toolbar/menu color route has explicit coverage
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```
