@@ -1541,7 +1541,7 @@
 
   (func $richedit_patch_get_charformat_message
         (param $hwnd i32) (param $msg i32) (param $lParam i32)
-    (local $slot i32) (local $yHeight i32) (local $cf_w i32)
+    (local $slot i32) (local $yHeight i32) (local $cf_w i32) (local $native_yHeight i32)
     (if (i32.ne (local.get $msg) (i32.const 0x043A)) (then (return))) ;; EM_GETCHARFORMAT
     (if (i32.eqz (local.get $lParam)) (then (return)))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -1550,6 +1550,11 @@
       (i32.load (call $richedit_format_addr_for_slot (local.get $slot))))
     (if (i32.eqz (local.get $yHeight)) (then (return)))
     (local.set $cf_w (call $g2w (local.get $lParam)))
+    (local.set $native_yHeight (i32.load offset=12 (local.get $cf_w)))
+    (if (i32.and
+          (i32.gt_s (local.get $native_yHeight) (i32.const 0))
+          (i32.lt_u (local.get $native_yHeight) (i32.const 32767)))
+      (then (return)))
     (i32.store offset=4 (local.get $cf_w)
       (i32.or (i32.load offset=4 (local.get $cf_w)) (i32.const 0x80000000))) ;; CFM_SIZE
     (i32.store offset=12 (local.get $cf_w) (local.get $yHeight)))

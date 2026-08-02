@@ -114,10 +114,15 @@ result:      PASS for formatting-toolbar B/I/U mouse commands. The color
 Focused formatting round-trip probe:
 
 ```text
-type "style", Ctrl+A, Ctrl+B / Ctrl+I / Ctrl+U, Save As .rtf,
-File New, then reopen the saved .rtf
+type "style", Ctrl+A, Format > Font..., pick Arial / Bold Italic / 24pt,
+apply Underline and Blue, Save As .rtf, File New, then reopen the saved .rtf
 result:      PASS: reopened text is "style" and EM_GETCHARFORMAT on the
-             selected reopened text reports bold=1, italic=1, underline=1.
+             selected reopened text reports bold=1, italic=1, underline=1,
+             yHeight=480, color=0xff0000, and face="Arial".
+scope:       The VFS write boundary rewrites RichEdit's native RTF sentinels
+             `\up3276` / `\fs3277` to `\up0` / `\fs48` from the latest
+             explicit 24pt size hint. This is a simple selected-run path, not
+             a full mixed-run formatting model.
 ```
 
 Focused Font dialog probe:
@@ -249,10 +254,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   has bold, italic, and underline effects after the shortcuts. The focused
   regression also compares plain/formatted editor screenshots and confirms the
   typed-word pixels visibly change.
-- WordPad can save and reopen a simple RTF document with bold/italic/underline
-  effects preserved in RichEdit charformat state. This is still bounded to
-  simple character formatting; font size/color, paragraph formatting, and
-  advanced RTF remain follow-up work.
+- WordPad can save and reopen a simple RTF document with selected-run
+  face/style/size/color state preserved in RichEdit charformat state. The
+  focused round-trip now covers Arial / Bold Italic / Underline / 24pt / Blue.
+  The VFS write boundary rewrites RichEdit's native `\up3276` / `\fs3277`
+  sentinels to `\up0` / `\fs48` from the latest explicit size hint; mixed-size
+  runs, paragraph formatting, and advanced RTF remain follow-up work.
 - WordPad Format > Font now opens the WAT `ChooseFontA` dialog and returns the
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
@@ -324,8 +331,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/toolbar-format-buttons.png`; it covers
   formatting-toolbar Bold / Italic / Underline mouse clicks without relying on
   keyboard accelerators.
-- Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
-  and writes `test/output/wordpad-richedit/format-roundtrip.png`.
+- Regression test: `node test/test-wordpad-format-roundtrip.js` passes 20/20
+  and writes `test/output/wordpad-richedit/format-roundtrip.png`; it covers
+  Save As -> New -> Open of a simple RTF document with Arial / Bold Italic /
+  Underline / 24pt / Blue preserved on the reopened selected text.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
@@ -372,10 +381,10 @@ blocker.
    wrapping, advanced toolbar UI state, mixed-run size reporting, and paragraph
    formatting still need focused probes. Font dialog face/style/point-size
    handoff, concrete latest-size `EM_GETCHARFORMAT` reporting, visible 24pt
-   rendering, visible toolbar layout, first-toolbar-button command routing,
-   formatting-toolbar B/I/U mouse commands, and direct RichEdit color rendering
-   are now covered, and WordPad's own toolbar color UI now applies Blue through
-   the covered dynamic-popup path.
+   rendering, simple RTF face/style/size/color round-trip, visible toolbar
+   layout, first-toolbar-button command routing, formatting-toolbar B/I/U mouse
+   commands, and direct RichEdit color rendering are now covered, and WordPad's
+   own toolbar color UI now applies Blue through the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
@@ -386,5 +395,6 @@ RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 
 **Key files:** `lib/thread-manager.js`, `lib/renderer-input.js`,
-`lib/renderer.js`, `lib/host-imports.js`, `src/09a-handlers.wat`,
-`src/09a5-handlers-window.wat`, `src/09c3-controls.wat`
+`lib/renderer.js`, `lib/host-imports.js`, `lib/filesystem.js`,
+`src/09a-handlers.wat`, `src/09a5-handlers-window.wat`,
+`src/09c3-controls.wat`

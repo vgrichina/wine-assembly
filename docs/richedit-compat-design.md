@@ -68,6 +68,8 @@ launch WordPad -> click editor -> type "hello world"
               -> standard/format toolbar rows are visible above the editor
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
+              -> simple RTF save/reopen preserves Arial Bold Italic Underline
+                 24pt Blue
               -> visible edited text appears
 ```
 
@@ -93,6 +95,10 @@ That means these pieces are already good enough for basic insertion:
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
   and update native RichEdit character-format state;
+- a simple WordPad RTF Save As -> New -> Open round-trip preserves one
+  selected run's face/style/size/color state: Arial / Bold Italic / Underline /
+  24pt / Blue, with reopened `EM_GETCHARFORMAT` reporting `underline=1`,
+  `yHeight=480`, `color=0xff0000`, and face `Arial`;
 - keyboard routing preserves focused native RichEdit before using the WAT EDIT
   fallback, so toolbar combobox edit children do not steal document typing;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
@@ -163,9 +169,13 @@ native-editing path is alive.
   probe confirms selected native RichEdit text reports bold, italic, and
   underline effects through `EM_GETCHARFORMAT(SCF_SELECTION)`, and now compares
   plain/formatted screenshots to assert visible B/I/U text pixels.
-- Added `test/test-wordpad-format-roundtrip.js`, which proves a simple
+- Added `test/test-wordpad-format-roundtrip.js`, which now proves a simple
   WordPad RTF Save As -> New -> Open round-trip preserves selected text plus
-  bold, italic, and underline effects in native RichEdit charformat state.
+  selected-run face/style/size/color state. The focused probe applies Arial /
+  Bold Italic / 24pt through Format > Font, applies underline through
+  WordPad's accelerator path, applies Blue through `EM_SETCHARFORMAT(CFM_COLOR)`,
+  and verifies reopened native RichEdit reports `underline=1`, `yHeight=480`,
+  `color=0xff0000`, and face `Arial`.
 - Expanded the WAT `ChooseFontA` dialog writeback from size-only to full
   face/style/size output through `CHOOSEFONT` and `LOGFONT`, including
   `iPointSize`, `nFontType`, `lpszStyle`, `lfFaceName`, `lfWeight`, and
@@ -229,6 +239,11 @@ native-editing path is alive.
 - Added focused API trace formatting for `SendMessageA/W` calls carrying
   `EM_GETCHARFORMAT` / `EM_SETCHARFORMAT`, so future WordPad/RichEdit probes
   show decoded CHARFORMAT fields instead of only raw pointers.
+- Added a VFS write-boundary patch for native RichEdit stream-out's known
+  single-run RTF size sentinels. When a latest explicit `CFM_SIZE` hint is
+  available, `WriteFile` data replaces `\up3276` / `\fs3277` with `\up0` /
+  `\fsNN` before the bytes enter the virtual filesystem. This fixes the simple
+  WordPad font-size round-trip without claiming a full mixed-run RTF model.
 
 ### 2026-08-01 implementation progress
 
@@ -455,6 +470,7 @@ Acceptance:
 [x] WordPad saved RTF reopens with simple plain text content
 [x] plain text save/reopen through the text filter works in WordPad
 [x] basic RTF save/reopen preserves bold/italic/underline charformat
+[x] basic RTF save/reopen preserves one selected run's font face/size/color
 [ ] installer license RichEdit text streams in and scrolls
 ```
 
@@ -500,8 +516,9 @@ Acceptance:
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
 [x] WordPad toolbar/menu color command route applies Blue through app UI
-[x] simple RTF round-trips without losing bold/italic/underline effects
-[ ] simple RTF round-trips font size/color/paragraph formatting
+[x] simple RTF round-trips without losing basic character-format effects
+[x] simple RTF round-trips one selected run's font size/color
+[ ] simple RTF round-trips paragraph formatting
 ```
 
 ## Whole-task acceptance matrix
@@ -524,6 +541,7 @@ Acceptance:
 [x] WordPad saved RTF reopens with simple plain text content
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
+[x] Basic RTF save/reopen preserves selected font size/color state
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
