@@ -44,8 +44,10 @@ type "save me", invoke command 57604 (Save As), pick wordpad-save-probe.txt
 file path: CreateFileA -> GetFileTime -> WriteFile(0x97 bytes) -> CloseHandle
 OLE path:  CreateFileMoniker -> GetRunningObjectTable -> ROT Register/Release
 title:     "wordpad-save-probe.txt - WordPad"
-result:    PASS for saving the current RichEdit contents through WordPad's
-           MFC Save As command path without missing exports or null ROT calls.
+then File New, accept the "New document type" dialog, verify RichEdit len=0
+then File Open, pick sources.md, verify ReadFile streaming and loaded text
+result:    PASS for Save As, New/clear, and Open/load through WordPad's MFC
+           command paths without missing exports or null ROT calls.
 ```
 
 Current evidence from the 2026-08-02 follow-up probe:
@@ -86,6 +88,14 @@ Current evidence from the 2026-08-02 follow-up probe:
   is covered with minimal `CreateFileMoniker`, `GetRunningObjectTable`, and
   `IRunningObjectTable` scaffolding. This is not full structured storage or
   moniker binding support.
+- WordPad File New now clears the native RichEdit buffer after the app's
+  document-type dialog is accepted. The fix is generic: `SetWindowTextA/W` now
+  forwards `WM_SETTEXT` to native child windows with real wndprocs, rather than
+  treating class-0 children as title-only windows.
+- WordPad File Open can load an existing text file through the common dialog,
+  `CreateFileA` / `ReadFile` streaming, and `GetFileTitleA`; the native
+  RichEdit buffer then contains the opened file text and the title updates to
+  the opened filename.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -103,8 +113,9 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor.
-- Regression test: `node test/test-wordpad-save-as.js` passes 18/18 and covers
-  WordPad's Save As command/file/OLE bookkeeping path.
+- Regression test: `node test/test-wordpad-save-as.js` passes 32/32 and covers
+  WordPad's Save As, New/clear, and Open/load command/file/OLE bookkeeping
+  paths.
 
 ## Write Launcher
 
@@ -132,7 +143,8 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, formatting changes, and reopen/load still need focused probes.
+   wrapping, formatting changes, and reopen-saved-file still need focused
+   probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

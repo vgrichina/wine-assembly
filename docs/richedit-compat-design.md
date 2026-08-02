@@ -126,6 +126,12 @@ native-editing path is alive.
   As filename, create/write/close the target file, update the title, and avoid
   the previous MFC null-ROT call. This is scoped save-path scaffolding, not full
   structured storage, moniker binding, or embedded OLE object support.
+- Extended the same bounded regression to cover WordPad File New and File Open.
+  `SetWindowTextA/W` now forwards `WM_SETTEXT` to native child windows with real
+  wndprocs, which lets WordPad's New document-type dialog clear the RichEdit
+  buffer instead of only resetting the title. The Open path now proves the
+  common dialog, `CreateFileA` / `ReadFile` stream, `GetFileTitleA`, title
+  update, and native RichEdit readback for `sources.md`.
 
 ### 2026-08-01 implementation progress
 

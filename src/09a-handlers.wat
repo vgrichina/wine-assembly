@@ -1857,6 +1857,19 @@
         (call $host_set_window_text (local.get $arg0) (local.get $wa))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
+    ;; Native child windows such as RichEdit20A are not WAT control-table
+    ;; controls, but SetWindowText still maps to WM_SETTEXT for them. Without
+    ;; this, WordPad's File->New title reset succeeds while the RichEdit buffer
+    ;; keeps the previous document text.
+    (if (i32.and
+          (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
+          (call $wnd_table_get (local.get $arg0)))
+      (then
+        (global.set $eax (call $wnd_send_message
+          (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $arg1)))
+        (call $host_set_window_text (local.get $arg0) (local.get $wa))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; Store in TITLE_TABLE so DefWindowProc WM_NCPAINT can redraw the
     ;; caption text from WAT-side state. Also post WM_NCPAINT.
     (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
@@ -4049,6 +4062,18 @@
     (if (call $ctrl_table_get_class (local.get $arg0))
       (then
         (global.set $eax (call $control_wndproc_dispatch
+          (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
+        (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
+        (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Native child windows such as RichEdit20A are not WAT control-table
+    ;; controls, but SetWindowText still maps to WM_SETTEXT for them.
+    (if (i32.and
+          (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
+          (call $wnd_table_get (local.get $arg0)))
+      (then
+        (global.set $eax (call $wnd_send_message
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
         (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
         (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
