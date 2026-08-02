@@ -5,6 +5,7 @@
 //   - keypresses route to that child
 //   - typed text is present in RichEdit's own WM_GETTEXT buffer
 //   - Backspace and Enter update that buffer
+//   - Delete-forward, Left, Home, and End update insertion position
 //   - edited text is visibly painted in the editor screenshot
 
 const fs = require('fs');
@@ -47,14 +48,29 @@ for (const ch of 'again') {
   b += 1;
 }
 seq.push('120:dump-focus-text:edited');
-seq.push('125:dump-windows:final');
-seq.push(`130:png:${PNG_OUT}`);
+seq.push('124:keydown:37');
+seq.push('125:keyup:37');
+seq.push('128:keydown:37');
+seq.push('129:keyup:37');
+seq.push('132:keydown:46');
+seq.push('133:keyup:46');
+seq.push('138:dump-focus-text:delete');
+seq.push('142:keydown:36');
+seq.push('143:keyup:36');
+seq.push('146:keypress:88');
+seq.push('150:dump-focus-text:home');
+seq.push('154:keydown:35');
+seq.push('155:keyup:35');
+seq.push('158:keypress:89');
+seq.push('162:dump-focus-text:end');
+seq.push('170:dump-windows:final');
+seq.push(`175:png:${PNG_OUT}`);
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=150',
+  '--max-batches=190',
   '--batch-size=50000',
   '--quiet-api',
   '--no-close',
@@ -116,6 +132,9 @@ const darkPixels = pngExists ? countDarkTextPixels(PNG_OUT) : 0;
 const keyboardFocusHits = (out.match(/\[check_input_hwnd\] keyboard → focus 0x10002/g) || []).length;
 const typedTextOk = /dump-focus-text typed: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=11 text="hello world"/.test(out);
 const editedTextOk = /dump-focus-text edited: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nagain"/.test(out);
+const deleteTextOk = /dump-focus-text delete: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nagan"/.test(out);
+const homeTextOk = /dump-focus-text home: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nXagan"/.test(out);
+const endTextOk = /dump-focus-text end: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nXaganY"/.test(out);
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('top-level WordPad window visible', /window:final hwnd=65537 .*visible=true .*title="Document - WordPad"/.test(out));
@@ -124,6 +143,9 @@ check('keypresses routed to RichEdit child', keyboardFocusHits >= text.length + 
 check('focus remained on native RichEdit after typing', /dump-focus typed: hwnd=0x10002 class=0 id=59648 parent=0x10001/.test(out));
 check('typed text is readable with WM_GETTEXT', typedTextOk);
 check('Backspace and Enter update RichEdit text', editedTextOk);
+check('Delete-forward updates RichEdit text', deleteTextOk);
+check('Home changes insertion position', homeTextOk);
+check('End changes insertion position', endTextOk);
 check('edited-text screenshot written', pngExists);
 check(`edited text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));

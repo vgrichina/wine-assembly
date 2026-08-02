@@ -53,6 +53,8 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns "hello world"
               -> Backspace, Enter, type "again"
               -> WM_GETTEXT returns "hello worl\r\nagain"
+              -> Left, Left, Delete, Home, type "X", End, type "Y"
+              -> WM_GETTEXT returns "hello worl\r\nXaganY"
               -> visible edited text appears
 ```
 
@@ -63,7 +65,8 @@ That means these pieces are already good enough for basic insertion:
 - `WM_CHAR` insertion reaches native RichEdit;
 - synchronous `WM_GETTEXT` can read the focused native RichEdit buffer through
   the test harness;
-- Backspace and Enter update that native buffer in the current probe;
+- Backspace, Delete-forward, Enter, Left, Home, and End update that native
+  buffer/insertion position in the current probe;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
@@ -83,7 +86,8 @@ native-editing path is alive.
   and native controls through `WM_GETTEXT`.
 - Expanded `test/test-wordpad-richedit.js`, a bounded regression covering
   launch, RichEdit focus, `hello world` typing, native text readback,
-  Backspace, Enter/newline, and visible text paint.
+  Backspace, Delete-forward, Enter/newline, Left/Home/End insertion movement,
+  and visible text paint.
 
 ## Problem statement
 
@@ -319,9 +323,10 @@ Acceptance:
 [x] WordPad accepts focus and inserts visible "hello world"
 [x] Automated WordPad/RichEdit probe exists
 [x] Backspace edits visible text correctly
-[ ] Delete-forward edits visible text correctly
+[x] Delete-forward edits visible text correctly
 [x] Enter creates a visible new line
-[ ] Arrow/Home/End movement tracks the caret
+[x] Arrow/Home/End movement tracks insertion position
+[ ] Visible caret paint and blink stay coherent
 [ ] Shift+arrow and mouse-drag selection render visibly
 [ ] Copy/Cut/Paste work for plain text
 [ ] Line wrapping and vertical scrolling stay coherent

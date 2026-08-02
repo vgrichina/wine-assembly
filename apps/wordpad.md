@@ -12,11 +12,13 @@ WordPad ... PASS  134 APIs, window created, 392 colors
 Focused typing probe:
 
 ```text
-click editor, type "hello world", Backspace, Enter, type "again"
+click editor, type "hello world", Backspace, Enter, type "again",
+Left, Left, Delete, Home, type "X", End, type "Y"
 focus: RichEdit child hwnd=0x10002
-text:  "hello worl\r\nagain" via WM_GETTEXT
+text:  "hello worl\r\nXaganY" via WM_GETTEXT
 result: PASS for basic text entry/editing — typed text, Backspace, and Enter
-        update the native RichEdit buffer and visible editor paint.
+        update the native RichEdit buffer, and Delete/Home/End/Left update the
+        insertion position.
 ```
 
 Current evidence from the 2026-08-01 follow-up probe:
@@ -27,8 +29,8 @@ Current evidence from the 2026-08-01 follow-up probe:
 - The test harness can now dump focused native-control text through
   synchronous `WM_GETTEXT`, so WordPad assertions no longer rely only on
   screenshot pixels for the editor buffer.
-- Backspace and Enter update the native RichEdit text buffer in the current
-  probe.
+- Backspace, Delete-forward, Enter, Left, Home, and End update the native
+  RichEdit text buffer/insertion position in the current probe.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -40,7 +42,7 @@ Current evidence from the 2026-08-01 follow-up probe:
   negative y coordinate.
 - `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills, so RichEdit's erase bands
   clear to the DC background instead of leaving black memory-DC strips.
-- Regression test: `node test/test-wordpad-richedit.js` passes 11/11 and
+- Regression test: `node test/test-wordpad-richedit.js` passes 14/14 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
 
@@ -68,9 +70,9 @@ blocker.
    app depends on threads staying suspended until `ResumeThread`.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
-3. Expand WordPad coverage beyond basic insertion/deletion/newline:
-   Delete-forward, navigation, visible selection, scrolling/wrapping,
-   formatting changes, and save/load still need focused probes.
+3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
+   visible caret assertions, visible selection, scrolling/wrapping, formatting
+   changes, and save/load still need focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
