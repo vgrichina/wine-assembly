@@ -67,6 +67,7 @@ launch WordPad -> click editor -> type "hello world"
               -> 35-line text auto-scrolls, wheel changes first visible line
               -> standard/format toolbar rows are visible above the editor
               -> first Standard toolbar button opens the New dialog
+              -> formatting toolbar B/I/U buttons update selected text
               -> visible edited text appears
 ```
 
@@ -90,6 +91,8 @@ That means these pieces are already good enough for basic insertion:
   native RichEdit child is laid out below them;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
+- formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
+  and update native RichEdit character-format state;
 - keyboard routing preserves focused native RichEdit before using the WAT EDIT
   fallback, so toolbar combobox edit children do not steal document typing;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
@@ -200,6 +203,12 @@ native-editing path is alive.
   cycle. `test/test-wordpad-toolbar.js` now passes 13/13 and also captures
   `test/output/wordpad-richedit/toolbar-command-new.png`, proving the first
   Standard toolbar button opens WordPad's `New` dialog.
+- Added minimal `GetDCEx` support on top of the existing host DC allocator and
+  client/whole-window clip helpers. Added
+  `test/test-wordpad-toolbar-format-buttons.js`, which passes 10/10 and
+  captures `test/output/wordpad-richedit/toolbar-format-buttons.png`, proving
+  formatting-toolbar Bold / Italic / Underline mouse clicks route through
+  WordPad UI and update native RichEdit charformat state.
 - Added ANSI `EnumFontFamiliesExA` / `EnumFontFamiliesA` callback support with
   the same one-face `Arial` enumeration as the Unicode path. This unblocks the
   formatting toolbar's ANSI font-list setup after the MFC toolbar subclass is
@@ -480,6 +489,7 @@ Acceptance:
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbars are visible and layout RichEdit below them
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
+[x] WordPad formatting toolbar B/I/U buttons route through app UI
 [ ] WordPad toolbar/menu color command route works through app UI
 [x] simple RTF round-trips without losing bold/italic/underline effects
 [ ] simple RTF round-trips font size/color/paragraph formatting
@@ -513,6 +523,7 @@ Acceptance:
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
 [x] WordPad standard/format toolbar layout is visibly asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
+[x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [ ] WordPad toolbar/menu color route has explicit coverage
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes

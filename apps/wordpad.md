@@ -100,6 +100,19 @@ result:      PASS for WordPad formatting command dispatch, native RichEdit
              later work.
 ```
 
+Focused formatting toolbar-button probe:
+
+```text
+type "style", Ctrl+A, click Formatting toolbar Bold / Italic / Underline
+buttons, refocus editor, reselect text, read EM_GETCHARFORMAT
+toolbar:     clicks at the formatting toolbar button centers route through
+             ToolbarWindow32 -> MFC -> EM_SETCHARFORMAT
+RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1 after
+             the three toolbar clicks
+result:      PASS for formatting-toolbar B/I/U mouse commands. The color
+             picker/menu route remains separate follow-up work.
+```
+
 Focused formatting round-trip probe:
 
 ```text
@@ -159,6 +172,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   opens WordPad's `New` dialog through the app's MFC command route. The
   `LockWindowUpdate` compatibility handler is a successful no-op so MFC's
   toolbar UI update cycle no longer traps.
+- Formatting toolbar Bold / Italic / Underline mouse clicks now route through
+  the same command path and update native RichEdit character-format state. The
+  `GetDCEx` compatibility handler now allocates a client or whole-window DC
+  with the existing DC allocator/clip helpers, which unblocks MFC toolbar paint
+  and update paths reached by these clicks.
 - Renderer keyboard routing now preserves focus on native child controls such
   as WordPad's `RichEdit20A` before falling back to the first WAT `EDIT`. This
   prevents the formatting toolbar's combobox edit child from stealing typing
@@ -278,6 +296,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   and writes `test/output/wordpad-richedit/format-accelerators-plain.png` plus
   `test/output/wordpad-richedit/format-accelerators.png`; the typed-word band
   shows 155 changed pixels and 58 more dark pixels after B/I/U formatting.
+- Regression test: `node test/test-wordpad-toolbar-format-buttons.js` passes
+  10/10 and writes
+  `test/output/wordpad-richedit/toolbar-format-buttons-plain.png` plus
+  `test/output/wordpad-richedit/toolbar-format-buttons.png`; it covers
+  formatting-toolbar Bold / Italic / Underline mouse clicks without relying on
+  keyboard accelerators.
 - Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
   and writes `test/output/wordpad-richedit/format-roundtrip.png`.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
@@ -317,12 +341,13 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, more toolbar command/state cases, concrete RichEdit selected-size
+   wrapping, advanced toolbar UI state, concrete RichEdit selected-size
    reporting, WordPad's toolbar/menu color route, and paragraph formatting
    still need focused probes. Font dialog face/style/point-size handoff,
    visible 24pt rendering, visible toolbar layout, first-toolbar-button command
-   routing, and direct RichEdit color rendering are now covered, but
-   `EM_GETCHARFORMAT` size reporting and the app's own color UI are not.
+   routing, formatting-toolbar B/I/U mouse commands, and direct RichEdit color
+   rendering are now covered, but `EM_GETCHARFORMAT` size reporting and the
+   app's own color UI are not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

@@ -9452,7 +9452,28 @@
 
   ;; 657: GetDCEx — STUB: unimplemented
   (func $handle_GetDCEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $hdc i32)
+    ;; GetDCEx(hwnd, hrgnClip, flags). Minimal USER/GDI compatibility:
+    ;; ignore the optional region for now, but honor DCX_WINDOW enough for MFC
+    ;; toolbar/nonclient update code to choose whole-window vs client origin.
+    ;; hwnd=NULL and the fixed desktop hwnd both use the host screen DC path.
+    (if (i32.or
+          (i32.eqz (local.get $arg0))
+          (i32.or
+            (i32.eq (local.get $arg0) (i32.const 0x00010000))
+            (i32.eq (call $wnd_table_find (local.get $arg0)) (i32.const -1))))
+      (then
+        (local.set $hdc (call $host_alloc_screen_dc)))
+      (else
+        (if (i32.and (local.get $arg2) (i32.const 0x00000001)) ;; DCX_WINDOW
+          (then
+            (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 1)))
+            (call $dc_apply_window_clip (local.get $hdc) (local.get $arg0)))
+          (else
+            (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
+            (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0)))))))
+    (global.set $eax (local.get $hdc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 658: LockWindowUpdate — STUB: unimplemented
