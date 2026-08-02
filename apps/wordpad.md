@@ -26,17 +26,19 @@ result: PASS for basic text entry/editing — typed text, Backspace, and Enter
         RichEdit controls.
 ```
 
-Focused toolbar layout probe:
+Focused toolbar layout/command probe:
 
 ```text
-startup, dump windows, capture toolbar-layout screenshot
+startup, dump windows, capture toolbar-layout screenshot,
+click first Standard toolbar button, capture toolbar-command screenshot
 toolbars:  Standard and Formatting are visible `ToolbarWindow32` children
            with WAT control class 21 and independent back-surfaces
 layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
            toolbar rows and the ruler/status bands
-result:    PASS for minimal ToolbarWindow32 layout/painting and WordPad MFC
-           toolbar sizing. Button command hit-testing/state mapping remains
-           follow-up work.
+command:   first Standard toolbar button opens WordPad's "New" dialog
+result:    PASS for ToolbarWindow32 layout/painting, command-ID-backed button
+           hit testing, and the MFC toolbar command path for File New.
+           WordPad's color UI/palette route remains follow-up work.
 ```
 
 Focused mouse/scroll probe:
@@ -151,6 +153,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   enough `TB_*` layout state for WordPad/MFC to size the toolbar rows. The
   native RichEdit child is laid out below them instead of overlapping the top
   of the document area.
+- `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
+  `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
+  and hit-tests mouse clicks. Clicking the first Standard toolbar button now
+  opens WordPad's `New` dialog through the app's MFC command route. The
+  `LockWindowUpdate` compatibility handler is a successful no-op so MFC's
+  toolbar UI update cycle no longer traps.
 - Renderer keyboard routing now preserves focus on native child controls such
   as WordPad's `RichEdit20A` before falling back to the first WAT `EDIT`. This
   prevents the formatting toolbar's combobox edit child from stealing typing
@@ -249,9 +257,11 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
-- Regression test: `node test/test-wordpad-toolbar.js` passes 11/11 and writes
-  `test/output/wordpad-richedit/toolbar-layout.png`, which shows the visible
-  standard/formatting toolbars above the editor.
+- Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
+  `test/output/wordpad-richedit/toolbar-layout.png` plus
+  `test/output/wordpad-richedit/toolbar-command-new.png`, covering visible
+  standard/formatting toolbars and the first Standard toolbar button opening
+  WordPad's `New` dialog.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor.
@@ -307,11 +317,11 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, toolbar button command hit-testing/state mapping, concrete
-   RichEdit selected-size reporting, WordPad's toolbar/menu color route, and
-   paragraph formatting still need focused probes. Font dialog
-   face/style/point-size handoff, visible 24pt rendering, visible toolbar
-   layout, and direct RichEdit color rendering are now covered, but
+   wrapping, more toolbar command/state cases, concrete RichEdit selected-size
+   reporting, WordPad's toolbar/menu color route, and paragraph formatting
+   still need focused probes. Font dialog face/style/point-size handoff,
+   visible 24pt rendering, visible toolbar layout, first-toolbar-button command
+   routing, and direct RichEdit color rendering are now covered, but
    `EM_GETCHARFORMAT` size reporting and the app's own color UI are not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through

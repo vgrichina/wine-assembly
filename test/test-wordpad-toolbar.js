@@ -3,6 +3,8 @@
 //   - both standard and formatting toolbars are WAT-native class 21 controls
 //   - the MFC control bar lays out the RichEdit child below the visible bars
 //   - a screenshot is captured with the toolbar surfaces composited
+//   - the first standard-toolbar button maps through TBBUTTON.idCommand and
+//     opens WordPad's New dialog instead of crashing in MFC toolbar UI updates
 
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +16,7 @@ const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
 const PNG_OUT = path.join(OUT_DIR, 'toolbar-layout.png');
+const PNG_CLICK_OUT = path.join(OUT_DIR, 'toolbar-command-new.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  wordpad.exe not found at', EXE);
@@ -26,14 +29,17 @@ const seq = [
   '40:dump-windows:initial',
   '90:dump-windows:final',
   `94:png:${PNG_OUT}`,
-  '98:stop',
+  '110:click:10:48',
+  '150:dump-windows:after-click',
+  `154:png:${PNG_CLICK_OUT}`,
+  '170:stop',
 ];
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=140',
+  '--max-batches=220',
   '--batch-size=50000',
   '--quiet-api',
   '--no-close',
@@ -60,6 +66,7 @@ const interesting = out.split('\n').filter(l =>
   l.includes('dump-windows') ||
   l.includes('window:final') ||
   l.includes('window:initial') ||
+  l.includes('window:after-click') ||
   l.includes('[input] png') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH') ||
@@ -114,7 +121,10 @@ const standard = parseWindowByCtrlId(59392);
 const formatting = parseWindowByCtrlId(59396);
 const richEdit = parseWindowByCtrlId(59648);
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
+const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
 const toolbarInk = countToolbarInk(PNG_OUT);
+const openedNewDialog =
+  /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true dialog=true .* title="New"/.test(out);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
@@ -145,6 +155,8 @@ check('RichEdit child is laid out below the toolbars',
   richEdit.visible);
 check('toolbar-layout screenshot written', pngExists);
 check(`toolbar buttons visibly painted (${toolbarInk} dark pixels)`, toolbarInk >= 80);
+check('first standard toolbar button opens New dialog', openedNewDialog);
+check('toolbar-command screenshot written', clickPngExists);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 

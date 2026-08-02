@@ -9457,7 +9457,12 @@
 
   ;; 658: LockWindowUpdate — STUB: unimplemented
   (func $handle_LockWindowUpdate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; LockWindowUpdate(hWndLock) blocks drawing to all other windows until
+    ;; unlocked with NULL. WordPad/MFC uses it around toolbar command UI
+    ;; updates. We do not maintain host-side window locks, so accept both lock
+    ;; and unlock requests as successful no-ops.
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 659: GetTabbedTextExtentA — STUB: unimplemented
