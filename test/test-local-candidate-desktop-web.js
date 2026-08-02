@@ -28,6 +28,7 @@ const TRACE_HOST_NAMES = String(process.env.CANDIDATE_TRACE_HOST || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+const SCREENSHOT_DIR = process.env.CANDIDATE_SCREENSHOT_DIR || '';
 
 const ALL_CANDIDATES = [
   {
@@ -76,9 +77,11 @@ const ALL_CANDIDATES = [
     id: 'marbles',
     label: 'Marbles',
     titlePattern: 'Marbles|Lose Your Marbles',
-    click: { x: 320, y: 240 },
+    click: { x: 378, y: 206, holdMs: 220 },
     minColors: 80,
-    waitMs: 1200,
+    minDiff: 5000,
+    waitMs: 100,
+    actionWaitMs: 1600,
   },
 ];
 const CANDIDATE_FILTER = new Set(String(process.env.CANDIDATE_IDS || process.argv.slice(2).join(',') || '')
@@ -566,6 +569,17 @@ async function main() {
     })()`);
   }
 
+  async function saveCanvasSnapshot(app, label) {
+    if (!SCREENSHOT_DIR) return;
+    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    const dataUrl = await evalExpr(`(() => {
+      const canvas = document.getElementById('screen');
+      return canvas.toDataURL('image/png');
+    })()`);
+    const b64 = String(dataUrl).replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(path.join(SCREENSHOT_DIR, `${app.id}-${label}.png`), Buffer.from(b64, 'base64'));
+  }
+
   async function waitForLaunch(app) {
     try {
       await evalExpr(`new Promise((resolve, reject) => {
@@ -694,22 +708,104 @@ async function main() {
   }
 
   async function postCommand(command) {
-    await evalExpr(`(() => {
+    return evalExpr(`(() => {
       const app = runningApps[0];
       const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
       if (!e || !e.post_message_q || !e.get_main_hwnd) throw new Error('post_message_q unavailable');
-      e.post_message_q(e.get_main_hwnd(), 0x0111, ${command >>> 0}, 0);
-      return 1;
+      const hwnd = e.get_main_hwnd() >>> 0;
+      e.post_message_q(hwnd, 0x0111, ${command >>> 0}, 0);
+      return { kind: 'command', command: ${command >>> 0}, hwnd };
     })()`);
   }
 
-  async function rendererClick(x, y) {
-    await evalExpr(`(() => {
+  async function rendererMouseDown(x, y) {
+    return evalExpr(`(() => {
       if (!sharedRenderer) throw new Error('renderer unavailable');
+      const formatEvent = (evt) => evt ? ({
+        type: evt.type || '',
+        hwnd: evt.hwnd >>> 0,
+        msg: evt.msg >>> 0,
+        wParam: evt.wParam >>> 0,
+        lParam: evt.lParam >>> 0,
+        x: evt.lParam & 0xFFFF,
+        y: (evt.lParam >>> 16) & 0xFFFF,
+        mouseX: evt.mouseX | 0,
+        mouseY: evt.mouseY | 0,
+        mouseButtons: evt.mouseButtons >>> 0,
+      }) : null;
+      const q = sharedRenderer.inputQueue || [];
+      const beforeLen = q.length;
+      const transform = sharedRenderer._exclusiveTransform
+        ? Object.assign({}, sharedRenderer._exclusiveTransform)
+        : null;
+      const mapped = sharedRenderer._mapExclusiveInputPoint
+        ? sharedRenderer._mapExclusiveInputPoint(${x | 0}, ${y | 0})
+        : { x: ${x | 0}, y: ${y | 0} };
       sharedRenderer.handleMouseDown(${x | 0}, ${y | 0}, 0);
-      sharedRenderer.handleMouseUp(${x | 0}, ${y | 0}, 0);
-      return 1;
+      return {
+        kind: 'mousedown',
+        x: ${x | 0},
+        y: ${y | 0},
+        mapped,
+        transform,
+        beforeLen,
+        afterLen: q.length,
+        events: q.slice(beforeLen).map(formatEvent),
+      };
     })()`);
+  }
+
+  async function rendererMouseUp(x, y) {
+    return evalExpr(`(() => {
+      if (!sharedRenderer) throw new Error('renderer unavailable');
+      const formatEvent = (evt) => evt ? ({
+        type: evt.type || '',
+        hwnd: evt.hwnd >>> 0,
+        msg: evt.msg >>> 0,
+        wParam: evt.wParam >>> 0,
+        lParam: evt.lParam >>> 0,
+        x: evt.lParam & 0xFFFF,
+        y: (evt.lParam >>> 16) & 0xFFFF,
+        mouseX: evt.mouseX | 0,
+        mouseY: evt.mouseY | 0,
+        mouseButtons: evt.mouseButtons >>> 0,
+      }) : null;
+      const q = sharedRenderer.inputQueue || [];
+      const beforeLen = q.length;
+      const transform = sharedRenderer._exclusiveTransform
+        ? Object.assign({}, sharedRenderer._exclusiveTransform)
+        : null;
+      const mapped = sharedRenderer._mapExclusiveInputPoint
+        ? sharedRenderer._mapExclusiveInputPoint(${x | 0}, ${y | 0})
+        : { x: ${x | 0}, y: ${y | 0} };
+      sharedRenderer.handleMouseUp(${x | 0}, ${y | 0}, 0);
+      return {
+        kind: 'mouseup',
+        x: ${x | 0},
+        y: ${y | 0},
+        mapped,
+        transform,
+        beforeLen,
+        afterLen: q.length,
+        events: q.slice(beforeLen).map(formatEvent),
+      };
+    })()`);
+  }
+
+  async function rendererClick(x, y, holdMs = 0) {
+    const down = await rendererMouseDown(x, y);
+    if (holdMs > 0) await wait(holdMs);
+    const up = await rendererMouseUp(x, y);
+    return {
+      kind: 'click',
+      x: x | 0,
+      y: y | 0,
+      holdMs: holdMs | 0,
+      mapped: down.mapped,
+      transform: down.transform,
+      down: down.events,
+      up: up.events,
+    };
   }
 
   async function rendererDrag(points) {
@@ -761,16 +857,21 @@ async function main() {
     await waitForLaunch(app);
     await wait(app.waitMs || 500);
 
+    const actions = [];
     const before = await captureDiffBaseline(app);
+    await saveCanvasSnapshot(app, 'before');
     if (app.commands) {
       for (const command of app.commands) {
-        await postCommand(command);
+        actions.push(await postCommand(command));
         await wait(350);
       }
     }
-    if (app.click) {
-      await rendererClick(app.click.x, app.click.y);
-      await wait(350);
+    const clicks = app.clicks || (app.click ? [app.click] : null);
+    if (clicks) {
+      for (const click of clicks) {
+        actions.push(await rendererClick(click.x, click.y, click.holdMs || 0));
+        await wait(click.waitMs || app.actionWaitMs || 350);
+      }
     }
     if (app.draw) {
       await rendererClick(39, 146);
@@ -784,6 +885,7 @@ async function main() {
     }
 
     const after = await snapshot(app);
+    await saveCanvasSnapshot(app, 'after');
     const diff = await diffSince(before, app);
     const windowsText = after.windows.map(w => w.title).join(', ');
     const consoleText = consoleEventSummary(cdp.events).join('\n');
@@ -791,6 +893,7 @@ async function main() {
       windows: after.windows,
       metrics: after.metrics,
       diff: diff.diff,
+      actions,
       status: after.status,
       log: after.log.slice(-1000),
       console: consoleText.slice(-1000),
@@ -817,6 +920,21 @@ async function main() {
     for (const expected of app.expectDialogs || []) {
       assert(new RegExp(expected, 'i').test(windowsText),
         `${app.label}: expected dialog did not appear: ${summary}`);
+    }
+    if ((app.commands || app.click || app.clicks || app.draw || app.typeText) && !app.expectDialogs) {
+      assert(actions.length > 0,
+        `${app.label}: expected at least one app-specific action: ${summary}`);
+    }
+    for (const action of actions) {
+      if (action.kind === 'command') {
+        assert(action.hwnd,
+          `${app.label}: command ${action.command} should target a main window: ${summary}`);
+      } else if (action.kind === 'click') {
+        assert(!action.mapped || !action.mapped.outside,
+          `${app.label}: click should land inside the rendered app surface: ${summary}`);
+        assert((action.down || []).some(ev => ev.msg === 0x0201) && (action.up || []).some(ev => ev.msg === 0x0202),
+          `${app.label}: click should enqueue WM_LBUTTONDOWN/UP: ${summary}`);
+      }
     }
     if (app.minDiff) {
       assert(diff.diff >= app.minDiff,
