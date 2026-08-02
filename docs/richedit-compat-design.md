@@ -144,6 +144,9 @@ native-editing path is alive.
   `test/run.js` and `test/test-wordpad-format-accelerators.js`; the focused
   probe confirms selected native RichEdit text reports bold, italic, and
   underline effects through `EM_GETCHARFORMAT(SCF_SELECTION)`.
+- Added `test/test-wordpad-format-roundtrip.js`, which proves a simple
+  WordPad RTF Save As -> New -> Open round-trip preserves selected text plus
+  bold, italic, and underline effects in native RichEdit charformat state.
 
 ### 2026-08-01 implementation progress
 
@@ -368,7 +371,7 @@ Acceptance:
 ```text
 [x] WordPad saved RTF reopens with simple plain text content
 [ ] plain text save/reopen through the text filter works in WordPad
-[ ] basic RTF save/reopen preserves simple formatting
+[x] basic RTF save/reopen preserves bold/italic/underline charformat
 [ ] installer license RichEdit text streams in and scrolls
 ```
 
@@ -406,7 +409,8 @@ Acceptance:
 [ ] bold / italic / underline have explicit visual/pixel assertions
 [ ] font size changes affect layout predictably
 [ ] text color renders
-[ ] simple RTF round-trips without losing basic formatting
+[x] simple RTF round-trips without losing bold/italic/underline effects
+[ ] simple RTF round-trips font size/color/paragraph formatting
 ```
 
 ## Whole-task acceptance matrix
@@ -428,7 +432,7 @@ Acceptance:
 [ ] Line wrapping and scrollbar scrolling stay coherent
 [x] WordPad saved RTF reopens with simple plain text content
 [ ] Plain text save/reopen through the text filter works
-[ ] Basic RTF save/reopen works without data loss for simple styling
+[x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Bold/italic/underline command state toggles in WordPad
 [ ] Bold/italic/underline/font-size/color are visibly asserted in WordPad
 [ ] Installer/license RichEdit panes render and scroll

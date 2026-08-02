@@ -72,6 +72,15 @@ result:      PASS for WordPad formatting command dispatch and native RichEdit
              round-trip are still later work.
 ```
 
+Focused formatting round-trip probe:
+
+```text
+type "style", Ctrl+A, Ctrl+B / Ctrl+I / Ctrl+U, Save As .rtf,
+File New, then reopen the saved .rtf
+result:      PASS: reopened text is "style" and EM_GETCHARFORMAT on the
+             selected reopened text reports bold=1, italic=1, underline=1.
+```
+
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
@@ -128,6 +137,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   Shift/Ctrl/Alt modifier state instead of skipping modifier accelerators.
   `EM_GETCHARFORMAT(SCF_SELECTION)` confirms the selected native RichEdit text
   has bold, italic, and underline effects after the shortcuts.
+- WordPad can save and reopen a simple RTF document with bold/italic/underline
+  effects preserved in RichEdit charformat state. This is still bounded to
+  simple character formatting; exact visual pixel fidelity, font size/color,
+  paragraph formatting, and advanced RTF remain follow-up work.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -152,6 +165,8 @@ Current evidence from the 2026-08-02 follow-up probe:
   covers Save As -> New -> Open of the saved simple RichEdit document.
 - Regression test: `node test/test-wordpad-format-accelerators.js` passes 11/11
   and writes `test/output/wordpad-richedit/format-accelerators.png`.
+- Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
+  and writes `test/output/wordpad-richedit/format-roundtrip.png`.
 
 ## Write Launcher
 
@@ -179,8 +194,9 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, font size/color changes, RTF style round-trip, and filter-specific
-   plain-text save still need focused probes.
+   wrapping, font size/color changes, paragraph formatting, exact formatting
+   pixel assertions, and filter-specific plain-text save still need focused
+   probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
