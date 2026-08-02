@@ -109,6 +109,13 @@ native-editing path is alive.
   keypress suppression for Ctrl-letter shortcuts, and
   `test/test-wordpad-richedit-scroll.js`. The bounded mouse/scroll regression
   passes 10/10 and captures `test/output/wordpad-richedit/mouse-scroll.png`.
+- Added minimal USER clipboard APIs for plain ANSI text:
+  `OpenClipboard`, `CloseClipboard`, `EmptyClipboard`, `SetClipboardData`,
+  `GetClipboardData`, `IsClipboardFormatAvailable`, `CountClipboardFormats`,
+  and `GetClipboardOwner`. These share the WAT edit clipboard buffer and cover
+  `CF_TEXT` / `CF_OEMTEXT`. A raw native RichEdit Ctrl+C/Ctrl+V probe still
+  follows RichEdit's OLE storage setup rather than the verified USER text path,
+  so rich/native clipboard fidelity remains later work.
 
 ### 2026-08-01 implementation progress
 

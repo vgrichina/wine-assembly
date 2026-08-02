@@ -52,6 +52,13 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Ctrl+A selects the native RichEdit buffer, Ctrl+C copies plain text through
   the renderer-side native-text shortcut bridge, Ctrl+X cuts the selected text,
   and Ctrl+V pastes/restores it through `EM_REPLACESEL`.
+- Minimal USER clipboard APIs now back `CF_TEXT` / `CF_OEMTEXT`
+  (`OpenClipboard`, `CloseClipboard`, `EmptyClipboard`, `SetClipboardData`,
+  `GetClipboardData`, `IsClipboardFormatAvailable`, `CountClipboardFormats`,
+  `GetClipboardOwner`) using the shared WAT edit clipboard buffer. This is
+  generic plain-text infrastructure; raw native RichEdit Ctrl+C/Ctrl+V still
+  travels through RichEdit's OLE storage setup in the current probe, so the
+  verified WordPad clipboard path remains the renderer-side shortcut bridge.
 - Mouse drag over the native RichEdit child produces a non-empty `EM_GETSEL`
   range.
 - Long multiline insertion produces 35 RichEdit lines and auto-scrolls to the

@@ -5395,18 +5395,19 @@
   ;; No-op when lo >= hi (empty selection — leaves clipboard untouched so
   ;; Ctrl+C on nothing doesn't wipe a prior copy).
   (func $edit_copy_range (param $state_w i32) (param $lo i32) (param $hi i32)
-    (local $len i32) (local $src_g i32) (local $dst_g i32) (local $cap i32)
+    (local $len i32) (local $src_g i32) (local $dst_g i32) (local $cap i32) (local $need i32)
     (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
     (local.set $len (i32.sub (local.get $hi) (local.get $lo)))
+    (local.set $need (i32.add (local.get $len) (i32.const 1)))
     (local.set $src_g (i32.load (local.get $state_w)))
     (if (i32.eqz (local.get $src_g)) (then (return)))
     ;; Grow capacity if needed (round up to multiple of 64).
-    (if (i32.gt_u (local.get $len) (global.get $clipboard_cap))
+    (if (i32.gt_u (local.get $need) (global.get $clipboard_cap))
       (then
         (if (global.get $clipboard_ptr)
           (then (call $heap_free (global.get $clipboard_ptr))
                 (global.set $clipboard_ptr (i32.const 0))))
-        (local.set $cap (i32.and (i32.add (local.get $len) (i32.const 63)) (i32.const -64)))
+        (local.set $cap (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
         (global.set $clipboard_ptr (call $heap_alloc (local.get $cap)))
         (global.set $clipboard_cap (local.get $cap))))
     (local.set $dst_g (global.get $clipboard_ptr))
@@ -5415,6 +5416,7 @@
       (call $g2w (local.get $dst_g))
       (i32.add (call $g2w (local.get $src_g)) (local.get $lo))
       (local.get $len))
+    (i32.store8 (i32.add (call $g2w (local.get $dst_g)) (local.get $len)) (i32.const 0))
     (global.set $clipboard_len (local.get $len))
   )
 

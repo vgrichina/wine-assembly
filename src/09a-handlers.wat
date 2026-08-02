@@ -2668,9 +2668,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 144: GetClipboardData — STUB: unimplemented
+  ;; 144: GetClipboardData(uFormat) → HANDLE
+  ;; Minimal CF_TEXT/CF_OEMTEXT clipboard backed by the same global text buffer
+  ;; used by WAT EDIT controls. Handles are direct heap pointers, matching the
+  ;; emulator's GlobalLock identity behavior.
   (func $handle_GetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.and
+          (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
+                  (i32.eq (local.get $arg0) (i32.const 7))) ;; CF_OEMTEXT
+          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+      (then (global.set $eax (global.get $clipboard_ptr)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
 
@@ -3414,19 +3428,46 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 244: OpenClipboard — STUB: unimplemented
+  ;; 244: OpenClipboard(hwndNewOwner) — single-process clipboard, always open.
   (func $handle_OpenClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 245: CloseClipboard — STUB: unimplemented
+  ;; 245: CloseClipboard() — single-process clipboard, always succeeds.
   (func $handle_CloseClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 246: IsClipboardFormatAvailable — STUB: unimplemented
+  ;; 246: IsClipboardFormatAvailable(format) — support plain ANSI text only.
   (func $handle_IsClipboardFormatAvailable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32)
+        (i32.and
+          (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
+                  (i32.eq (local.get $arg0) (i32.const 7))) ;; CF_OEMTEXT
+          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+        (then (i32.const 1))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 247: GetEnvironmentStringsW
@@ -9672,9 +9713,89 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 689: CountClipboardFormats — STUB: unimplemented
+  ;; 689: CountClipboardFormats() — one format when CF_TEXT data exists.
   (func $handle_CountClipboardFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32) (i32.gt_u (global.get $clipboard_len) (i32.const 0))
+        (then (i32.const 1))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; EmptyClipboard() — clear the plain-text clipboard.
+  (func $handle_EmptyClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $clipboard_len (i32.const 0))
+    (if (global.get $clipboard_ptr)
+      (then (i32.store8 (call $g2w (global.get $clipboard_ptr)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; SetClipboardData(uFormat, hMem) — copy CF_TEXT/CF_OEMTEXT into the global
+  ;; clipboard buffer. Non-text formats are accepted as inert success so apps
+  ;; that publish multiple formats can continue.
+  (func $handle_SetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $len i32) (local $need i32) (local $cap i32)
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz
+          (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
+                  (i32.eq (local.get $arg0) (i32.const 7)))) ;; CF_OEMTEXT
+      (then
+        (global.set $eax (local.get $arg1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $len (call $guest_strlen (local.get $arg1)))
+    (local.set $need (i32.add (local.get $len) (i32.const 1)))
+    (if (i32.gt_u (local.get $need) (global.get $clipboard_cap))
+      (then
+        (if (global.get $clipboard_ptr)
+          (then (call $heap_free (global.get $clipboard_ptr))
+                (global.set $clipboard_ptr (i32.const 0))))
+        (local.set $cap (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
+        (global.set $clipboard_ptr (call $heap_alloc (local.get $cap)))
+        (global.set $clipboard_cap (local.get $cap))))
+    (if (i32.eqz (global.get $clipboard_ptr))
+      (then
+        (global.set $clipboard_len (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $memcpy (call $g2w (global.get $clipboard_ptr)) (call $g2w (local.get $arg1)) (local.get $need))
+    (global.set $clipboard_len (local.get $len))
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetClipboardOwner() — no cross-window ownership model yet.
+  (func $handle_GetClipboardOwner (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 690: SetWindowContextHelpId — STUB: unimplemented

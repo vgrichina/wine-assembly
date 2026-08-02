@@ -15742,5 +15742,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2947177135
+  },
+  {
+    "id": 2046,
+    "name": "EmptyClipboard",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3842379416
+  },
+  {
+    "id": 2047,
+    "name": "SetClipboardData",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 489354643
+  },
+  {
+    "id": 2048,
+    "name": "GetClipboardOwner",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1213872586
   }
 ]
