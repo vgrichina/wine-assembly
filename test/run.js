@@ -367,6 +367,7 @@ async function main() {
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
   //   B:set-focus-paraformat-align:ALIGN[:LABEL] — EM_SETPARAFORMAT alignment on focused hwnd
+  //   B:menu-edit-command:ID[:LABEL] — invoke exported WAT menu edit-command bridge
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
@@ -425,6 +426,9 @@ async function main() {
       } else if (kind === 'set-focus-paraformat-align') {
         scheduledInput.push({ batch, action: 'set-focus-paraformat-align',
           align: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'menu-edit-command') {
+        scheduledInput.push({ batch, action: 'menu-edit-command',
+          id: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'class-cmd') {
         // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
         // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
@@ -2507,6 +2511,15 @@ async function main() {
           logs.push(`[input] set-focus-paraformat-align${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} alignment=${ev.align >>> 0} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-paraformat-align${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO PARAFORMAT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'menu-edit-command') {
+        const we = instance.exports;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (we.menu_try_edit_command) {
+          const ret = we.menu_try_edit_command(ev.id >>> 0) >>> 0;
+          logs.push(`[input] menu-edit-command${tag}: id=${ev.id >>> 0} ret=${ret} at batch ${batch}`);
+        } else {
+          logs.push(`[input] menu-edit-command${tag}: id=${ev.id >>> 0} NO MENU API at batch ${batch}`);
         }
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its

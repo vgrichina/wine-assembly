@@ -88,6 +88,8 @@ That means these pieces are already good enough for basic insertion:
   updates/collapses the selected range;
 - plain-text Ctrl+A/C/X/V works for focused native RichEdit controls through the
   renderer-side native-text shortcut bridge;
+- WordPad Edit-menu Select All / Copy / Cut / Paste command ids route through a
+  plain-text WAT menu edit bridge for the focused native RichEdit child;
 - mouse drag changes native RichEdit selection state;
 - long multiline text inserts, auto-scrolls to the caret, and focused native
   wheel input changes `EM_GETFIRSTVISIBLELINE`;
@@ -139,6 +141,15 @@ native-editing path is alive.
   `CF_TEXT` / `CF_OEMTEXT`. A raw native RichEdit Ctrl+C/Ctrl+V probe still
   follows RichEdit's OLE storage setup rather than the verified USER text path,
   so rich/native clipboard fidelity remains later work.
+- Added a plain-text WAT menu edit-command bridge for WordPad/MFC edit command
+  ids: Select All (`57642`), Copy (`57634`), Cut (`57635`), Paste (`57637`),
+  plus the existing small WAT edit ids. For WordPad's focused native RichEdit
+  child it uses `WM_GETTEXT`, `EM_GETSEL`, `EM_SETSEL`, and `EM_REPLACESEL`
+  instead of forwarding `WM_COPY` / `WM_CUT` into RichEdit's OLE clipboard
+  storage path. Added `test/test-wordpad-menu-edit-clipboard.js`; it proves
+  menu Copy/Paste duplicates `menu` to `menumenu`, menu Cut clears selected
+  text and menu Paste restores it, and the covered plain-text path does not
+  call `CreateILockBytesOnHGlobal` or `StgCreateDocfileOnILockBytes`.
 - Added WordPad Save As coverage and the minimal compatibility it needed:
   `GetFileTime`, `CreateFileMoniker`, `GetRunningObjectTable`, an
   `IRunningObjectTable` no-op vtable, and failure-returning storage/OLE
@@ -495,8 +506,9 @@ Acceptance:
 Expected message surface:
 
 - renderer shortcut routing for focused native text controls;
+- WAT menu edit-command routing for WordPad/MFC edit ids;
 - `WM_GETTEXT`, `EM_GETSEL`, `EM_SETSEL`, and `EM_REPLACESEL`;
-- later: real USER clipboard and RichEdit/OLE clipboard fidelity.
+- later: rich USER clipboard formats and RichEdit/OLE clipboard fidelity.
 
 Acceptance:
 
@@ -505,7 +517,7 @@ Acceptance:
 [x] Ctrl+C captures the selected native RichEdit text as plain text
 [x] Ctrl+V inserts the captured plain text through `EM_REPLACESEL`
 [x] Ctrl+X cuts selected native RichEdit text
-[ ] menu Edit/Copy/Paste routes work without the keyboard bridge
+[x] menu Edit Select All/Copy/Cut/Paste routes work without the keyboard bridge
 [ ] rich clipboard formats preserve RTF/objects
 ```
 
@@ -552,7 +564,7 @@ Acceptance:
 [ ] Visible selection highlight renders coherently
 [x] Mouse-drag selection changes selection range
 [x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
-[ ] Menu Copy/Cut/Paste has explicit coverage
+[x] Menu Copy/Cut/Paste has explicit coverage
 [x] Native RichEdit wheel changes first visible line
 [ ] Line wrapping and scrollbar scrolling stay coherent
 [x] WordPad saved RTF reopens with simple plain text content

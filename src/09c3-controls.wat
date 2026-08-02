@@ -7775,6 +7775,13 @@
     (if (i32.eq (local.get $ctrl_class) (i32.const 2))
       (then (return (call $edit_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Standard Edit menu/command ids should act on the focused edit control
+    ;; before app frameworks forward them into native RichEdit's rich/OLE
+    ;; clipboard path. Non-edit command ids fall through to the app wndproc.
+    (if (i32.eq (local.get $msg) (i32.const 0x0111)) ;; WM_COMMAND
+      (then
+        (if (call $menu_try_edit_command (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+          (then (return (i32.const 0))))))
     ;; WAT-native (>= 0xFFFF0000)
     (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000))
       (then (return (call $wat_wndproc_dispatch

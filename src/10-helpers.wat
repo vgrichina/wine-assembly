@@ -2184,6 +2184,155 @@
         (if (local.get $target) (then (return (local.get $target))))))
     (i32.const 0))
 
+  (func $native_text_logical_to_string_index
+        (param $buf_g i32) (param $text_len i32) (param $logical_pos i32)
+        (result i32)
+    (local $i i32) (local $logical i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $text_len)))
+      (br_if $done (i32.ge_u (local.get $logical) (local.get $logical_pos)))
+      ;; Native RichEdit selection offsets count CRLF as one logical character;
+      ;; WM_GETTEXT returns CRLF as two bytes. Match the renderer native-text
+      ;; bridge so menu Copy/Cut handles multiline text sensibly.
+      (if (i32.and
+            (i32.eq
+              (call $gl8 (i32.add (local.get $buf_g) (local.get $i)))
+              (i32.const 13))
+            (i32.and
+              (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $text_len))
+              (i32.eq
+                (call $gl8 (i32.add
+                  (local.get $buf_g)
+                  (i32.add (local.get $i) (i32.const 1))))
+                (i32.const 10))))
+        (then (local.set $i (i32.add (local.get $i) (i32.const 2))))
+        (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $logical (i32.add (local.get $logical) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  (func $native_text_copy_selection_to_clipboard (param $hwnd i32) (result i32)
+    (local $text_len i32) (local $cap i32) (local $text_g i32)
+    (local $scratch_g i32) (local $lo i32) (local $hi i32) (local $tmp i32)
+    (local $a i32) (local $b i32) (local $len i32) (local $need i32)
+    (local $new_cap i32)
+    (local.set $text_len
+      (call $wnd_send_message (local.get $hwnd) (i32.const 0x000E) (i32.const 0) (i32.const 0))) ;; WM_GETTEXTLENGTH
+    (if (i32.lt_s (local.get $text_len) (i32.const 0))
+      (then (local.set $text_len (i32.const 0))))
+    (if (i32.gt_u (local.get $text_len) (i32.const 65534))
+      (then (local.set $text_len (i32.const 65534))))
+    (local.set $cap (i32.add (local.get $text_len) (i32.const 2)))
+    (local.set $text_g (call $heap_alloc (local.get $cap)))
+    (local.set $scratch_g (call $heap_alloc (i32.const 8)))
+    (if (i32.or (i32.eqz (local.get $text_g)) (i32.eqz (local.get $scratch_g)))
+      (then
+        (if (local.get $text_g) (then (call $heap_free (local.get $text_g))))
+        (if (local.get $scratch_g) (then (call $heap_free (local.get $scratch_g))))
+        (return (i32.const 0))))
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (call $gs32 (i32.add (local.get $scratch_g) (i32.const 4)) (i32.const 0))
+    (local.set $text_len
+      (call $wnd_send_message (local.get $hwnd) (i32.const 0x000D) (local.get $cap) (local.get $text_g))) ;; WM_GETTEXT
+    (if (i32.lt_s (local.get $text_len) (i32.const 0))
+      (then (local.set $text_len (i32.const 0))))
+    (if (i32.gt_u (local.get $text_len) (i32.sub (local.get $cap) (i32.const 1)))
+      (then (local.set $text_len (i32.sub (local.get $cap) (i32.const 1)))))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00B0)
+      (local.get $scratch_g)
+      (i32.add (local.get $scratch_g) (i32.const 4)))) ;; EM_GETSEL
+    (local.set $lo (call $gl32 (local.get $scratch_g)))
+    (local.set $hi (call $gl32 (i32.add (local.get $scratch_g) (i32.const 4))))
+    (if (i32.gt_u (local.get $lo) (local.get $hi))
+      (then
+        (local.set $tmp (local.get $lo))
+        (local.set $lo (local.get $hi))
+        (local.set $hi (local.get $tmp))))
+    (local.set $a
+      (call $native_text_logical_to_string_index
+        (local.get $text_g) (local.get $text_len) (local.get $lo)))
+    (local.set $b
+      (call $native_text_logical_to_string_index
+        (local.get $text_g) (local.get $text_len) (local.get $hi)))
+    (if (i32.lt_u (local.get $b) (local.get $a))
+      (then (local.set $b (local.get $a))))
+    (local.set $len (i32.sub (local.get $b) (local.get $a)))
+    (if (local.get $len)
+      (then
+        (local.set $need (i32.add (local.get $len) (i32.const 1)))
+        (if (i32.gt_u (local.get $need) (global.get $clipboard_cap))
+          (then
+            (if (global.get $clipboard_ptr)
+              (then
+                (call $heap_free (global.get $clipboard_ptr))
+                (global.set $clipboard_ptr (i32.const 0))))
+            (local.set $new_cap
+              (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
+            (global.set $clipboard_ptr (call $heap_alloc (local.get $new_cap)))
+            (global.set $clipboard_cap (local.get $new_cap))))
+        (if (global.get $clipboard_ptr)
+          (then
+            (call $memcpy
+              (call $g2w (global.get $clipboard_ptr))
+              (i32.add (call $g2w (local.get $text_g)) (local.get $a))
+              (local.get $len))
+            (call $gs8 (i32.add (global.get $clipboard_ptr) (local.get $len)) (i32.const 0))
+            (global.set $clipboard_len (local.get $len))))))
+    (call $heap_free (local.get $text_g))
+    (call $heap_free (local.get $scratch_g))
+    (i32.const 1))
+
+  (func $wordpad_richedit_replace_empty (param $hwnd i32) (result i32)
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00C2) (i32.const 1) (i32.const 0))) ;; EM_REPLACESEL
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (i32.const 1))
+
+  (func $wordpad_richedit_paste_clipboard (param $hwnd i32) (result i32)
+    (local $paste_g i32) (local $need i32)
+    (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))
+      (then (return (i32.const 1))))
+    (local.set $need (i32.add (global.get $clipboard_len) (i32.const 1)))
+    (local.set $paste_g (call $heap_alloc (local.get $need)))
+    (if (i32.eqz (local.get $paste_g)) (then (return (i32.const 0))))
+    (call $memcpy
+      (call $g2w (local.get $paste_g))
+      (call $g2w (global.get $clipboard_ptr))
+      (global.get $clipboard_len))
+    (call $gs8 (i32.add (local.get $paste_g) (global.get $clipboard_len)) (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00C2) (i32.const 1) (local.get $paste_g))) ;; EM_REPLACESEL
+    (call $heap_free (local.get $paste_g))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (i32.const 1))
+
+  (func $wordpad_richedit_plain_edit_command (param $hwnd i32) (param $op i32) (result i32)
+    (if (i32.eq (local.get $op) (i32.const 1)) ;; Select All
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x00B1) (i32.const 0) (i32.const -1))) ;; EM_SETSEL
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $op) (i32.const 3)) ;; Copy
+      (then
+        (drop (call $native_text_copy_selection_to_clipboard (local.get $hwnd)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $op) (i32.const 4)) ;; Paste
+      (then
+        (drop (call $wordpad_richedit_paste_clipboard (local.get $hwnd)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $op) (i32.const 2)) ;; Cut
+      (then
+        (drop (call $native_text_copy_selection_to_clipboard (local.get $hwnd)))
+        (drop (call $wordpad_richedit_replace_empty (local.get $hwnd)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $op) (i32.const 5)) ;; Clear
+      (then
+        (drop (call $wordpad_richedit_replace_empty (local.get $hwnd)))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $menu_try_wordpad_color_command (param $id i32) (result i32)
     (local $idx i32) (local $target i32) (local $cf_g i32) (local $cf_w i32)
     (local $color i32)
@@ -2215,28 +2364,56 @@
     (i32.const 1))
 
   (func $menu_try_edit_command (param $id i32) (result i32)
-    (local $target i32) (local $msg i32) (local $lParam i32)
+    (local $target i32) (local $msg i32) (local $lParam i32) (local $op i32)
     (if (call $menu_try_wordpad_color_command (local.get $id))
       (then (return (i32.const 1))))
-    (local.set $target (call $edit_command_target))
-    (if (i32.eqz (local.get $target)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $id) (i32.const 7))
+    (if (i32.or
+          (i32.eq (local.get $id) (i32.const 7))
+          (i32.eq (local.get $id) (i32.const 0xE12A))) ;; MFC ID_EDIT_SELECT_ALL
       (then
+        (local.set $op (i32.const 1))
         (local.set $msg (i32.const 0x00B1)) ;; EM_SETSEL
         (local.set $lParam (i32.const -1)))
       (else
-        (if (i32.eq (local.get $id) (i32.const 768))
-          (then (local.set $msg (i32.const 0x0300))) ;; WM_CUT
+        (if (i32.or
+              (i32.eq (local.get $id) (i32.const 768))
+              (i32.eq (local.get $id) (i32.const 0xE123))) ;; MFC ID_EDIT_CUT
+          (then
+            (local.set $op (i32.const 2))
+            (local.set $msg (i32.const 0x0300))) ;; WM_CUT
           (else
-            (if (i32.eq (local.get $id) (i32.const 769))
-              (then (local.set $msg (i32.const 0x0301))) ;; WM_COPY
+            (if (i32.or
+                  (i32.eq (local.get $id) (i32.const 769))
+                  (i32.eq (local.get $id) (i32.const 0xE122))) ;; MFC ID_EDIT_COPY
+              (then
+                (local.set $op (i32.const 3))
+                (local.set $msg (i32.const 0x0301))) ;; WM_COPY
               (else
-                (if (i32.eq (local.get $id) (i32.const 770))
-                  (then (local.set $msg (i32.const 0x0302))) ;; WM_PASTE
+                (if (i32.or
+                      (i32.eq (local.get $id) (i32.const 770))
+                      (i32.eq (local.get $id) (i32.const 0xE125))) ;; MFC ID_EDIT_PASTE
+                  (then
+                    (local.set $op (i32.const 4))
+                    (local.set $msg (i32.const 0x0302))) ;; WM_PASTE
                   (else
-                    (if (i32.eq (local.get $id) (i32.const 771))
-                      (then (local.set $msg (i32.const 0x0303))) ;; WM_CLEAR
+                    (if (i32.or
+                          (i32.eq (local.get $id) (i32.const 771))
+                          (i32.eq (local.get $id) (i32.const 0xE120))) ;; MFC ID_EDIT_CLEAR
+                      (then
+                        (local.set $op (i32.const 5))
+                        (local.set $msg (i32.const 0x0303))) ;; WM_CLEAR
                       (else (return (i32.const 0))))))))))))
+    ;; WordPad's native RichEdit enters an OLE clipboard/storage path for
+    ;; WM_COPY/WM_CUT. Until rich clipboard fidelity exists, keep menu commands
+    ;; app-useful by bridging plain-text behavior with RichEdit text messages,
+    ;; matching the renderer Ctrl+C/X/V bridge.
+    (local.set $target (call $wordpad_richedit_target))
+    (if (local.get $target)
+      (then
+        (drop (call $wordpad_richedit_plain_edit_command (local.get $target) (local.get $op)))
+        (return (i32.const 1))))
+    (local.set $target (call $edit_command_target))
+    (if (i32.eqz (local.get $target)) (then (return (i32.const 0))))
     (drop (call $wnd_send_message (local.get $target) (local.get $msg) (i32.const 0) (local.get $lParam)))
     (call $paint_flag_set_inv (local.get $target))
     (i32.const 1))

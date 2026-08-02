@@ -26,6 +26,20 @@ result: PASS for basic text entry/editing — typed text, Backspace, and Enter
         RichEdit controls.
 ```
 
+Focused Edit-menu clipboard probe:
+
+```text
+type "menu", invoke WordPad/MFC Edit command ids through the WAT menu edit
+bridge: Select All (57642), Copy (57634), Paste (57637), Cut (57635)
+copy/paste: selected "menu" copies and menu Paste duplicates it to "menumenu"
+cut/paste:  selected "menu" cuts to an empty buffer, then menu Paste restores
+            "menu"
+OLE path:   CreateILockBytesOnHGlobal / StgCreateDocfileOnILockBytes are not
+            reached in this plain-text menu bridge path
+result:     PASS for Edit-menu Select All / Copy / Cut / Paste plain-text
+            behavior on WordPad's focused native RichEdit child.
+```
+
 Focused toolbar layout/command probe:
 
 ```text
@@ -230,9 +244,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   (`OpenClipboard`, `CloseClipboard`, `EmptyClipboard`, `SetClipboardData`,
   `GetClipboardData`, `IsClipboardFormatAvailable`, `CountClipboardFormats`,
   `GetClipboardOwner`) using the shared WAT edit clipboard buffer. This is
-  generic plain-text infrastructure; raw native RichEdit Ctrl+C/Ctrl+V still
-  travels through RichEdit's OLE storage setup in the current probe, so the
-  verified WordPad clipboard path remains the renderer-side shortcut bridge.
+  generic plain-text infrastructure. WordPad's Edit-menu/MFC ids for Select
+  All, Copy, Cut, and Paste now route through a WAT menu edit-command bridge
+  for the focused native RichEdit child, using `WM_GETTEXT`, `EM_GETSEL`,
+  `EM_SETSEL`, and `EM_REPLACESEL` instead of native RichEdit's rich/OLE
+  clipboard storage path. Rich clipboard formats remain later work.
 - Mouse drag over the native RichEdit child produces a non-empty `EM_GETSEL`
   range.
 - Long multiline insertion produces 35 RichEdit lines and auto-scrolls to the
@@ -326,6 +342,13 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
+- Regression test: `node test/test-wordpad-menu-edit-clipboard.js` passes 17/17
+  and writes `test/output/wordpad-richedit/menu-edit-copy-paste.png` plus
+  `test/output/wordpad-richedit/menu-edit-cut-paste.png`; it covers WordPad
+  Edit-menu Select All / Copy / Cut / Paste command ids through the WAT menu
+  edit bridge, with Copy/Paste duplicating `menu` to `menumenu`, Cut/Paste
+  restoring cut text, and no RichEdit OLE clipboard-storage calls on this
+  plain-text path.
 - Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering visible
@@ -411,8 +434,9 @@ blocker.
    indents/tabs/numbering still need focused probes. Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
-   round-trip, simple paragraph center-alignment round-trip, visible toolbar
-   layout, first-toolbar-button command routing, formatting-toolbar B/I/U mouse
+   round-trip, simple paragraph center-alignment round-trip, Edit-menu
+   Select All/Copy/Cut/Paste plain-text commands, visible toolbar layout,
+   first-toolbar-button command routing, formatting-toolbar B/I/U mouse
    commands, and direct RichEdit color rendering are now covered, and WordPad's
    own toolbar color UI now applies Blue through the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
