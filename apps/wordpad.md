@@ -38,7 +38,6 @@ layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
 command:   first Standard toolbar button opens WordPad's "New" dialog
 result:    PASS for ToolbarWindow32 layout/painting, command-ID-backed button
            hit testing, and the MFC toolbar command path for File New.
-           WordPad's color UI/palette route remains follow-up work.
 ```
 
 Focused mouse/scroll probe:
@@ -96,8 +95,7 @@ RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
 pixels:      plain vs formatted screenshots differ in the typed-word band
 result:      PASS for WordPad formatting command dispatch, native RichEdit
              CHARFORMAT state, and visible B/I/U text rendering. Paragraph
-             formatting and WordPad's own color UI command route are still
-             later work.
+             formatting is still later work.
 ```
 
 Focused formatting toolbar-button probe:
@@ -110,7 +108,7 @@ toolbar:     clicks at the formatting toolbar button centers route through
 RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1 after
              the three toolbar clicks
 result:      PASS for formatting-toolbar B/I/U mouse commands. The color
-             picker/menu route remains separate follow-up work.
+             picker/menu route has separate focused coverage below.
 ```
 
 Focused formatting round-trip probe:
@@ -152,9 +150,24 @@ renderer:    SetTextColor sees COLORREF 0x00ff0000, which is blue in Win32
 pixels:      before/after screenshots differ in the typed-word band, with
              blue pixels appearing only after the format apply
 result:      PASS for the native RichEdit color/rendering path. This bypasses
-             WordPad's toolbar/menu color UI; that route remains open because
-             toolbar button command/state mapping does not yet carry WordPad's
-             palette state correctly.
+             WordPad's toolbar/menu color UI; that route has separate focused
+             coverage below.
+```
+
+Focused formatting toolbar color-menu probe:
+
+```text
+type "color", Ctrl+A, click Formatting toolbar color button, inspect popup,
+choose Blue from the dynamic owner-draw popup
+menu:        CreatePopupMenu/AppendMenuA owner-draw popup exposes 17 color
+             command rows (`0x800e..0x801e`) at the TrackPopupMenu anchor
+RichEdit:    EM_GETCHARFORMAT reports effects=0 and color=0xff0000 after
+             choosing row `#801a` / Blue
+renderer:    SetTextColor sees COLORREF 0x00ff0000
+pixels:      before/after screenshots differ in the typed-word band, with
+             94 blue-dominant pixels after the toolbar color command
+result:      PASS for WordPad's toolbar color picker opening, hit-testing, and
+             applying the selected color to native RichEdit text.
 ```
 
 Current evidence from the 2026-08-02 follow-up probe:
@@ -253,8 +266,16 @@ Current evidence from the 2026-08-02 follow-up probe:
   `EM_SETCHARFORMAT(CFM_COLOR)` to the selected WordPad text. Native RichEdit
   reports `color=0xff0000` with autocolor cleared, `SetTextColor` receives that
   COLORREF, and the screenshot shows blue text pixels. This validates the
-  RichEdit color/rendering path only; WordPad's own toolbar/menu color command
-  route still needs UI/state work.
+  RichEdit color/rendering path independently from WordPad's own UI.
+- WordPad's formatting-toolbar color button now opens its temporary owner-draw
+  popup through WAT-backed dynamic HMENU state. `CreatePopupMenu` allocates a
+  menu record, `AppendMenuA(MF_OWNERDRAW)` stores the 17 color command ids, and
+  `TrackPopupMenu` synthesizes a transient dropdown blob for WAT painting and
+  hit-testing. Because the emulator's `TrackPopupMenu` is asynchronous while
+  WordPad destroys the temporary MFC menu state immediately after opening it,
+  `menu_try_edit_command` has a narrow fallback for `0x800e..0x801e` that
+  applies the selected Win32 `COLORREF` directly to WordPad's `RichEdit20A`
+  child (`id=0xE900`).
 - The shared Open/Save dialog now exposes a `Files of type` combobox from
   `OPENFILENAME.lpstrFilter` and writes the selected item back to
   `OPENFILENAME.nFilterIndex`. WordPad's `Text Document` selection shows the
@@ -314,6 +335,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/richedit-color-blue.png`; the typed-word band
   shows 96 changed pixels and 94 blue-dominant pixels after applying direct
   `CFM_COLOR`.
+- Regression test: `node test/test-wordpad-toolbar-color-menu.js` passes 13/13
+  and writes `test/output/wordpad-richedit/toolbar-color-menu-plain.png`,
+  `test/output/wordpad-richedit/toolbar-color-menu-popup.png`, and
+  `test/output/wordpad-richedit/toolbar-color-menu-blue.png`; it covers the
+  formatting-toolbar color popup's dynamic owner-draw commands and Blue color
+  application through the WordPad UI route.
 
 ## Write Launcher
 
@@ -342,12 +369,13 @@ blocker.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
    wrapping, advanced toolbar UI state, concrete RichEdit selected-size
-   reporting, WordPad's toolbar/menu color route, and paragraph formatting
+   reporting, and paragraph formatting
    still need focused probes. Font dialog face/style/point-size handoff,
    visible 24pt rendering, visible toolbar layout, first-toolbar-button command
    routing, formatting-toolbar B/I/U mouse commands, and direct RichEdit color
-   rendering are now covered, but `EM_GETCHARFORMAT` size reporting and the
-   app's own color UI are not.
+   rendering are now covered, and WordPad's own toolbar color UI now applies
+   Blue through the covered dynamic-popup path. `EM_GETCHARFORMAT` size
+   reporting is still open.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

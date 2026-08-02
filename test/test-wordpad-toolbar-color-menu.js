@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Regression coverage for native RichEdit text-color rendering in WordPad.
+// Regression coverage for WordPad's formatting-toolbar color popup.
 //
-// This intentionally probes the focused RichEdit control directly with
-// EM_SETCHARFORMAT(CFM_COLOR). WordPad's own color toolbar/menu command route
-// has separate coverage in test-wordpad-toolbar-color-menu.js.
+// WordPad builds this as a temporary owner-draw CreatePopupMenu/AppendMenuA
+// menu. The emulator keeps that popup usable after async TrackPopupMenu opens
+// it and applies the selected color to the native RichEdit child.
 
 const fs = require('fs');
 const path = require('path');
@@ -14,11 +14,9 @@ const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
-const PLAIN_PNG = path.join(OUT_DIR, 'richedit-color-plain.png');
-const BLUE_PNG = path.join(OUT_DIR, 'richedit-color-blue.png');
-const TEXT = 'color';
-// Win32 COLORREF is 0x00BBGGRR, so 0x00ff0000 paints blue.
-const COLORREF_BLUE = 0x00ff0000;
+const PLAIN_PNG = path.join(OUT_DIR, 'toolbar-color-menu-plain.png');
+const POPUP_PNG = path.join(OUT_DIR, 'toolbar-color-menu-popup.png');
+const BLUE_PNG = path.join(OUT_DIR, 'toolbar-color-menu-blue.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  wordpad.exe not found at', EXE);
@@ -27,37 +25,55 @@ if (!fs.existsSync(EXE)) {
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
+const ctrlA = b => [
+  `${b}:keydown:17`,
+  `${b + 1}:keydown:65`,
+  `${b + 2}:keyup:65`,
+  `${b + 3}:keyup:17`,
+];
+
 const seq = [
   '70:click:40:150',
+  '74:keypress:99',
+  '75:keypress:111',
+  '76:keypress:108',
+  '77:keypress:111',
+  '78:keypress:114',
+  '84:dump-focus-state:typed',
+  `88:png:${PLAIN_PNG}`,
+  ...ctrlA(92),
+
+  // Formatting toolbar color button center.
+  '104:click:171:80',
+  '110:menu-dump:color',
+  `112:png:${POPUP_PNG}`,
+
+  // Popup anchor is x=164,y=93. Row #12 is #801a / Blue.
+  '120:mousemove:184:345',
+  '122:menu-dump:hover-blue',
+  '124:click:184:345',
+
+  // Refocus/reselect the document text for a stable CHARFORMAT assertion.
+  '142:click:40:150',
+  ...ctrlA(146),
+  '160:dump-focus-charformat:after-blue',
+  '162:dump-focus-state:after-blue',
+
+  // Collapse selection before the visual assertion so text ink color is visible.
+  '166:keydown:39',
+  '167:keyup:39',
+  `180:png:${BLUE_PNG}`,
+  '186:stop',
 ];
-let b = 74;
-for (const ch of TEXT) {
-  seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
-  b += 1;
-}
-seq.push('84:dump-focus-state:typed');
-seq.push('86:dump-focus-charformat:plain');
-seq.push(`88:png:${PLAIN_PNG}`);
-seq.push('94:keydown:17');
-seq.push('95:keydown:65');
-seq.push('96:keyup:65');
-seq.push('97:keyup:17');
-seq.push(`104:set-focus-charformat-color:0x${COLORREF_BLUE.toString(16).padStart(8, '0')}:blue`);
-seq.push('122:dump-focus-charformat:after-blue');
-seq.push('126:dump-focus-state:after-blue');
-seq.push('132:keydown:39'); // collapse selection before the visual assertion
-seq.push('133:keyup:39');
-seq.push(`148:png:${BLUE_PNG}`);
-seq.push('152:stop');
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=220',
+  '--max-batches=280',
   '--batch-size=50000',
   '--quiet-api',
-  '--trace-api=SendMessageA,SetTextColor',
+  '--trace-api=SetTextColor',
   '--no-close',
 ];
 
@@ -79,19 +95,21 @@ try {
 
 const interesting = out.split('\n').filter(l =>
   l.includes('ShowWindow') ||
-  l.includes('set-focus-charformat-color') ||
+  l.includes('menu-dump') ||
   l.includes('dump-focus-state') ||
   l.includes('dump-focus-charformat') ||
-  l.includes('png ') ||
+  l.includes('[input] png') ||
   (l.includes('SetTextColor') && l.includes('0xff0000')) ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH') ||
   l.includes('Unreachable code'));
 for (const l of interesting) console.log('  ' + l);
 
-function line(label, kind = 'dump-focus-charformat') {
-  const prefix = `${kind} ${label}:`;
-  return out.split('\n').find(l => l.includes(prefix)) || '';
+function line(label, kind) {
+  const marker = kind === 'menu-dump'
+    ? `${kind}:${label}:`
+    : `${kind} ${label}:`;
+  return out.split('\n').find(l => l.includes(marker)) || '';
 }
 
 function readPng(file) {
@@ -113,10 +131,6 @@ function analyzeTextBand(beforePath, afterPath) {
   const y1 = Math.min(200, before.height);
   let changedPixels = 0;
   let diffSum = 0;
-  let darkBefore = 0;
-  let darkAfter = 0;
-  let blueBefore = 0;
-  let blueAfter = 0;
   let blueDominantBefore = 0;
   let blueDominantAfter = 0;
 
@@ -134,57 +148,43 @@ function analyzeTextBand(beforePath, afterPath) {
       const delta = Math.abs(br - ar) + Math.abs(bg - ag) + Math.abs(bb - ab);
       if (delta > 30) changedPixels++;
       diffSum += delta;
-
-      if (ba && br < 120 && bg < 120 && bb < 120) darkBefore++;
-      if (aa && ar < 120 && ag < 120 && ab < 120) darkAfter++;
-      if (ba && bb > 120 && br < 100 && bg < 100) blueBefore++;
-      if (aa && ab > 120 && ar < 100 && ag < 100) blueAfter++;
       if (ba && bb > br + 40 && bb > bg + 40 && bb > 80) blueDominantBefore++;
       if (aa && ab > ar + 40 && ab > ag + 40 && ab > 80) blueDominantAfter++;
     }
   }
 
-  return {
-    changedPixels,
-    diffSum,
-    darkBefore,
-    darkAfter,
-    blueBefore,
-    blueAfter,
-    blueDominantBefore,
-    blueDominantAfter,
-  };
+  return { changedPixels, diffSum, blueDominantBefore, blueDominantAfter };
 }
 
 const typed = line('typed', 'dump-focus-state');
+const colorMenu = line('color', 'menu-dump');
+const hoverBlue = line('hover-blue', 'menu-dump');
+const afterBlue = line('after-blue', 'dump-focus-charformat');
 const afterBlueState = line('after-blue', 'dump-focus-state');
-const plain = line('plain');
-const afterBlue = line('after-blue');
-const setBlue = out.split('\n').find(l => l.includes('set-focus-charformat-color blue:')) || '';
 const visual = analyzeTextBand(PLAIN_PNG, BLUE_PNG);
 if (visual) {
-  console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} blueBefore=${visual.blueBefore} blueAfter=${visual.blueAfter} blueDominantBefore=${visual.blueDominantBefore} blueDominantAfter=${visual.blueDominantAfter}`);
+  console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} blueDominantBefore=${visual.blueDominantBefore} blueDominantAfter=${visual.blueDominantAfter}`);
 }
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
 
-check('WordPad reached ShowWindow', /ShowWindow\] hwnd=0x10001/.test(out));
+check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('typed text reached native RichEdit', /text="color"/.test(typed));
-check('plain text starts with automatic black color',
-  /effects=0x40000000/.test(plain) &&
-  /color=0x0/.test(plain));
-check('direct CFM_COLOR setter returned success',
-  /color=0xff0000/.test(setBlue) &&
-  /ret=0x1/.test(setBlue));
-check('RichEdit reports blue COLORREF with autocolor cleared',
+check('color toolbar popup exposes 17 dynamic commands',
+  /count=17/.test(colorMenu) &&
+  /#0 id=32782/.test(colorMenu) &&
+  /#12 id=32794 flags=0x0 "#801a"/.test(colorMenu) &&
+  /#16 id=32798/.test(colorMenu));
+check('mouse hover hit-tests Blue row', /hover=12/.test(hoverBlue));
+check('toolbar color popup screenshot written', fs.existsSync(POPUP_PNG) && fs.statSync(POPUP_PNG).size > 0);
+check('Blue menu row applies Win32 blue COLORREF',
   /effects=0x0/.test(afterBlue) &&
   /color=0xff0000/.test(afterBlue));
-check('text color formatting did not corrupt editor text', /text="color"/.test(afterBlueState));
-check('GDI text renderer used the blue COLORREF',
-  /SetTextColor\(.*0xff0000/.test(out));
-check('plain color screenshot written', fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
-check('blue color screenshot written', fs.existsSync(BLUE_PNG) && fs.statSync(BLUE_PNG).size > 0);
+check('text color command did not corrupt editor text', /text="color"/.test(afterBlueState));
+check('GDI text renderer used the blue COLORREF', /SetTextColor\(.*0xff0000/.test(out));
+check('plain screenshot written', fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
+check('blue screenshot written', fs.existsSync(BLUE_PNG) && fs.statSync(BLUE_PNG).size > 0);
 check('blue color changes visible text pixels',
   visual &&
   !visual.mismatch &&

@@ -2084,8 +2084,86 @@
     (if (local.get $target) (then (call $set_focus (local.get $target))))
     (local.get $target))
 
+  ;; WordPad's color toolbar builds a temporary owner-draw popup with command
+  ;; ids 0x800e..0x801e. TrackPopupMenu is currently asynchronous in this
+  ;; emulator, so WordPad destroys that temporary MFC menu state immediately
+  ;; after opening it. Keep the user-visible behavior by applying the selected
+  ;; color directly to the WordPad RichEdit child.
+  (func $wordpad_colorref_for_index (param $idx i32) (result i32)
+    (local $k i32) (local $c i32)
+    (if (i32.lt_u (local.get $idx) (i32.const 8))
+      (then
+        (local.set $c (i32.const 0))
+        (if (i32.and (local.get $idx) (i32.const 1))
+          (then (local.set $c (i32.or (local.get $c) (i32.const 0x00000080)))))
+        (if (i32.and (local.get $idx) (i32.const 2))
+          (then (local.set $c (i32.or (local.get $c) (i32.const 0x00008000)))))
+        (if (i32.and (local.get $idx) (i32.const 4))
+          (then (local.set $c (i32.or (local.get $c) (i32.const 0x00800000)))))
+        (return (local.get $c))))
+    (if (i32.eq (local.get $idx) (i32.const 8))
+      (then (return (i32.const 0x00C0C0C0))))
+    (local.set $k (i32.sub (local.get $idx) (i32.const 8)))
+    (local.set $c (i32.const 0))
+    (if (i32.and (local.get $k) (i32.const 1))
+      (then (local.set $c (i32.or (local.get $c) (i32.const 0x000000FF)))))
+    (if (i32.and (local.get $k) (i32.const 2))
+      (then (local.set $c (i32.or (local.get $c) (i32.const 0x0000FF00)))))
+    (if (i32.and (local.get $k) (i32.const 4))
+      (then (local.set $c (i32.or (local.get $c) (i32.const 0x00FF0000)))))
+    (local.get $c))
+
+  (func $wordpad_richedit_target (result i32)
+    (local $top i32) (local $target i32)
+    (if (i32.and
+          (i32.ne (global.get $focus_hwnd) (i32.const 0))
+          (i32.eq (call $ctrl_table_get_id (global.get $focus_hwnd)) (i32.const 0xE900)))
+      (then (return (global.get $focus_hwnd))))
+    (local.set $top (global.get $menu_open_hwnd))
+    (if (i32.eqz (local.get $top))
+      (then
+        (if (global.get $focus_hwnd)
+          (then (local.set $top (call $wnd_top_level (global.get $focus_hwnd)))))))
+    (if (local.get $top)
+      (then
+        (local.set $target (call $ctrl_find_by_id (local.get $top) (i32.const 0xE900)))
+        (if (local.get $target) (then (return (local.get $target))))))
+    (i32.const 0))
+
+  (func $menu_try_wordpad_color_command (param $id i32) (result i32)
+    (local $idx i32) (local $target i32) (local $cf_g i32) (local $cf_w i32)
+    (local $color i32)
+    (if (i32.or
+          (i32.lt_u (local.get $id) (i32.const 0x800E))
+          (i32.gt_u (local.get $id) (i32.const 0x801E)))
+      (then (return (i32.const 0))))
+    (local.set $target (call $wordpad_richedit_target))
+    (if (i32.eqz (local.get $target)) (then (return (i32.const 0))))
+    (local.set $idx (i32.sub (local.get $id) (i32.const 0x800E)))
+    (local.set $cf_g (call $heap_alloc (i32.const 64)))
+    (if (i32.eqz (local.get $cf_g)) (then (return (i32.const 0))))
+    (local.set $cf_w (call $g2w (local.get $cf_g)))
+    (call $zero_memory (local.get $cf_w) (i32.const 64))
+    (i32.store         (local.get $cf_w) (i32.const 60))          ;; cbSize
+    (i32.store offset=4 (local.get $cf_w) (i32.const 0x40000000)) ;; CFM_COLOR
+    (if (i32.eq (local.get $idx) (i32.const 16))
+      (then
+        (i32.store offset=8  (local.get $cf_w) (i32.const 0x40000000)) ;; CFE_AUTOCOLOR
+        (i32.store offset=20 (local.get $cf_w) (i32.const 0)))
+      (else
+        (local.set $color (call $wordpad_colorref_for_index (local.get $idx)))
+        (i32.store offset=8  (local.get $cf_w) (i32.const 0))
+        (i32.store offset=20 (local.get $cf_w) (local.get $color))))
+    (drop (call $wnd_send_message
+      (local.get $target) (i32.const 0x0444) (i32.const 1) (local.get $cf_g)))
+    (call $heap_free (local.get $cf_g))
+    (call $paint_flag_set_inv (local.get $target))
+    (i32.const 1))
+
   (func $menu_try_edit_command (param $id i32) (result i32)
     (local $target i32) (local $msg i32) (local $lParam i32)
+    (if (call $menu_try_wordpad_color_command (local.get $id))
+      (then (return (i32.const 1))))
     (local.set $target (call $edit_command_target))
     (if (i32.eqz (local.get $target)) (then (return (i32.const 0))))
     (if (i32.eq (local.get $id) (i32.const 7))

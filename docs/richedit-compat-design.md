@@ -184,10 +184,9 @@ native-editing path is alive.
   `EM_SETCHARFORMAT(CFM_COLOR)` directly to the focused WordPad RichEdit child,
   verifies `EM_GETCHARFORMAT` reports `color=0xff0000` with autocolor cleared,
   sees `SetTextColor(..., 0xff0000)`, and compares screenshots to assert blue
-  text pixels. This proves the native RichEdit color/rendering path, not
-  WordPad's toolbar/menu color UI: the format toolbar is visible now, but
-  toolbar button command/state mapping still does not carry WordPad's palette
-  state correctly.
+  text pixels. This proves the native RichEdit color/rendering path
+  independently from WordPad's toolbar/menu color UI, which has separate
+  coverage below.
 - Added a minimal WAT-native `ToolbarWindow32` common-control default proc
   (control class 21). It handles the layout-facing `TB_*` messages WordPad/MFC
   sends through `CallWindowProcA` after subclassing, including button counts,
@@ -209,6 +208,16 @@ native-editing path is alive.
   captures `test/output/wordpad-richedit/toolbar-format-buttons.png`, proving
   formatting-toolbar Bold / Italic / Underline mouse clicks route through
   WordPad UI and update native RichEdit charformat state.
+- Added WAT-backed dynamic popup menu state for `CreatePopupMenu` plus
+  `AppendMenuA/W` owner-draw items and `TrackPopupMenu` painting/hit-testing.
+  WordPad's formatting-toolbar color button now opens the 17-row temporary
+  color popup (`0x800e..0x801e`). Because `TrackPopupMenu` is still async in the
+  emulator and WordPad destroys the temporary MFC menu immediately after
+  opening it, `menu_try_edit_command` has a narrow fallback for those ids that
+  applies the selected Win32 `COLORREF` directly to the WordPad RichEdit child.
+  `test/test-wordpad-toolbar-color-menu.js` passes 13/13 and captures
+  `toolbar-color-menu-popup.png` plus `toolbar-color-menu-blue.png`, proving
+  the toolbar color UI route applies Blue (`COLORREF 0x00ff0000`).
 - Added ANSI `EnumFontFamiliesExA` / `EnumFontFamiliesA` callback support with
   the same one-face `Arial` enumeration as the Unicode path. This unblocks the
   formatting toolbar's ANSI font-list setup after the MFC toolbar subclass is
@@ -490,7 +499,7 @@ Acceptance:
 [x] WordPad standard/format toolbars are visible and layout RichEdit below them
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
-[ ] WordPad toolbar/menu color command route works through app UI
+[x] WordPad toolbar/menu color command route applies Blue through app UI
 [x] simple RTF round-trips without losing bold/italic/underline effects
 [ ] simple RTF round-trips font size/color/paragraph formatting
 ```
@@ -524,7 +533,7 @@ Acceptance:
 [x] WordPad standard/format toolbar layout is visibly asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
-[ ] WordPad toolbar/menu color route has explicit coverage
+[x] WordPad toolbar/menu color route has explicit coverage
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```

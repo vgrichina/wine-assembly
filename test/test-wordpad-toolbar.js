@@ -77,7 +77,7 @@ function parseWindowByCtrlId(id) {
   const re = new RegExp(
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
     `parent=(0x[0-9a-f]+) pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
-    `client=\\{[^}]*\\} visible=(true|false) dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
+    `client=\\{[^}]*\\} visible=(true|false)(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
     'i');
   const line = out.split('\n').find(l => re.test(l)) || '';
   const m = line.match(re);
@@ -124,7 +124,7 @@ const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
 const toolbarInk = countToolbarInk(PNG_OUT);
 const openedNewDialog =
-  /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true dialog=true .* title="New"/.test(out);
+  /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }

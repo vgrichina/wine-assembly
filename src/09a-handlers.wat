@@ -1406,7 +1406,9 @@
 
   ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
   (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_destroy (local.get $arg0)))
+    (if (call $dynamic_menu_destroy (local.get $arg0))
+      (then (global.set $eax (i32.const 1)))
+      (else (global.set $eax (call $host_menu_destroy (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -9396,15 +9398,29 @@
 
   ;; 655: AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem)
   (func $handle_AppendMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_append
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 1)))
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_append
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (global.set $eax (call $host_menu_append
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; AppendMenuA(hMenu, uFlags, uIDNewItem, lpNewItem) — return TRUE
   (func $handle_AppendMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_append
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 0)))
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_append
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (global.set $eax (call $host_menu_append
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -9856,9 +9872,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; CreatePopupMenu() — same allocator as CreateMenu.
+  ;; CreatePopupMenu() — WAT-owned dynamic popup menu state.
   (func $handle_CreatePopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_create))
+    (global.set $eax (call $dynamic_menu_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

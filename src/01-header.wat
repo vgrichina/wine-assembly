@@ -1429,6 +1429,7 @@
   (global $menu_open_sub_hover (mut i32) (i32.const -1))
   (global $menu_open_x     (mut i32) (i32.const -1))
   (global $menu_open_y     (mut i32) (i32.const -1))
+  (global $menu_open_popup_blob (mut i32) (i32.const 0)) ;; guest ptr to transient TrackPopupMenu blob for dynamic HMENU
 
   ;; Currently-dropped combobox hwnd (the COMBO, not the popup). 0 = none open.
   ;; Set by $combobox_open_dropdown / cleared by $combobox_close_dropdown.
