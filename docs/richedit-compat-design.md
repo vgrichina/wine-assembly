@@ -161,9 +161,12 @@ native-editing path is alive.
   Format > Font path can select Arial / Bold Italic / 24pt, send
   `EM_SETCHARFORMAT(yHeight=480, effects=bold|italic, face="Arial")`, and leave
   native RichEdit reporting the selected face/style with visible pixel changes.
-  This is not yet a full font-size fix: after the apply, RichEdit still reports
-  the existing 32767 size sentinel, so predictable visible size layout remains
-  open.
+  A follow-up GDI/RichEdit font-size hint now records the latest explicit
+  `CFM_SIZE` twips value and uses it only when native RichEdit later asks GDI to
+  create the known sentinel-derived huge font height. The font dialog regression
+  now also asserts that selecting 24pt visibly increases the rendered text
+  height. `EM_GETCHARFORMAT` still reports the existing 32767 size sentinel
+  after the apply, so selected-size state reporting remains open.
 - Added a focused `set-focus-charformat-color` harness action and
   `test/test-wordpad-richedit-color.js`. The bounded probe applies
   `EM_SETCHARFORMAT(CFM_COLOR)` directly to the focused WordPad RichEdit child,
@@ -439,7 +442,8 @@ Acceptance:
 [x] WordPad Format > Font dialog writes selected face/style/point size back to
     WordPad's `EM_SETCHARFORMAT`
 [x] WordPad Font dialog face/style application has visible/pixel assertions
-[ ] font size changes affect layout predictably
+[x] WordPad Font dialog 24pt selection visibly increases text height
+[ ] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [ ] WordPad toolbar/menu color command route works through app UI
 [x] simple RTF round-trips without losing bold/italic/underline effects
@@ -469,7 +473,8 @@ Acceptance:
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
-[ ] Font-size layout is visibly asserted in WordPad
+[x] Font-size layout is visibly asserted in WordPad
+[ ] RichEdit selected-size reporting returns concrete `yHeight`
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
 [ ] WordPad toolbar/menu color route has explicit coverage
 [ ] Installer/license RichEdit panes render and scroll

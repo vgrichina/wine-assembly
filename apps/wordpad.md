@@ -80,9 +80,9 @@ accelerator: TranslateAcceleratorA now matches Ctrl/Shift/Alt modifier bits
 RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
 pixels:      plain vs formatted screenshots differ in the typed-word band
 result:      PASS for WordPad formatting command dispatch, native RichEdit
-             CHARFORMAT state, and visible B/I/U text rendering. Font
-             size, paragraph formatting, and WordPad's own color UI command
-             route are still later work.
+             CHARFORMAT state, and visible B/I/U text rendering. Paragraph
+             formatting and WordPad's own color UI command route are still
+             later work.
 ```
 
 Focused formatting round-trip probe:
@@ -104,10 +104,13 @@ handoff:     WordPad sends EM_SETCHARFORMAT with effects=bold|italic,
              yHeight=480, and face="Arial"
 RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, face="Arial"
 pixels:      before/after screenshots differ in the typed-word band
+size:        a GDI/RichEdit font-size hint maps the sentinel-derived font
+             create back to the latest explicit CFM_SIZE value; the screenshot
+             ink box grows from 9px to 36px after choosing 24pt
 result:      PASS for Font dialog face/style/point-size handoff and visible
-             face/style rendering. RichEdit still reports the selected size as
-             the existing 32767 sentinel, so predictable visible font-size
-             layout remains follow-up work.
+             face/style/24pt rendering. RichEdit still reports the selected
+             size as the existing 32767 sentinel through EM_GETCHARFORMAT, so
+             concrete selected-size state reporting remains follow-up work.
 ```
 
 Focused direct RichEdit color probe:
@@ -192,10 +195,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
   `EM_SETCHARFORMAT(yHeight=480, effects=bold|italic, face="Arial")`; native
-  RichEdit then reports bold/italic and face `Arial`, and before/after editor
-  screenshots differ visibly. The size path is not done: `EM_GETCHARFORMAT`
-  still reports the existing 32767 sentinel after the apply, so visible font
-  sizing remains open.
+  RichEdit then reports bold/italic and face `Arial`. A narrow GDI/RichEdit
+  font-size hint now uses the latest explicit `CFM_SIZE` value when native
+  RichEdit later asks GDI for the known sentinel-derived huge font height, so
+  the before/after editor screenshots visibly show 24pt text. The remaining
+  size gap is state reporting: `EM_GETCHARFORMAT` still returns the existing
+  32767 sentinel after the apply.
 - A direct focused RichEdit color probe now applies
   `EM_SETCHARFORMAT(CFM_COLOR)` to the selected WordPad text. Native RichEdit
   reports `color=0xff0000` with autocolor cleared, `SetTextColor` receives that
@@ -239,11 +244,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   shows 236 changed pixels and 62 more dark pixels after B/I/U formatting.
 - Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
   and writes `test/output/wordpad-richedit/format-roundtrip.png`.
-- Regression test: `node test/test-wordpad-font-dialog.js` passes 15/15 and
+- Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
-  246 changed pixels and 74 more dark pixels after applying Arial Bold Italic
-  through Format > Font.
+  985 changed pixels, 630 more dark pixels, and ink height growing from 9px to
+  36px after applying Arial Bold Italic 24pt through Format > Font.
 - Regression test: `node test/test-wordpad-richedit-color.js` passes 12/12 and
   writes `test/output/wordpad-richedit/richedit-color-plain.png` plus
   `test/output/wordpad-richedit/richedit-color-blue.png`; the typed-word band
@@ -276,10 +281,11 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, RichEdit font-size layout, WordPad's toolbar/menu color route, and
-   paragraph formatting still need focused probes. Font dialog
-   face/style/point-size handoff and direct RichEdit color rendering are now
-   covered, but visible size application and the app's own color UI are not.
+   wrapping, concrete RichEdit selected-size reporting, WordPad's toolbar/menu
+   color route, and paragraph formatting still need focused probes. Font dialog
+   face/style/point-size handoff, visible 24pt rendering, and direct RichEdit
+   color rendering are now covered, but `EM_GETCHARFORMAT` size reporting and
+   the app's own color UI are not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

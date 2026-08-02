@@ -886,6 +886,20 @@
   (func (export "send_message")
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
     (result i32)
+    (local $cf_wa i32)
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0444)) ;; EM_SETCHARFORMAT
+          (i32.ne (local.get $lParam) (i32.const 0)))
+      (then
+        (local.set $cf_wa (call $g2w (local.get $lParam)))
+        (if (i32.ne
+              (i32.and
+                (i32.load offset=4 (local.get $cf_wa)) ;; dwMask
+                (i32.const 0x80000000))                ;; CFM_SIZE
+              (i32.const 0))
+          (then
+            (call $host_note_richedit_charformat_size
+              (i32.load offset=12 (local.get $cf_wa)))))))
     (call $wnd_send_message (local.get $hwnd) (local.get $msg)
                             (local.get $wParam) (local.get $lParam)))
 

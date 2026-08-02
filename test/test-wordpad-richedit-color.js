@@ -118,6 +118,8 @@ function analyzeTextBand(beforePath, afterPath) {
   let darkAfter = 0;
   let blueBefore = 0;
   let blueAfter = 0;
+  let blueDominantBefore = 0;
+  let blueDominantAfter = 0;
 
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
@@ -138,6 +140,8 @@ function analyzeTextBand(beforePath, afterPath) {
       if (aa && ar < 120 && ag < 120 && ab < 120) darkAfter++;
       if (ba && bb > 120 && br < 100 && bg < 100) blueBefore++;
       if (aa && ab > 120 && ar < 100 && ag < 100) blueAfter++;
+      if (ba && bb > br + 40 && bb > bg + 40 && bb > 80) blueDominantBefore++;
+      if (aa && ab > ar + 40 && ab > ag + 40 && ab > 80) blueDominantAfter++;
     }
   }
 
@@ -148,6 +152,8 @@ function analyzeTextBand(beforePath, afterPath) {
     darkAfter,
     blueBefore,
     blueAfter,
+    blueDominantBefore,
+    blueDominantAfter,
   };
 }
 
@@ -158,7 +164,7 @@ const afterBlue = line('after-blue');
 const setBlue = out.split('\n').find(l => l.includes('set-focus-charformat-color blue:')) || '';
 const visual = analyzeTextBand(PLAIN_PNG, BLUE_PNG);
 if (visual) {
-  console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} blueBefore=${visual.blueBefore} blueAfter=${visual.blueAfter}`);
+  console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} blueBefore=${visual.blueBefore} blueAfter=${visual.blueAfter} blueDominantBefore=${visual.blueDominantBefore} blueDominantAfter=${visual.blueDominantAfter}`);
 }
 
 const checks = [];
@@ -183,8 +189,8 @@ check('blue color screenshot written', fs.existsSync(BLUE_PNG) && fs.statSync(BL
 check('blue color changes visible text pixels',
   visual &&
   !visual.mismatch &&
-  visual.blueBefore <= 2 &&
-  visual.blueAfter >= 20 &&
+  visual.blueDominantBefore <= 2 &&
+  visual.blueDominantAfter >= 40 &&
   visual.changedPixels >= 40 &&
   visual.diffSum >= 5000);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));

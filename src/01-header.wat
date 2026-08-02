@@ -130,6 +130,8 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
   ;; create_font(height, weight, italic, facePtr) → handle
+  (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32)))
+  ;; note_richedit_charformat_size(yHeightTwips) — latest explicit CFM_SIZE hint
   (import "host" "measure_text" (func $host_measure_text (param i32 i32 i32) (result i32)))
   ;; measure_text(hdc, textPtr, nCount) → pixel width
   (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))

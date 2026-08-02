@@ -120,6 +120,12 @@ function compareTextBand(beforePath, afterPath) {
   let changedPixels = 0;
   let darkBefore = 0;
   let darkAfter = 0;
+  let inkBefore = 0;
+  let inkAfter = 0;
+  let inkBeforeMinY = 1 << 30;
+  let inkBeforeMaxY = -1;
+  let inkAfterMinY = 1 << 30;
+  let inkAfterMaxY = -1;
   let diffSum = 0;
 
   for (let y = y0; y < y1; y++) {
@@ -138,6 +144,16 @@ function compareTextBand(beforePath, afterPath) {
       if (after.data[i] < 120 && after.data[i + 1] < 120 && after.data[i + 2] < 120 && after.data[i + 3]) {
         darkAfter++;
       }
+      if (before.data[i] < 160 && before.data[i + 1] < 160 && before.data[i + 2] < 160 && before.data[i + 3]) {
+        inkBefore++;
+        if (y < inkBeforeMinY) inkBeforeMinY = y;
+        if (y > inkBeforeMaxY) inkBeforeMaxY = y;
+      }
+      if (after.data[i] < 160 && after.data[i + 1] < 160 && after.data[i + 2] < 160 && after.data[i + 3]) {
+        inkAfter++;
+        if (y < inkAfterMinY) inkAfterMinY = y;
+        if (y > inkAfterMaxY) inkAfterMaxY = y;
+      }
     }
   }
 
@@ -146,6 +162,10 @@ function compareTextBand(beforePath, afterPath) {
     darkBefore,
     darkAfter,
     darkDelta: darkAfter - darkBefore,
+    inkBefore,
+    inkAfter,
+    inkHeightBefore: inkBefore ? (inkBeforeMaxY - inkBeforeMinY + 1) : 0,
+    inkHeightAfter: inkAfter ? (inkAfterMaxY - inkAfterMinY + 1) : 0,
     diffSum,
   };
 }
@@ -162,7 +182,7 @@ const setCharFormat = out.split('\n').find(l =>
 
 const visual = compareTextBand(PLAIN_PNG, FONT_PNG);
 if (visual) {
-  console.log(`visual text-band diff: changed=${visual.changedPixels} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} darkDelta=${visual.darkDelta} diffSum=${visual.diffSum}`);
+  console.log(`visual text-band diff: changed=${visual.changedPixels} darkBefore=${visual.darkBefore} darkAfter=${visual.darkAfter} darkDelta=${visual.darkDelta} inkHeightBefore=${visual.inkHeightBefore} inkHeightAfter=${visual.inkHeightAfter} diffSum=${visual.diffSum}`);
 }
 
 const checks = [];
@@ -192,6 +212,11 @@ check('font dialog face/style changes visible text pixels',
   !visual.mismatch &&
   visual.changedPixels >= 40 &&
   visual.diffSum >= 10000);
+check('font dialog 24pt size visibly increases text height',
+  visual &&
+  !visual.mismatch &&
+  visual.inkHeightAfter >= 24 &&
+  visual.inkHeightAfter >= visual.inkHeightBefore + 12);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 
