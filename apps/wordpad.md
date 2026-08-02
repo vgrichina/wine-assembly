@@ -93,6 +93,22 @@ result:      PASS: reopened text is "style" and EM_GETCHARFORMAT on the
              selected reopened text reports bold=1, italic=1, underline=1.
 ```
 
+Focused Font dialog probe:
+
+```text
+type "font", Ctrl+A, Format > Font..., pick Arial / Bold Italic / 24pt, OK
+dialog:      WAT ChooseFontA exposes face/style/size listboxes and writes the
+             selected values back to CHOOSEFONT/LOGFONT
+handoff:     WordPad sends EM_SETCHARFORMAT with effects=bold|italic,
+             yHeight=480, and face="Arial"
+RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, face="Arial"
+pixels:      before/after screenshots differ in the typed-word band
+result:      PASS for Font dialog face/style/point-size handoff and visible
+             face/style rendering. RichEdit still reports the selected size as
+             the existing 32767 sentinel, so predictable visible font-size
+             layout remains follow-up work.
+```
+
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
@@ -155,6 +171,14 @@ Current evidence from the 2026-08-02 follow-up probe:
   effects preserved in RichEdit charformat state. This is still bounded to
   simple character formatting; font size/color, paragraph formatting, and
   advanced RTF remain follow-up work.
+- WordPad Format > Font now opens the WAT `ChooseFontA` dialog and returns the
+  selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
+  selecting Arial / Bold Italic / 24pt makes WordPad send
+  `EM_SETCHARFORMAT(yHeight=480, effects=bold|italic, face="Arial")`; native
+  RichEdit then reports bold/italic and face `Arial`, and before/after editor
+  screenshots differ visibly. The size path is not done: `EM_GETCHARFORMAT`
+  still reports the existing 32767 sentinel after the apply, so visible font
+  sizing remains open.
 - The shared Open/Save dialog now exposes a `Files of type` combobox from
   `OPENFILENAME.lpstrFilter` and writes the selected item back to
   `OPENFILENAME.nFilterIndex`. WordPad's `Text Document` selection shows the
@@ -192,6 +216,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   shows 236 changed pixels and 62 more dark pixels after B/I/U formatting.
 - Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
   and writes `test/output/wordpad-richedit/format-roundtrip.png`.
+- Regression test: `node test/test-wordpad-font-dialog.js` passes 15/15 and
+  writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
+  `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
+  246 changed pixels and 74 more dark pixels after applying Arial Bold Italic
+  through Format > Font.
 
 ## Write Launcher
 
@@ -219,8 +248,9 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, font size/color changes, and paragraph formatting still need
-   focused probes.
+   wrapping, RichEdit font-size layout, text color, and paragraph formatting
+   still need focused probes. Font dialog face/style/point-size handoff is now
+   covered, but visible size application is not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

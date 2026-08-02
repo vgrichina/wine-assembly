@@ -154,6 +154,19 @@ native-editing path is alive.
 - Added `test/test-wordpad-format-roundtrip.js`, which proves a simple
   WordPad RTF Save As -> New -> Open round-trip preserves selected text plus
   bold, italic, and underline effects in native RichEdit charformat state.
+- Expanded the WAT `ChooseFontA` dialog writeback from size-only to full
+  face/style/size output through `CHOOSEFONT` and `LOGFONT`, including
+  `iPointSize`, `nFontType`, `lpszStyle`, `lfFaceName`, `lfWeight`, and
+  `lfItalic`. Added `test/test-wordpad-font-dialog.js`; it proves WordPad's
+  Format > Font path can select Arial / Bold Italic / 24pt, send
+  `EM_SETCHARFORMAT(yHeight=480, effects=bold|italic, face="Arial")`, and leave
+  native RichEdit reporting the selected face/style with visible pixel changes.
+  This is not yet a full font-size fix: after the apply, RichEdit still reports
+  the existing 32767 size sentinel, so predictable visible size layout remains
+  open.
+- Added focused API trace formatting for `SendMessageA/W` calls carrying
+  `EM_GETCHARFORMAT` / `EM_SETCHARFORMAT`, so future WordPad/RichEdit probes
+  show decoded CHARFORMAT fields instead of only raw pointers.
 
 ### 2026-08-01 implementation progress
 
@@ -414,6 +427,9 @@ Acceptance:
 ```text
 [x] WordPad Ctrl+B / Ctrl+I / Ctrl+U toggle RichEdit charformat effects
 [x] bold / italic / underline have explicit visual/pixel assertions
+[x] WordPad Format > Font dialog writes selected face/style/point size back to
+    WordPad's `EM_SETCHARFORMAT`
+[x] WordPad Font dialog face/style application has visible/pixel assertions
 [ ] font size changes affect layout predictably
 [ ] text color renders
 [x] simple RTF round-trips without losing bold/italic/underline effects
@@ -442,7 +458,8 @@ Acceptance:
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
-[ ] Font-size/color are visibly asserted in WordPad
+[x] Font dialog face/style handoff is visibly asserted in WordPad
+[ ] Font-size layout and text color are visibly asserted in WordPad
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```

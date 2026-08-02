@@ -990,10 +990,9 @@
   ;;
   ;; Three listboxes (face / style / size) + OK / Cancel. The CHOOSEFONT
   ;; guest ptr is stashed in userdata so the IDOK handler can write the
-  ;; selected face/style/size back into CHOOSEFONT.lpLogFont. For V1 the
-  ;; write-back is a best-effort: we set lfHeight from the size index and
-  ;; zero out the face name since copying a variable face into LOGFONT
-  ;; requires the name string from the listbox and a 32-byte buffer.
+  ;; selected face/style/size back into CHOOSEFONT.lpLogFont plus the
+  ;; CHOOSEFONT output fields that apps commonly consume (notably
+  ;; iPointSize). WordPad builds its RichEdit CHARFORMAT from that result.
   ;;
   ;; Listbox control IDs: face=0x450, style=0x451, size=0x452.
   (func $fontdlg_wndproc
@@ -1017,21 +1016,32 @@
     (if (i32.eq (local.get $cmd) (i32.const 2))
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
 
-    ;; ---- OK: write size back to LOGFONT.lfHeight via helper ----
+    ;; ---- OK: write selected face/style/size back to CHOOSEFONT ----
     (if (i32.eq (local.get $cmd) (i32.const 1))
       (then
-        (call $fontdlg_writeback_size (local.get $hwnd))
+        (call $fontdlg_writeback (local.get $hwnd))
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
     (i32.const 0))
 
-  ;; Helper: read selected size from the 0x452 listbox, parse to int,
-  ;; write negative value into CHOOSEFONT.lpLogFont[lfHeight=+0]. Split
-  ;; out from $fontdlg_wndproc so the latter stays stack-balanced.
-  (func $fontdlg_writeback_size (param $hwnd i32)
+  ;; Helper: read selected face/style/size from the dialog listboxes and
+  ;; populate the CHOOSEFONT output fields that legacy apps expect:
+  ;;
+  ;;   CHOOSEFONT.lpLogFont (+0x0C) -> LOGFONTA
+  ;;   CHOOSEFONT.iPointSize (+0x10) = selected point size * 10
+  ;;   CHOOSEFONT.lpszStyle (+0x2C), if provided
+  ;;   CHOOSEFONT.nFontType (+0x30) style flags + TRUETYPE_FONTTYPE
+  ;;
+  ;; LOGFONT.lfHeight remains a simple negative point-size proxy. iPointSize
+  ;; gives MFC/WordPad the standard tenths-of-points value for
+  ;; CHARFORMAT.yHeight; RichEdit's later 32767 sentinel-size reporting is
+  ;; tracked separately from this common-dialog writeback.
+  (func $fontdlg_writeback (param $hwnd i32)
     (local $cf i32) (local $cf_w i32) (local $lf_g i32) (local $lf_w i32)
-    (local $size_h i32) (local $size_sel i32)
+    (local $face_h i32) (local $style_h i32) (local $size_h i32)
+    (local $face_sel i32) (local $style_sel i32) (local $size_sel i32)
     (local $buf_g i32) (local $buf_w i32)
+    (local $style_dst_g i32) (local $font_type i32)
     (local $val i32) (local $i i32) (local $c i32)
     (local.set $cf (call $wnd_get_userdata (local.get $hwnd)))
     (if (i32.eqz (local.get $cf)) (then (return)))
@@ -1039,6 +1049,58 @@
     (local.set $lf_g (i32.load offset=12 (local.get $cf_w)))
     (if (i32.eqz (local.get $lf_g)) (then (return)))
     (local.set $lf_w (call $g2w (local.get $lf_g)))
+
+    ;; Style selection -> LOGFONT weight/italic + CHOOSEFONT.nFontType.
+    (local.set $style_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x451)))
+    (local.set $style_sel (i32.const 0))
+    (if (local.get $style_h)
+      (then
+        (local.set $style_sel (call $wnd_send_message
+          (local.get $style_h) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
+        (if (i32.lt_s (local.get $style_sel) (i32.const 0))
+          (then (local.set $style_sel (i32.const 0))))))
+    (i32.store offset=16 (local.get $lf_w) (i32.const 400))
+    (if (i32.or (i32.eq (local.get $style_sel) (i32.const 1))
+                (i32.eq (local.get $style_sel) (i32.const 3)))
+      (then (i32.store offset=16 (local.get $lf_w) (i32.const 700))))
+    (i32.store8 offset=20 (local.get $lf_w) (i32.const 0))
+    (if (i32.or (i32.eq (local.get $style_sel) (i32.const 2))
+                (i32.eq (local.get $style_sel) (i32.const 3)))
+      (then (i32.store8 offset=20 (local.get $lf_w) (i32.const 1))))
+    (i32.store8 offset=21 (local.get $lf_w) (i32.const 0)) ;; lfUnderline
+    (i32.store8 offset=22 (local.get $lf_w) (i32.const 0)) ;; lfStrikeOut
+    (local.set $font_type (i32.const 0x0404)) ;; REGULAR_FONTTYPE | TRUETYPE_FONTTYPE
+    (if (i32.eq (local.get $style_sel) (i32.const 1))
+      (then (local.set $font_type (i32.const 0x0104)))) ;; BOLD | TRUETYPE
+    (if (i32.eq (local.get $style_sel) (i32.const 2))
+      (then (local.set $font_type (i32.const 0x0204)))) ;; ITALIC | TRUETYPE
+    (if (i32.eq (local.get $style_sel) (i32.const 3))
+      (then (local.set $font_type (i32.const 0x0304)))) ;; BOLD | ITALIC | TRUETYPE
+    (i32.store16 offset=48 (local.get $cf_w) (local.get $font_type))
+    (local.set $style_dst_g (i32.load offset=44 (local.get $cf_w)))
+    (if (local.get $style_h)
+      (then
+        (if (local.get $style_dst_g)
+          (then
+            (drop (call $wnd_send_message
+              (local.get $style_h) (i32.const 0x0189)
+              (local.get $style_sel) (local.get $style_dst_g)))))))
+
+    ;; Face selection -> LOGFONT.lfFaceName (32-byte ANSI buffer).
+    (local.set $face_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x450)))
+    (local.set $face_sel (i32.const 0))
+    (if (local.get $face_h)
+      (then
+        (local.set $face_sel (call $wnd_send_message
+          (local.get $face_h) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
+        (if (i32.lt_s (local.get $face_sel) (i32.const 0))
+          (then (local.set $face_sel (i32.const 0))))
+        (call $zero_memory (i32.add (local.get $lf_w) (i32.const 28)) (i32.const 32))
+        (drop (call $wnd_send_message
+          (local.get $face_h) (i32.const 0x0189)
+          (local.get $face_sel) (i32.add (local.get $lf_g) (i32.const 28))))))
+
+    ;; Size selection -> LOGFONT.lfHeight and CHOOSEFONT.iPointSize.
     (local.set $size_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x452)))
     (if (i32.eqz (local.get $size_h)) (then (return)))
     (local.set $size_sel (call $wnd_send_message (local.get $size_h) (i32.const 0x0188) (i32.const 0) (i32.const 0)))
@@ -1057,7 +1119,11 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $digit)))
     (call $heap_free (local.get $buf_g))
-    (i32.store (local.get $lf_w) (i32.sub (i32.const 0) (local.get $val))))
+    (if (i32.gt_s (local.get $val) (i32.const 0))
+      (then
+        (i32.store (local.get $lf_w) (i32.sub (i32.const 0) (local.get $val)))
+        (i32.store offset=16 (local.get $cf_w)
+          (i32.mul (local.get $val) (i32.const 10))))))
 
   (func $create_font_dialog (param $dlg i32) (param $owner i32) (param $cf i32)
     (local $face_lb i32) (local $style_lb i32) (local $size_lb i32)
