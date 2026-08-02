@@ -24,7 +24,7 @@ if (!fs.existsSync(EXE)) {
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
-const seq = ['70:click:40:70'];
+const seq = ['70:click:40:150'];
 let b = 74;
 for (const ch of TEXT) {
   seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
@@ -38,7 +38,7 @@ seq.push('174:dlg-dump:filter-text');
 seq.push(`180:open-dlg-pick:${SAVE_NAME}`);
 seq.push('205:dlg-dump:text-warning');
 seq.push('210:dlg-cmd:6');
-seq.push('250:click:40:70');
+seq.push('250:click:40:150');
 seq.push('260:dump-focus-text:after-save');
 seq.push('300:0x111:57600');
 seq.push('330:dlg-cmd:1');

@@ -2828,6 +2828,7 @@ async function main() {
         }
       } else if (ev.action === 'dump-windows' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
         const entries = Object.entries(renderer.windows || {})
           .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
         if (!entries.length) {
@@ -2835,7 +2836,15 @@ async function main() {
         }
         for (const [hwndStr, win] of entries) {
           if (!win) continue;
-          logs.push(`[input] window${label} hwnd=${hwndStr} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          let ctrlClass = -1;
+          let ctrlId = -1;
+          try {
+            if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0;
+            if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
+          } catch (_) {}
+          const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
         try {

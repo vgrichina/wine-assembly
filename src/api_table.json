@@ -15903,5 +15903,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3769696995
+  },
+  {
+    "id": 2069,
+    "name": "EnumFontFamiliesExA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 174284435
+  },
+  {
+    "id": 2070,
+    "name": "EnumFontFamiliesA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2198602244
   }
 ]

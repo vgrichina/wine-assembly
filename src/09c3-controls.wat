@@ -19,7 +19,8 @@
   ;; ctrl_class values: 0=not a control, 1=Button, 2=Edit, 3=Static,
   ;;                    4=ListBox, 5=ComboBox, 6=ColorGrid, 7=ScrollBar,
   ;;                    8=TreeView, 9=Combo popup, 10+=WAT-built dialogs,
-  ;;                    17=ProgressBar, 18=ListView
+  ;;                    17=ProgressBar, 18=ListView, 19=TrackBar,
+  ;;                    20=Tooltip, 21=Toolbar
 
   ;; ---- Per-class state struct layouts ----
   ;;
@@ -344,6 +345,9 @@
     ;; Class 20 = Tooltip (tooltips_class32)
     (if (i32.eq (local.get $class) (i32.const 20))
       (then (return (call $tooltip_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 21 = Toolbar (ToolbarWindow32)
+    (if (i32.eq (local.get $class) (i32.const 21))
+      (then (return (call $toolbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -3264,6 +3268,277 @@
                         (local.get $w) (local.get $h)
                         (i32.const 0x0A) (i32.const 0x0F)))))))
         (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; ---- Toolbar WndProc ----
+  ;;
+  ;; Minimal ToolbarWindow32 common-control default proc. WordPad subclasses
+  ;; this child with MFC's CToolBar proc, then chains TB_* messages to the
+  ;; previous wndproc through CallWindowProcA. Returning a real button count and
+  ;; button geometry is enough for MFC's WM_SIZEPARENT layout to allocate a
+  ;; visible toolbar instead of collapsing it to its border height.
+  ;;
+  ;; ToolbarState (32 bytes):
+  ;; +0 button_count, +4 button_w, +8 button_h, +12 bitmap_w, +16 bitmap_h,
+  ;; +20 rows, +24 tbutton_struct_size, +28 bitmap_count.
+
+  (func $toolbar_ensure_state (param $hwnd i32) (result i32)
+    (local $state i32) (local $sw i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (local.set $state (call $heap_alloc (i32.const 32)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (call $zero_memory (local.get $sw) (i32.const 32))
+        (i32.store offset=4  (local.get $sw) (i32.const 23)) ;; default dxButton
+        (i32.store offset=8  (local.get $sw) (i32.const 22)) ;; default dyButton
+        (i32.store offset=12 (local.get $sw) (i32.const 16)) ;; default dxBitmap
+        (i32.store offset=16 (local.get $sw) (i32.const 15)) ;; default dyBitmap
+        (i32.store offset=20 (local.get $sw) (i32.const 1))  ;; one row
+        (i32.store offset=24 (local.get $sw) (i32.const 20)) ;; sizeof(TBBUTTON)
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
+    (local.get $state))
+
+  (func $toolbar_autosize (param $hwnd i32)
+    (local $idx i32) (local $state i32) (local $sw i32) (local $parent i32)
+    (local $xy i32) (local $wh i32) (local $x i32) (local $y i32)
+    (local $w i32) (local $h i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $x (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
+    (local.set $y (i32.shr_s (local.get $xy) (i32.const 16)))
+    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
+    (if (i32.le_s (local.get $w) (i32.const 0))
+      (then
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (if (local.get $parent)
+          (then (local.set $w (call $wnd_client_w_for_clip (local.get $parent)))))))
+    (if (i32.le_s (local.get $w) (i32.const 0)) (then (local.set $w (i32.const 160))))
+    (local.set $h (i32.add (i32.load offset=8 (local.get $sw)) (i32.const 6)))
+    (if (i32.lt_s (local.get $h) (i32.const 24)) (then (local.set $h (i32.const 24))))
+    (call $host_move_window (local.get $hwnd) (local.get $x) (local.get $y) (local.get $w) (local.get $h) (i32.const 0))
+    (call $ctrl_geom_set (local.get $idx) (local.get $x) (local.get $y) (local.get $w) (local.get $h))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (call $paint_flag_set_inv (local.get $hwnd)))
+
+  (func $toolbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $hdc i32)
+    (local $sz i32) (local $w i32) (local $h i32)
+    (local $count i32) (local $i i32) (local $left i32) (local $top i32)
+    (local $bw i32) (local $bh i32) (local $old i32) (local $rect i32)
+
+    ;; WM_DESTROY
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+        (if (local.get $state)
+          (then
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    ;; WM_CREATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; WM_ERASEBKGND
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then
+        (drop (call $host_erase_background (local.get $hwnd) (i32.const 16)))
+        (return (i32.const 1))))
+
+    ;; TB_BUTTONSTRUCTSIZE (WM_USER+30): remember caller's TBBUTTON size.
+    (if (i32.eq (local.get $msg) (i32.const 0x041E))
+      (then
+        (if (local.get $wParam)
+          (then (i32.store offset=24 (local.get $sw) (local.get $wParam))))
+        (return (i32.const 1))))
+
+    ;; TB_ADDBITMAP (WM_USER+19): return first allocated bitmap index.
+    (if (i32.eq (local.get $msg) (i32.const 0x0413))
+      (then
+        (local.set $old (i32.load offset=28 (local.get $sw)))
+        (i32.store offset=28 (local.get $sw)
+          (i32.add (local.get $old) (local.get $wParam)))
+        (return (local.get $old))))
+
+    ;; TB_ADDBUTTONSA (WM_USER+20): append wParam buttons.
+    (if (i32.eq (local.get $msg) (i32.const 0x0414))
+      (then
+        (if (i32.gt_u (local.get $wParam) (i32.const 0))
+          (then
+            (i32.store (local.get $sw)
+              (i32.add (i32.load (local.get $sw)) (local.get $wParam)))))
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; TB_INSERTBUTTONA (WM_USER+21), TB_DELETEBUTTON (WM_USER+22).
+    (if (i32.eq (local.get $msg) (i32.const 0x0415))
+      (then
+        (i32.store (local.get $sw) (i32.add (i32.load (local.get $sw)) (i32.const 1)))
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0416))
+      (then
+        (if (i32.gt_u (i32.load (local.get $sw)) (i32.const 0))
+          (then (i32.store (local.get $sw) (i32.sub (i32.load (local.get $sw)) (i32.const 1)))))
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; TB_GETBUTTON (WM_USER+23): write a simple enabled TBBUTTON.
+    (if (i32.eq (local.get $msg) (i32.const 0x0417))
+      (then
+        (if (i32.or
+              (i32.eqz (local.get $lParam))
+              (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $rect (call $g2w (local.get $lParam)))
+        (i32.store        (local.get $rect) (local.get $wParam)) ;; iBitmap
+        (i32.store offset=4  (local.get $rect) (i32.const 0))    ;; idCommand unknown in this subset
+        (i32.store8 offset=8 (local.get $rect) (i32.const 4))    ;; TBSTATE_ENABLED
+        (i32.store8 offset=9 (local.get $rect) (i32.const 0))    ;; TBSTYLE_BUTTON
+        (i32.store16 offset=10 (local.get $rect) (i32.const 0))
+        (i32.store offset=12 (local.get $rect) (i32.const 0))
+        (i32.store offset=16 (local.get $rect) (i32.const 0))
+        (return (i32.const 1))))
+
+    ;; TB_BUTTONCOUNT (WM_USER+24), TB_GETROWS (WM_USER+40).
+    (if (i32.eq (local.get $msg) (i32.const 0x0418))
+      (then (return (i32.load (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0428))
+      (then (return (i32.load offset=20 (local.get $sw)))))
+
+    ;; TB_GETITEMRECT (WM_USER+29): lParam -> RECT for button index wParam.
+    (if (i32.eq (local.get $msg) (i32.const 0x041D))
+      (then
+        (if (i32.or
+              (i32.eqz (local.get $lParam))
+              (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $rect (call $g2w (local.get $lParam)))
+        (local.set $bw (i32.load offset=4 (local.get $sw)))
+        (local.set $bh (i32.load offset=8 (local.get $sw)))
+        (local.set $left (i32.add (i32.const 2) (i32.mul (local.get $wParam) (local.get $bw))))
+        (local.set $top (i32.const 2))
+        (i32.store        (local.get $rect) (local.get $left))
+        (i32.store offset=4  (local.get $rect) (local.get $top))
+        (i32.store offset=8  (local.get $rect) (i32.add (local.get $left) (local.get $bw)))
+        (i32.store offset=12 (local.get $rect) (i32.add (local.get $top) (local.get $bh)))
+        (return (i32.const 1))))
+
+    ;; TB_SETBUTTONSIZE / TB_SETBITMAPSIZE / TB_AUTOSIZE.
+    (if (i32.eq (local.get $msg) (i32.const 0x041F))
+      (then
+        (local.set $bw (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $bh (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (i32.store offset=4 (local.get $sw) (local.get $bw))))
+        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (i32.store offset=8 (local.get $sw) (local.get $bh))))
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0420))
+      (then
+        (local.set $bw (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $bh (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (i32.store offset=12 (local.get $sw) (local.get $bw))))
+        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (i32.store offset=16 (local.get $sw) (local.get $bh))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0421))
+      (then
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; TB_GETBUTTONSIZE (WM_USER+58), TB_SETROWS (WM_USER+39).
+    (if (i32.eq (local.get $msg) (i32.const 0x043A))
+      (then
+        (return
+          (i32.or
+            (i32.and (i32.load offset=4 (local.get $sw)) (i32.const 0xFFFF))
+            (i32.shl (i32.load offset=8 (local.get $sw)) (i32.const 16))))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0427))
+      (then
+        (if (i32.gt_u (i32.and (local.get $wParam) (i32.const 0xFFFF)) (i32.const 0))
+          (then (i32.store offset=20 (local.get $sw) (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
+        (call $toolbar_autosize (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; Basic state/probe messages: enabled, unchecked, visible.
+    (if (i32.eq (local.get $msg) (i32.const 0x0409)) (then (return (i32.const 1)))) ;; TB_ISBUTTONENABLED
+    (if (i32.eq (local.get $msg) (i32.const 0x040A)) (then (return (i32.const 0)))) ;; TB_ISBUTTONCHECKED
+    (if (i32.eq (local.get $msg) (i32.const 0x040B)) (then (return (i32.const 0)))) ;; TB_ISBUTTONPRESSED
+    (if (i32.eq (local.get $msg) (i32.const 0x040C)) (then (return (i32.const 0)))) ;; TB_ISBUTTONHIDDEN
+    (if (i32.eq (local.get $msg) (i32.const 0x040D)) (then (return (i32.const 0)))) ;; TB_ISBUTTONINDETERMINATE
+    (if (i32.eq (local.get $msg) (i32.const 0x0412)) (then (return (i32.const 4)))) ;; TB_GETSTATE: enabled
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0401)) ;; TB_ENABLEBUTTON
+          (i32.or
+            (i32.eq (local.get $msg) (i32.const 0x0402)) ;; TB_CHECKBUTTON
+            (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x0403)) ;; TB_PRESSBUTTON
+              (i32.or
+                (i32.eq (local.get $msg) (i32.const 0x0404)) ;; TB_HIDEBUTTON
+                (i32.or
+                  (i32.eq (local.get $msg) (i32.const 0x0405)) ;; TB_INDETERMINATE
+                  (i32.eq (local.get $msg) (i32.const 0x0411))))))) ;; TB_SETSTATE
+      (then
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                     (i32.gt_s (local.get $h) (i32.const 0)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30011))) ;; COLOR_BTNFACE approximation.
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x04) (i32.const 0x08))) ;; BDR_RAISEDINNER | BF_BOTTOM
+            (local.set $count (i32.load (local.get $sw)))
+            (local.set $bw (i32.load offset=4 (local.get $sw)))
+            (local.set $bh (i32.load offset=8 (local.get $sw)))
+            (if (i32.lt_s (local.get $count) (i32.const 1))
+              (then (local.set $count (i32.const 1))))
+            (local.set $i (i32.const 0))
+            (block $done (loop $buttons
+              (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+              (local.set $left (i32.add (i32.const 2) (i32.mul (local.get $i) (local.get $bw))))
+              (local.set $top (i32.const 2))
+              (br_if $done (i32.ge_s (local.get $left) (i32.sub (local.get $w) (i32.const 2))))
+              (drop (call $host_gdi_draw_edge (local.get $hdc)
+                      (local.get $left) (local.get $top)
+                      (i32.add (local.get $left) (local.get $bw))
+                      (i32.add (local.get $top) (local.get $bh))
+                      (i32.const 0x05) (i32.const 0x0F))) ;; EDGE_RAISED | BF_RECT
+              ;; Placeholder glyph: a small dark mark inside each button, so
+              ;; screenshots distinguish toolbar buttons from a plain gray band.
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (i32.add (local.get $left) (i32.const 8))
+                      (i32.add (local.get $top) (i32.const 7))
+                      (i32.add (local.get $left) (i32.const 15))
+                      (i32.add (local.get $top) (i32.const 14))
+                      (i32.const 0x30012)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $buttons)))))
+        (return (i32.const 0))))
+
     (i32.const 0))
 
   ;; ---- Tooltip WndProc ----

@@ -24,7 +24,7 @@ if (!fs.existsSync(EXE)) {
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const seq = [
-  '70:click:40:70',
+  '70:click:40:150',
 ];
 let b = 74;
 for (const ch of TEXT) {
@@ -125,13 +125,13 @@ function compareTextBand(beforePath, afterPath) {
     return { mismatch: true };
   }
 
-  // WordPad's edit surface begins just under the toolbar in the fixed-size test
-  // window. Keep the region tight around the typed word so caret/window chrome
-  // noise does not satisfy the visual formatting assertion.
+  // WordPad's edit surface begins below the visible standard/format toolbars in
+  // the fixed-size test window. Keep the region tight around the typed word so
+  // caret/window chrome noise does not satisfy the visual formatting assertion.
   const x0 = 0;
-  const y0 = 45;
+  const y0 = 130;
   const x1 = Math.min(220, before.width);
-  const y1 = Math.min(95, before.height);
+  const y1 = Math.min(200, before.height);
   let changedPixels = 0;
   let darkBefore = 0;
   let darkAfter = 0;

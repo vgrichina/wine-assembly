@@ -26,6 +26,19 @@ result: PASS for basic text entry/editing — typed text, Backspace, and Enter
         RichEdit controls.
 ```
 
+Focused toolbar layout probe:
+
+```text
+startup, dump windows, capture toolbar-layout screenshot
+toolbars:  Standard and Formatting are visible `ToolbarWindow32` children
+           with WAT control class 21 and independent back-surfaces
+layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
+           toolbar rows and the ruler/status bands
+result:    PASS for minimal ToolbarWindow32 layout/painting and WordPad MFC
+           toolbar sizing. Button command hit-testing/state mapping remains
+           follow-up work.
+```
+
 Focused mouse/scroll probe:
 
 ```text
@@ -125,14 +138,23 @@ pixels:      before/after screenshots differ in the typed-word band, with
              blue pixels appearing only after the format apply
 result:      PASS for the native RichEdit color/rendering path. This bypasses
              WordPad's toolbar/menu color UI; that route remains open because
-             the format toolbar is currently zero-sized and direct color menu
-             IDs do not yet carry WordPad's palette state correctly.
+             toolbar button command/state mapping does not yet carry WordPad's
+             palette state correctly.
 ```
 
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
   the blocker.
+- The standard and formatting toolbars now create as WAT-native
+  `ToolbarWindow32` controls, paint visible button placeholders, and report
+  enough `TB_*` layout state for WordPad/MFC to size the toolbar rows. The
+  native RichEdit child is laid out below them instead of overlapping the top
+  of the document area.
+- Renderer keyboard routing now preserves focus on native child controls such
+  as WordPad's `RichEdit20A` before falling back to the first WAT `EDIT`. This
+  prevents the formatting toolbar's combobox edit child from stealing typing
+  after the editor is clicked.
 - `WM_CHAR` inserts through the native RichEdit path.
 - The test harness can now dump focused native-control text through
   synchronous `WM_GETTEXT`, so WordPad assertions no longer rely only on
@@ -215,9 +237,10 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
-- `EnumFontFamiliesExW` / `EnumFontFamiliesW` now enumerate one basic
+- `EnumFontFamiliesExA/W` / `EnumFontFamiliesA/W` now enumerate one basic
   TrueType-style `Arial` face through the app callback. This unblocks WordPad's
-  font-list startup path before `ShowWindow`.
+  font-list startup path before `ShowWindow` and the ANSI font enumeration path
+  used while creating the visible formatting toolbar.
 - The `32767 twips` RichEdit sentinel is clamped during the exact screen-DPI
   `MulDiv(32767, 96, 1440)` conversion, so text no longer paints at a large
   negative y coordinate.
@@ -226,6 +249,9 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
+- Regression test: `node test/test-wordpad-toolbar.js` passes 11/11 and writes
+  `test/output/wordpad-richedit/toolbar-layout.png`, which shows the visible
+  standard/formatting toolbars above the editor.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor.
@@ -241,18 +267,18 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-format-accelerators.js` passes 13/13
   and writes `test/output/wordpad-richedit/format-accelerators-plain.png` plus
   `test/output/wordpad-richedit/format-accelerators.png`; the typed-word band
-  shows 236 changed pixels and 62 more dark pixels after B/I/U formatting.
+  shows 155 changed pixels and 58 more dark pixels after B/I/U formatting.
 - Regression test: `node test/test-wordpad-format-roundtrip.js` passes 19/19
   and writes `test/output/wordpad-richedit/format-roundtrip.png`.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
-  985 changed pixels, 630 more dark pixels, and ink height growing from 9px to
-  36px after applying Arial Bold Italic 24pt through Format > Font.
+  1779 changed pixels, 510 more dark pixels, and ink height growing from 20px
+  to 37px after applying Arial Bold Italic 24pt through Format > Font.
 - Regression test: `node test/test-wordpad-richedit-color.js` passes 12/12 and
   writes `test/output/wordpad-richedit/richedit-color-plain.png` plus
   `test/output/wordpad-richedit/richedit-color-blue.png`; the typed-word band
-  shows 139 changed pixels and 50 blue pixels after applying direct
+  shows 96 changed pixels and 94 blue-dominant pixels after applying direct
   `CFM_COLOR`.
 
 ## Write Launcher
@@ -281,11 +307,12 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, concrete RichEdit selected-size reporting, WordPad's toolbar/menu
-   color route, and paragraph formatting still need focused probes. Font dialog
-   face/style/point-size handoff, visible 24pt rendering, and direct RichEdit
-   color rendering are now covered, but `EM_GETCHARFORMAT` size reporting and
-   the app's own color UI are not.
+   wrapping, toolbar button command hit-testing/state mapping, concrete
+   RichEdit selected-size reporting, WordPad's toolbar/menu color route, and
+   paragraph formatting still need focused probes. Font dialog
+   face/style/point-size handoff, visible 24pt rendering, visible toolbar
+   layout, and direct RichEdit color rendering are now covered, but
+   `EM_GETCHARFORMAT` size reporting and the app's own color UI are not.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
@@ -296,4 +323,5 @@ RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 
 **Key files:** `lib/thread-manager.js`, `lib/renderer-input.js`,
-`lib/host-imports.js`, `src/09a-handlers.wat`, `src/09a5-handlers-window.wat`
+`lib/renderer.js`, `lib/host-imports.js`, `src/09a-handlers.wat`,
+`src/09a5-handlers-window.wat`, `src/09c3-controls.wat`

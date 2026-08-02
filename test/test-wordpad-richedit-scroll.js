@@ -23,7 +23,7 @@ if (!fs.existsSync(EXE)) {
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
-const seq = ['70:click:40:70'];
+const seq = ['70:click:40:150'];
 let b = 74;
 
 function push(action, step = 1) {
@@ -49,9 +49,9 @@ function ctrlKey(vk) {
 
 typeText('mouse select');
 push('dump-focus-state:typed', 8);
-push('mousedown:5:56', 2);
-push('mousemove:90:56', 2);
-push('mouseup:90:56', 6);
+push('mousedown:10:150', 2);
+push('mousemove:120:150', 2);
+push('mouseup:120:150', 6);
 push('dump-focus-state:dragged', 8);
 
 ctrlKey(65); // Ctrl+A
@@ -123,7 +123,7 @@ function state(label) {
 function countDarkPixels(pngPath) {
   const png = PNG.sync.read(fs.readFileSync(pngPath));
   let dark = 0;
-  for (let y = 45; y < Math.min(260, png.height); y++) {
+  for (let y = 125; y < Math.min(285, png.height); y++) {
     for (let x = 5; x < Math.min(220, png.width); x++) {
       const i = (y * png.width + x) * 4;
       const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2], a = png.data[i + 3];

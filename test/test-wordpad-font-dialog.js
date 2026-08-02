@@ -25,7 +25,7 @@ if (!fs.existsSync(EXE)) {
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const seq = [
-  '70:click:40:70',
+  '70:click:40:150',
 ];
 let b = 74;
 for (const ch of TEXT) {
@@ -114,9 +114,9 @@ function compareTextBand(beforePath, afterPath) {
   }
 
   const x0 = 0;
-  const y0 = 45;
+  const y0 = 125;
   const x1 = Math.min(220, before.width);
-  const y1 = Math.min(95, before.height);
+  const y1 = Math.min(225, before.height);
   let changedPixels = 0;
   let darkBefore = 0;
   let darkAfter = 0;

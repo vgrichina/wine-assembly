@@ -20,7 +20,7 @@ if (!fs.existsSync(EXE)) {
 
 const seq = [
   '60:slot-count:before',
-  '70:click:40:70',
+  '70:click:40:150',
 ];
 let b = 74;
 for (const ch of TEXT) {

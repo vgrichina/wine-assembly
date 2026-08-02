@@ -30,7 +30,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const text = 'hello world';
 const seq = [
-  '70:click:40:70',
+  '70:click:40:150',
   '72:dump-focus:clicked',
 ];
 let b = 74;
@@ -152,11 +152,10 @@ for (const l of interesting) console.log('  ' + l);
 function countDarkTextPixels(pngPath) {
   const png = PNG.sync.read(fs.readFileSync(pngPath));
   let dark = 0;
-  // Tight band over the upper-left of WordPad's editor, where "hello world"
-  // paints after click+typing. The blank editor baseline has 0 dark pixels
-  // here in current renderer output.
+  // Tight band over the upper-left of WordPad's editor, below the visible
+  // standard/format toolbars, where the edited text paints after click+typing.
   const x0 = 5, x1 = Math.min(170, png.width);
-  const y0 = 50, y1 = Math.min(90, png.height);
+  const y0 = 130, y1 = Math.min(210, png.height);
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = (y * png.width + x) * 4;

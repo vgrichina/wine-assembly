@@ -213,6 +213,21 @@
             (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                     (i32.const 0x73706974)))) ;; "tips"
       (then (local.set $tmp (i32.const 0))))
+    ;; Prefer the WAT-native ToolbarWindow32 default proc. MFC control bars
+    ;; subclass it and chain TB_* messages to the previous wndproc; the guest
+    ;; comctl32 toolbar proc currently reports no usable button/layout state,
+    ;; collapsing WordPad's toolbar to an 8px border strip.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x6c6f6f74)) ;; "tool"
+            (i32.and
+              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x77726162)) ;; "barw"
+              (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x6f646e69))))) ;; "indo"
+      (then (local.set $tmp (i32.const 0))))
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
     ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
@@ -239,7 +254,8 @@
         ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082, LISTBOX=0x0083,
         ;;        SCROLLBAR=0x0084, COMBOBOX=0x0085.
         ;; ctrl class IDs (see $control_wndproc_dispatch):
-        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7.
+        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
+        ;;   TreeView=8, ListView=18, Tooltip=20, Toolbar=21.
         (local.set $detected_class (i32.const 0))
         (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
         (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
@@ -305,6 +321,17 @@
                   (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x73706974)))
               (then (local.set $detected_class (i32.const 20))))
+            ;; "ToolbarWindow32" → class 21 (Toolbar)
+            ;; LE dwords: "tool"=0x6c6f6f74, "barw"=0x77726162, "indo"=0x6f646e69
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x6c6f6f74))
+                  (i32.and
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x77726162))
+                    (i32.eq (i32.or (i32.load offset=8 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x6f646e69))))
+              (then (local.set $detected_class (i32.const 21))))
             ;; "listbox\0" — LE dwords: "list"=0x7473696c, "box\0" = u32 0x00786f62.
             (if (i32.and
                   (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
@@ -638,7 +665,12 @@
     ;; wndproc via SetWindowLongA before we start delivering messages.
     (if (i32.and
           (global.get $cbt_hook_proc)
-          (i32.ne (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE)))
+          (i32.or
+            (i32.ne (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE))
+            ;; ToolbarWindow32 is WAT-native only as the common-control
+            ;; default proc. MFC still needs its CBT subclass hook so it can
+            ;; own WM_SIZEPARENT and chain TB_* messages to this default proc.
+            (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 21))))
     (then
     ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
     (global.set $child_cbt_saved_hwnd (local.get $hwnd))

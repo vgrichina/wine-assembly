@@ -5118,8 +5118,77 @@
   )
 
   ;; Minimal font enumeration callback. Enumerate one stable TrueType-style
-  ;; face ("Arial") with enough ENUMLOGFONTEXW / NEWTEXTMETRICEXW fields for
-  ;; MFC/WordPad font-list startup code.
+  ;; face ("Arial") with enough ENUMLOGFONTEXA/W / NEWTEXTMETRICEXA/W fields
+  ;; for MFC/WordPad font-list startup code.
+  (func $font_enum_dispatch_one_a (param $callback i32) (param $lparam i32) (param $ret_addr i32)
+    (local $lf_guest i32) (local $lf_wa i32) (local $tm_guest i32) (local $tm_wa i32)
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $lf_guest (call $heap_alloc (i32.const 192)))
+    (local.set $tm_guest (call $heap_alloc (i32.const 128)))
+    (local.set $lf_wa (call $g2w (local.get $lf_guest)))
+    (local.set $tm_wa (call $g2w (local.get $tm_guest)))
+    (call $zero_memory (local.get $lf_wa) (i32.const 192))
+    (call $zero_memory (local.get $tm_wa) (i32.const 128))
+
+    ;; LOGFONTA at ENUMLOGFONTEXA+0.
+    (i32.store (local.get $lf_wa) (i32.const -12))                         ;; lfHeight
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 16)) (i32.const 400)) ;; lfWeight
+    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 23)) (i32.const 0))  ;; ANSI_CHARSET
+    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 27)) (i32.const 0x22)) ;; VARIABLE_PITCH|FF_SWISS
+    ;; lfFaceName = "Arial".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 28)) (i32.const 0x61697241))
+    (i32.store16 (i32.add (local.get $lf_wa) (i32.const 32)) (i32.const 0x006c))
+    ;; elfFullName = "Arial".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 60)) (i32.const 0x61697241))
+    (i32.store16 (i32.add (local.get $lf_wa) (i32.const 64)) (i32.const 0x006c))
+    ;; elfStyle = "Regular".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 124)) (i32.const 0x75676552))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 128)) (i32.const 0x0072616c))
+    ;; elfScript = "Western".
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 156)) (i32.const 0x74736557))
+    (i32.store (i32.add (local.get $lf_wa) (i32.const 160)) (i32.const 0x006e7265))
+
+    ;; TEXTMETRICA / NEWTEXTMETRICA prefix.
+    (i32.store (local.get $tm_wa) (i32.const 16))                         ;; tmHeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 4)) (i32.const 13))  ;; tmAscent
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 8)) (i32.const 3))   ;; tmDescent
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 20)) (i32.const 8))  ;; tmAveCharWidth
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 24)) (i32.const 16)) ;; tmMaxCharWidth
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 28)) (i32.const 400)) ;; tmWeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 36)) (i32.const 96))
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 40)) (i32.const 96))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 44)) (i32.const 32))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 45)) (i32.const 255))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 46)) (i32.const 0))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 47)) (i32.const 32))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 51)) (i32.const 0x22))
+    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 52)) (i32.const 0))
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 64)) (i32.const 16)) ;; ntmSizeEM
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 68)) (i32.const 16)) ;; ntmCellHeight
+    (i32.store (i32.add (local.get $tm_wa) (i32.const 72)) (i32.const 8))  ;; ntmAvgWidth
+
+    ;; Save original return address above the stdcall callback frame.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Push FONTENUMPROCA args right-to-left:
+    ;; lParam, FontType=TRUETYPE_FONTTYPE, lpntme, lpelfe.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $lparam))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 4))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $tm_guest))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $lf_guest))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0)))
+
   (func $font_enum_dispatch_one_w (param $callback i32) (param $lparam i32) (param $ret_addr i32)
     (local $lf_guest i32) (local $lf_wa i32) (local $tm_guest i32) (local $tm_wa i32)
     (if (i32.eqz (local.get $callback))
@@ -5194,6 +5263,18 @@
     (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
     (global.set $eip (local.get $callback))
     (global.set $steps (i32.const 0)))
+
+  ;; EnumFontFamiliesExA(hdc, lpLogfont, proc, lParam, flags) → INT.
+  (func $handle_EnumFontFamiliesExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 24))))
+  )
+
+  ;; EnumFontFamiliesA(hdc, lpszFamily, proc, lParam) → INT.
+  (func $handle_EnumFontFamiliesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 20))))
+  )
 
   ;; 377: EnumFontFamiliesExW(hdc, lpLogfont, proc, lParam, flags) → INT.
   (func $handle_EnumFontFamiliesExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

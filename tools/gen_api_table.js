@@ -131,6 +131,8 @@ const extra = [
   { name: 'FreeEnvironmentStringsW', nargs: 1 },
   { name: 'GetVersion', nargs: 0 },
   { name: 'GetTextExtentPoint32A', nargs: 4 },
+  { name: 'EnumFontFamiliesExA', nargs: 5 },
+  { name: 'EnumFontFamiliesA', nargs: 4 },
   { name: 'wsprintfA', nargs: -1 },  // varargs, handled specially
   { name: 'GetPrivateProfileStringA', nargs: 6 },
   { name: 'GetProfileSectionA', nargs: 3 },

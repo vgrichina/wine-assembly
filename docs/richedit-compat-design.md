@@ -42,6 +42,7 @@ Implement now                                 Postpone later
 | mouse selection / wheel scroll |            | TOM/COM / accessibility / D&D|
 | plain text stream I/O          |            | exact version quirks         |
 | basic RTF + basic formatting   |            | rich clipboard fidelity      |
+| visible WordPad toolbar layout |            | toolbar command fidelity     |
 +--------------------------------+            +-------------------------------+
 ```
 
@@ -64,6 +65,7 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns restored duplicated text
               -> mouse drag selects text
               -> 35-line text auto-scrolls, wheel changes first visible line
+              -> standard/format toolbar rows are visible above the editor
               -> visible edited text appears
 ```
 
@@ -83,6 +85,10 @@ That means these pieces are already good enough for basic insertion:
 - mouse drag changes native RichEdit selection state;
 - long multiline text inserts, auto-scrolls to the caret, and focused native
   wheel input changes `EM_GETFIRSTVISIBLELINE`;
+- WordPad's standard and formatting `ToolbarWindow32` rows are visible, and the
+  native RichEdit child is laid out below them;
+- keyboard routing preserves focused native RichEdit before using the WAT EDIT
+  fallback, so toolbar combobox edit children do not steal document typing;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
@@ -173,9 +179,25 @@ native-editing path is alive.
   verifies `EM_GETCHARFORMAT` reports `color=0xff0000` with autocolor cleared,
   sees `SetTextColor(..., 0xff0000)`, and compares screenshots to assert blue
   text pixels. This proves the native RichEdit color/rendering path, not
-  WordPad's toolbar/menu color UI: the format toolbar is still zero-sized in the
-  current window, and direct WordPad color command IDs currently route fixed
-  colors as black unless the app's palette state is initialized through UI.
+  WordPad's toolbar/menu color UI: the format toolbar is visible now, but
+  toolbar button command/state mapping still does not carry WordPad's palette
+  state correctly.
+- Added a minimal WAT-native `ToolbarWindow32` common-control default proc
+  (control class 21). It handles the layout-facing `TB_*` messages WordPad/MFC
+  sends through `CallWindowProcA` after subclassing, including button counts,
+  item rectangles, button/bitmap sizes, rows, autosize, basic state probes, and
+  placeholder painting. The renderer composites toolbar child surfaces. Added
+  `test/test-wordpad-toolbar.js`, which proves WordPad's Standard and
+  Formatting toolbars are visible, have real 32px surfaces, and place RichEdit
+  below them.
+- Added ANSI `EnumFontFamiliesExA` / `EnumFontFamiliesA` callback support with
+  the same one-face `Arial` enumeration as the Unicode path. This unblocks the
+  formatting toolbar's ANSI font-list setup after the MFC toolbar subclass is
+  allowed to install.
+- Tightened renderer keyboard routing so focused native child windows keep
+  keyboard input on the queued native-focus path. This avoids routing document
+  typing into WordPad's toolbar combobox inner `EDIT` after a RichEdit click,
+  while preserving the existing Notepad WAT-edit fallback.
 - Added focused API trace formatting for `SendMessageA/W` calls carrying
   `EM_GETCHARFORMAT` / `EM_SETCHARFORMAT`, so future WordPad/RichEdit probes
   show decoded CHARFORMAT fields instead of only raw pointers.
@@ -208,6 +230,7 @@ compatibility layer around it:
 - GDI text drawing, clipping, erase, metrics, and scroll invalidation;
 - stream callbacks and text/RTF transfer messages;
 - enough formatting messages for visible WordPad toolbar actions.
+- enough common-control behavior for app toolbars to participate in layout.
 
 The target is app-useful compatibility, not exact implementation parity with
 every RichEdit version.
@@ -445,6 +468,7 @@ Acceptance:
 [x] WordPad Font dialog 24pt selection visibly increases text height
 [ ] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
+[x] WordPad standard/format toolbars are visible and layout RichEdit below them
 [ ] WordPad toolbar/menu color command route works through app UI
 [x] simple RTF round-trips without losing bold/italic/underline effects
 [ ] simple RTF round-trips font size/color/paragraph formatting
@@ -476,6 +500,7 @@ Acceptance:
 [x] Font-size layout is visibly asserted in WordPad
 [ ] RichEdit selected-size reporting returns concrete `yHeight`
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
+[x] WordPad standard/format toolbar layout is visibly asserted
 [ ] WordPad toolbar/menu color route has explicit coverage
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
