@@ -1922,23 +1922,23 @@
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $cf_wa i32)
-    ;; Native RichEdit can later ask GDI to create a sentinel-derived font
-    ;; height even after the app supplied an explicit CHARFORMAT size. Keep the
-    ;; latest explicit CFM_SIZE as a narrow host-side fallback for that case.
+    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32)
+    (call $richedit_note_charformat_message
+      (local.get $arg0) (local.get $arg1) (local.get $arg3))
+    ;; EM_GETCHARFORMAT needs post-call patching of the output buffer. Route
+    ;; this narrow message through the recursive synchronous sender so the WAT
+    ;; handler regains control before returning to the guest SendMessageA call.
     (if (i32.and
-          (i32.eq (local.get $arg1) (i32.const 0x0444)) ;; EM_SETCHARFORMAT
+          (i32.eq (local.get $arg1) (i32.const 0x043A)) ;; EM_GETCHARFORMAT
           (i32.ne (local.get $arg3) (i32.const 0)))
       (then
-        (local.set $cf_wa (call $g2w (local.get $arg3)))
-        (if (i32.ne
-              (i32.and
-                (i32.load offset=4 (local.get $cf_wa)) ;; dwMask
-                (i32.const 0x80000000))                ;; CFM_SIZE
-              (i32.const 0))
-          (then
-            (call $host_note_richedit_charformat_size
-              (i32.load offset=12 (local.get $cf_wa))))))) ;; yHeight twips
+        (local.set $sm_ret (call $wnd_send_message
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (call $richedit_patch_get_charformat_message
+          (local.get $arg0) (local.get $arg1) (local.get $arg3))
+        (global.set $eax (local.get $sm_ret))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Intercept TreeView messages (0x1100-0x1150) — handle directly, bypass comctl32
     (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 0x1100))
                  (i32.le_u (local.get $arg1) (i32.const 0x1150)))

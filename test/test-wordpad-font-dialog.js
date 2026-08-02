@@ -2,7 +2,8 @@
 // Regression coverage for WordPad's Format > Font dialog path:
 // selecting face/style/size in the WAT ChooseFontA dialog must write the
 // selected values back into CHOOSEFONT/LOGFONT so WordPad sends a meaningful
-// EM_SETCHARFORMAT to native RichEdit.
+// EM_SETCHARFORMAT to native RichEdit, and EM_GETCHARFORMAT reports the
+// applied selection size back to callers.
 
 const fs = require('fs');
 const path = require('path');
@@ -201,8 +202,9 @@ check('Font dialog returned Arial Bold Italic 24pt to WordPad',
   /yHeight=480/.test(setCharFormat) &&
   /effects=0x00000003:bold\|italic/.test(setCharFormat) &&
   /face="Arial"/.test(setCharFormat));
-check('RichEdit selection reports applied face/style',
+check('RichEdit selection reports applied face/style/size',
   /bold=1 .*italic=1 .*underline=0/.test(afterFont) &&
+  /yHeight=480/.test(afterFont) &&
   /face="Arial"/.test(afterFont));
 check('font dialog path did not corrupt editor text', /text="font"/.test(final));
 check('plain font screenshot written', fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);

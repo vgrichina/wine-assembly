@@ -1505,6 +1505,55 @@
     (i64.store offset=8 (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
     (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
 
+  ;; RichEdit charformat compatibility cache. The current native RichEdit path
+  ;; accepts CFM_SIZE and renders with the latest explicit yHeight, but the DLL
+  ;; still reports the 32767 sentinel through EM_GETCHARFORMAT. Track the same
+  ;; per-window yHeight so tests and app UI state can read the concrete size.
+  (func $richedit_format_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $RICHEDIT_FORMAT_TABLE)
+             (i32.shl (local.get $slot) (i32.const 2))))
+
+  (func $richedit_format_reset_slot (param $slot i32)
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)) (then (return)))
+    (i32.store (call $richedit_format_addr_for_slot (local.get $slot)) (i32.const 0)))
+
+  (func $richedit_note_charformat_message
+        (param $hwnd i32) (param $msg i32) (param $lParam i32)
+    (local $slot i32) (local $cf_w i32) (local $mask i32) (local $yHeight i32)
+    (if (i32.ne (local.get $msg) (i32.const 0x0444)) (then (return))) ;; EM_SETCHARFORMAT
+    (if (i32.eqz (local.get $lParam)) (then (return)))
+    (local.set $cf_w (call $g2w (local.get $lParam)))
+    (local.set $mask (i32.load offset=4 (local.get $cf_w)))
+    (if (i32.eqz (i32.and (local.get $mask) (i32.const 0x80000000)))
+      (then (return))) ;; CFM_SIZE
+    (local.set $yHeight (i32.load offset=12 (local.get $cf_w)))
+    (if (i32.or
+          (i32.le_s (local.get $yHeight) (i32.const 0))
+          (i32.ge_u (local.get $yHeight) (i32.const 32767)))
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $slot) (i32.const -1))
+      (then
+        (i32.store
+          (call $richedit_format_addr_for_slot (local.get $slot))
+          (local.get $yHeight))))
+    (call $host_note_richedit_charformat_size (local.get $yHeight)))
+
+  (func $richedit_patch_get_charformat_message
+        (param $hwnd i32) (param $msg i32) (param $lParam i32)
+    (local $slot i32) (local $yHeight i32) (local $cf_w i32)
+    (if (i32.ne (local.get $msg) (i32.const 0x043A)) (then (return))) ;; EM_GETCHARFORMAT
+    (if (i32.eqz (local.get $lParam)) (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $yHeight
+      (i32.load (call $richedit_format_addr_for_slot (local.get $slot))))
+    (if (i32.eqz (local.get $yHeight)) (then (return)))
+    (local.set $cf_w (call $g2w (local.get $lParam)))
+    (i32.store offset=4 (local.get $cf_w)
+      (i32.or (i32.load offset=4 (local.get $cf_w)) (i32.const 0x80000000))) ;; CFM_SIZE
+    (i32.store offset=12 (local.get $cf_w) (local.get $yHeight)))
+
   ;; ---- NC_FLAGS / TITLE_TABLE / CLIENT_RECT (parallel to WND_RECORDS) ----
   ;; All three are indexed by the WND_RECORDS slot (0..MAX_WINDOWS-1).
   ;; Values are kept in sync with the wnd slot lifecycle.

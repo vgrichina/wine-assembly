@@ -56,6 +56,7 @@
         (call $wnd_region_reset_slot (local.get $empty))
         (call $paint_flag_reset_slot (local.get $empty))
         (call $ctrl_table_reset_slot (local.get $empty))
+        (call $richedit_format_reset_slot (local.get $empty))
         (call $wnd_owner_reset_slot (local.get $empty))))
   )
 
@@ -93,6 +94,7 @@
           (call $wnd_region_reset_slot (local.get $i))
           (call $paint_flag_reset_slot (local.get $i))
           (call $ctrl_table_reset_slot (local.get $i))
+          (call $richedit_format_reset_slot (local.get $i))
           (call $wnd_owner_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))

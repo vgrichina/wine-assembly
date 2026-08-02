@@ -128,15 +128,16 @@ dialog:      WAT ChooseFontA exposes face/style/size listboxes and writes the
              selected values back to CHOOSEFONT/LOGFONT
 handoff:     WordPad sends EM_SETCHARFORMAT with effects=bold|italic,
              yHeight=480, and face="Arial"
-RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, face="Arial"
+RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, yHeight=480,
+             and face="Arial"
 pixels:      before/after screenshots differ in the typed-word band
 size:        a GDI/RichEdit font-size hint maps the sentinel-derived font
-             create back to the latest explicit CFM_SIZE value; the screenshot
-             ink box grows from 9px to 36px after choosing 24pt
+             create back to the latest explicit CFM_SIZE value; a per-window
+             CHARFORMAT cache also patches EM_GETCHARFORMAT size reporting.
+             The screenshot ink box grows from 20px to 37px after choosing 24pt
 result:      PASS for Font dialog face/style/point-size handoff and visible
-             face/style/24pt rendering. RichEdit still reports the selected
-             size as the existing 32767 sentinel through EM_GETCHARFORMAT, so
-             concrete selected-size state reporting remains follow-up work.
+             face/style/24pt rendering, including concrete selected-size
+             reporting for this latest-size path.
 ```
 
 Focused direct RichEdit color probe:
@@ -256,12 +257,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
   `EM_SETCHARFORMAT(yHeight=480, effects=bold|italic, face="Arial")`; native
-  RichEdit then reports bold/italic and face `Arial`. A narrow GDI/RichEdit
-  font-size hint now uses the latest explicit `CFM_SIZE` value when native
-  RichEdit later asks GDI for the known sentinel-derived huge font height, so
-  the before/after editor screenshots visibly show 24pt text. The remaining
-  size gap is state reporting: `EM_GETCHARFORMAT` still returns the existing
-  32767 sentinel after the apply.
+  RichEdit then reports bold/italic, `yHeight=480`, and face `Arial`. A narrow
+  GDI/RichEdit font-size hint uses the latest explicit `CFM_SIZE` value when
+  native RichEdit later asks GDI for the known sentinel-derived huge font
+  height, so the before/after editor screenshots visibly show 24pt text. The
+  same latest-size value is cached per HWND and patched into
+  `EM_GETCHARFORMAT`; mixed-size run reporting remains later work.
 - A direct focused RichEdit color probe now applies
   `EM_SETCHARFORMAT(CFM_COLOR)` to the selected WordPad text. Native RichEdit
   reports `color=0xff0000` with autocolor cleared, `SetTextColor` receives that
@@ -368,14 +369,13 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, advanced toolbar UI state, concrete RichEdit selected-size
-   reporting, and paragraph formatting
-   still need focused probes. Font dialog face/style/point-size handoff,
-   visible 24pt rendering, visible toolbar layout, first-toolbar-button command
-   routing, formatting-toolbar B/I/U mouse commands, and direct RichEdit color
-   rendering are now covered, and WordPad's own toolbar color UI now applies
-   Blue through the covered dynamic-popup path. `EM_GETCHARFORMAT` size
-   reporting is still open.
+   wrapping, advanced toolbar UI state, mixed-run size reporting, and paragraph
+   formatting still need focused probes. Font dialog face/style/point-size
+   handoff, concrete latest-size `EM_GETCHARFORMAT` reporting, visible 24pt
+   rendering, visible toolbar layout, first-toolbar-button command routing,
+   formatting-toolbar B/I/U mouse commands, and direct RichEdit color rendering
+   are now covered, and WordPad's own toolbar color UI now applies Blue through
+   the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

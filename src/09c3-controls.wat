@@ -1038,7 +1038,7 @@
   ;;
   ;; LOGFONT.lfHeight remains a simple negative point-size proxy. iPointSize
   ;; gives MFC/WordPad the standard tenths-of-points value for
-  ;; CHARFORMAT.yHeight; RichEdit's later 32767 sentinel-size reporting is
+  ;; CHARFORMAT.yHeight; RichEdit's latest-size reporting/rendering cache is
   ;; tracked separately from this common-dialog writeback.
   (func $fontdlg_writeback (param $hwnd i32)
     (local $cf i32) (local $cf_w i32) (local $lf_g i32) (local $lf_w i32)
