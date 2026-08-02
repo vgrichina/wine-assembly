@@ -38,6 +38,7 @@ assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.mp3'/s.test(deployJs), 'deploy should
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.wav'/s.test(deployJs), 'deploy should include .wav sidecar audio assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.inf'/s.test(deployJs), 'deploy should include .inf companion config assets');
 assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.txt'/s.test(deployJs), 'deploy should include .txt companion assets');
+assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.manifest'/s.test(deployJs), 'deploy should include .manifest companion assets');
 assert(/TEXT_EXTS\s*=\s*new Set\([^)]*'\.ini'/s.test(deployJs), 'deploy should include Winamp INI text assets');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large Plus! 95 pinball DAT');
@@ -160,12 +161,17 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(indexHtml.includes('lib/renderer-input.js?v=168'), 'web host should cache-bust renderer input after desktop changes');
-assert(indexHtml.includes('lib/host-imports.js?v=168'), 'web host should cache-bust host-imports after browser host changes');
+assert(indexHtml.includes('lib/host-imports.js?v=169'), 'web host should cache-bust host-imports after browser host changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(indexHtml.includes('host.js?v=168'), 'web host should cache-bust host.js after WAT/API source changes');
+assert(indexHtml.includes('host.js?v=169'), 'web host should cache-bust host.js after browser host changes');
 assert(hostJs.includes("SOURCE_VERSION = '168'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
+assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
+assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');
+assert(hostImportsJs.includes('ctx.availableDllFiles'), 'host imports should let LoadLibraryA yield for browser-fetchable DLLs not already in VFS');
 assert(hostJs.includes("this._audioCtx.state === 'closed'"), 'web host should not reuse a closed browser AudioContext');
+assert(hostJs.includes('h.get_ticks = () => self._guestTickMs(sharedAudio)'), 'web host should use deterministic guest ticks for timeGetTime/GetTickCount');
+assert(hostJs.includes('self._beginGuestTickBatch()'), 'web host should reset deterministic guest tick calls each run slice');
 assert(hostJs.includes('flushRepaint(true)'), 'web host should refresh the display after WAT-only paints');
 assert(hostJs.includes('runBudgeted({'), 'web host should use wall-budgeted worker scheduling for visible-window workers');
 assert(hostJs.includes('maxTotalSteps: audioHot ? threadBudget : threadBudget * 4'), 'web host should let non-audio UI workers consume their wall-clock budget');

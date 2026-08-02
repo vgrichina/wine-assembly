@@ -16,6 +16,37 @@ class WineAssembly {
     this.verbose = false;
   }
 
+  _guestTickState(sharedAudio) {
+    const shared = sharedAudio || this._sharedAudio || (this._sharedAudio = {});
+    if (!shared.guestTickState) {
+      shared.guestTickState = { batchMs: 0, nextBatchMs: 0, callsInBatch: 0 };
+    }
+    return shared.guestTickState;
+  }
+
+  _beginGuestTickBatch(sharedAudio) {
+    const st = this._guestTickState(sharedAudio);
+    if (!Number.isFinite(st.nextBatchMs)) {
+      st.nextBatchMs = Number.isFinite(st.batchMs) ? st.batchMs : 0;
+    }
+    st.batchMs = st.nextBatchMs & 0x7FFFFFFF;
+    st.nextBatchMs = (st.batchMs + 200) & 0x7FFFFFFF;
+    st.callsInBatch = 0;
+  }
+
+  _guestTickMs(sharedAudio) {
+    const st = this._guestTickState(sharedAudio);
+    const batchMs = Number.isFinite(st.batchMs) ? st.batchMs : 0;
+    const call = Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0;
+    st.callsInBatch = call + 1;
+    return (batchMs + call) & 0x7FFFFFFF;
+  }
+
+  _guestAudioClockMs(sharedAudio) {
+    const st = this._guestTickState(sharedAudio);
+    return Number.isFinite(st.batchMs) ? st.batchMs : 0;
+  }
+
   readString(ptr) {
     const bytes = new Uint8Array(this.memory.buffer);
     let str = '';
@@ -138,6 +169,8 @@ class WineAssembly {
   getImports(options) {
     const self = this;
     const opts = options || {};
+    const sharedAudio = opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {});
+    self._guestTickState(sharedAudio);
     const ctx = {
       getMemory: () => self.memory.buffer,
       apiTable: self.apiTable,
@@ -157,8 +190,10 @@ class WineAssembly {
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
+      get availableDllFiles() { return opts.availableDllFiles || self._availableDllFiles || null; },
       sharedGdi: opts.sharedGdi || null,
-      sharedAudio: opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {}),
+      sharedAudio,
+      audioClockMs: () => self._guestAudioClockMs(sharedAudio),
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
@@ -259,6 +294,7 @@ class WineAssembly {
         window.__waProfileEipHit(eip >>> 0, 0);
       }
     };
+    h.get_ticks = () => self._guestTickMs(sharedAudio);
     // Browser-only Open/Save common-dialog hooks. has_dom returns 1 so
     // $create_open_dialog renders the Upload / Download button.
     h.has_dom = () => 1;
@@ -1140,6 +1176,7 @@ class WineAssembly {
       if (!self.running) return;
       try {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        self._beginGuestTickBatch();
         // Check if main thread is waiting
         const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
         if (mainThreadWaiting) {

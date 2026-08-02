@@ -605,10 +605,10 @@ Resource-aware Win98 emulator
   <script src="lib/filesystem.js?v=168"></script>
   <script src="lib/hlp-parser.js?v=168"></script>
   <script src="lib/vendor/webaudio-tinysynth.js?v=168"></script>
-  <script src="lib/host-imports.js?v=168"></script>
+  <script src="lib/host-imports.js?v=169"></script>
   <script src="lib/compile-wat.js?v=168"></script>
   <script src="lib/thread-manager.js?v=168"></script>
-  <script src="host.js?v=168"></script>
+  <script src="host.js?v=169"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script>
     let wine = null;
@@ -2103,21 +2103,22 @@ Resource-aware Win98 emulator
           }
         }
         const dllsToLoad = app.dlls ? [...app.dlls] : [];
+        const availableDlls = {
+          'comctl32.dll': 'binaries/dlls/comctl32.dll',
+          'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
+          'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
+          'mfc42.dll': 'binaries/dlls/mfc42.dll',
+          'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
+          'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
+          'd3drm.dll': 'binaries/dlls/d3drm.dll',
+          'cards.dll': 'binaries/entertainment-pack/cards.dll',
+        };
+        wine._availableDllFiles = new Set(Object.keys(availableDlls));
         if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
           const required = DllLoader.detectRequiredDlls(wine._exeBytes);
           if (required.length) {
             log.textContent += `Detected DLLs: ${required.join(', ')}\n`;
           }
-          const availableDlls = {
-            'comctl32.dll': 'binaries/dlls/comctl32.dll',
-            'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
-            'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
-            'mfc42.dll': 'binaries/dlls/mfc42.dll',
-            'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
-            'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
-            'd3drm.dll': 'binaries/dlls/d3drm.dll',
-            'cards.dll': 'binaries/entertainment-pack/cards.dll',
-          };
           const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
           for (const name of required) {
             if (availableDlls[name] && !alreadyListed.has(name)) {

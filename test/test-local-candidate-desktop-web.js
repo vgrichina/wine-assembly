@@ -17,7 +17,17 @@ const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const DEBUG_PORT = Number(process.env.CANDIDATE_WEB_DEBUG_PORT || (9341 + (process.pid % 1000)));
+const DEBUG_PORT_HINT = process.env.CANDIDATE_WEB_DEBUG_PORT
+  ? Number(process.env.CANDIDATE_WEB_DEBUG_PORT)
+  : 0;
+const TRACE_API_NAMES = String(process.env.CANDIDATE_TRACE_API || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const TRACE_HOST_NAMES = String(process.env.CANDIDATE_TRACE_HOST || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 const ALL_CANDIDATES = [
   {
@@ -143,6 +153,21 @@ function startStaticServer() {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+function reserveTcpPort(preferred = 0) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', err => {
+      if (preferred) reserveTcpPort(0).then(resolve, reject);
+      else reject(err);
+    });
+    server.listen(preferred, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
   });
 }
 
@@ -286,6 +311,7 @@ function jsArray(values) {
 async function main() {
   const server = await startStaticServer();
   const port = server.address().port;
+  const debugPort = await reserveTcpPort(DEBUG_PORT_HINT);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-candidates-profile-'));
   const chrome = spawn(CHROME, [
     '--headless=new',
@@ -294,7 +320,7 @@ async function main() {
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-search-engine-choice-screen',
-    `--remote-debugging-port=${DEBUG_PORT}`,
+    `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${userData}`,
     `http://127.0.0.1:${port}/index.html?candidate-web=${Date.now()}`,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -313,7 +339,7 @@ async function main() {
   let page;
   for (let i = 0; i < 100; i++) {
     try {
-      const pages = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
+      const pages = await getJson(`http://127.0.0.1:${debugPort}/json/list`);
       page = pages.find(p => p.type === 'page' && String(p.url || '').includes('/index.html'));
       if (page) break;
     } catch (_) {}
@@ -357,6 +383,13 @@ async function main() {
     };
     tick();
   })`, 12000);
+  if (TRACE_API_NAMES.length || TRACE_HOST_NAMES.length) {
+    await evalExpr(`(() => {
+      window.__waTraceApiNames = new Set(${jsArray(TRACE_API_NAMES)});
+      window.__waTraceHostNames = new Set(${jsArray(TRACE_HOST_NAMES)});
+      return 1;
+    })()`);
+  }
 
   const ids = CANDIDATES.map(c => c.id);
   const localState = await evalExpr(`(() => ({
@@ -534,7 +567,8 @@ async function main() {
   }
 
   async function waitForLaunch(app) {
-    await evalExpr(`new Promise((resolve, reject) => {
+    try {
+      await evalExpr(`new Promise((resolve, reject) => {
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
       const started = performance.now();
       const tick = () => {
@@ -562,6 +596,11 @@ async function main() {
       };
       tick();
     })`, 28000);
+    } catch (e) {
+      const consoleText = consoleEventSummary(cdp.events).join('\n');
+      if (consoleText) e.message += '\nconsole:\n' + consoleText.slice(-4000);
+      throw e;
+    }
   }
 
   async function waitForInstance(app) {
