@@ -299,6 +299,7 @@ async function main() {
   //   B:mousedown:X:Y       — handleMouseDown at canvas (X,Y)
   //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
   //   B:mousemove:X:Y       — handleMouseMove at canvas (X,Y)
+  //   B:wheel:X:Y:DELTA     — handleWheel at canvas (X,Y)
   //   B:dump-find           — log current find dialog edit state
   //   B:dump-main-edit      — log main edit text
   //   B:focus-main-window   — set WAT focus to the top-level main window
@@ -518,6 +519,9 @@ async function main() {
         scheduledInput.push({ batch, action: 'mouseup', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousemove') {
         scheduledInput.push({ batch, action: 'mousemove', x: parseInt(parts[2]), y: parseInt(parts[3]) });
+      } else if (kind === 'wheel') {
+        scheduledInput.push({ batch, action: 'wheel',
+          x: parseInt(parts[2]), y: parseInt(parts[3]), delta: parseInt(parts[4]) || 0 });
       } else {
         const msg = parseInt(parts[1]);
         const wParam = parseInt(parts[2]) || 0;
@@ -3166,6 +3170,9 @@ async function main() {
         if (renderer.handleMenuHover) renderer.handleMenuHover(ev.x, ev.y);
         renderer.handleMouseMove(ev.x, ev.y);
         logs.push(`[input] mousemove ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'wheel' && renderer && renderer.handleWheel) {
+        renderer.handleWheel(ev.x, ev.y, ev.delta);
+        logs.push(`[input] wheel ${ev.x},${ev.y} delta=${ev.delta} at batch ${batch}`);
       } else if (renderer) {
         renderer.inputQueue.push({ type: 'key', hwnd: 0, msg: ev.msg, wParam: ev.wParam, lParam: ev.lParam });
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);

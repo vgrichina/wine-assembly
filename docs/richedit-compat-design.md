@@ -39,7 +39,7 @@ Implement now                                 Postpone later
 | delete / enter / movement      |            | advanced RTF layout          |
 | selection replacement          |            | IME / bidi / complex shaping |
 | plain-text Ctrl+A/C/X/V bridge |            | print pagination             |
-| scroll / wrap sanity           |            | TOM/COM / accessibility / D&D|
+| mouse selection / wheel scroll |            | TOM/COM / accessibility / D&D|
 | plain text stream I/O          |            | exact version quirks         |
 | basic RTF + basic formatting   |            | rich clipboard fidelity      |
 +--------------------------------+            +-------------------------------+
@@ -62,6 +62,8 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns "hello worl\r\nXagaZhello worl\r\nXagaZ"
               -> Ctrl+A, Ctrl+X, Ctrl+V
               -> WM_GETTEXT returns restored duplicated text
+              -> mouse drag selects text
+              -> 35-line text auto-scrolls, wheel changes first visible line
               -> visible edited text appears
 ```
 
@@ -78,6 +80,9 @@ That means these pieces are already good enough for basic insertion:
   updates/collapses the selected range;
 - plain-text Ctrl+A/C/X/V works for focused native RichEdit controls through the
   renderer-side native-text shortcut bridge;
+- mouse drag changes native RichEdit selection state;
+- long multiline text inserts, auto-scrolls to the caret, and focused native
+  wheel input changes `EM_GETFIRSTVISIBLELINE`;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
@@ -100,6 +105,10 @@ native-editing path is alive.
   Ctrl+V, Ctrl+X, and restore-paste. The bounded regression now passes 22/22
   and captures
   `test/output/wordpad-richedit/hello-world-edited.png`.
+- Added renderer wheel fallback for focused native controls, key-specific
+  keypress suppression for Ctrl-letter shortcuts, and
+  `test/test-wordpad-richedit-scroll.js`. The bounded mouse/scroll regression
+  passes 10/10 and captures `test/output/wordpad-richedit/mouse-scroll.png`.
 
 ### 2026-08-01 implementation progress
 
@@ -288,7 +297,7 @@ Acceptance:
 
 ```text
 [x] Shift+arrow produces a non-empty selection
-[ ] mouse drag produces a non-empty selection
+[x] mouse drag produces a non-empty selection
 [ ] selected text is visibly highlighted in a screenshot
 [x] replacing selected text leaves the expected buffer contents
 ```
@@ -304,8 +313,8 @@ Expected touchpoints:
 Acceptance:
 
 ```text
-[ ] long multiline text inserts without truncation
-[ ] wheel scroll changes first visible line
+[x] long multiline text inserts without truncation
+[x] wheel scroll changes first visible line
 [ ] scrollbar drag changes first visible line
 [ ] text stays clipped to the RichEdit client rect
 ```
@@ -375,10 +384,11 @@ Acceptance:
 [ ] Visible caret paint and blink stay coherent
 [x] Shift+arrow selection changes replacement range
 [ ] Visible selection highlight renders coherently
-[ ] Mouse-drag selection changes selection range
+[x] Mouse-drag selection changes selection range
 [x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
 [ ] Menu Copy/Cut/Paste has explicit coverage
-[ ] Line wrapping and vertical scrolling stay coherent
+[x] Native RichEdit wheel changes first visible line
+[ ] Line wrapping and scrollbar scrolling stay coherent
 [ ] Plain text save/reopen works
 [ ] Basic RTF save/reopen works without data loss for simple styling
 [ ] Bold/italic/underline/font-size/color are visible in WordPad
@@ -395,12 +405,13 @@ Acceptance:
 3. Fix Backspace, Delete, Enter, and caret navigation.
 4. Fix visible selection rendering and replacement.
 5. Add plain-text keyboard clipboard bridge for focused native RichEdit.
-6. Fix multiline wrapping, scroll, and clip invalidation.
-7. Add plain text stream in/out.
-8. Add basic RTF stream in/out.
-9. Add basic character and paragraph formatting.
-10. Re-run WordPad, Notepad, and installer RichEdit probes.
-11. Update app status docs with screenshots and pass/fail state.
+6. Add mouse-selection and focused-wheel scroll coverage.
+7. Fix wrapping, scrollbar drag, and clip invalidation.
+8. Add plain text stream in/out.
+9. Add basic RTF stream in/out.
+10. Add basic character and paragraph formatting.
+11. Re-run WordPad, Notepad, and installer RichEdit probes.
+12. Update app status docs with screenshots and pass/fail state.
 ```
 
 ## Risk controls

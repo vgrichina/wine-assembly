@@ -26,6 +26,17 @@ result: PASS for basic text entry/editing — typed text, Backspace, and Enter
         RichEdit controls.
 ```
 
+Focused mouse/scroll probe:
+
+```text
+click editor, type "mouse select", drag across the first line,
+Ctrl+A, type 35 lines, wheel up over the editor
+selection: non-empty `EM_GETSEL` range after mouse drag
+scroll:    `EM_GETFIRSTVISIBLELINE` changes from 28 to 22 after wheel input
+result:    PASS for native RichEdit mouse selection, long multiline insertion,
+           focused native wheel routing, and scrolled screenshot capture.
+```
+
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
@@ -41,6 +52,11 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Ctrl+A selects the native RichEdit buffer, Ctrl+C copies plain text through
   the renderer-side native-text shortcut bridge, Ctrl+X cuts the selected text,
   and Ctrl+V pastes/restores it through `EM_REPLACESEL`.
+- Mouse drag over the native RichEdit child produces a non-empty `EM_GETSEL`
+  range.
+- Long multiline insertion produces 35 RichEdit lines and auto-scrolls to the
+  caret. Wheel input over the editor now routes through the renderer to the
+  focused native RichEdit child and changes `EM_GETFIRSTVISIBLELINE`.
 - RichEdit's OLE clipboard setup no longer stops on missing profile/storage
   helpers in the covered path (`GetProfileSectionA`, `GlobalFlags`,
   `CreateILockBytesOnHGlobal`, `StgCreateDocfileOnILockBytes`,
@@ -60,6 +76,9 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
+- Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
+  and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
+  visible scrolled multiline text in the editor.
 
 ## Write Launcher
 
@@ -86,9 +105,8 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   visible caret assertions, visible selection highlight, mouse-drag selection,
-   scrolling/wrapping, formatting changes, and save/load still need focused
-   probes.
+   visible caret assertions, visible selection highlight, scrollbar drag,
+   wrapping, formatting changes, and save/load still need focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
