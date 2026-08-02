@@ -40,6 +40,17 @@ result:     PASS for Edit-menu Select All / Copy / Cut / Paste plain-text
             behavior on WordPad's focused native RichEdit child.
 ```
 
+Focused selection-highlight probe:
+
+```text
+type "select me", screenshot plain text, Ctrl+A, read `EM_GETSEL`, screenshot
+selected text
+selection: `EM_GETSEL` reports a non-empty selected range
+pixels:    selected screenshot gains ~1.9k blue-dominant pixels in the
+           RichEdit text band versus the plain screenshot
+result:    PASS for visible native RichEdit selection highlight.
+```
+
 Focused toolbar layout/command probe:
 
 ```text
@@ -237,6 +248,9 @@ Current evidence from the 2026-08-02 follow-up probe:
   RichEdit text buffer/insertion position in the current probe.
 - Shift+Left selection is observable through `EM_GETSEL`, and typed replacement
   collapses the selection to the expected caret position.
+- Ctrl+A selection now has focused screenshot coverage: the selected RichEdit
+  text renders white-on-blue, with the selected screenshot gaining blue-dominant
+  pixels in the document text band.
 - Ctrl+A selects the native RichEdit buffer, Ctrl+C copies plain text through
   the renderer-side native-text shortcut bridge, Ctrl+X cuts the selected text,
   and Ctrl+V pastes/restores it through `EM_REPLACESEL`.
@@ -349,6 +363,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   edit bridge, with Copy/Paste duplicating `menu` to `menumenu`, Cut/Paste
   restoring cut text, and no RichEdit OLE clipboard-storage calls on this
   plain-text path.
+- Regression test: `node test/test-wordpad-selection-highlight.js` passes 8/8
+  and writes `test/output/wordpad-richedit/selection-highlight-plain.png` plus
+  `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A
+  selects the native RichEdit text and the screenshot gains a visible blue
+  selection band.
 - Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering visible
@@ -429,16 +448,17 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, advanced toolbar UI state, mixed-run size reporting, and paragraph
+   visible caret assertions, scrollbar drag, wrapping, advanced toolbar UI
+   state, mixed-run size reporting, and paragraph
    indents/tabs/numbering still need focused probes. Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
    round-trip, simple paragraph center-alignment round-trip, Edit-menu
-   Select All/Copy/Cut/Paste plain-text commands, visible toolbar layout,
-   first-toolbar-button command routing, formatting-toolbar B/I/U mouse
-   commands, and direct RichEdit color rendering are now covered, and WordPad's
-   own toolbar color UI now applies Blue through the covered dynamic-popup path.
+   Select All/Copy/Cut/Paste plain-text commands, visible selection highlight,
+   visible toolbar layout, first-toolbar-button command routing,
+   formatting-toolbar B/I/U mouse commands, and direct RichEdit color rendering
+   are now covered, and WordPad's own toolbar color UI now applies Blue through
+   the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

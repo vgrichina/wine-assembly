@@ -86,6 +86,8 @@ That means these pieces are already good enough for basic insertion:
   buffer/insertion position in the current probe;
 - Shift+Left selection is visible through `EM_GETSEL`, and typing replacement
   updates/collapses the selected range;
+- Ctrl+A selection visibly paints white-on-blue in the WordPad RichEdit text
+  band;
 - plain-text Ctrl+A/C/X/V works for focused native RichEdit controls through the
   renderer-side native-text shortcut bridge;
 - WordPad Edit-menu Select All / Copy / Cut / Paste command ids route through a
@@ -150,6 +152,11 @@ native-editing path is alive.
   menu Copy/Paste duplicates `menu` to `menumenu`, menu Cut clears selected
   text and menu Paste restores it, and the covered plain-text path does not
   call `CreateILockBytesOnHGlobal` or `StgCreateDocfileOnILockBytes`.
+- Added `test/test-wordpad-selection-highlight.js` to make the existing
+  RichEdit selection painter an explicit acceptance point. The focused probe
+  types `select me`, captures a plain screenshot, sends Ctrl+A, verifies
+  `EM_GETSEL` reports a non-empty selection, captures the selected screenshot,
+  and asserts the RichEdit text band gains blue-dominant selection pixels.
 - Added WordPad Save As coverage and the minimal compatibility it needed:
   `GetFileTime`, `CreateFileMoniker`, `GetRunningObjectTable`, an
   `IRunningObjectTable` no-op vtable, and failure-returning storage/OLE
@@ -561,7 +568,7 @@ Acceptance:
 [x] Arrow/Home/End movement tracks insertion position
 [ ] Visible caret paint and blink stay coherent
 [x] Shift+arrow selection changes replacement range
-[ ] Visible selection highlight renders coherently
+[x] Visible selection highlight renders coherently
 [x] Mouse-drag selection changes selection range
 [x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
 [x] Menu Copy/Cut/Paste has explicit coverage
