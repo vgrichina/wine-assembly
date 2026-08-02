@@ -95,6 +95,7 @@ const comInterfaces = [
   { prefix: 'IDirectAnimationDAStatics', global: 'DX_VTBL_DA_STATICS' },
   { prefix: 'IDirectAnimationDABehavior', global: 'DX_VTBL_DA_BEHAVIOR' },
   { prefix: 'IMalloc',              global: 'DX_VTBL_IMALLOC' },
+  { prefix: 'IRunningObjectTable',   global: 'DX_VTBL_OLE_ROT' },
   { prefix: 'IDirect3DDevice3',     global: 'DX_VTBL_D3DDEV3' },
   { prefix: 'IDirect3DViewport3',   global: 'DX_VTBL_D3DVP3' },
   { prefix: 'IDirect3DLight',       global: 'DX_VTBL_D3DLIGHT' },

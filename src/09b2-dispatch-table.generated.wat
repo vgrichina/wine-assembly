@@ -38,7 +38,7 @@
       (then
         (call $dispatch_api_table_page_7 (i32.sub (local.get $api_id) (i32.const 1792)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2049))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2069))
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -8302,12 +8302,92 @@
   )
 
   (func $dispatch_api_table_page_8 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2048..2048
+    ;; api ids 2048..2068
     (block $fallback
+    (block $api_20
+    (block $api_19
+    (block $api_18
+    (block $api_17
+    (block $api_16
+    (block $api_15
+    (block $api_14
+    (block $api_13
+    (block $api_12
+    (block $api_11
+    (block $api_10
+    (block $api_9
+    (block $api_8
+    (block $api_7
+    (block $api_6
+    (block $api_5
+    (block $api_4
+    (block $api_3
+    (block $api_2
+    (block $api_1
     (block $api_0
-      (br_table $api_0 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $fallback (local.get $api_id))
     ) ;; 2048: GetClipboardOwner
       (call $handle_GetClipboardOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2049: CreateFileMoniker
+      (call $handle_CreateFileMoniker (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2050: GetRunningObjectTable
+      (call $handle_GetRunningObjectTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2051: CreateBindCtx
+      (call $handle_CreateBindCtx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2052: StgIsStorageFile
+      (call $handle_StgIsStorageFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2053: StgOpenStorage
+      (call $handle_StgOpenStorage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2054: StgCreateDocfile
+      (call $handle_StgCreateDocfile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2055: StgOpenStorageOnILockBytes
+      (call $handle_StgOpenStorageOnILockBytes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2056: ReadClassStg
+      (call $handle_ReadClassStg (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2057: ReleaseStgMedium
+      (call $handle_ReleaseStgMedium (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2058: OleRegGetUserType
+      (call $handle_OleRegGetUserType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2059: IRunningObjectTable_QueryInterface
+      (call $handle_IRunningObjectTable_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2060: IRunningObjectTable_AddRef
+      (call $handle_IRunningObjectTable_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2061: IRunningObjectTable_Release
+      (call $handle_IRunningObjectTable_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2062: IRunningObjectTable_Register
+      (call $handle_IRunningObjectTable_Register (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2063: IRunningObjectTable_Revoke
+      (call $handle_IRunningObjectTable_Revoke (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2064: IRunningObjectTable_IsRunning
+      (call $handle_IRunningObjectTable_IsRunning (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2065: IRunningObjectTable_GetObject
+      (call $handle_IRunningObjectTable_GetObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2066: IRunningObjectTable_NoteChangeTime
+      (call $handle_IRunningObjectTable_NoteChangeTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2067: IRunningObjectTable_GetTimeOfLastChange
+      (call $handle_IRunningObjectTable_GetTimeOfLastChange (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2068: IRunningObjectTable_EnumRunning
+      (call $handle_IRunningObjectTable_EnumRunning (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2048)))
@@ -8358,6 +8438,8 @@
     (global.set $DX_VTBL_DA_BEHAVIOR (call $init_com_vtable (i32.const 1991) (i32.const 20)))
     ;; IMalloc: 9 methods starting at api_id 2015
     (global.set $DX_VTBL_IMALLOC (call $init_com_vtable (i32.const 2015) (i32.const 9)))
+    ;; IRunningObjectTable: 10 methods starting at api_id 2059
+    (global.set $DX_VTBL_OLE_ROT (call $init_com_vtable (i32.const 2059) (i32.const 10)))
     ;; IDirect3DDevice3: 42 methods starting at api_id 1146
     (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1146) (i32.const 42)))
     ;; IDirect3DViewport3: 21 methods starting at api_id 1188

@@ -549,6 +549,159 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; GetRunningObjectTable(reserved, pprot)
+  ;; Minimal process-local ROT placeholder. MFC WordPad's save path calls this
+  ;; after CreateFileMoniker and then uses the returned vtable immediately, so
+  ;; failure/null is not a safe compatibility answer.
+  (func $handle_GetRunningObjectTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $obj_w i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj_w (call $g2w (local.get $obj)))
+    (i32.store (local.get $obj_w) (global.get $DX_VTBL_OLE_ROT))
+    (i32.store (i32.add (local.get $obj_w) (i32.const 4)) (i32.const 1))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; IRunningObjectTable — minimal no-op COM object used by MFC OLE document
+  ;; save/link bookkeeping. It preserves stack arity for every ROT slot while
+  ;; reporting that no objects are currently registered/running.
+  (func $handle_IRunningObjectTable_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2)
+      (then (call $gs32 (local.get $arg2) (local.get $arg0))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+  (func $handle_IRunningObjectTable_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+  (func $handle_IRunningObjectTable_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+  (func $handle_IRunningObjectTable_Register (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 1))))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+  (func $handle_IRunningObjectTable_Revoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+  (func $handle_IRunningObjectTable_IsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1)) ;; S_FALSE: object not running
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+  (func $handle_IRunningObjectTable_GetObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x800401E3)) ;; MK_E_UNAVAILABLE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+  (func $handle_IRunningObjectTable_NoteChangeTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+  (func $handle_IRunningObjectTable_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $zero_memory (call $g2w (local.get $arg3)) (i32.const 8))))
+    (global.set $eax (i32.const 0x800401E3)) ;; MK_E_UNAVAILABLE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+  (func $handle_IRunningObjectTable_EnumRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CreateBindCtx(reserved, ppbc) — bind contexts are only needed for rich OLE
+  ;; moniker binding, which is outside the current WordPad plain-text target.
+  (func $handle_CreateBindCtx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CreateFileMoniker(lpszPathName, ppmk)
+  ;; WordPad's MFC/OLE save path creates a file moniker for linked/embedded
+  ;; object bookkeeping. We do not model moniker binding yet; return an inert
+  ;; IUnknown-compatible placeholder so the document save flow can continue.
+  (func $handle_CreateFileMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $obj_w i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj_w (call $g2w (local.get $obj)))
+    (i32.store (local.get $obj_w) (global.get $DX_VTBL_IMALLOC))
+    (i32.store (i32.add (local.get $obj_w) (i32.const 4)) (i32.const 0))
+    (call $gs32 (local.get $arg1) (local.get $obj))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; StgIsStorageFile(pwcsName) — report "not a structured storage file".
+  (func $handle_StgIsStorageFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x800300FB)) ;; STG_E_INVALIDHEADER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; StgOpenStorage(pwcsName, pstgPriority, grfMode, snbExclude, reserved, ppstgOpen)
+  ;; Structured storage is not implemented; zero the out pointer and fail
+  ;; gracefully so callers can fall back to flat-file handling where available.
+  (func $handle_StgOpenStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $out i32)
+    (local.set $out (i32.load (i32.add (call $g2w (global.get $esp)) (i32.const 24))))
+    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
+    (global.set $eax (i32.const 0x80030002)) ;; STG_E_FILENOTFOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
+  ;; StgCreateDocfile(pwcsName, grfMode, reserved, ppstgOpen)
+  (func $handle_StgCreateDocfile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; StgOpenStorageOnILockBytes(plkbyt, pstgPriority, grfMode, snbExclude, reserved, ppstgOpen)
+  (func $handle_StgOpenStorageOnILockBytes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $out i32)
+    (local.set $out (i32.load (i32.add (call $g2w (global.get $esp)) (i32.const 24))))
+    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
   ;; CreateILockBytesOnHGlobal(hGlobal, fDeleteOnRelease, ppLkbyt)
   ;; Minimal storage-on-HGLOBAL placeholder for RichEdit clipboard paths. The
   ;; object uses the existing IUnknown-compatible IMalloc vtable; this is not a
@@ -609,6 +762,27 @@
     (call $gs32 (local.get $arg3) (local.get $obj))
     (global.set $eax (i32.const 0)) ;; S_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; ReadClassStg(pstg, pclsid) — no storage contents; clear CLSID and fail.
+  (func $handle_ReadClassStg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 16))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ReleaseStgMedium(pmedium) — no-op for the placeholder TYMED values.
+  (func $handle_ReleaseStgMedium (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; OleRegGetUserType(rclsid, dwFormOfType, lplpszUserType)
+  (func $handle_OleRegGetUserType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 762: GetWindowLongA(hWnd, nIndex)

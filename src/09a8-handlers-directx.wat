@@ -60,6 +60,7 @@
   (global $DX_VTBL_DA_STATICS (mut i32) (i32.const 0))
   (global $DX_VTBL_DA_BEHAVIOR (mut i32) (i32.const 0))
   (global $DX_VTBL_IMALLOC    (mut i32) (i32.const 0))
+  (global $DX_VTBL_OLE_ROT    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDSURF2   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))

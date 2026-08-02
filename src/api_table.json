@@ -15763,5 +15763,145 @@
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1213872586
+  },
+  {
+    "id": 2049,
+    "name": "CreateFileMoniker",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 691059676
+  },
+  {
+    "id": 2050,
+    "name": "GetRunningObjectTable",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2572991039
+  },
+  {
+    "id": 2051,
+    "name": "CreateBindCtx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 549766443
+  },
+  {
+    "id": 2052,
+    "name": "StgIsStorageFile",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2828024486
+  },
+  {
+    "id": 2053,
+    "name": "StgOpenStorage",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1795388336
+  },
+  {
+    "id": 2054,
+    "name": "StgCreateDocfile",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3174144493
+  },
+  {
+    "id": 2055,
+    "name": "StgOpenStorageOnILockBytes",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2378148546
+  },
+  {
+    "id": 2056,
+    "name": "ReadClassStg",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2381665109
+  },
+  {
+    "id": 2057,
+    "name": "ReleaseStgMedium",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2057171449
+  },
+  {
+    "id": 2058,
+    "name": "OleRegGetUserType",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1019644680
+  },
+  {
+    "id": 2059,
+    "name": "IRunningObjectTable_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2069972174
+  },
+  {
+    "id": 2060,
+    "name": "IRunningObjectTable_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 150836797
+  },
+  {
+    "id": 2061,
+    "name": "IRunningObjectTable_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 875859866
+  },
+  {
+    "id": 2062,
+    "name": "IRunningObjectTable_Register",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2827724692
+  },
+  {
+    "id": 2063,
+    "name": "IRunningObjectTable_Revoke",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 64655719
+  },
+  {
+    "id": 2064,
+    "name": "IRunningObjectTable_IsRunning",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4237553776
+  },
+  {
+    "id": 2065,
+    "name": "IRunningObjectTable_GetObject",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1622324240
+  },
+  {
+    "id": 2066,
+    "name": "IRunningObjectTable_NoteChangeTime",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2769880712
+  },
+  {
+    "id": 2067,
+    "name": "IRunningObjectTable_GetTimeOfLastChange",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1018556887
+  },
+  {
+    "id": 2068,
+    "name": "IRunningObjectTable_EnumRunning",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3769696995
   }
 ]

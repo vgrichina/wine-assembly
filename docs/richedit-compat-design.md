@@ -116,6 +116,16 @@ native-editing path is alive.
   `CF_TEXT` / `CF_OEMTEXT`. A raw native RichEdit Ctrl+C/Ctrl+V probe still
   follows RichEdit's OLE storage setup rather than the verified USER text path,
   so rich/native clipboard fidelity remains later work.
+- Added WordPad Save As coverage and the minimal compatibility it needed:
+  `GetFileTime`, `CreateFileMoniker`, `GetRunningObjectTable`, an
+  `IRunningObjectTable` no-op vtable, and failure-returning storage/OLE
+  placeholders (`CreateBindCtx`, `StgIsStorageFile`, `StgOpenStorage`,
+  `StgCreateDocfile`, `StgOpenStorageOnILockBytes`, `ReadClassStg`,
+  `ReleaseStgMedium`, `OleRegGetUserType`). The bounded regression
+  `test/test-wordpad-save-as.js` proves WordPad can type text, accept the Save
+  As filename, create/write/close the target file, update the title, and avoid
+  the previous MFC null-ROT call. This is scoped save-path scaffolding, not full
+  structured storage, moniker binding, or embedded OLE object support.
 
 ### 2026-08-01 implementation progress
 

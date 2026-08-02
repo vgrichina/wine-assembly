@@ -37,6 +37,17 @@ result:    PASS for native RichEdit mouse selection, long multiline insertion,
            focused native wheel routing, and scrolled screenshot capture.
 ```
 
+Focused Save As probe:
+
+```text
+type "save me", invoke command 57604 (Save As), pick wordpad-save-probe.txt
+file path: CreateFileA -> GetFileTime -> WriteFile(0x97 bytes) -> CloseHandle
+OLE path:  CreateFileMoniker -> GetRunningObjectTable -> ROT Register/Release
+title:     "wordpad-save-probe.txt - WordPad"
+result:    PASS for saving the current RichEdit contents through WordPad's
+           MFC Save As command path without missing exports or null ROT calls.
+```
+
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
@@ -69,6 +80,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   `CreateILockBytesOnHGlobal`, `StgCreateDocfileOnILockBytes`,
   `WriteClassStg`, `WriteFmtUserTypeStg`). This is compatibility scaffolding,
   not full OLE storage or rich clipboard support.
+- WordPad Save As now reaches the common dialog, accepts a picked filename,
+  creates/writes/closes the target file, updates the top-level title, and
+  returns focus to the native RichEdit child. The MFC/OLE save bookkeeping path
+  is covered with minimal `CreateFileMoniker`, `GetRunningObjectTable`, and
+  `IRunningObjectTable` scaffolding. This is not full structured storage or
+  moniker binding support.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -86,6 +103,8 @@ Current evidence from the 2026-08-02 follow-up probe:
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor.
+- Regression test: `node test/test-wordpad-save-as.js` passes 18/18 and covers
+  WordPad's Save As command/file/OLE bookkeeping path.
 
 ## Write Launcher
 
@@ -113,7 +132,7 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, formatting changes, and save/load still need focused probes.
+   wrapping, formatting changes, and reopen/load still need focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

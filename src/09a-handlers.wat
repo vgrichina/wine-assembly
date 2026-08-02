@@ -7241,9 +7241,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 519: GetFileTime — STUB: unimplemented
+  ;; 519: GetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime)
+  ;; Minimal VFS timestamp surface. The current virtual FS does not persist
+  ;; per-file mtimes, but MFC document save paths require this API to succeed
+  ;; after CreateFileA. Return a stable FILETIME near the simulated clock.
   (func $handle_GetFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $lo i32) (local $hi i32)
+    ;; Base: 2000-01-01 = 0x01BF53EB256D4000, add ticks*10000 (100ns units).
+    (local.set $lo
+      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
+    (local.set $hi (i32.const 0x01BF53EB))
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (local.get $lo))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (local.get $hi))))
+    (if (local.get $arg2)
+      (then
+        (call $gs32 (local.get $arg2) (local.get $lo))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $hi))))
+    (if (local.get $arg3)
+      (then
+        (call $gs32 (local.get $arg3) (local.get $lo))
+        (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $hi))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; GetStringTypeExA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
