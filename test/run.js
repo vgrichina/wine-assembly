@@ -306,6 +306,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
@@ -354,6 +355,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
       } else if (kind === 'dump-focus-state') {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
+      } else if (kind === 'dump-focus-charformat') {
+        scheduledInput.push({ batch, action: 'dump-focus-charformat', label: parts[2] || '' });
       } else if (kind === 'class-cmd') {
         // B:class-cmd:CLASS:CMD — find first slot whose ctrl class == CLASS,
         // then send WM_COMMAND wParam=CMD lParam=0. Used by dialog regression
@@ -2287,6 +2290,44 @@ async function main() {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-focus-charformat') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] dump-focus-charformat${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cfSize = 60; // CHARFORMATA; RichEdit accepts this prefix for CHARFORMAT2A too.
+          const cfG = we.guest_alloc(128);
+          const cfWA = g2w(cfG);
+          new Uint8Array(memory.buffer, cfWA, 128).fill(0);
+          const dv = new DataView(memory.buffer);
+          dv.setUint32(cfWA, cfSize, true); // cbSize
+          const ret = we.send_message(h, 0x043A, 1, cfG) >>> 0; // EM_GETCHARFORMAT, SCF_SELECTION
+          const cb = dv.getUint32(cfWA, true) >>> 0;
+          const mask = dv.getUint32(cfWA + 4, true) >>> 0;
+          const effects = dv.getUint32(cfWA + 8, true) >>> 0;
+          const yHeight = dv.getInt32(cfWA + 12, true) | 0;
+          const yOffset = dv.getInt32(cfWA + 16, true) | 0;
+          const color = dv.getUint32(cfWA + 20, true) >>> 0;
+          const charset = dv.getUint8(cfWA + 24);
+          const pitch = dv.getUint8(cfWA + 25);
+          let face = '';
+          for (let i = 0; i < 32; i++) {
+            const ch = dv.getUint8(cfWA + 26 + i);
+            if (!ch) break;
+            face += String.fromCharCode(ch);
+          }
+          const bold = !!(effects & 0x1);
+          const italic = !!(effects & 0x2);
+          const underline = !!(effects & 0x4);
+          logs.push(`[input] dump-focus-charformat${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} ret=0x${ret.toString(16)} cb=${cb} mask=0x${mask.toString(16)} effects=0x${effects.toString(16)} bold=${bold ? 1 : 0} italic=${italic ? 1 : 0} underline=${underline ? 1 : 0} yHeight=${yHeight} yOffset=${yOffset} color=0x${color.toString(16)} charset=${charset} pitch=${pitch} face=${JSON.stringify(face)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-focus-charformat${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO CHARFORMAT API at batch ${batch}`);
         }
       } else if (ev.action === 'open-dlg-pick') {
         // Walk slots for a class-12 (Open/Save) dialog parent, find its

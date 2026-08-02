@@ -61,6 +61,17 @@ result:    PASS: reopened RichEdit text is exactly "save me"; the previous
            raw "{\(null)..." corrupted RTF header is no longer exposed.
 ```
 
+Focused formatting accelerator probe:
+
+```text
+type "style", Ctrl+A, then Ctrl+B / Ctrl+I / Ctrl+U
+accelerator: TranslateAcceleratorA now matches Ctrl/Shift/Alt modifier bits
+RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1
+result:      PASS for WordPad formatting command dispatch and native RichEdit
+             CHARFORMAT state. Exact visual/pixel fidelity and RTF style
+             round-trip are still later work.
+```
+
 Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
@@ -111,6 +122,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   typed text. The blocking bug was `wvsprintfA`: it passed a `va_list` through
   `g2w` even though the shared formatter reads guest addresses with `gl32`,
   corrupting RichEdit's streamed RTF header with `(null)` placeholders.
+- WordPad Ctrl+B / Ctrl+I / Ctrl+U now reach the app's accelerator table and
+  dispatch Bold / Italic / Underline commands. The generic fix is in
+  `TranslateAcceleratorA`: it now matches `FVIRTKEY` entries with exact
+  Shift/Ctrl/Alt modifier state instead of skipping modifier accelerators.
+  `EM_GETCHARFORMAT(SCF_SELECTION)` confirms the selected native RichEdit text
+  has bold, italic, and underline effects after the shortcuts.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -133,6 +150,8 @@ Current evidence from the 2026-08-02 follow-up probe:
   paths.
 - Regression test: `node test/test-wordpad-reopen-saved.js` passes 22/22 and
   covers Save As -> New -> Open of the saved simple RichEdit document.
+- Regression test: `node test/test-wordpad-format-accelerators.js` passes 11/11
+  and writes `test/output/wordpad-richedit/format-accelerators.png`.
 
 ## Write Launcher
 
@@ -160,8 +179,8 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    visible caret assertions, visible selection highlight, scrollbar drag,
-   wrapping, formatting changes, and filter-specific plain-text save still need
-   focused probes.
+   wrapping, font size/color changes, RTF style round-trip, and filter-specific
+   plain-text save still need focused probes.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

@@ -137,6 +137,13 @@ native-editing path is alive.
   RTF with `(null)` placeholders in the header during WordPad Save As. Added
   `test/test-wordpad-reopen-saved.js`, which proves simple text saved by
   WordPad reopens as editor text instead of raw corrupted RTF.
+- Added modifier-aware accelerator matching in `TranslateAcceleratorA/W`.
+  Accelerator entries now require exact Shift/Ctrl/Alt state, which lets
+  WordPad's Ctrl+B / Ctrl+I / Ctrl+U commands reach the frame instead of being
+  swallowed as plain RichEdit keydowns. Added `dump-focus-charformat` to
+  `test/run.js` and `test/test-wordpad-format-accelerators.js`; the focused
+  probe confirms selected native RichEdit text reports bold, italic, and
+  underline effects through `EM_GETCHARFORMAT(SCF_SELECTION)`.
 
 ### 2026-08-01 implementation progress
 
@@ -395,7 +402,8 @@ Expected message surface:
 Acceptance:
 
 ```text
-[ ] bold / italic / underline are visible
+[x] WordPad Ctrl+B / Ctrl+I / Ctrl+U toggle RichEdit charformat effects
+[ ] bold / italic / underline have explicit visual/pixel assertions
 [ ] font size changes affect layout predictably
 [ ] text color renders
 [ ] simple RTF round-trips without losing basic formatting
@@ -421,7 +429,8 @@ Acceptance:
 [x] WordPad saved RTF reopens with simple plain text content
 [ ] Plain text save/reopen through the text filter works
 [ ] Basic RTF save/reopen works without data loss for simple styling
-[ ] Bold/italic/underline/font-size/color are visible in WordPad
+[x] Bold/italic/underline command state toggles in WordPad
+[ ] Bold/italic/underline/font-size/color are visibly asserted in WordPad
 [ ] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```
