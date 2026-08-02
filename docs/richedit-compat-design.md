@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-01.
+Last updated: 2026-08-02.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -35,12 +35,13 @@ Win app / installer -->| native RichEdit code |
 Implement now                                 Postpone later
 
 +--------------------------------+            +-------------------------------+
-| bounded WordPad/RichEdit probe |            | images / tables / OLE        |
+| bounded WordPad/RichEdit probe |            | images / tables / OLE objs   |
 | delete / enter / movement      |            | advanced RTF layout          |
-| visible selection              |            | IME / bidi / complex shaping |
-| scroll / wrap sanity           |            | print pagination             |
-| plain text stream I/O          |            | TOM/COM / accessibility / D&D|
-| basic RTF + basic formatting   |            | exact version quirks         |
+| selection replacement          |            | IME / bidi / complex shaping |
+| plain-text Ctrl+A/C/X/V bridge |            | print pagination             |
+| scroll / wrap sanity           |            | TOM/COM / accessibility / D&D|
+| plain text stream I/O          |            | exact version quirks         |
+| basic RTF + basic formatting   |            | rich clipboard fidelity      |
 +--------------------------------+            +-------------------------------+
 ```
 
@@ -57,6 +58,10 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns "hello worl\r\nXaganY"
               -> Shift+Left twice, type "Z"
               -> EM_GETSEL reports selected range, WM_GETTEXT returns "hello worl\r\nXagaZ"
+              -> Ctrl+A, Ctrl+C, End, Ctrl+V
+              -> WM_GETTEXT returns "hello worl\r\nXagaZhello worl\r\nXagaZ"
+              -> Ctrl+A, Ctrl+X, Ctrl+V
+              -> WM_GETTEXT returns restored duplicated text
               -> visible edited text appears
 ```
 
@@ -71,12 +76,30 @@ That means these pieces are already good enough for basic insertion:
   buffer/insertion position in the current probe;
 - Shift+Left selection is visible through `EM_GETSEL`, and typing replacement
   updates/collapses the selected range;
+- plain-text Ctrl+A/C/X/V works for focused native RichEdit controls through the
+  renderer-side native-text shortcut bridge;
 - `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
 
 This does not mean RichEdit is feature complete. It only proves the first
 native-editing path is alive.
+
+### 2026-08-02 implementation progress
+
+- Added a renderer-side native-text shortcut bridge for focused non-WAT edit
+  controls. It uses `WM_GETTEXT` / `EM_GETSEL` for copy, `EM_SETSEL` for
+  select-all, and `EM_REPLACESEL` for paste/cut replacement. The bridge is
+  plain text only.
+- Added compatibility scaffolding for RichEdit's OLE clipboard setup:
+  `GetProfileSectionA`, `GlobalFlags`, `CreateILockBytesOnHGlobal`,
+  `StgCreateDocfileOnILockBytes`, `WriteClassStg`, and `WriteFmtUserTypeStg`.
+  These avoid missing-export/unimplemented stops in the covered path, but they
+  are intentionally not full OLE storage implementations.
+- Expanded `test/test-wordpad-richedit.js` to cover Ctrl+A, Ctrl+C, End,
+  Ctrl+V, Ctrl+X, and restore-paste. The bounded regression now passes 22/22
+  and captures
+  `test/output/wordpad-richedit/hello-world-edited.png`.
 
 ### 2026-08-01 implementation progress
 
@@ -246,11 +269,11 @@ Expected touchpoints:
 Acceptance:
 
 ```text
-[ ] Backspace removes the previous character
-[ ] Delete removes the next character
-[ ] Enter creates a visible new line
-[ ] Left/Right/Home/End move the caret without corrupting text
-[ ] typing over selection replaces the selected range
+[x] Backspace removes the previous character
+[x] Delete removes the next character
+[x] Enter creates a visible new line
+[x] Left/Right/Home/End move the caret without corrupting text
+[x] typing over selection replaces the selected range
 ```
 
 ### 2. Visible selection
@@ -264,10 +287,10 @@ Expected touchpoints:
 Acceptance:
 
 ```text
-[ ] Shift+arrow produces a non-empty selection
+[x] Shift+arrow produces a non-empty selection
 [ ] mouse drag produces a non-empty selection
 [ ] selected text is visibly highlighted in a screenshot
-[ ] replacing selected text leaves the expected buffer contents
+[x] replacing selected text leaves the expected buffer contents
 ```
 
 ### 3. Scroll and wrapping
@@ -304,7 +327,26 @@ Acceptance:
 [ ] installer license RichEdit text streams in and scrolls
 ```
 
-### 5. Basic formatting
+### 5. Plain-text clipboard shortcuts
+
+Expected message surface:
+
+- renderer shortcut routing for focused native text controls;
+- `WM_GETTEXT`, `EM_GETSEL`, `EM_SETSEL`, and `EM_REPLACESEL`;
+- later: real USER clipboard and RichEdit/OLE clipboard fidelity.
+
+Acceptance:
+
+```text
+[x] Ctrl+A selects all focused native RichEdit text
+[x] Ctrl+C captures the selected native RichEdit text as plain text
+[x] Ctrl+V inserts the captured plain text through `EM_REPLACESEL`
+[x] Ctrl+X cuts selected native RichEdit text
+[ ] menu Edit/Copy/Paste routes work without the keyboard bridge
+[ ] rich clipboard formats preserve RTF/objects
+```
+
+### 6. Basic formatting
 
 Expected message surface:
 
@@ -334,7 +376,8 @@ Acceptance:
 [x] Shift+arrow selection changes replacement range
 [ ] Visible selection highlight renders coherently
 [ ] Mouse-drag selection changes selection range
-[ ] Copy/Cut/Paste work for plain text
+[x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
+[ ] Menu Copy/Cut/Paste has explicit coverage
 [ ] Line wrapping and vertical scrolling stay coherent
 [ ] Plain text save/reopen works
 [ ] Basic RTF save/reopen works without data loss for simple styling
@@ -351,12 +394,13 @@ Acceptance:
    enough for WordPad.
 3. Fix Backspace, Delete, Enter, and caret navigation.
 4. Fix visible selection rendering and replacement.
-5. Fix multiline wrapping, scroll, and clip invalidation.
-6. Add plain text stream in/out.
-7. Add basic RTF stream in/out.
-8. Add basic character and paragraph formatting.
-9. Re-run WordPad, Notepad, and installer RichEdit probes.
-10. Update app status docs with screenshots and pass/fail state.
+5. Add plain-text keyboard clipboard bridge for focused native RichEdit.
+6. Fix multiline wrapping, scroll, and clip invalidation.
+7. Add plain text stream in/out.
+8. Add basic RTF stream in/out.
+9. Add basic character and paragraph formatting.
+10. Re-run WordPad, Notepad, and installer RichEdit probes.
+11. Update app status docs with screenshots and pass/fail state.
 ```
 
 ## Risk controls

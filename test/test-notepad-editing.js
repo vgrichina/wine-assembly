@@ -95,7 +95,7 @@ for (const l of interesting) console.log('  ' + l);
 function state(label) {
   const line = out.split('\n').find(l => l.includes(`dump-main-edit-state ${label}:`));
   if (!line) return null;
-  const m = line.match(/len=(\d+) cursor=(\d+) sel=(\d+) firstVisible=(\d+) lineCount=(\d+) text=(".*") at batch/);
+  const m = line.match(/len=(\d+) cursor=(\d+) sel=(\d+)(?: flags=0x[0-9a-f]+)? firstVisible=(\d+) lineCount=(\d+) text=(".*") at batch/i);
   if (!m) return null;
   return {
     line,

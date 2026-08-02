@@ -15721,5 +15721,26 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3657422909
+  },
+  {
+    "id": 2043,
+    "name": "GetProfileSectionA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3555758266
+  },
+  {
+    "id": 2044,
+    "name": "CreateILockBytesOnHGlobal",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 391304990
+  },
+  {
+    "id": 2045,
+    "name": "StgCreateDocfileOnILockBytes",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2947177135
   }
 ]

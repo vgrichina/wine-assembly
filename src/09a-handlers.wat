@@ -409,6 +409,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
+  ;; GetProfileSectionA(appName, retBuf, nSize) → chars copied
+  ;;
+  ;; RichEdit queries win.ini's "FontSubstitutes" section while processing
+  ;; clipboard and formatting paths. Returning an empty double-NUL section is
+  ;; valid for "section exists but has no entries" and is safer than crashing;
+  ;; callers that need real profile persistence still use GetProfileStringA /
+  ;; WriteProfileStringA.
+  (func $handle_GetProfileSectionA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.and (local.get $arg1) (i32.gt_u (local.get $arg2) (i32.const 0)))
+      (then
+        (local.set $buf (call $g2w (local.get $arg1)))
+        (i32.store8 (local.get $buf) (i32.const 0))
+        (if (i32.gt_u (local.get $arg2) (i32.const 1))
+          (then (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0))))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 10: GetProfileIntA(appName, keyName, nDefault) — 3 args stdcall
   (func $handle_GetProfileIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_ini_get_int
@@ -6383,14 +6406,16 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 462: WriteClassStg — STUB: unimplemented
+  ;; 462: WriteClassStg(pStg, rclsid) — no-op success for placeholder OLE storage.
   (func $handle_WriteClassStg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 463: WriteFmtUserTypeStg — STUB: unimplemented
+  ;; 463: WriteFmtUserTypeStg(pStg, cf, lpszUserType) — no-op success.
   (func $handle_WriteFmtUserTypeStg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 464: StringFromCLSID(rclsid, lplpsz) — 2 args stdcall
@@ -7376,9 +7401,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 536: GlobalFlags — STUB: unimplemented
+  ;; 536: GlobalFlags(hMem) → flags/lock count.
+  ;; Our GlobalAlloc returns a direct heap pointer and GlobalLock is identity,
+  ;; so there is no movable/discardable/lock-count state to report. Return 0,
+  ;; which is the normal unlocked/fixed-memory result.
   (func $handle_GlobalFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 537: GetDiskFreeSpaceW — STUB: unimplemented

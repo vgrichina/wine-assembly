@@ -549,6 +549,68 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; CreateILockBytesOnHGlobal(hGlobal, fDeleteOnRelease, ppLkbyt)
+  ;; Minimal storage-on-HGLOBAL placeholder for RichEdit clipboard paths. The
+  ;; object uses the existing IUnknown-compatible IMalloc vtable; this is not a
+  ;; real ILockBytes implementation, but it is safe for AddRef/Release and lets
+  ;; callers progress to their plain-text clipboard fallback.
+  (func $handle_CreateILockBytesOnHGlobal (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $obj_w i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $obj (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $obj_w (call $g2w (local.get $obj)))
+    (i32.store (local.get $obj_w) (global.get $DX_VTBL_IMALLOC))
+    (i32.store (i32.add (local.get $obj_w) (i32.const 4)) (i32.const 0))
+    (call $gs32 (local.get $arg2) (local.get $obj))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; StgCreateDocfileOnILockBytes(plkbyt, grfMode, reserved, ppstg)
+  ;; Minimal IStorage placeholder for RichEdit's OLE clipboard setup. It uses
+  ;; the same inert IUnknown-compatible vtable as the ILockBytes placeholder.
+  (func $handle_StgCreateDocfileOnILockBytes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $obj_w i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $obj (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (call $gs32 (local.get $arg3) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $obj_w (call $g2w (local.get $obj)))
+    (i32.store (local.get $obj_w) (global.get $DX_VTBL_IMALLOC))
+    (i32.store (i32.add (local.get $obj_w) (i32.const 4)) (i32.const 0))
+    (call $gs32 (local.get $arg3) (local.get $obj))
+    (global.set $eax (i32.const 0)) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
   ;; 762: GetWindowLongA(hWnd, nIndex)
   (func $handle_GetWindowLongA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eq (local.get $arg1) (i32.const -21))  ;; GWL_USERDATA

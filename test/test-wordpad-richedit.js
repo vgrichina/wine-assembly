@@ -7,6 +7,7 @@
 //   - Backspace and Enter update that buffer
 //   - Delete-forward, Left, Home, and End update insertion position
 //   - Shift+Left selection is visible through EM_GETSEL and replacement text
+//   - Ctrl+A/C/X/V plain-text clipboard shortcuts work for native RichEdit focus
 //   - edited text is visibly painted in the editor screenshot
 
 const fs = require('fs');
@@ -73,14 +74,46 @@ seq.push('176:dump-focus-state:selected');
 seq.push('178:keyup:16');
 seq.push('182:keypress:90');
 seq.push('186:dump-focus-state:replace');
-seq.push('194:dump-windows:final');
-seq.push(`200:png:${PNG_OUT}`);
+seq.push('190:keydown:17');
+seq.push('191:keydown:65');
+seq.push('192:keyup:65');
+seq.push('193:keyup:17');
+seq.push('196:dump-focus-state:selectall');
+seq.push('200:keydown:17');
+seq.push('201:keydown:67');
+seq.push('202:keyup:67');
+seq.push('203:keyup:17');
+seq.push('206:keydown:35');
+seq.push('207:keyup:35');
+seq.push('210:dump-focus-state:copyend');
+seq.push('214:keydown:17');
+seq.push('215:keydown:86');
+seq.push('216:keyup:86');
+seq.push('217:keyup:17');
+seq.push('222:dump-focus-state:pasted');
+seq.push('226:keydown:17');
+seq.push('227:keydown:65');
+seq.push('228:keyup:65');
+seq.push('229:keyup:17');
+seq.push('232:dump-focus-state:cutselect');
+seq.push('236:keydown:17');
+seq.push('237:keydown:88');
+seq.push('238:keyup:88');
+seq.push('239:keyup:17');
+seq.push('242:dump-focus-state:cut');
+seq.push('246:keydown:17');
+seq.push('247:keydown:86');
+seq.push('248:keyup:86');
+seq.push('249:keyup:17');
+seq.push('254:dump-focus-state:restored');
+seq.push('262:dump-windows:final');
+seq.push(`268:png:${PNG_OUT}`);
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=220',
+  '--max-batches=290',
   '--batch-size=50000',
   '--quiet-api',
   '--no-close',
@@ -150,6 +183,12 @@ const endTextOk = /dump-focus-text end: hwnd=0x10002 class=0 id=59648 parent=0x1
 // one position lower than the JSON text length suggests.
 const selectionStateOk = /dump-focus-state selected: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=18 sel=15\.\.17 .*lineCount=2 text="hello worl\\r?\\nXaganY"/.test(out);
 const replacementTextOk = /dump-focus-state replace: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const selectAllOk = /dump-focus-state selectall: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=0\.\.17 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const copyEndOk = /dump-focus-state copyend: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const pastedTextOk = /dump-focus-state pasted: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
+const cutSelectOk = /dump-focus-state cutselect: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=0\.\.33 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
+const cutTextOk = /dump-focus-state cut: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=0 sel=0\.\.0 .*lineCount=1 text=""/.test(out);
+const restoredTextOk = /dump-focus-state restored: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('top-level WordPad window visible', /window:final hwnd=65537 .*visible=true .*title="Document - WordPad"/.test(out));
@@ -163,6 +202,12 @@ check('Home changes insertion position', homeTextOk);
 check('End changes insertion position', endTextOk);
 check('Shift+Left updates RichEdit selection range', selectionStateOk);
 check('selection replacement updates RichEdit text', replacementTextOk);
+check('Ctrl+A selects all native RichEdit text', selectAllOk);
+check('Ctrl+C preserves copied text and End collapses selection', copyEndOk);
+check('Ctrl+V pastes copied native RichEdit text', pastedTextOk);
+check('Ctrl+A selects duplicated native RichEdit text', cutSelectOk);
+check('Ctrl+X cuts selected native RichEdit text', cutTextOk);
+check('Ctrl+V restores cut native RichEdit text', restoredTextOk);
 check('edited-text screenshot written', pngExists);
 check(`edited text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));

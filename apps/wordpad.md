@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-01):** PARTIAL.
+**Status (2026-08-02):** PARTIAL.
 
 WordPad opens and renders in the focused smoke:
 
@@ -14,16 +14,19 @@ Focused typing probe:
 ```text
 click editor, type "hello world", Backspace, Enter, type "again",
 Left, Left, Delete, Home, type "X", End, type "Y",
-Shift+Left, Shift+Left, type "Z"
+Shift+Left, Shift+Left, type "Z",
+Ctrl+A, Ctrl+C, End, Ctrl+V
+Ctrl+A, Ctrl+X, Ctrl+V
 focus: RichEdit child hwnd=0x10002
-text:  "hello worl\r\nXagaZ" via WM_GETTEXT
+text:  "hello worl\r\nXagaZhello worl\r\nXagaZ" via WM_GETTEXT
 result: PASS for basic text entry/editing — typed text, Backspace, and Enter
         update the native RichEdit buffer, and Delete/Home/End/Left update the
         insertion position. Shift+Left updates `EM_GETSEL`, and typing replaces
-        the selected range.
+        the selected range. Plain-text Ctrl+A/C/X/V works for focused native
+        RichEdit controls.
 ```
 
-Current evidence from the 2026-08-01 follow-up probe:
+Current evidence from the 2026-08-02 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
   the blocker.
@@ -35,6 +38,14 @@ Current evidence from the 2026-08-01 follow-up probe:
   RichEdit text buffer/insertion position in the current probe.
 - Shift+Left selection is observable through `EM_GETSEL`, and typed replacement
   collapses the selection to the expected caret position.
+- Ctrl+A selects the native RichEdit buffer, Ctrl+C copies plain text through
+  the renderer-side native-text shortcut bridge, Ctrl+X cuts the selected text,
+  and Ctrl+V pastes/restores it through `EM_REPLACESEL`.
+- RichEdit's OLE clipboard setup no longer stops on missing profile/storage
+  helpers in the covered path (`GetProfileSectionA`, `GlobalFlags`,
+  `CreateILockBytesOnHGlobal`, `StgCreateDocfileOnILockBytes`,
+  `WriteClassStg`, `WriteFmtUserTypeStg`). This is compatibility scaffolding,
+  not full OLE storage or rich clipboard support.
 - Worker-thread thunk metadata is synchronized before/after thread slices, so a
   worker can no longer allocate a stale `GetProcAddress` thunk over RichEdit's
   imported KERNEL32 thunk table.
@@ -46,7 +57,7 @@ Current evidence from the 2026-08-01 follow-up probe:
   negative y coordinate.
 - `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills, so RichEdit's erase bands
   clear to the DC background instead of leaving black memory-DC strips.
-- Regression test: `node test/test-wordpad-richedit.js` passes 16/16 and
+- Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
 
@@ -81,6 +92,8 @@ blocker.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
+5. Treat images, tables, embedded OLE objects, and advanced RTF layout as later
+   RichEdit work; the current target is app-useful plain-text editing.
 
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).

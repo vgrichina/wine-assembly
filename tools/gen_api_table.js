@@ -130,6 +130,7 @@ const extra = [
   { name: 'GetTextExtentPoint32A', nargs: 4 },
   { name: 'wsprintfA', nargs: -1 },  // varargs, handled specially
   { name: 'GetPrivateProfileStringA', nargs: 6 },
+  { name: 'GetProfileSectionA', nargs: 3 },
   { name: 'PaintRgn', nargs: 2 },
   { name: 'FrameRgn', nargs: 5 },
   { name: 'CharUpperA', nargs: 1 },
@@ -244,6 +245,8 @@ const extra = [
   { name: 'CoSetState', nargs: 1 },
   { name: 'CoGetState', nargs: 1 },
   { name: 'CoTaskMemFree', nargs: 1 },
+  { name: 'CreateILockBytesOnHGlobal', nargs: 3 },
+  { name: 'StgCreateDocfileOnILockBytes', nargs: 4 },
   // GDI extras
   { name: 'SaveDC', nargs: 1 },
   { name: 'RestoreDC', nargs: 2 },
