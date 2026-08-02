@@ -75,9 +75,18 @@ async function main() {
       fail++;
     }
   }
+  function testFloat(name, got, expected, epsilon = 1e-9) {
+    if (Number.isFinite(got) && Math.abs(got - expected) <= epsilon) {
+      pass++;
+    } else {
+      console.log(`  FAIL ${name}: got ${got} expected ${expected}`);
+      fail++;
+    }
+  }
 
   function memAt(addr) { return dv.getUint32(g2w(addr), true); }
   function setMem(addr, val) { dv.setUint32(g2w(addr), val, true); }
+  function setFloat(addr, val) { dv.setFloat64(g2w(addr), val, true); }
   function setByte(addr, val) { mem[g2w(addr)] = val & 0xFF; }
   function setBytes(addr, bytes) { mem.set(bytes, g2w(addr)); }
   function bytesAt(addr, len) { return Array.from(mem.subarray(g2w(addr), g2w(addr) + len)); }
@@ -118,6 +127,27 @@ async function main() {
     0xDF, 0x3D, ...le32(scratchA), // fistp qword ptr [scratchA]
   ]);
   testBytes('FILD/FISTP m64 preserves raw qword bytes', bytesAt(scratchA, 8), fpuCopyBytes);
+
+  // QuickBlackjack stores its $20,000 house limit as a real 80-bit extended
+  // constant. FLD tword must decode the sign/exponent word, not treat the
+  // first 8 bytes as an f64 payload.
+  setBytes(scratch, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x9c, 0x0d, 0x40]);
+  setBytes(scratchA, [0, 0, 0, 0, 0, 0, 0, 0]);
+  runCode([
+    0xDB, 0x2D, ...le32(scratch),  // fld tword ptr [scratch]
+    0xDD, 0x1D, ...le32(scratchA), // fstp qword ptr [scratchA]
+  ]);
+  testFloat('FLD m80 decodes 80-bit extended 20000.0', dv.getFloat64(g2w(scratchA), true), 20000);
+
+  setFloat(scratch, 20000);
+  setBytes(scratchA, new Array(10).fill(0));
+  runCode([
+    0xDD, 0x05, ...le32(scratch),  // fld qword ptr [scratch]
+    0xDB, 0x3D, ...le32(scratchA), // fstp tword ptr [scratchA]
+  ]);
+  testBytes('FSTP m80 stores real 80-bit extended 20000.0',
+    bytesAt(scratchA, 10),
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x9c, 0x0d, 0x40]);
 
   // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply

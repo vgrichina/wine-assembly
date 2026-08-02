@@ -8,10 +8,10 @@
   ;; emulate them in software. The intentional differences are:
   ;;
   ;;   * 80-bit extended precision is unavailable. ST(i) is f64 (53-bit
-  ;;     mantissa, 11-bit exponent). FLD/FSTP m80 store/load the 8-byte f64
-  ;;     payload plus 2 zero bytes; the 16-bit sign+exponent of the m80
-  ;;     format is fabricated. Code that depends on the extra ~11 bits of
-  ;;     mantissa or the wider exponent range will diverge.
+  ;;     mantissa, 11-bit exponent). FLD/FSTP m80 convert between real 80-bit
+  ;;     sign/exponent/explicit-mantissa values and f64, so code that depends
+  ;;     on the extra ~11 bits of mantissa or the wider exponent range will
+  ;;     still diverge.
   ;;
   ;;   * Precision Control (CW bits 8-9: 24/53/64-bit) is ignored. All
   ;;     arithmetic runs at f64 precision regardless of PC.
@@ -269,6 +269,77 @@
     (else
       (f64.load (call $g2w (local.get $addr))))))))))))
 
+  (func $fpu_load_m80 (param $addr i32) (result f64)
+    (local $w i32) (local $se i32) (local $exp i32) (local $sign i32)
+    (local $mant i64) (local $val f64)
+    (local.set $w (call $g2w (local.get $addr)))
+    (local.set $mant (i64.load (local.get $w)))
+    (local.set $se (i32.load16_u (i32.add (local.get $w) (i32.const 8))))
+    (local.set $exp (i32.and (local.get $se) (i32.const 0x7FFF)))
+    (local.set $sign (i32.and (local.get $se) (i32.const 0x8000)))
+    ;; Backward compatibility for values stored by our FSTP m80 path: an f64
+    ;; payload followed by a zero sign/exponent word.
+    (if (i32.and (i32.eqz (local.get $exp)) (i64.ne (local.get $mant) (i64.const 0)))
+      (then (return (f64.load (local.get $w)))))
+    (if (i64.eqz (local.get $mant))
+      (then
+        (if (local.get $sign)
+          (then (return (f64.const -0.0)))
+          (else (return (f64.const 0.0))))))
+    (if (i32.eq (local.get $exp) (i32.const 0x7FFF))
+      (then
+        (local.set $val (f64.const 1.7976931348623157e308))
+        (if (local.get $sign) (then (local.set $val (f64.neg (local.get $val)))))
+        (return (local.get $val))))
+    (local.set $val
+      (f64.mul
+        (f64.div (f64.convert_i64_u (local.get $mant))
+                 (f64.const 9223372036854775808.0))
+        (call $host_math_pow2
+          (f64.convert_i32_s (i32.sub (local.get $exp) (i32.const 16383))))))
+    (if (local.get $sign) (then (local.set $val (f64.neg (local.get $val)))))
+    (local.get $val))
+
+  (func $fpu_store_m80 (param $addr i32) (param $val f64)
+    (local $w i32) (local $sign i32) (local $exp i32)
+    (local $abs f64) (local $scaled f64)
+    (local.set $w (call $g2w (local.get $addr)))
+    (local.set $abs (f64.abs (local.get $val)))
+    (if (i64.lt_s (i64.reinterpret_f64 (local.get $val)) (i64.const 0))
+      (then (local.set $sign (i32.const 0x8000))))
+    (if (call $fpu_is_nan (local.get $val))
+      (then
+        (i64.store (local.get $w) (i64.const -4611686018427387904))
+        (i32.store16 (i32.add (local.get $w) (i32.const 8))
+          (i32.or (local.get $sign) (i32.const 0x7FFF)))
+        (return)))
+    (if (f64.eq (local.get $abs) (f64.const 0))
+      (then
+        (i64.store (local.get $w) (i64.const 0))
+        (i32.store16 (i32.add (local.get $w) (i32.const 8)) (local.get $sign))
+        (return)))
+    (if (f64.ge (local.get $abs) (f64.const 1.7976931348623157e308))
+      (then
+        (i64.store (local.get $w) (i64.const -9223372036854775808))
+        (i32.store16 (i32.add (local.get $w) (i32.const 8))
+          (i32.or (local.get $sign) (i32.const 0x7FFF)))
+        (return)))
+    (local.set $exp (i32.trunc_f64_s (f64.floor (call $host_math_log2 (local.get $abs)))))
+    (local.set $scaled
+      (f64.mul
+        (f64.div (local.get $abs)
+          (call $host_math_pow2 (f64.convert_i32_s (local.get $exp))))
+        (f64.const 9223372036854775808.0)))
+    (if (f64.ge (local.get $scaled) (f64.const 18446744073709551616.0))
+      (then
+        (i64.store (local.get $w) (i64.const -9223372036854775808))
+        (local.set $exp (i32.add (local.get $exp) (i32.const 1))))
+      (else
+        (i64.store (local.get $w) (i64.trunc_f64_u (local.get $scaled)))))
+    (i32.store16 (i32.add (local.get $w) (i32.const 8))
+      (i32.or (local.get $sign)
+        (i32.and (i32.add (local.get $exp) (i32.const 16383)) (i32.const 0x7FFF)))))
+
   ;; ── FNSTENV / FLDENV / FNSAVE / FRSTOR / FBLD / FBSTP helpers ─────
   ;; 32-bit protected-mode env block (28 bytes): CW, SW (with TOP packed),
   ;; Tag word (2 bits/reg: 00=valid, 11=empty), FIP, FCS:opcode, FDP, FDS.
@@ -329,8 +400,7 @@
     (call $fpu_unpack_tag_word
       (i32.and (i32.load (i32.add (local.get $w) (i32.const 8))) (i32.const 0xFFFF))))
 
-  ;; FNSAVE/FRSTOR ST area: 8 × 10-byte slots in PHYSICAL order. We store the
-  ;; f64 payload + 2 zero bytes (matches our existing FLD/FSTP m80 convention).
+  ;; FNSAVE/FRSTOR ST area: 8 x 10-byte slots in PHYSICAL order.
   (func $fpu_store_regs (param $addr i32)
     (local $i i32) (local $base i32) (local $slot i32)
     (local.set $base (call $g2w (local.get $addr)))
@@ -338,9 +408,10 @@
       (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
       (local.set $slot (i32.add (local.get $base)
         (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
-      (f64.store (local.get $slot)
+      (call $fpu_store_m80
+        (i32.add (local.get $addr)
+          (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1))))
         (f64.load (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))))
-      (i32.store16 (i32.add (local.get $slot) (i32.const 8)) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -353,7 +424,8 @@
       (local.set $slot (i32.add (local.get $base)
         (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
       (f64.store (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))
-        (f64.load (local.get $slot)))
+        (call $fpu_load_m80 (i32.add (local.get $addr)
+          (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -488,13 +560,11 @@
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then (i32.store (call $g2w (local.get $addr)) (call $fpu_to_i32 (call $fpu_pop))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
-          ;; FLD m80 — see header note: we read the f64 payload and ignore the
-          ;; trailing 2 bytes of x87 sign+exponent.
-          (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
+          ;; FLD m80 — decode real 80-bit extended values into f64.
+          (then (call $fpu_push (call $fpu_load_m80 (local.get $addr))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
-          ;; FSTP m80 — write the f64 payload and zero the sign+exponent slot.
-          (then (f64.store (call $g2w (local.get $addr)) (call $fpu_pop))
-            (i32.store16 (call $g2w (i32.add (local.get $addr) (i32.const 8))) (i32.const 0)) (return)))
+          ;; FSTP m80 — convert f64-backed ST(0) to real 80-bit extended format.
+          (then (call $fpu_store_m80 (local.get $addr) (call $fpu_pop)) (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     ;; Group 7 (DF): FILD/FIST/FISTP int16, FILD/FISTP int64
     (if (i32.eq (local.get $group) (i32.const 7))

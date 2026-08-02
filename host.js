@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '168';
+  static SOURCE_VERSION = '170';
 
   constructor() {
     this.instance = null;
@@ -722,6 +722,55 @@ class WineAssembly {
     return ok;
   }
 
+  _guestToWasmAddress(addr) {
+    const ex = this.instance && this.instance.exports;
+    if (!ex || !this.memory || !this.memory.buffer || !ex.get_image_base) return -1;
+    const imageBase = ex.get_image_base() >>> 0;
+    const guestBase = ex.get_guest_base ? (ex.get_guest_base() >>> 0) : 0x12000;
+    return (((addr >>> 0) - imageBase + guestBase) >>> 0);
+  }
+
+  _patchLoadedBytes(addr, expected, replacement, label) {
+    const wa = this._guestToWasmAddress(addr);
+    const mem = this.memory && this.memory.buffer ? new Uint8Array(this.memory.buffer) : null;
+    if (!mem || wa < 0 || wa + expected.length > mem.length || expected.length !== replacement.length) {
+      console.warn(`[compat] cannot patch ${label}: address out of range`);
+      return false;
+    }
+    for (let i = 0; i < expected.length; i++) {
+      if (mem[wa + i] !== expected[i]) {
+        console.warn(`[compat] cannot patch ${label}: unexpected byte at 0x${(addr + i).toString(16)}`);
+        return false;
+      }
+    }
+    mem.set(replacement, wa);
+    console.log(`[compat] patched ${label} at 0x${addr.toString(16)}`);
+    return true;
+  }
+
+  _applyExeCompatibilityPatches(exeName) {
+    const name = String(exeName || '').toLowerCase();
+    if (name !== 'quickblackjack.exe') return;
+    this._patchLoadedBytes(
+      0x004222d0,
+      [0x55, 0x89, 0xe5],
+      [0xc3, 0x90, 0x90],
+      'QuickBlackjack synchronous animation delay'
+    );
+    this._patchLoadedBytes(
+      0x0041a80c,
+      [0x75, 0x05],
+      [0x90, 0x90],
+      'QuickBlackjack hand painter x-animation branch'
+    );
+    this._patchLoadedBytes(
+      0x0041a890,
+      [0x75, 0x05],
+      [0x90, 0x90],
+      'QuickBlackjack hand painter y-animation branch'
+    );
+  }
+
   async loadExe(url) {
     if (!this.instance) await this.init();
 
@@ -742,13 +791,15 @@ class WineAssembly {
     const entry = this.instance.exports.load_pe(exeBytes.length);
     console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
 
+    const exeName = url.replace(/^.*[\\\/]/, '');
+    this._applyExeCompatibilityPatches(exeName);
+
     // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base).
     if (this.instance.exports.init_dx_com_thunks) {
       this.instance.exports.init_dx_com_thunks();
     }
 
     // Set EXE name from URL
-    const exeName = url.replace(/^.*[\\\/]/, '');
     this._exeName = exeName;
     this._exeUrl = url;
     if (this._helpCtx && this._helpCtx.vfs && this._helpCtx.vfs.files) {

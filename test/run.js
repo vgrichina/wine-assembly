@@ -140,6 +140,61 @@ const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 
+function applyExeCompatibilityPatches(exeName, exports, memoryBuffer) {
+  if (process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1') return;
+  const enabledKeys = process.env.WA_EXE_COMPAT_PATCHES
+    ? new Set(process.env.WA_EXE_COMPAT_PATCHES.split(',').map(s => s.trim()).filter(Boolean))
+    : null;
+  const name = String(exeName || '').toLowerCase();
+  if (name !== 'quickblackjack.exe') return;
+  if (!exports || !exports.get_image_base || !memoryBuffer) return;
+  const imageBase = exports.get_image_base() >>> 0;
+  const guestBase = exports.get_guest_base ? (exports.get_guest_base() >>> 0) : 0x12000;
+  const mem = new Uint8Array(memoryBuffer);
+  const patches = [
+    {
+      key: 'qbj-delay',
+      addr: 0x004222d0,
+      expected: [0x55, 0x89, 0xe5],
+      replacement: [0xc3, 0x90, 0x90],
+      label: 'QuickBlackjack synchronous animation delay',
+    },
+    {
+      key: 'qbj-hand-x',
+      addr: 0x0041a80c,
+      expected: [0x75, 0x05],
+      replacement: [0x90, 0x90],
+      label: 'QuickBlackjack hand painter x-animation branch',
+    },
+    {
+      key: 'qbj-hand-y',
+      addr: 0x0041a890,
+      expected: [0x75, 0x05],
+      replacement: [0x90, 0x90],
+      label: 'QuickBlackjack hand painter y-animation branch',
+    },
+  ];
+  for (const patch of patches) {
+    if (enabledKeys && !enabledKeys.has(patch.key)) continue;
+    const wa = (((patch.addr >>> 0) - imageBase + guestBase) >>> 0);
+    if (wa + patch.expected.length > mem.length) {
+      console.warn(`[compat] cannot patch ${patch.label}: address out of range`);
+      continue;
+    }
+    let ok = true;
+    for (let i = 0; i < patch.expected.length; i++) {
+      if (mem[wa + i] !== patch.expected[i]) {
+        console.warn(`[compat] cannot patch ${patch.label}: unexpected byte at ${hex(patch.addr + i)}`);
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    mem.set(patch.replacement, wa);
+    console.log(`[compat] patched ${patch.label} at ${hex(patch.addr)}`);
+  }
+}
+
 // Module-relative address syntax: `module.dll+0xVA` or `module.exe+0xVA` resolves
 // to runtime VA (loadAddr - origBase + VA) after DLLs load. Plain `0xVA` stays as-is.
 // `moduleBases` is populated after loadDlls(); resolveAddr() called via deferred
@@ -295,6 +350,8 @@ async function main() {
   //   B:focus-find          — set focus on find dialog edit ctrl
   //   B:keypress:CODE       — call renderer.handleKeyPress(CODE)
   //   B:keydown:VK          — call renderer.handleKeyDown(VK)
+  //   B:di-keydown:VK       — set DirectInput/GetAsyncKeyState key-down state without WM_KEYDOWN
+  //   B:di-keyup:VK         — clear DirectInput/GetAsyncKeyState key-down state without WM_KEYUP
   //   B:click:X:Y           — handleMouseDown+Up at canvas (X,Y)
   //   B:mousedown:X:Y       — handleMouseDown at canvas (X,Y)
   //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
@@ -371,6 +428,12 @@ async function main() {
         scheduledInput.push({ batch, action: 'dlg-cmd', cmdId: parseInt(parts[2]) });
       } else if (kind === 'dlg-click') {
         scheduledInput.push({ batch, action: 'dlg-click', ctrlId: parseInt(parts[2]) });
+      } else if (kind === 'ctrl-click') {
+        // B:ctrl-click:ID — find a control by ID anywhere and send a button click.
+        scheduledInput.push({ batch, action: 'ctrl-click', ctrlId: parseInt(parts[2]) });
+      } else if (kind === 'ctrl-cmd') {
+        // B:ctrl-cmd:ID — find a control by ID and send WM_COMMAND to its parent.
+        scheduledInput.push({ batch, action: 'ctrl-cmd', ctrlId: parseInt(parts[2]) });
       } else if (kind === 'dlg-send') {
         scheduledInput.push({ batch, action: 'dlg-send',
           ctrlId: parseInt(parts[2]), msg: parseInt(parts[3]),
@@ -477,7 +540,8 @@ async function main() {
         // parent dialog. Generic helper for simple modal prompt dialogs.
         scheduledInput.push({ batch, action: 'edit-ok',
           ctrlId: parseInt(parts[2]), text: parts.slice(3).join(':') });
-      } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup') {
+      } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup' ||
+                 kind === 'di-keydown' || kind === 'di-keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
       } else if (kind === 'winamp-play') {
         // B:winamp-play:FILENAME — write filename to guest mem, send Winamp IPC
@@ -1183,11 +1247,14 @@ async function main() {
   // Each call advances by 1ms so games that compare consecutive timeGetTime
   // calls within the same batch see time progressing (pinball's physics tick
   // requires this — it compares two timeGetTime results and only advances
-  // when they differ). Batch transitions add a larger jump (~200ms) to keep
+  // when they differ). Tests may raise TICK_CALL_STEP_MS for apps with
+  // synchronous GetTickCount-driven animations that would otherwise crawl in
+  // headless slices. Batch transitions add a larger jump (~200ms) to keep
   // the overall simulated pace realistic.
+  const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const tickState = { batch: 0, callsInBatch: 0 };
   ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
-  h.get_ticks = () => (((tickState.batch * 200 + tickState.callsInBatch++) & 0x7FFFFFFF));
+  h.get_ticks = () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -1407,6 +1474,23 @@ async function main() {
     wh.log_i32 = (val) => {
       if (TRACE_API) logs.push(`  => ${hex(val)}`);
     };
+    if (TRACE_MOUSE_STATE) {
+      const workerGetMousePosition = wh.get_mouse_position;
+      const workerGetMouseButtons = wh.get_mouse_buttons;
+      wh.get_mouse_position = () => {
+        const value = workerGetMousePosition ? workerGetMousePosition() : 0;
+        const x = value & 0xFFFF;
+        const y = (value >>> 16) & 0xFFFF;
+        const buttons = workerGetMouseButtons ? (workerGetMouseButtons() >>> 0) : 0;
+        logs.push(`[mouse-state T${tid}] get_mouse_position x=${x} y=${y} buttons=${hex(buttons)}`);
+        return value;
+      };
+      wh.get_mouse_buttons = () => {
+        const value = workerGetMouseButtons ? (workerGetMouseButtons() >>> 0) : 0;
+        logs.push(`[mouse-state T${tid}] get_mouse_buttons buttons=${hex(value)}`);
+        return value;
+      };
+    }
     if (traceEipOn) {
       wh.log_eip = (eip) => {
         logs.push(`[EIP T${tid}] ${hex(eip >>> 0)}`);
@@ -1437,6 +1521,7 @@ async function main() {
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: ' + hex(entry));
+  applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   const requiredDlls = detectRequiredDlls(exeBytes);
 
   // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base)
@@ -1644,17 +1729,21 @@ async function main() {
         }
       } catch (_) {}
     }
-    if (exeName === 'quickblackjack.exe') {
+    if (exeName === 'quickblackjack.exe' && process.env.QBLACKJACK_SKIP_SEED !== '1') {
       try {
         const { setRegValue } = require('../lib/storage');
         const purse = Number.isFinite(Number(process.env.QBLACKJACK_PURSE))
           ? Number(process.env.QBLACKJACK_PURSE)
-          : -1000;
+          : 500;
         const change = Number.isFinite(Number(process.env.QBLACKJACK_CHANGE))
           ? Number(process.env.QBLACKJACK_CHANGE)
-          : 1000;
+          : 0;
         setRegValue('HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', 'Purse', 4, purse);
         setRegValue('HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', 'Change', 4, change);
+        const animation = Number.isFinite(Number(process.env.QBLACKJACK_ANIMATION))
+          ? Number(process.env.QBLACKJACK_ANIMATION)
+          : 0;
+        setRegValue('HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Tabletop', 'Animation', 4, animation);
       } catch (_) {}
     }
 
@@ -2560,6 +2649,96 @@ async function main() {
         } else {
           logs.push(`[input] dlg-click: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
         }
+      } else if (ev.action === 'ctrl-click') {
+        const we = instance.exports;
+        const seen = new Set();
+        const findChildById = (parent) => {
+          if (!parent || seen.has(parent) || !we.wnd_next_child_slot || !we.wnd_slot_hwnd || !we.ctrl_get_id) return 0;
+          seen.add(parent);
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) return ch;
+            const nested = findChildById(ch);
+            if (nested) return nested;
+            s++;
+          }
+          return 0;
+        };
+        let found = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          for (const w of wins) {
+            found = findChildById(w.hwnd | 0);
+            if (found) break;
+          }
+        }
+        if (!found && we.wnd_slot_hwnd) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (!hwnd) continue;
+            if (we.ctrl_get_id && we.ctrl_get_id(hwnd) === ev.ctrlId) {
+              found = hwnd;
+              break;
+            }
+          }
+        }
+        if (found) {
+          we.send_message(found, 0x0201, 0, 0);
+          we.send_message(found, 0x0202, 0, 0);
+          logs.push(`[input] ctrl-click: id=${ev.ctrlId} hwnd=0x${found.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] ctrl-click: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
+        }
+      } else if (ev.action === 'ctrl-cmd') {
+        const we = instance.exports;
+        const seen = new Set();
+        const findChildById = (parent) => {
+          if (!parent || seen.has(parent) || !we.wnd_next_child_slot || !we.wnd_slot_hwnd || !we.ctrl_get_id) return 0;
+          seen.add(parent);
+          let s = 0;
+          while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+            const ch = we.wnd_slot_hwnd(s);
+            if (ch && we.ctrl_get_id(ch) === ev.ctrlId) return ch;
+            const nested = findChildById(ch);
+            if (nested) return nested;
+            s++;
+          }
+          return 0;
+        };
+        let found = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          for (const w of wins) {
+            found = findChildById(w.hwnd | 0);
+            if (found) break;
+          }
+        }
+        if (!found && we.wnd_slot_hwnd) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (!hwnd) continue;
+            if (we.ctrl_get_id && we.ctrl_get_id(hwnd) === ev.ctrlId) {
+              found = hwnd;
+              break;
+            }
+          }
+        }
+        if (found) {
+          const parent = we.wnd_get_parent ? (we.wnd_get_parent(found) >>> 0) : 0;
+          const target = parent || found;
+          we.send_message(target, 0x0111, ev.ctrlId & 0xffff, found);
+          let top = 0;
+          try { top = we.wnd_top_level ? (we.wnd_top_level(found) >>> 0) : 0; } catch (_) { top = 0; }
+          if (top && top !== target) we.send_message(top, 0x0111, ev.ctrlId & 0xffff, found);
+          logs.push(`[input] ctrl-cmd: id=${ev.ctrlId} hwnd=0x${found.toString(16)} target=0x${target.toString(16)} top=0x${top.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] ctrl-cmd: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
+        }
       } else if (ev.action === 'dlg-send') {
         const we = instance.exports;
         let dlg = 0;
@@ -2839,12 +3018,15 @@ async function main() {
           const hwnd = parseInt(hwndStr, 10) || 0;
           let ctrlClass = -1;
           let ctrlId = -1;
+          let style = 0;
           try {
             if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0;
             if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
+            if (we && we.wnd_get_style_export) style = we.wnd_get_style_export(hwnd) >>> 0;
           } catch (_) {}
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          const enabled = (style & 0x08000000) === 0;
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
         try {
@@ -3119,6 +3301,14 @@ async function main() {
       } else if (ev.action === 'keyup' && renderer && renderer.handleKeyUp) {
         renderer.handleKeyUp(ev.code);
         logs.push(`[input] keyup vk=${ev.code} at batch ${batch}`);
+      } else if ((ev.action === 'di-keydown' || ev.action === 'di-keyup') && renderer) {
+        if (!renderer._asyncKeys) renderer._asyncKeys = Object.create(null);
+        if (!renderer._asyncPressedKeys) renderer._asyncPressedKeys = Object.create(null);
+        const key = ev.code & 0xFF;
+        const down = ev.action === 'di-keydown';
+        renderer._asyncKeys[key] = down;
+        if (down) renderer._asyncPressedKeys[key] = true;
+        logs.push(`[input] ${ev.action} vk=${ev.code} at batch ${batch}`);
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
         logs.push(`[input] sleep-ms ${ev.ms} at batch ${batch}`);

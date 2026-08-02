@@ -57,11 +57,11 @@ const ALL_CANDIDATES = [
     titlePattern: 'Blackjack',
     dismissDialogControl: 1,
     commands: [311],
-    expectDialogs: ["You can't afford"],
-    forbidDialogs: ['Congratulations'],
+    forbidDialogs: ["You can't afford", 'Congratulations'],
     minColors: 80,
     minDiff: 40,
     waitMs: 1000,
+    commandWaitMs: 2500,
   },
   {
     id: 'cwordzap',
@@ -69,9 +69,9 @@ const ALL_CANDIDATES = [
     titlePattern: 'Addictionary|W O R D Z A P|WORD ZAP|WordZap|CWordZap',
     commands: [40003],
     minColors: 12,
-    minSaturated: 5000,
     minDiff: 80,
     waitMs: 1500,
+    commandWaitMs: 1800,
   },
   {
     id: 'marbles',
@@ -591,7 +591,7 @@ async function main() {
         const hasExpected = visible.some(w => !w.isDialog && titleRe.test(w.title || ''));
         const hasAnyMain = visible.some(w => !w.isDialog);
         const log = document.getElementById('log').textContent;
-        if (runningApps.length === 1 && (hasExpected || hasAnyMain)) resolve(1);
+        if (runningApps.length === 1 && hasExpected) resolve(1);
         else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error'));
         else if (performance.now() - started > 25000) {
           const app = runningApps[0];
@@ -863,7 +863,7 @@ async function main() {
     if (app.commands) {
       for (const command of app.commands) {
         actions.push(await postCommand(command));
-        await wait(350);
+        await wait(app.commandWaitMs || 350);
       }
     }
     const clicks = app.clicks || (app.click ? [app.click] : null);

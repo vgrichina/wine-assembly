@@ -2244,20 +2244,23 @@
     ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-      (global.set $main_win_cx (local.get $arg3))
-      (global.set $main_win_cy (local.get $arg4))
-      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-      (if (i32.ne (local.get $cs) (local.get $old_cs))
-        (then (global.set $pending_wm_size (local.get $cs)))))
-    (else
-      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-      (local.set $cx (i32.and (local.get $cs) (i32.const 0xFFFF)))
-      (local.set $cy (i32.shr_u (local.get $cs) (i32.const 16)))
-      (if (i32.ne (local.get $cs) (local.get $old_cs))
-        (then
-          (global.set $movewindow_pending_hwnd (local.get $arg0))
-          (global.set $movewindow_pending_size
-            (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
+	      (global.set $main_win_cx (local.get $arg3))
+	      (global.set $main_win_cy (local.get $arg4))
+	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+	      (if (i32.ne (local.get $cs) (local.get $old_cs))
+	        (then
+	          (global.set $pending_wm_size (local.get $cs))
+	          (call $invalidate_hwnd (local.get $arg0)))))
+	    (else
+	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+	      (local.set $cx (i32.and (local.get $cs) (i32.const 0xFFFF)))
+	      (local.set $cy (i32.shr_u (local.get $cs) (i32.const 16)))
+	      (if (i32.ne (local.get $cs) (local.get $old_cs))
+	        (then
+	          (call $invalidate_hwnd (local.get $arg0))
+	          (global.set $movewindow_pending_hwnd (local.get $arg0))
+	          (global.set $movewindow_pending_size
+	            (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
                     (i32.shl (local.get $cy) (i32.const 16))))))))
     (global.set $eax (i32.const 1))
     (return)
@@ -3408,15 +3411,30 @@
     ;; update exists, return the full client rect like Win32's empty fallback.
     (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
     (local.set $partial (call $update_get_rect (local.get $arg0) (local.get $wa)))
-    (if (i32.eqz (local.get $partial))
-      (then
-        ;; Empty update rect: rcPaint = full client.
-        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
-        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
-        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
-        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
-    ;; WAT-owned visible clipping: update rect, client bounds, parent,
+	    (if (i32.eqz (local.get $partial))
+	      (then
+	        ;; Empty update rect: rcPaint = full client.
+	        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+	        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
+	        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
+	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
+	    ;; Some Win9x games resize/maximize from inside WM_PAINT and then draw a
+	    ;; complete redraw-class scene while the old partial update region is still
+	    ;; installed. For maximized CS_HREDRAW/CS_VREDRAW top-levels, promote that
+	    ;; paint to the full client so the redraw is not clipped to the pre-resize
+	    ;; splash/update rectangle.
+	    (if (i32.and
+	          (i32.and (local.get $partial) (call $wnd_max_get (local.get $arg0)))
+	          (i32.ne (i32.and (global.get $wndclass_style) (i32.const 0x0003)) (i32.const 0)))
+	      (then
+	        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+	        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
+	        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
+	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))
+	        (local.set $partial (i32.const 0))))
+	    ;; WAT-owned visible clipping: update rect, client bounds, parent,
     ;; CLIPCHILDREN and CLIPSIBLINGS all compose into the HDC clip.
     (if (local.get $partial)
       (then
@@ -9219,11 +9237,12 @@
     (global.set $pending_child_size (i32.const 0))
     (call $gs32 (local.get $msg_ptr) (global.get $pending_child_size_hwnd))
     (global.set $pending_child_size_hwnd (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
+	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
+	    (call $invalidate_hwnd (global.get $main_hwnd))
+	    (global.set $eax (i32.const 1))
+	    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver pending WM_SIZE after WM_CREATE
     (if (global.get $pending_wm_size)
     (then

@@ -154,11 +154,12 @@
         (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
-        ;; Consume pending_wm_size so GetMessageA drain path doesn't replay it.
-        (global.set $pending_wm_size (i32.const 0))
-        ;; Match what the GetMessageA-drain path does: set WM_NCCALCSIZE pending.
-        (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
-        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
+	        ;; Consume pending_wm_size so GetMessageA drain path doesn't replay it.
+	        (global.set $pending_wm_size (i32.const 0))
+	        ;; Match what the GetMessageA-drain path does: set WM_NCCALCSIZE pending.
+	        (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
+	        (call $invalidate_hwnd (global.get $main_hwnd))
+	        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $steps (i32.const 0))

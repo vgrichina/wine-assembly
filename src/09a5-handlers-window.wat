@@ -481,24 +481,27 @@
     ;; synchronous path overwrites pending_wm_size with child dimensions.
     (if (i32.eqz (i32.and (local.get $arg3) (i32.const 0x40000000)))
     (then
-    ;; Store window outer dimensions for WM_SIZE delivery later
-    (global.set $main_win_cx (local.get $win_cx))
-    (global.set $main_win_cy (local.get $win_cy))
-    ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
-    (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
-      (i32.ne (local.get $menu_id) (i32.const 0))))
-    (global.set $pending_wm_size (i32.or
-      (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-      (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
-    ;; If WS_VISIBLE (0x10000000) is set on the main window's style and the activation
-    ;; chain hasn't already run (no prior ShowWindow), arm CACA0001 to run the
-    ;; implicit-show activation chain after WM_CREATE returns. This matches real
-    ;; Win32, where CreateWindowEx with WS_VISIBLE implicitly calls ShowWindow.
-    (if (i32.and (i32.and
-                   (i32.eq (local.get $hwnd) (global.get $main_hwnd))
-                   (i32.ne (i32.and (local.get $arg3) (i32.const 0x10000000)) (i32.const 0)))
-                 (i32.eqz (global.get $show_window_activated)))
-      (then (global.set $createwnd_implicit_show (i32.const 1))))
+    ;; Store main-window dimensions for startup WM_SIZE delivery. Secondary
+    ;; top-level helper windows must not overwrite the single pending_wm_size
+    ;; slot because the message pump delivers that slot to main_hwnd.
+    (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+      (then
+        (global.set $main_win_cx (local.get $win_cx))
+        (global.set $main_win_cy (local.get $win_cy))
+        ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
+        (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
+          (i32.ne (local.get $menu_id) (i32.const 0))))
+        (global.set $pending_wm_size (i32.or
+          (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
+          (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
+        ;; If WS_VISIBLE (0x10000000) is set on the main window's style and the activation
+        ;; chain hasn't already run (no prior ShowWindow), arm CACA0001 to run the
+        ;; implicit-show activation chain after WM_CREATE returns. This matches real
+        ;; Win32, where CreateWindowEx with WS_VISIBLE implicitly calls ShowWindow.
+        (if (i32.and
+              (i32.ne (i32.and (local.get $arg3) (i32.const 0x10000000)) (i32.const 0))
+              (i32.eqz (global.get $show_window_activated)))
+          (then (global.set $createwnd_implicit_show (i32.const 1))))))
     ;; Save state for continuation thunk
     (global.set $createwnd_saved_hwnd (local.get $hwnd))
     (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
@@ -510,8 +513,8 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x104)) (call $gl32 (i32.add (global.get $esp) (i32.const 44)))) ;; hInstance
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x108)) (call $gl32 (i32.add (global.get $esp) (i32.const 40)))) ;; hMenu
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x10c)) (local.get $parent_hwnd))                               ;; hwndParent
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))                               ;; cy
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))                               ;; cx
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (local.get $win_cy))                                      ;; cy
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (local.get $win_cx))                                      ;; cx
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c)) (local.get $arg4))                                       ;; x
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (local.get $arg3))                                       ;; style
@@ -1222,11 +1225,12 @@
     (global.set $pending_wm_size (i32.const 0))
     (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005)) ;; WM_SIZE
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
-    (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; SIZE_RESTORED
+	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed)) ;; lParam=cx|(cy<<16)
+	    (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
+	    (call $invalidate_hwnd (global.get $main_hwnd))
+	    (global.set $eax (i32.const 1))
+	    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Phases 0-4 (WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS) now delivered
     ;; synchronously during CreateWindowExA via CACA0007→CACA000A chain.
     ;; msg_phase is set to 5 after the chain completes.

@@ -1808,16 +1808,26 @@
   (func $handle_IDirectDrawSurface_BltFast (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst_entry i32) (local $src_entry i32)
     (local $dst_dib i32) (local $src_dib i32)
+    (local $dst_w i32) (local $dst_h i32) (local $src_full_w i32) (local $src_full_h i32)
     (local $dst_pitch i32) (local $src_pitch i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $bps i32) (local $row i32) (local $trans i32)
     (local $ckey i32) (local $col i32) (local $x i32)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
     (local.set $dst_dib (i32.load (i32.add (local.get $dst_entry) (i32.const 20))))
+    (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
+    (local.set $dst_h (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 14))))
     (local.set $dst_pitch (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 18))))
     (local.set $bps (i32.div_u (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 16))) (i32.const 8)))
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     (local.set $src_entry (call $dx_from_this (local.get $arg3)))
     (local.set $src_dib (i32.load (i32.add (local.get $src_entry) (i32.const 20))))
+    (local.set $src_full_w (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
+    (local.set $src_full_h (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))
     (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
     (local.set $trans (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; dwTrans (6th arg)
     (call $host_dx_trace (i32.const 14) (call $dx_slot_of (local.get $dst_entry))
@@ -1838,6 +1848,33 @@
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
         (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
         (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
+    ;; BltFast does not take a clipper. Treat fully out-of-bounds requests as
+    ;; no-ops and clip partial requests so bad animation coordinates cannot
+    ;; escape the surface DIB.
+    (if (i32.or
+          (i32.or
+            (i32.ge_u (local.get $arg1) (local.get $dst_w))
+            (i32.ge_u (local.get $arg2) (local.get $dst_h)))
+          (i32.or
+            (i32.ge_u (local.get $sx) (local.get $src_full_w))
+            (i32.ge_u (local.get $sy) (local.get $src_full_h))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (if (i32.gt_u (local.get $sw) (i32.sub (local.get $src_full_w) (local.get $sx)))
+      (then (local.set $sw (i32.sub (local.get $src_full_w) (local.get $sx)))))
+    (if (i32.gt_u (local.get $sh) (i32.sub (local.get $src_full_h) (local.get $sy)))
+      (then (local.set $sh (i32.sub (local.get $src_full_h) (local.get $sy)))))
+    (if (i32.gt_u (local.get $sw) (i32.sub (local.get $dst_w) (local.get $arg1)))
+      (then (local.set $sw (i32.sub (local.get $dst_w) (local.get $arg1)))))
+    (if (i32.gt_u (local.get $sh) (i32.sub (local.get $dst_h) (local.get $arg2)))
+      (then (local.set $sh (i32.sub (local.get $dst_h) (local.get $arg2)))))
+    (if (i32.or (i32.eqz (local.get $sw)) (i32.eqz (local.get $sh)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     ;; DDBLTFAST_SRCCOLORKEY = 0x1, DDBLTFAST_DESTCOLORKEY = 0x2
     (if (i32.and (local.get $trans) (i32.const 0x01))
       (then
@@ -2995,7 +3032,7 @@
           (if (i32.and (call $host_get_key_down_state (local.get $i)) (i32.const 0x8000))
             (then (i32.store8 (i32.add (local.get $wa) (local.get $i)) (i32.const 0x80))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $kbd_lp))))
+          (br $kbd_lp)))))
     (if (i32.eq (local.get $dev_type) (i32.const 2))
       (then
         ;; Mouse — DIMOUSESTATE: lX(4), lY(4), lZ(4), rgbButtons[4](4)
@@ -3026,7 +3063,7 @@
               (then (i32.store8 offset=13 (local.get $wa) (i32.const 0x80))))))
         ))
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetDeviceData(this, cbObjectData, rgdod, pdwInOut, dwFlags)
   ;; Minimal buffered mouse support. MCM peeks with rgdod=NULL/DIGDD_PEEK,

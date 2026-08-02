@@ -605,10 +605,10 @@ Resource-aware Win98 emulator
   <script src="lib/filesystem.js?v=168"></script>
   <script src="lib/hlp-parser.js?v=168"></script>
   <script src="lib/vendor/webaudio-tinysynth.js?v=168"></script>
-  <script src="lib/host-imports.js?v=169"></script>
+  <script src="lib/host-imports.js?v=171"></script>
   <script src="lib/compile-wat.js?v=168"></script>
   <script src="lib/thread-manager.js?v=168"></script>
-  <script src="host.js?v=169"></script>
+  <script src="host.js?v=171"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script>
     let wine = null;
@@ -1220,8 +1220,9 @@ Resource-aware Win98 emulator
       qblackjack: {
         exe: 'binaries/wep32-community/QBlackjack/QuickBlackjack.exe',
         startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Purse', type: 4, data: -1000 },
-          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Change', type: 4, data: 1000 },
+          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Purse', type: 4, data: 500 },
+          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Change', type: 4, data: 0 },
+          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Tabletop', valueName: 'Animation', type: 4, data: 0 },
         ],
       },
       runenlegen: { exe: 'binaries/wep32-community/Runenlegen/Runenlegen.exe' },
