@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-02):** PARTIAL.
+**Status (2026-08-03):** PARTIAL.
 
 WordPad opens and renders in the focused smoke:
 
@@ -364,11 +364,20 @@ Current evidence from the 2026-08-02 follow-up probe:
 - The `32767 twips` RichEdit sentinel is clamped during the exact screen-DPI
   `MulDiv(32767, 96, 1440)` conversion, so text no longer paints at a large
   negative y coordinate.
-- `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills, so RichEdit's erase bands
-  clear to the DC background instead of leaving black memory-DC strips.
+- `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills and `ETO_CLIPPED` glyph
+  clipping, so RichEdit's erase bands clear to the DC background and long-line
+  paints stay constrained to the native paint rectangle.
+- Direct GDI regression test:
+  `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
+  and null-text opaque erases on a surface DC.
 - Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor.
+- Regression test: `node test/test-wordpad-richedit-clipping.js` passes 11/11
+  and writes `test/output/wordpad-richedit/long-line-clipped.png`; it types
+  100 chars, observes native RichEdit line metrics, confirms
+  `ExtTextOutA(... fuOptions=4, lprc=...)`, and checks that glyphs do not spill
+  into the desktop band outside WordPad.
 - Regression test: `node test/test-wordpad-menu-edit-clipboard.js` passes 17/17
   and writes `test/output/wordpad-richedit/menu-edit-copy-paste.png` plus
   `test/output/wordpad-richedit/menu-edit-cut-paste.png`; it covers WordPad
@@ -465,17 +474,19 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   caret blink/XOR cadence, scrollbar drag, wrapping, advanced toolbar UI
+   caret blink/XOR cadence, scrollbar drag, full wrapping/clip invalidation
+   edge cases, advanced toolbar UI
    state, mixed-run size reporting, and paragraph
    indents/tabs/numbering still need focused probes. Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
    round-trip, simple paragraph center-alignment round-trip, Edit-menu
    Select All/Copy/Cut/Paste plain-text commands, visible selection highlight,
-   visible caret paint, visible toolbar layout, first-toolbar-button command routing,
-   formatting-toolbar B/I/U mouse commands, and direct RichEdit color rendering
-   are now covered, and WordPad's own toolbar color UI now applies Blue through
-   the covered dynamic-popup path.
+   visible caret paint, visible toolbar layout, first-toolbar-button command
+   routing, formatting-toolbar B/I/U mouse commands, direct RichEdit color
+   rendering, and clipped long-text RichEdit painting are now covered, and
+   WordPad's own toolbar color UI now applies Blue through the covered
+   dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

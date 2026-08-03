@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-02.
+Last updated: 2026-08-03.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -44,6 +44,7 @@ Implement now                                 Postpone later
 | basic RTF + basic formatting   |            | rich clipboard fidelity      |
 | simple paragraph alignment     |            | indents / tabs / numbering   |
 | basic toolbar command fidelity |            | advanced toolbar UI state    |
+| clipped ExtTextOut rendering   |            | scrollbar drag fidelity      |
 +--------------------------------+            +-------------------------------+
 ```
 
@@ -69,6 +70,8 @@ launch WordPad -> click editor -> type "hello world"
               -> standard/format toolbar rows are visible above the editor
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
+              -> 100 chars of WordPad text produce native line metrics and
+                 paint through clipped ExtTextOut rectangles without desktop spill
               -> simple RTF save/reopen preserves Arial Bold Italic Underline
                  24pt Blue
               -> simple RTF save/reopen preserves centered paragraph alignment
@@ -112,12 +115,25 @@ That means these pieces are already good enough for basic insertion:
   `alignment=3`;
 - keyboard routing preserves focused native RichEdit before using the WAT EDIT
   fallback, so toolbar combobox edit children do not steal document typing;
-- `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles;
+- `ExtTextOutA/W` supports `ETO_OPAQUE` erase rectangles and `ETO_CLIPPED`
+  glyph clipping, including the long-line WordPad RichEdit paint path;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
 
 This does not mean RichEdit is feature complete. It only proves the first
 native-editing path is alive.
+
+### 2026-08-03 implementation progress
+
+- Routed `ExtTextOutA/W` through a shared host GDI primitive that preserves the
+  existing `TextOut` rendering path while honoring `ETO_OPAQUE` and
+  `ETO_CLIPPED` rectangles. `lpDx` is still ignored.
+- Added direct host-GDI coverage in `test/test-gdi-exttextout-clipping.js` for
+  glyph clipping and null-text opaque erases.
+- Added `test/test-wordpad-richedit-clipping.js`, which types 100 chars into
+  WordPad, observes native RichEdit line metrics, confirms
+  `ExtTextOutA(... fuOptions=4, lprc=...)`, and captures
+  `test/output/wordpad-richedit/long-line-clipped.png`.
 
 ### 2026-08-02 implementation progress
 
@@ -478,7 +494,7 @@ Acceptance:
 ```text
 [x] Shift+arrow produces a non-empty selection
 [x] mouse drag produces a non-empty selection
-[ ] selected text is visibly highlighted in a screenshot
+[x] selected text is visibly highlighted in a screenshot
 [x] replacing selected text leaves the expected buffer contents
 ```
 
@@ -495,8 +511,10 @@ Acceptance:
 ```text
 [x] long multiline text inserts without truncation
 [x] wheel scroll changes first visible line
+[x] long WordPad RichEdit text paints through clipped ExtTextOut rectangles
+[x] glyph drawing stays inside the tested RichEdit/outer-window paint band
 [ ] scrollbar drag changes first visible line
-[ ] text stays clipped to the RichEdit client rect
+[ ] full wrapping + clip invalidation stays coherent across resize/scroll edges
 ```
 
 ### 4. Text I/O
@@ -585,7 +603,8 @@ Acceptance:
 [x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
 [x] Menu Copy/Cut/Paste has explicit coverage
 [x] Native RichEdit wheel changes first visible line
-[ ] Line wrapping and scrollbar scrolling stay coherent
+[x] Long WordPad RichEdit text paints through clipped ExtTextOut rectangles
+[ ] Scrollbar drag and full wrapping/clip invalidation stay coherent
 [x] WordPad saved RTF reopens with simple plain text content
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
@@ -615,12 +634,13 @@ Acceptance:
 4. Fix visible selection rendering and replacement.
 5. Add plain-text keyboard clipboard bridge for focused native RichEdit.
 6. Add mouse-selection and focused-wheel scroll coverage.
-7. Fix wrapping, scrollbar drag, and clip invalidation.
+7. Fix clipped RichEdit text rendering.
 8. Add plain text stream in/out.
 9. Add basic RTF stream in/out.
 10. Add basic character and paragraph formatting.
-11. Re-run WordPad, Notepad, and installer RichEdit probes.
-12. Update app status docs with screenshots and pass/fail state.
+11. Fix scrollbar drag and full wrapping/clip invalidation edge cases.
+12. Re-run WordPad, Notepad, and installer RichEdit probes.
+13. Update app status docs with screenshots and pass/fail state.
 ```
 
 ## Risk controls

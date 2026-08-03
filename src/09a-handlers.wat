@@ -4988,34 +4988,19 @@
   )
 
   ;; 364: ExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Delegates to gdi_text_out in wide mode; clipping rect and lpDx are ignored
-  ;; (matches ExtTextOutA behaviour — host reads UTF-16 LE directly).
+  ;; Host draws UTF-16 text and honors ETO_OPAQUE/ETO_CLIPPED; lpDx is ignored.
   (func $handle_ExtTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lpString i32) (local $count i32) (local $rect i32) (local $brush i32)
+    (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
     (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
     (local.set $count    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; arg6 (wchar count)
-    ;; ETO_OPAQUE (0x2): fill lprect with the current background color even
-    ;; when lpString is NULL/c == 0. RichEdit relies on this to erase text
-    ;; bands before drawing into window and memory DCs.
-    (if (i32.and
-          (i32.ne (i32.and (local.get $arg3) (i32.const 0x2)) (i32.const 0))
-          (i32.ne (local.get $arg4) (i32.const 0)))
-      (then
-        (local.set $rect (call $g2w (local.get $arg4)))
-        (local.set $brush
-          (call $host_gdi_create_solid_brush
-            (call $host_gdi_get_bk_color (local.get $arg0))))
-        (drop (call $host_gdi_fill_rect
-          (local.get $arg0)
-          (i32.load (local.get $rect))
-          (i32.load offset=4 (local.get $rect))
-          (i32.load offset=8 (local.get $rect))
-          (i32.load offset=12 (local.get $rect))
-          (local.get $brush)))
-        (drop (call $host_gdi_delete_object (local.get $brush)))))
-    (global.set $eax (call $host_gdi_text_out
+    (if (local.get $arg4)
+      (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
+    (if (local.get $lpString)
+      (then (local.set $text_wa (call $g2w (local.get $lpString)))))
+    (global.set $eax (call $host_gdi_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $lpString)) (local.get $count) (i32.const 1)))
+      (local.get $arg3) (local.get $rect_wa)
+      (local.get $text_wa) (local.get $count) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
@@ -11057,30 +11042,19 @@
   )
 
   ;; 949: ExtTextOutA(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Delegates to TextOut for glyphs; implements ETO_OPAQUE rect fill.
+  ;; Host draws ANSI text and honors ETO_OPAQUE/ETO_CLIPPED; lpDx is ignored.
   (func $handle_ExtTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lpString i32) (local $count i32) (local $rect i32) (local $brush i32)
+    (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
     (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
     (local.set $count (call $gl32 (i32.add (global.get $esp) (i32.const 28))))    ;; arg6
-    (if (i32.and
-          (i32.ne (i32.and (local.get $arg3) (i32.const 0x2)) (i32.const 0))
-          (i32.ne (local.get $arg4) (i32.const 0)))
-      (then
-        (local.set $rect (call $g2w (local.get $arg4)))
-        (local.set $brush
-          (call $host_gdi_create_solid_brush
-            (call $host_gdi_get_bk_color (local.get $arg0))))
-        (drop (call $host_gdi_fill_rect
-          (local.get $arg0)
-          (i32.load (local.get $rect))
-          (i32.load offset=4 (local.get $rect))
-          (i32.load offset=8 (local.get $rect))
-          (i32.load offset=12 (local.get $rect))
-          (local.get $brush)))
-        (drop (call $host_gdi_delete_object (local.get $brush)))))
-    (global.set $eax (call $host_gdi_text_out
+    (if (local.get $arg4)
+      (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
+    (if (local.get $lpString)
+      (then (local.set $text_wa (call $g2w (local.get $lpString)))))
+    (global.set $eax (call $host_gdi_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $lpString)) (local.get $count) (i32.const 0)))
+      (local.get $arg3) (local.get $rect_wa)
+      (local.get $text_wa) (local.get $count) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; 8 args + ret
   )
 
