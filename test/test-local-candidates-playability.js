@@ -207,9 +207,9 @@ const tests = [
     id: 'marbles',
     name: 'Marbles',
     exe: exePath('plus98', 'MARBLES.EXE'),
-    maxBatches: 640,
+    maxBatches: 220,
     batchSize: 50000,
-    timeout: 180000,
+    timeout: 90000,
     before: fullPath('marbles', 'before'),
     after: fullPath('marbles', 'after'),
     input: null,
@@ -217,7 +217,7 @@ const tests = [
       return [
         { name: 'run exited cleanly', pass: result.exitCode === 0 },
         { name: 'main window remains visible', pass: /window:marbles .*visible=true .*dialog=false .*title="Marbles"/.test(result.out) },
-        { name: 'click visibly changes the intro/game surface', pass: diff > 50000 },
+        { name: 'click visibly changes the intro surface', pass: diff > 50000 },
         { name: 'renderer retains color content after click', pass: metricAfter.colors > 100 && metricAfter.saturated > 5000 },
         { name: 'no crash marker', pass: hasNoCrash(result.out) },
       ];
@@ -279,9 +279,9 @@ tests.find(t => t.id === 'marbles').input = [
   `80:png:${tests.find(t => t.id === 'marbles').before}`,
   '100:mousedown:320:240',
   '120:mouseup:320:240',
-  `520:png:${tests.find(t => t.id === 'marbles').after}`,
-  '600:dump-windows:marbles',
-  '620:stop',
+  `180:png:${tests.find(t => t.id === 'marbles').after}`,
+  '200:dump-windows:marbles',
+  '210:stop',
 ].join(',');
 
 (async () => {

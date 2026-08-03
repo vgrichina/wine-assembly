@@ -3013,11 +3013,34 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; DirectInput keyboard state is indexed by DIK scan codes, while the host
+  ;; renderer tracks browser/Win32 VK codes. Map the keys used by candidate
+  ;; games, and fall back to the original index for VK-shaped callers.
+  (func $di_dik_to_vk (param $dik i32) (result i32)
+    (if (i32.eq (local.get $dik) (i32.const 0x01)) (then (return (i32.const 0x1B)))) ;; ESC
+    (if (i32.eq (local.get $dik) (i32.const 0x02)) (then (return (i32.const 0x31)))) ;; 1
+    (if (i32.eq (local.get $dik) (i32.const 0x03)) (then (return (i32.const 0x32)))) ;; 2
+    (if (i32.eq (local.get $dik) (i32.const 0x04)) (then (return (i32.const 0x33)))) ;; 3
+    (if (i32.eq (local.get $dik) (i32.const 0x05)) (then (return (i32.const 0x34)))) ;; 4
+    (if (i32.eq (local.get $dik) (i32.const 0x06)) (then (return (i32.const 0x35)))) ;; 5
+    (if (i32.eq (local.get $dik) (i32.const 0x07)) (then (return (i32.const 0x36)))) ;; 6
+    (if (i32.eq (local.get $dik) (i32.const 0x08)) (then (return (i32.const 0x37)))) ;; 7
+    (if (i32.eq (local.get $dik) (i32.const 0x09)) (then (return (i32.const 0x38)))) ;; 8
+    (if (i32.eq (local.get $dik) (i32.const 0x0A)) (then (return (i32.const 0x39)))) ;; 9
+    (if (i32.eq (local.get $dik) (i32.const 0x0B)) (then (return (i32.const 0x30)))) ;; 0
+    (if (i32.eq (local.get $dik) (i32.const 0x1C)) (then (return (i32.const 0x0D)))) ;; Return
+    (if (i32.eq (local.get $dik) (i32.const 0x39)) (then (return (i32.const 0x20)))) ;; Space
+    (if (i32.eq (local.get $dik) (i32.const 0xC8)) (then (return (i32.const 0x26)))) ;; Up
+    (if (i32.eq (local.get $dik) (i32.const 0xCB)) (then (return (i32.const 0x25)))) ;; Left
+    (if (i32.eq (local.get $dik) (i32.const 0xCD)) (then (return (i32.const 0x27)))) ;; Right
+    (if (i32.eq (local.get $dik) (i32.const 0xD0)) (then (return (i32.const 0x28)))) ;; Down
+    (local.get $dik))
+
   ;; GetDeviceState(this, cbData, lpvData)
-  ;; For keyboard: fill 256-byte array with 0x80 for each pressed key
+  ;; For keyboard: fill 256-byte DirectInput DIK array with 0x80 for each pressed key
   ;; For mouse: fill DIMOUSESTATE (dx, dy, dz, rgbButtons[4]) = 16 bytes
   (func $handle_IDirectInputDevice_GetDeviceState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $dev_type i32) (local $wa i32) (local $i i32)
+    (local $entry i32) (local $dev_type i32) (local $wa i32) (local $i i32) (local $vk i32)
     (local $pos i32) (local $mx i32) (local $my i32) (local $dx i32) (local $dy i32) (local $buttons i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
@@ -3025,11 +3048,12 @@
     (call $zero_memory (local.get $wa) (local.get $arg1))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
       (then
-        ;; Keyboard — fill 256 bytes, key[vk] = 0x80 if pressed
+        ;; Keyboard — fill 256 bytes, key[dik] = 0x80 if pressed
         (local.set $i (i32.const 0))
         (block $kbd_done (loop $kbd_lp
           (br_if $kbd_done (i32.ge_u (local.get $i) (i32.const 256)))
-          (if (i32.and (call $host_get_key_down_state (local.get $i)) (i32.const 0x8000))
+          (local.set $vk (call $di_dik_to_vk (local.get $i)))
+          (if (i32.and (call $host_get_key_down_state (local.get $vk)) (i32.const 0x8000))
             (then (i32.store8 (i32.add (local.get $wa) (local.get $i)) (i32.const 0x80))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $kbd_lp)))))
@@ -3129,8 +3153,13 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetEventNotification — no-op
+  ;; SetEventNotification(this, hEvent) — remember the host event so renderer
+  ;; input can wake DirectInput polling loops.
   (func $handle_IDirectInputDevice_SetEventNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $dev_type i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (drop (call $host_di_set_event_notification (local.get $dev_type) (local.get $arg1)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

@@ -29,6 +29,7 @@ const TRACE_HOST_NAMES = String(process.env.CANDIDATE_TRACE_HOST || '')
   .map(s => s.trim())
   .filter(Boolean);
 const SCREENSHOT_DIR = process.env.CANDIDATE_SCREENSHOT_DIR || '';
+const DEBUG_EVAL = process.env.CANDIDATE_DEBUG_EVAL === '1';
 
 const ALL_CANDIDATES = [
   {
@@ -77,10 +78,41 @@ const ALL_CANDIDATES = [
     id: 'marbles',
     label: 'Marbles',
     titlePattern: 'Marbles|Lose Your Marbles',
-    click: { x: 378, y: 206, holdMs: 220 },
+    clicks: [
+      { guestX: 320, guestY: 240, holdMs: 220, waitMs: 200, snapshotAfter: 'after-intro-click' },
+      {
+        guestX: 130,
+        guestY: 130,
+        holdMs: 250,
+        waitMs: 500,
+        snapshotAfter: 'after-skill-click',
+        waitForGuestPixelBefore: {
+          x: 100, y: 300,
+          rMax: 70, gMax: 80, bMin: 60, bMax: 130,
+          timeoutMs: 15000,
+          label: 'skill panel',
+        },
+      },
+    ],
+    waitForGuestPixelAfterClicks: {
+      x: 100, y: 300,
+      rMin: 200, gMin: 200, bMin: 200,
+      timeoutMs: 10000,
+      label: 'level selection',
+    },
+    preGameKeys: [
+      { vk: 13, holdMs: 500, waitMs: 500, snapshotAfter: 'after-start-key' },
+    ],
+    keys: [
+      { vk: 39, holdMs: 180, waitMs: 350 }, // Right: select next column.
+      { vk: 38, holdMs: 180, waitMs: 350 }, // Up: move selected column.
+      { vk: 32, holdMs: 180, waitMs: 350 }, // Space: rotate center row.
+      { vk: 40, holdMs: 180, waitMs: 350 }, // Down: move selected column.
+    ],
     minColors: 80,
     minDiff: 5000,
-    waitMs: 100,
+    minKeyDiff: 120,
+    waitMs: 2500,
     actionWaitMs: 1600,
   },
 ];
@@ -357,16 +389,33 @@ async function main() {
   try { await cdp.send('Log.enable'); } catch (_) {}
 
   async function evalExpr(expression, timeoutMs = 10000) {
-    const timer = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs));
-    const result = await Promise.race([cdp.send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    }), timer]);
-    if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text || JSON.stringify(result.exceptionDetails));
+    const preview = expression.replace(/\s+/g, ' ').slice(0, 180);
+    if (DEBUG_EVAL) console.error('[eval]', preview);
+    const started = Date.now();
+    for (;;) {
+      const remaining = Math.max(1, timeoutMs - (Date.now() - started));
+      const timer = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), remaining));
+      let result;
+      try {
+        result = await Promise.race([cdp.send('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        }), timer]);
+      } catch (e) {
+        const retryable = /Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(e.message);
+        if (retryable && Date.now() - started < timeoutMs) {
+          await wait(150);
+          continue;
+        }
+        e.message += '\nwhile evaluating: ' + preview;
+        throw e;
+      }
+      if (result.exceptionDetails) {
+        throw new Error(result.exceptionDetails.text || JSON.stringify(result.exceptionDetails));
+      }
+      return result.result && result.result.value;
     }
-    return result.result && result.result.value;
   }
 
   await evalExpr(`new Promise(resolve => {
@@ -670,6 +719,112 @@ async function main() {
     })`, Math.max(2000, timeoutMs + 3000));
   }
 
+  async function waitForLogText(text, timeoutMs = 10000) {
+    try {
+      await evalExpr(`new Promise((resolve, reject) => {
+      const wanted = ${jsString(text)};
+      const started = performance.now();
+      const tick = () => {
+        const log = document.getElementById('log').textContent;
+        if (log.includes(wanted)) { resolve(1); return; }
+        if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) {
+          reject(new Error('log contains error while waiting for ' + wanted + ': ' + log.slice(-1200)));
+          return;
+        }
+        if (performance.now() - started > ${timeoutMs | 0}) {
+          const status = document.getElementById('status').textContent;
+          const windows = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+            .filter(w => w && w.visible)
+            .map(w => ({ hwnd: w.hwnd >>> 0, title: w.title || '', isDialog: !!w.isDialog }));
+          reject(new Error('timed out waiting for log text ' + wanted + ': ' + JSON.stringify({
+            status,
+            windows,
+            log: log.slice(-1200),
+            inputs: log.split('\\n').filter(line => line.includes('[input]')).slice(-40),
+          })));
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    })`, Math.max(2000, timeoutMs + 3000));
+    } catch (e) {
+      const consoleLines = consoleEventSummary(cdp.events);
+      const apiText = consoleLines.filter(line => line.includes('[API]')).slice(-120).join('\n');
+      const inputText = consoleLines.filter(line => line.includes('[input]')).slice(-120).join('\n');
+      const consoleText = consoleLines.join('\n').slice(-1200);
+      if (apiText) e.message += '\napi:\n' + apiText;
+      if (inputText) e.message += '\ninput:\n' + inputText;
+      if (consoleText) e.message += '\nconsole:\n' + consoleText;
+      throw e;
+    }
+  }
+
+  async function waitForGuestPixel(spec) {
+    const timeoutMs = spec.timeoutMs || 10000;
+    await evalExpr(`new Promise((resolve, reject) => {
+      const spec = ${JSON.stringify(spec)};
+      const started = performance.now();
+      const mapGuestToCanvas = (x, y) => {
+        const t = sharedRenderer && sharedRenderer._exclusiveTransform;
+        if (t && t.srcW && t.srcH && t.dstW && t.dstH) {
+          return {
+            x: Math.round((t.dstX || 0) + ((x - (t.srcX || 0)) * t.dstW / t.srcW)),
+            y: Math.round((t.dstY || 0) + ((y - (t.srcY || 0)) * t.dstH / t.srcH)),
+            transform: Object.assign({}, t),
+          };
+        }
+        return { x: x | 0, y: y | 0, transform: t ? Object.assign({}, t) : null };
+      };
+      const matches = (r, g, b, a) => {
+        if (spec.rMin != null && r < spec.rMin) return false;
+        if (spec.rMax != null && r > spec.rMax) return false;
+        if (spec.gMin != null && g < spec.gMin) return false;
+        if (spec.gMax != null && g > spec.gMax) return false;
+        if (spec.bMin != null && b < spec.bMin) return false;
+        if (spec.bMax != null && b > spec.bMax) return false;
+        if (spec.aMin != null && a < spec.aMin) return false;
+        if (spec.aMax != null && a > spec.aMax) return false;
+        return true;
+      };
+      const tick = () => {
+        if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
+        const canvas = document.getElementById('screen');
+        if (!canvas) { reject(new Error('canvas unavailable')); return; }
+        const p = mapGuestToCanvas(spec.x | 0, spec.y | 0);
+        if (p.x >= 0 && p.y >= 0 && p.x < canvas.width && p.y < canvas.height) {
+          const d = canvas.getContext('2d').getImageData(p.x, p.y, 1, 1).data;
+          if (matches(d[0], d[1], d[2], d[3])) {
+            resolve({ guest: { x: spec.x | 0, y: spec.y | 0 }, canvas: p, rgba: [d[0], d[1], d[2], d[3]] });
+            return;
+          }
+        }
+        const log = document.getElementById('log').textContent;
+        if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) {
+          reject(new Error('log contains error while waiting for pixel: ' + log.slice(-1200)));
+          return;
+        }
+        if (performance.now() - started > ${timeoutMs | 0}) {
+          const last = (() => {
+            if (p.x < 0 || p.y < 0 || p.x >= canvas.width || p.y >= canvas.height) return null;
+            const d = canvas.getContext('2d').getImageData(p.x, p.y, 1, 1).data;
+            return [d[0], d[1], d[2], d[3]];
+          })();
+          reject(new Error('timed out waiting for guest pixel ' + (spec.label || '') + ': ' + JSON.stringify({
+            spec,
+            canvas: p,
+            last,
+            size: { w: canvas.width, h: canvas.height },
+            log: log.slice(-1200),
+          })));
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    })`, Math.max(2000, timeoutMs + 3000));
+  }
+
   async function clickDialogControl(ctrlId) {
     await evalExpr(`(() => {
       const app = runningApps[0];
@@ -808,6 +963,25 @@ async function main() {
     };
   }
 
+  async function rendererGuestClick(x, y, holdMs = 0) {
+    const point = await evalExpr(`(() => {
+      if (!sharedRenderer) throw new Error('renderer unavailable');
+      const t = sharedRenderer._exclusiveTransform;
+      if (t && t.srcW && t.srcH && t.dstW && t.dstH) {
+        return {
+          x: Math.round((t.dstX || 0) + ((${x | 0} - (t.srcX || 0)) * t.dstW / t.srcW)),
+          y: Math.round((t.dstY || 0) + ((${y | 0} - (t.srcY || 0)) * t.dstH / t.srcH)),
+          transform: Object.assign({}, t),
+        };
+      }
+      return { x: ${x | 0}, y: ${y | 0}, transform: t ? Object.assign({}, t) : null };
+    })()`);
+    const action = await rendererClick(point.x, point.y, holdMs);
+    action.guest = { x: x | 0, y: y | 0 };
+    action.canvas = { x: point.x | 0, y: point.y | 0 };
+    return action;
+  }
+
   async function rendererDrag(points) {
     const p = points.map(([x, y]) => [x | 0, y | 0]);
     await evalExpr(`(() => {
@@ -831,6 +1005,53 @@ async function main() {
       }
       return 1;
     })()`);
+  }
+
+  async function rendererKeyTap(vk, holdMs = 80) {
+    const down = await evalExpr(`(() => {
+      if (!sharedRenderer || !sharedRenderer.handleKeyDown) throw new Error('renderer keydown unavailable');
+      const q = sharedRenderer.inputQueue || [];
+      const beforeLen = q.length;
+      sharedRenderer.handleKeyDown(${vk | 0});
+      const asyncDown = !!(sharedRenderer._asyncKeys && sharedRenderer._asyncKeys[${vk & 0xFF}]);
+      return {
+        kind: 'keydown',
+        vk: ${vk | 0},
+        asyncDown,
+        beforeLen,
+        afterLen: q.length,
+        events: q.slice(beforeLen).map(evt => evt ? ({
+          type: evt.type || '',
+          hwnd: evt.hwnd >>> 0,
+          msg: evt.msg >>> 0,
+          wParam: evt.wParam >>> 0,
+          lParam: evt.lParam >>> 0,
+        }) : null),
+      };
+    })()`);
+    if (holdMs > 0) await wait(holdMs);
+    const up = await evalExpr(`(() => {
+      if (!sharedRenderer || !sharedRenderer.handleKeyUp) throw new Error('renderer keyup unavailable');
+      const q = sharedRenderer.inputQueue || [];
+      const beforeLen = q.length;
+      sharedRenderer.handleKeyUp(${vk | 0});
+      const asyncDown = !!(sharedRenderer._asyncKeys && sharedRenderer._asyncKeys[${vk & 0xFF}]);
+      return {
+        kind: 'keyup',
+        vk: ${vk | 0},
+        asyncDown,
+        beforeLen,
+        afterLen: q.length,
+        events: q.slice(beforeLen).map(evt => evt ? ({
+          type: evt.type || '',
+          hwnd: evt.hwnd >>> 0,
+          msg: evt.msg >>> 0,
+          wParam: evt.wParam >>> 0,
+          lParam: evt.lParam >>> 0,
+        }) : null),
+      };
+    })()`);
+    return { kind: 'keytap', vk: vk | 0, holdMs: holdMs | 0, down, up };
   }
 
   const reports = [];
@@ -869,9 +1090,41 @@ async function main() {
     const clicks = app.clicks || (app.click ? [app.click] : null);
     if (clicks) {
       for (const click of clicks) {
-        actions.push(await rendererClick(click.x, click.y, click.holdMs || 0));
+        if (click.waitForGuestPixelBefore) {
+          await waitForGuestPixel(click.waitForGuestPixelBefore);
+          if (click.waitAfterGuestPixelBeforeMs) await wait(click.waitAfterGuestPixelBeforeMs);
+        }
+        actions.push(click.guestX !== undefined || click.guestY !== undefined
+          ? await rendererGuestClick(click.guestX || 0, click.guestY || 0, click.holdMs || 0)
+          : await rendererClick(click.x, click.y, click.holdMs || 0));
+        if (click.snapshotAfter) await saveCanvasSnapshot(app, click.snapshotAfter);
         await wait(click.waitMs || app.actionWaitMs || 350);
       }
+    }
+    if (app.waitForGuestPixelAfterClicks) {
+      await waitForGuestPixel(app.waitForGuestPixelAfterClicks);
+    }
+    if (app.preGameKeys) {
+      for (const key of app.preGameKeys) {
+        actions.push(await rendererKeyTap(key.vk, key.holdMs || 80));
+        if (key.snapshotAfter) await saveCanvasSnapshot(app, key.snapshotAfter);
+        await wait(key.waitMs || app.keyWaitMs || 150);
+      }
+    }
+    if (app.preGameText) {
+      await rendererType(app.preGameText);
+      actions.push({ kind: 'type', text: app.preGameText });
+      if (app.preGameTextSnapshotAfter) await saveCanvasSnapshot(app, app.preGameTextSnapshotAfter);
+      await wait(app.preGameTextWaitMs || 500);
+    }
+    if (app.waitForLogAfterClicks) {
+      await waitForLogText(app.waitForLogAfterClicks, app.waitForLogTimeoutMs || 10000);
+    }
+    let keyBaseline = null;
+    if (app.keys && app.minKeyDiff) {
+      await wait(app.keyBaselineWaitMs || 250);
+      keyBaseline = await captureDiffBaseline(app);
+      await saveCanvasSnapshot(app, 'before-keys');
     }
     if (app.draw) {
       await rendererClick(39, 146);
@@ -883,16 +1136,24 @@ async function main() {
       await rendererType(app.typeText);
       await wait(350);
     }
+    if (app.keys) {
+      for (const key of app.keys) {
+        actions.push(await rendererKeyTap(key.vk, key.holdMs || 80));
+        await wait(key.waitMs || app.keyWaitMs || 150);
+      }
+    }
 
     const after = await snapshot(app);
     await saveCanvasSnapshot(app, 'after');
     const diff = await diffSince(before, app);
+    const keyDiff = keyBaseline ? await diffSince(keyBaseline, app) : null;
     const windowsText = after.windows.map(w => w.title).join(', ');
     const consoleText = consoleEventSummary(cdp.events).join('\n');
     const summary = JSON.stringify({
       windows: after.windows,
       metrics: after.metrics,
       diff: diff.diff,
+      keyDiff: keyDiff && keyDiff.diff,
       actions,
       status: after.status,
       log: after.log.slice(-1000),
@@ -934,11 +1195,22 @@ async function main() {
           `${app.label}: click should land inside the rendered app surface: ${summary}`);
         assert((action.down || []).some(ev => ev.msg === 0x0201) && (action.up || []).some(ev => ev.msg === 0x0202),
           `${app.label}: click should enqueue WM_LBUTTONDOWN/UP: ${summary}`);
+      } else if (action.kind === 'keytap') {
+        assert(action.down && action.down.afterLen > action.down.beforeLen,
+          `${app.label}: keydown ${action.vk} should enqueue input: ${summary}`);
+        assert(action.up && action.up.afterLen > action.up.beforeLen,
+          `${app.label}: keyup ${action.vk} should enqueue input: ${summary}`);
+        assert(action.down.asyncDown === true && action.up.asyncDown === false,
+          `${app.label}: key ${action.vk} should update async key state: ${summary}`);
       }
     }
     if (app.minDiff) {
       assert(diff.diff >= app.minDiff,
         `${app.label}: action should visibly change app content by >=${app.minDiff} sampled pixels: ${summary}`);
+    }
+    if (app.minKeyDiff) {
+      assert(keyDiff && keyDiff.diff >= app.minKeyDiff,
+        `${app.label}: gameplay keys should visibly change app content by >=${app.minKeyDiff} sampled pixels: ${summary}`);
     }
     reports.push(`${app.id}: colors=${after.metrics.colors} top=${after.metrics.topShare.toFixed(3)} diff=${diff.diff} windows=${JSON.stringify(after.windows.map(w => w.title))}`);
     console.log('PASS ', reports[reports.length - 1]);
