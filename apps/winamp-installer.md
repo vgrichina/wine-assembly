@@ -427,9 +427,24 @@ Jump table at `0x401bb0`: state 0→`0x4010af`, 3→`0x40133f`, 4→`0x40137e`, 
 | `0x403de6` | NSIS decompress wrapper — calls inflate in a loop |
 | `0x403d09` | `load_nsis_header` — reads firstheader, allocates, decompresses |
 
-### Status: File Extraction Complete
+### Status: Silent and Interactive Install Passing (2026-08-03)
 
-The NSIS installer successfully decompresses and extracts all files to the virtual filesystem at `C:\Program Files\Winamp\`. All pages navigate correctly (License → Components → Folder → Installing Files → Completed).
+The NSIS installer successfully decompresses and extracts files to the virtual
+filesystem at `C:\Program Files\Winamp\`. The current regression covers:
+
+- Winamp 2.91 and 2.95 silent `/S` install extraction.
+- Winamp 2.95 interactive navigation through
+  License → Installation Options → Installation Folder → Installing Files →
+  Finish, returning `[Exit] code=0`.
+- License-page RichEdit rendering, word-wrapped `DrawText`, clipping, wheel
+  scroll, arrow scroll, direct thumb drag, and canvas thumb drag.
+- Page screenshots for license/options/folder/installing states:
+  `test/output/winamp295-stage-01-license.png`,
+  `test/output/winamp295-stage-02-options.png`,
+  `test/output/winamp295-stage-03-folder.png`, and
+  `test/output/winamp295-stage-04-installing-files.png`.
+- Native installing-page controls: `ProgressBar` ids `1004`/`1005` and
+  `SysListView32` id `1016`.
 
 **Key fixes applied:**
 - Dialog proc stored in window table (`wnd_table_set`) so `SendMessageA` routes messages to the correct dialog proc
@@ -441,25 +456,41 @@ The NSIS installer successfully decompresses and extracts all files to the virtu
 - VFS `closeHandle` marks handles closed instead of deleting (extraction thread reads installer EXE after main thread closes handle)
 - Button injection delayed during "Installing Files" page; extraction thread gets 1000x more runtime while main thread is idle
 - Thread crash handling: graceful continue on unimplemented API in thread
+- Test input wait scheduling now keeps future wait start-batches in sync when
+  an earlier wait defers the timeline, so later page waits do not expire
+  immediately after the license control appears.
+- Interactive page-flow probes use parent-frame `WM_COMMAND` (`post-cmd:1`) for
+  deterministic wizard navigation, while a separate real canvas I Agree click
+  probe verifies the License → Options button path.
+- Page PNG outputs are deleted before capture so stale screenshots cannot mask
+  navigation or rendering failures.
 
-**Extracted files (C:\Program Files\Winamp\):**
+**Representative extracted files (Winamp 2.95, `C:\Program Files\Winamp\`):**
 
 | File | Size |
 |------|------|
 | winamp.m3u | 36 bytes |
-| winamp.exe | 846,848 bytes |
+| winamp.exe | 854,016 bytes |
 | demo.mp3 | 38,912 bytes |
-| whatsnew.txt | 35,041 bytes |
 | winampmb.htm | 3,210 bytes |
-| Plugins/in_mp3.dll | 141,312 bytes |
+| Plugins/in_mp3.dll | 274,944 bytes |
 | Plugins/out_wave.dll | 13,824 bytes |
 | winampa.exe | 12,288 bytes |
-| Plugins/gen_ml.dll | 175,104 bytes |
+| Plugins/gen_ml.dll | 198,144 bytes |
 | Plugins/in_wm.dll | 54,272 bytes |
 | Plugins/out_wm.dll | 7,680 bytes |
-| (C:\Windows\Temp\wmaudioredist.exe) | 534,640 bytes |
+| Plugins/in_midi.dll | 101,888 bytes |
+| Plugins/read_file.dll | 84,480 bytes |
+| Plugins/in_mod.dll | 130,560 bytes |
+| Plugins/in_vorbis.dll | 226,816 bytes |
+| Plugins/enc_vorbis.dll | 108,544 bytes |
+| Plugins/in_cdda.dll | 58,368 bytes |
 
-**Performance:** Inflate decompression through x86 emulation is slow. The extraction thread needs ~500k main-thread batches (with 1000 thread slices per batch at batch-size=5000) to extract all files. Thread crashes on the last file (wmaudioredist.exe) due to an unresolved WriteFile thunk in the thread's WASM instance.
+**Performance:** Inflate decompression through x86 emulation is still slow. The
+full regression is intentionally timeout-wrapped. Current interactive coverage
+waits for Installing Files, lets the extraction worker run, sends the final
+Finish command after the expected extraction window, and verifies clean process
+exit plus the expected VFS files.
 
 ### Bug: $INSTDIR Empty — set_flags_logic Missing flag_sign_shift (FIXED)
 
@@ -476,5 +507,7 @@ The NSIS installer successfully decompresses and extracts all files to the virtu
 **Breakpoint improvement:** Added WASM-level breakpoint support to test runner (uses `set_bp` export for per-block EIP checking inside `$run`, instead of JS-level per-batch checking).
 
 Test commands:
-- Quick silent install: `node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=5000 --batch-size=5000`
-- Full silent extraction: `node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=5000 --batch-size=5000 --dump-vfs`
+- Full regression: `/opt/homebrew/bin/timeout 900 node test/test-winamp-installers.js`
+- Quick silent install: `node test/run.js --exe=test/binaries/installers/winamp291.exe --args=/S --max-batches=8000 --batch-size=5000 --dump-vfs`
+- Focused 2.95 interactive finish path:
+  `node test/run.js --exe=test/binaries/installers/winamp295.exe --max-batches=800000 --batch-size=5000 --input=1:wait-dlg-control:1000:6500,10:post-cmd:1,20:wait-title:Installation_Options:1800,30:post-cmd:1,40:wait-title:Installation_Folder:1800,50:post-cmd:1,60:wait-title:Installing_Files:1800,20000:post-cmd:1 --dump-vfs --quiet-api --stuck-after=5000`

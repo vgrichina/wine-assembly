@@ -617,6 +617,19 @@ async function main() {
     }
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
+  const sortScheduledInput = (current) => {
+    scheduledInput.sort((a, b) =>
+      (a.batch - b.batch) || (current ? (a === current ? -1 : (b === current ? 1 : 0)) : 0));
+  };
+  const deferScheduledWait = (ev, batch, preferCurrent = false) => {
+    ev.batch = batch + 1;
+    for (const pending of scheduledInput) {
+      pending.batch++;
+      if (typeof pending.startBatch === 'number') pending.startBatch++;
+    }
+    scheduledInput.push(ev);
+    sortScheduledInput(preferCurrent ? ev : null);
+  };
 
   // Resource parsing lives in WAT — nothing to pre-parse here.
 
@@ -3133,10 +3146,7 @@ async function main() {
             logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: unable to open menu at batch ${batch}`);
           }
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
-          ev.batch = batch + 1;
-          for (const pending of scheduledInput) pending.batch++;
-          scheduledInput.push(ev);
-          scheduledInput.sort((a, b) => (a.batch - b.batch) || (a === ev ? -1 : (b === ev ? 1 : 0)));
+          deferScheduledWait(ev, batch, true);
         } else {
           logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: TIMEOUT "${title}" at batch ${batch}`);
         }
@@ -3153,10 +3163,7 @@ async function main() {
             scheduledInput.unshift({ batch, action: 'dlg-dump', label: ev.label || '' });
           }
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
-          ev.batch = batch + 1;
-          for (const pending of scheduledInput) pending.batch++;
-          scheduledInput.push(ev);
-          scheduledInput.sort((a, b) => a.batch - b.batch);
+          deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
         }
@@ -3191,9 +3198,7 @@ async function main() {
           stopped = true;
           logs.push(`[input] stop at batch ${batch}`);
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
-          ev.batch = batch + 1;
-          scheduledInput.push(ev);
-          scheduledInput.sort((a, b) => a.batch - b.batch);
+          deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
         }
@@ -3283,10 +3288,7 @@ async function main() {
           stopped = true;
           logs.push(`[input] stop at batch ${batch}`);
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
-          ev.batch = batch + 1;
-          for (const pending of scheduledInput) pending.batch++;
-          scheduledInput.push(ev);
-          scheduledInput.sort((a, b) => a.batch - b.batch);
+          deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-title: TIMEOUT "${title}" at batch ${batch}`);
         }
@@ -3328,10 +3330,7 @@ async function main() {
         if (found) {
           logs.push(`[input] wait-dlg-control: matched id=${ev.ctrlId} hwnd=0x${found.toString(16)} at batch ${batch}`);
         } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
-          ev.batch = batch + 1;
-          for (const pending of scheduledInput) pending.batch++;
-          scheduledInput.push(ev);
-          scheduledInput.sort((a, b) => a.batch - b.batch);
+          deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-dlg-control: TIMEOUT id=${ev.ctrlId} at batch ${batch}`);
         }

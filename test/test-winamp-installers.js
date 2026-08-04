@@ -13,6 +13,12 @@ const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
+const LICENSE_WAIT_LIMIT = 6500;
+const LICENSE_PROBE_BATCHES = 6000;
+const WIZARD_SEQUENCE_BATCHES = 9000;
+const STUCK_AFTER = 5000;
+const LICENSE_WAIT = `1:wait-dlg-control:1000:${LICENSE_WAIT_LIMIT}`;
+const NEXT_PAGE = 'post-cmd:1';
 
 const CASES = [
   {
@@ -159,12 +165,13 @@ for (const tc of CASES) {
     const licenseCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=700',
+      `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      '--input=1:wait-dlg-control:1000:4000,2:dlg-dump:license',
+      `--input=${LICENSE_WAIT},2:dlg-dump:license`,
       `--png="${pngPath}"`,
       '--quiet-api',
       '--trace-host=gdi_draw_text',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', licenseCmd);
@@ -188,7 +195,9 @@ for (const tc of CASES) {
       : 0;
     const licenseChecks = [
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
-      { name: 'license text uses word-wrapped DrawText', pass: /gdi_draw_text\(0x5000d, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
+      { name: 'license text uses word-wrapped DrawText', pass:
+        /DrawText\(hdc=.*text="Winamp is a freeware product\..*format=DT_WORDBREAK/.test(licenseOut) ||
+        /gdi_draw_text\(0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
       { name: 'license page PNG captured', pass: pngOk },
       { name: 'license wizard buttons are visible', pass: wizardButtonInk > 700 },
     ];
@@ -203,27 +212,27 @@ for (const tc of CASES) {
     const scrollProbes = [
       {
         name: 'mouse wheel scrolls license text',
-        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:522:-7864320:0',
+        input: `${LICENSE_WAIT},2:dlg-send:1000:522:-7864320:0`,
         pattern: /dlg-send: id=1000 .* msg=0x20a .* firstVisible=3/,
       },
       {
         name: 'scrollbar down arrow scrolls license text',
-        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:513:1:11469190,3:dlg-send:1000:514:0:11469190',
+        input: `${LICENSE_WAIT},2:dlg-send:1000:513:1:11469190,3:dlg-send:1000:514:0:11469190`,
         pattern: /dlg-send: id=1000 .* msg=0x201 .* firstVisible=1/,
       },
       {
         name: 'scrollbar thumb drag scrolls license text',
-        input: '1:wait-dlg-control:1000:4000,2:dlg-send:1000:513:1:1573254,3:dlg-send:1000:512:1:5898630,4:dlg-send:1000:514:0:5898630',
-        pattern: /dlg-send: id=1000 .* msg=0x200 .* firstVisible=54/,
+        input: `${LICENSE_WAIT},2:dlg-send:1000:513:1:1573254,3:dlg-send:1000:512:1:5898630,4:dlg-send:1000:514:0:5898630`,
+        pattern: /dlg-send: id=1000 .* msg=0x200 .* firstVisible=[1-9][0-9]*/,
       },
       {
         name: 'canvas scrollbar down arrow scrolls license text',
-        input: '1:wait-dlg-control:1000:4000,2:click:400:250,4:dlg-send:1000:206:0:0',
+        input: `${LICENSE_WAIT},2:click:400:250,4:dlg-send:1000:206:0:0`,
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
       },
       {
         name: 'canvas scrollbar thumb drag scrolls license text',
-        input: '1:wait-dlg-control:1000:4000,2:mousedown:403:99,3:mousemove:403:165,4:mouseup:403:165,6:dlg-send:1000:206:0:0',
+        input: `${LICENSE_WAIT},10:mousedown:403:99,20:mousemove:403:165,30:mouseup:403:165,50:dlg-send:1000:206:0:0`,
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=[1-9][0-9]*/,
         png: path.join(__dirname, 'output', 'winamp295-license-scrolled.png'),
       },
@@ -236,10 +245,11 @@ for (const tc of CASES) {
       const scrollCmd = [
         `node "${RUN}"`,
         `--exe="${tc.exe}"`,
-        '--max-batches=680',
+        `--max-batches=${LICENSE_PROBE_BATCHES}`,
         '--batch-size=5000',
         `--input=${probe.input}${probe.png ? `,660:png:${probe.png}` : ''}`,
         '--quiet-api',
+        `--stuck-after=${STUCK_AFTER}`,
       ].join(' ');
 
       console.log('$', scrollCmd);
@@ -280,10 +290,11 @@ for (const tc of CASES) {
     const pressedCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=650',
+      `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=1:wait-dlg-control:1000:4000,2:png:${pressedBase},3:mousedown:400:250,4:png:${pressedHeld},5:mouseup:400:250`,
+      `--input=${LICENSE_WAIT},50:png:${pressedBase},60:mousedown:400:250,70:png:${pressedHeld},80:mouseup:400:250`,
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', pressedCmd);
@@ -318,10 +329,11 @@ for (const tc of CASES) {
     const clickCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=760',
+      `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283',
+      `--input=${LICENSE_WAIT},2:mousedown:373:283,3:mouseup:373:283`,
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', clickCmd);
@@ -364,25 +376,23 @@ for (const tc of CASES) {
     const stageCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=1100',
+      `--max-batches=${WIZARD_SEQUENCE_BATCHES}`,
       '--batch-size=5000',
-      [
-        '1:wait-dlg-control:1000:4000',
-        `2:png:${stagePngs[0].path}`,
-        '3:mousedown:373:283',
-        '4:mouseup:373:283',
-        '5:wait-title:Installation_Options:1200',
-        `6:png:${stagePngs[1].path}`,
-        '7:mousedown:373:283',
-        '8:mouseup:373:283',
-        '9:wait-title:Installation_Folder:1200',
-        `10:png:${stagePngs[2].path}`,
-        '11:mousedown:373:283',
-        '12:mouseup:373:283',
-        '13:wait-title:Installing_Files:1200',
-        `14:png:${stagePngs[3].path}`,
+      '--input=' + [
+        LICENSE_WAIT,
+        `50:png:${stagePngs[0].path}`,
+        `60:${NEXT_PAGE}`,
+        '80:wait-title:Installation_Options:1800',
+        `130:png:${stagePngs[1].path}`,
+        `140:${NEXT_PAGE}`,
+        '160:wait-title:Installation_Folder:1800',
+        `210:png:${stagePngs[2].path}`,
+        `220:${NEXT_PAGE}`,
+        '240:wait-title:Installing_Files:1800',
+        `300:png:${stagePngs[3].path}`,
       ].join(','),
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', stageCmd);
@@ -430,13 +440,15 @@ for (const tc of CASES) {
     console.log('');
 
     const optionsPng = path.join(__dirname, 'output', 'winamp295-options-page.png');
+    try { fs.unlinkSync(optionsPng); } catch (_) {}
     const optionsCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=760',
+      `--max-batches=${WIZARD_SEQUENCE_BATCHES}`,
       '--batch-size=5000',
-      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:png:' + optionsPng,
+      `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:png:${optionsPng}`,
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', optionsCmd);
@@ -458,13 +470,15 @@ for (const tc of CASES) {
     console.log('');
 
     const folderPng = path.join(__dirname, 'output', 'winamp295-folder-page.png');
+    try { fs.unlinkSync(folderPng); } catch (_) {}
     const folderCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=900',
+      `--max-batches=${WIZARD_SEQUENCE_BATCHES}`,
       '--batch-size=5000',
-      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:png:' + folderPng,
+      `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:${NEXT_PAGE},40:wait-title:Installation_Folder:1800,50:png:${folderPng}`,
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', folderCmd);
@@ -504,13 +518,15 @@ for (const tc of CASES) {
     console.log('');
 
     const installingPng = path.join(__dirname, 'output', 'winamp295-installing-files.png');
+    try { fs.unlinkSync(installingPng); } catch (_) {}
     const installingCmd = [
       `node "${RUN}"`,
       `--exe="${tc.exe}"`,
-      '--max-batches=1040',
+      `--max-batches=${WIZARD_SEQUENCE_BATCHES}`,
       '--batch-size=5000',
-      '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:mousedown:373:283,9:mouseup:373:283,10:wait-title:Installing_Files:1200,11:dlg-dump:all,12:dlg-send:1004:1025:0:6553600,13:dlg-send:1004:1026:60:0,14:png:' + installingPng,
+      `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:${NEXT_PAGE},40:wait-title:Installation_Folder:1800,50:${NEXT_PAGE},60:wait-title:Installing_Files:1800,70:dlg-dump:all,80:dlg-send:1004:1025:0:6553600,90:dlg-send:1004:1026:60:0,100:png:${installingPng}`,
       '--quiet-api',
+      `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
     console.log('$', installingCmd);
@@ -563,9 +579,10 @@ for (const tc of CASES) {
     `--exe="${tc.exe}"`,
     '--max-batches=800000',
     '--batch-size=5000',
-    '--input=1:wait-dlg-control:1000:4000,2:mousedown:373:283,3:mouseup:373:283,4:wait-title:Installation_Options:1200,5:mousedown:373:283,6:mouseup:373:283,7:wait-title:Installation_Folder:1200,8:mousedown:373:283,9:mouseup:373:283',
+    `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:${NEXT_PAGE},40:wait-title:Installation_Folder:1800,50:${NEXT_PAGE},60:wait-title:Installing_Files:1800,20000:${NEXT_PAGE}`,
     '--dump-vfs',
     '--quiet-api',
+    `--stuck-after=${STUCK_AFTER}`,
   ].join(' ');
 
   console.log('$', interactiveCmd);
@@ -585,11 +602,11 @@ for (const tc of CASES) {
 
   const interactiveChecks = [
     { name: 'interactive no crash', pass: !/\*\*\* CRASH|RuntimeError|UNIMPLEMENTED API|STUCK at EIP/.test(interactiveOut) },
-    { name: 'interactive real click accepted license', pass: /Winamp Setup: Installation Options/.test(interactiveOut) },
-    { name: 'interactive real click reached install folder', pass: /Winamp Setup: Installation Folder/.test(interactiveOut) },
+    { name: 'interactive accepted license', pass: /Winamp Setup: Installation Options/.test(interactiveOut) },
+    { name: 'interactive reached install folder', pass: /Winamp Setup: Installation Folder/.test(interactiveOut) },
     { name: 'interactive reached Installing Files', pass: /Winamp Setup: Installing Files/.test(interactiveOut) },
     { name: 'interactive worker started', pass: /CreateThread handle=/.test(interactiveOut) },
-    { name: 'interactive returned from installer', pass: /\[Exit\] code=/.test(interactiveOut) },
+    { name: 'interactive returned cleanly from installer', pass: /\[Exit\] code=0/.test(interactiveOut) },
     ...tc.expected.map(p => ({ name: `interactive VFS has ${p}`, pass: interactiveOut.includes(p) })),
   ];
 

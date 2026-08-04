@@ -79,6 +79,13 @@ launch WordPad -> click editor -> type "hello world"
               -> visible edited text appears
 ```
 
+The Winamp 2.95 NSIS installer also passes the bounded installer/RichEdit
+probe: its license RichEdit maps to the WAT edit path, streams license text,
+renders word-wrapped text, clips scroll output to the control rect, supports
+wheel/arrow/thumb/canvas scrolling, captures the license/options/folder/
+installing screenshots, reaches Installing Files, extracts the expected VFS
+files, and exits cleanly after the final Finish command.
+
 That means these pieces are already good enough for basic insertion:
 
 - focus can reach the RichEdit child;
@@ -137,6 +144,17 @@ native-editing path is alive.
   WordPad, observes native RichEdit line metrics, confirms
   `ExtTextOutA(... fuOptions=4, lprc=...)`, and captures
   `test/output/wordpad-richedit/long-line-clipped.png`.
+- Stabilized the Winamp 2.95 installer RichEdit/license coverage in
+  `test/test-winamp-installers.js`. The regression now waits long enough for
+  the license control, asserts RichEdit id `1000` renders through
+  word-wrapped `DrawText`, verifies wheel/arrow/thumb/canvas scrolling,
+  captures the stage screenshots, checks native `ProgressBar`/`SysListView32`
+  controls on Installing Files, and drives the interactive install to
+  `[Exit] code=0` with expected VFS files.
+- Fixed `test/run.js` scheduled-input wait deferral so future wait actions keep
+  their `startBatch` aligned when an earlier wait shifts the timeline. This
+  prevents later installer page waits from expiring immediately after the
+  license page appears.
 
 ### 2026-08-02 implementation progress
 
@@ -539,7 +557,7 @@ Acceptance:
 [x] basic RTF save/reopen preserves bold/italic/underline charformat
 [x] basic RTF save/reopen preserves one selected run's font face/size/color
 [x] basic RTF save/reopen preserves selected paragraph center alignment
-[ ] installer license RichEdit text streams in and scrolls
+[x] installer license RichEdit text streams in and scrolls
 ```
 
 ### 5. Plain-text clipboard shortcuts
@@ -626,7 +644,7 @@ Acceptance:
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage
-[ ] Installer/license RichEdit panes render and scroll
+[x] Installer/license RichEdit panes render and scroll
 [x] App status docs are updated from current screenshots/probes
 ```
 
