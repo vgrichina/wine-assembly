@@ -44,7 +44,8 @@ Implement now                                 Postpone later
 | basic RTF + basic formatting   |            | rich clipboard fidelity      |
 | simple paragraph alignment     |            | indents / tabs / numbering   |
 | basic toolbar command fidelity |            | advanced toolbar UI state    |
-| clipped ExtTextOut rendering   |            | scrollbar drag fidelity      |
+| clipped ExtTextOut rendering   |            | full resize/wrap edge cases  |
+| native scrollbar thumb routing |            |                               |
 +--------------------------------+            +-------------------------------+
 ```
 
@@ -100,6 +101,8 @@ That means these pieces are already good enough for basic insertion:
 - mouse drag changes native RichEdit selection state;
 - long multiline text inserts, auto-scrolls to the caret, and focused native
   wheel input changes `EM_GETFIRSTVISIBLELINE`;
+- native RichEdit right-band scrollbar thumb drag reuses the shared scrollbar
+  hit/drag math and changes `EM_GETFIRSTVISIBLELINE`;
 - WordPad's standard and formatting `ToolbarWindow32` rows are visible, and the
   native RichEdit child is laid out below them;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
@@ -153,7 +156,9 @@ native-editing path is alive.
 - Added renderer wheel fallback for focused native controls, key-specific
   keypress suppression for Ctrl-letter shortcuts, and
   `test/test-wordpad-richedit-scroll.js`. The bounded mouse/scroll regression
-  passes 10/10 and captures `test/output/wordpad-richedit/mouse-scroll.png`.
+  now also covers native RichEdit scrollbar thumb drag through the shared
+  scrollbar hit/drag helpers, passes 11/11, and captures
+  `test/output/wordpad-richedit/mouse-scroll.png`.
 - Added minimal USER clipboard APIs for plain ANSI text:
   `OpenClipboard`, `CloseClipboard`, `EmptyClipboard`, `SetClipboardData`,
   `GetClipboardData`, `IsClipboardFormatAvailable`, `CountClipboardFormats`,
@@ -513,7 +518,7 @@ Acceptance:
 [x] wheel scroll changes first visible line
 [x] long WordPad RichEdit text paints through clipped ExtTextOut rectangles
 [x] glyph drawing stays inside the tested RichEdit/outer-window paint band
-[ ] scrollbar drag changes first visible line
+[x] scrollbar thumb drag changes first visible line
 [ ] full wrapping + clip invalidation stays coherent across resize/scroll edges
 ```
 
@@ -604,7 +609,8 @@ Acceptance:
 [x] Menu Copy/Cut/Paste has explicit coverage
 [x] Native RichEdit wheel changes first visible line
 [x] Long WordPad RichEdit text paints through clipped ExtTextOut rectangles
-[ ] Scrollbar drag and full wrapping/clip invalidation stay coherent
+[x] Native RichEdit scrollbar thumb drag changes first visible line
+[ ] Full wrapping/clip invalidation stays coherent across resize/scroll edges
 [x] WordPad saved RTF reopens with simple plain text content
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
@@ -638,7 +644,7 @@ Acceptance:
 8. Add plain text stream in/out.
 9. Add basic RTF stream in/out.
 10. Add basic character and paragraph formatting.
-11. Fix scrollbar drag and full wrapping/clip invalidation edge cases.
+11. Fix remaining full wrapping/clip invalidation edge cases.
 12. Re-run WordPad, Notepad, and installer RichEdit probes.
 13. Update app status docs with screenshots and pass/fail state.
 ```

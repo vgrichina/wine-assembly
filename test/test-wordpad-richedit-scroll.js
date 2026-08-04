@@ -3,6 +3,7 @@
 //   - mouse drag changes the native RichEdit EM_GETSEL range
 //   - long multiline text inserts into the native RichEdit buffer
 //   - renderer wheel routing reaches the focused native RichEdit child
+//   - renderer native-scrollbar thumb drag reaches the focused RichEdit child
 //   - a screenshot is captured after the scrolled document state
 
 const fs = require('fs');
@@ -64,6 +65,10 @@ push('wheel:200:170:-120', 4);
 push('wheel:200:170:-120', 4);
 push('wheel:200:170:-120', 8);
 push('dump-focus-state:long-after-wheel', 8);
+push('mousedown:390:225', 2);
+push('mousemove:390:160', 2);
+push('mouseup:390:160', 8);
+push('dump-focus-state:long-after-thumb', 8);
 push(`png:${PNG_OUT}`, 4);
 push('stop', 1);
 
@@ -137,6 +142,7 @@ const typed = state('typed');
 const dragged = state('dragged');
 const longBefore = state('long-before-wheel');
 const longAfter = state('long-after-wheel');
+const longAfterThumb = state('long-after-thumb');
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const darkPixels = pngExists ? countDarkPixels(PNG_OUT) : 0;
 
@@ -149,6 +155,7 @@ check('mouse drag selected native RichEdit text', dragged && dragged.text === 'm
 check('long multiline text inserted', longBefore && longBefore.text.includes('line00\r\nline01') && longBefore.text.includes('line34') && longBefore.lineCount >= 35);
 check('long text auto-scrolled to caret', longBefore && longBefore.firstVisible > 0);
 check('mouse wheel routed to native RichEdit scroll', longBefore && longAfter && longAfter.firstVisible < longBefore.firstVisible);
+check('scrollbar thumb drag routed to native RichEdit scroll', longAfter && longAfterThumb && longAfterThumb.firstVisible < longAfter.firstVisible);
 check('scrolled screenshot written', pngExists);
 check(`scrolled text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));

@@ -82,11 +82,12 @@ Focused mouse/scroll probe:
 
 ```text
 click editor, type "mouse select", drag across the first line,
-Ctrl+A, type 35 lines, wheel up over the editor
+Ctrl+A, type 35 lines, wheel up over the editor, drag the scrollbar thumb
 selection: non-empty `EM_GETSEL` range after mouse drag
-scroll:    `EM_GETFIRSTVISIBLELINE` changes from 28 to 22 after wheel input
+scroll:    `EM_GETFIRSTVISIBLELINE` changes after wheel input and again after
+           right-band scrollbar thumb drag
 result:    PASS for native RichEdit mouse selection, long multiline insertion,
-           focused native wheel routing, and scrolled screenshot capture.
+           focused native wheel/thumb routing, and scrolled screenshot capture.
 ```
 
 Focused Save As probe:
@@ -399,9 +400,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering visible
   standard/formatting toolbars and the first Standard toolbar button opening
   WordPad's `New` dialog.
-- Regression test: `node test/test-wordpad-richedit-scroll.js` passes 10/10
+- Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
-  visible scrolled multiline text in the editor.
+  visible scrolled multiline text in the editor after wheel and thumb-drag
+  routing.
 - Regression test: `node test/test-wordpad-save-as.js` passes 32/32 and covers
   WordPad's Save As, New/clear, and Open/load command/file/OLE bookkeeping
   paths.
@@ -474,8 +476,8 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   caret blink/XOR cadence, scrollbar drag, full wrapping/clip invalidation
-   edge cases, advanced toolbar UI
+   caret blink/XOR cadence, full wrapping/clip invalidation edge cases,
+   advanced toolbar UI
    state, mixed-run size reporting, and paragraph
    indents/tabs/numbering still need focused probes. Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
