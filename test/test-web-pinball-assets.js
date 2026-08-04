@@ -24,6 +24,13 @@ function assertBundled(rel) {
   assert(fs.statSync(full).size > 0, `${rel} should not be empty`);
 }
 
+function assertDeployFile(rel) {
+  assert(deployJs.includes(`'${rel}'`), `deploy should include ${rel}`);
+  const full = path.join(ROOT, rel);
+  assert(fs.existsSync(full), `${rel} should exist for web fetch/deploy`);
+  assert(fs.statSync(full).size > 0, `${rel} should not be empty`);
+}
+
 for (const dir of ['binaries/pinball', 'binaries/pinball-plus95']) {
   const fullDir = path.join(ROOT, dir);
   const files = fs.readdirSync(fullDir)
@@ -42,6 +49,8 @@ assert(/BINARY_EXTS\s*=\s*new Set\([^)]*'\.manifest'/s.test(deployJs), 'deploy s
 assert(/TEXT_EXTS\s*=\s*new Set\([^)]*'\.ini'/s.test(deployJs), 'deploy should include Winamp INI text assets');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large pinball DAT');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large Plus! 95 pinball DAT');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/wep32-community\/QBlackjack\/QuickBlackjack\.exe'/s.test(deployJs), 'deploy should allow large QuickBlackjack binary');
+assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/plus98\/DIALOG\.BMP'/s.test(deployJs), 'deploy should allow large Marbles dialog art');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/tictac\.exe'/s.test(deployJs), 'deploy should include desktop TicTactics binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/entertainment-pack\/winmine\.exe'/s.test(deployJs), 'deploy should include desktop Minesweeper binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/plus98\/SPIDER\.EXE'/s.test(deployJs), 'deploy should include desktop Spider binary');
@@ -57,6 +66,15 @@ assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmP
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/EmPipe\/EMPIPEE\.TXT'/s.test(deployJs), 'deploy should include desktop EmPipe text companion');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Funtris\.exe'/s.test(deployJs), 'deploy should include desktop Funtris binary');
 assert(/DESKTOP_BINARY_FILES\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/Pyramid\.exe'/s.test(deployJs), 'deploy should include desktop Pyramid binary');
+for (const rel of [
+  'binaries/wep32-community/Funpack/Peaks.exe',
+  'binaries/wep32-community/Funpack/FourStones.exe',
+  'binaries/wep32-community/Wordzap/CWordZap.exe',
+  'binaries/wep32-community/QBlackjack/QuickBlackjack.exe',
+  'binaries/plus98/MARBLES.EXE',
+]) {
+  assertDeployFile(rel);
+}
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/winamp\.exe'/s.test(deployJs), 'deploy should allow large Winamp binary');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/wep32-community\/Funpack\/FunPack\.dll'/s.test(deployJs), 'deploy should allow large FunPack DLL');
 assert(/DESKTOP_BINARY_PREFIXES\s*=\s*\[[^\]]*'binaries\/pinball\/'/s.test(deployJs), 'deploy should include desktop Pinball asset directory');
@@ -111,10 +129,51 @@ for (const rel of [
   assert(fs.statSync(full).size > 0, `${rel} should not be empty`);
 }
 assert(/\[\s*'funtris'\s*,\s*'Funtris'/.test(indexHtml), 'default desktop whitelist should include Funtris');
+for (const [id, label, exe] of [
+  ['peaks',      'Peaks',      'binaries/wep32-community/Funpack/Peaks.exe'],
+  ['fourstones', 'FourStones', 'binaries/wep32-community/Funpack/FourStones.exe'],
+  ['cwordzap',   'CWordZap',   'binaries/wep32-community/Wordzap/CWordZap.exe'],
+  ['qblackjack', 'Blackjack',  'binaries/wep32-community/QBlackjack/QuickBlackjack.exe'],
+  ['marbles',    'Marbles',    'binaries/plus98/MARBLES.EXE'],
+]) {
+  assert(new RegExp(`\\[\\s*'${id}'\\s*,\\s*'${label}'`).test(indexHtml), `default desktop whitelist should include ${label}`);
+  assertBundled(exe);
+  assertDeployFile(exe);
+}
 assert(/\[\s*'pyramid'\s*,\s*'Pyramid'/.test(indexHtml), 'default desktop whitelist should include Pyramid');
 assert(/funtris:\s*\{[\s\S]*Funtris\\\\Options'[\s\S]*GetStarted'[\s\S]*data:\s*0[\s\S]*dismissStartupDialog:\s*\{\s*title:\s*'Funtris',\s*command:\s*1\s*\}/s.test(indexHtml), 'Funtris browser launch should suppress startup nag dialogs');
 assert(/peaks:\s*\{[\s\S]*Peaks\\\\Options'[\s\S]*GetStarted'[\s\S]*data:\s*0/s.test(indexHtml), 'Peaks browser launch should suppress startup nag dialogs');
 assert(/pyramid:\s*\{[\s\S]*iCDateCount'[\s\S]*value:\s*-1[\s\S]*GetStarted'[\s\S]*data:\s*0/s.test(indexHtml), 'Pyramid browser launch should suppress startup nag dialogs');
+for (const rel of [
+  'binaries/plus98/LLOGO.BMP',
+  'binaries/plus98/LSPLASH.BMP',
+  'binaries/plus98/CHOOSE1.BMP',
+  'binaries/plus98/CHOOSE2.BMP',
+  'binaries/plus98/COMMON01.BMP',
+  'binaries/plus98/COMMON02.BMP',
+  'binaries/plus98/COMMON03.BMP',
+  'binaries/plus98/COMMON04.BMP',
+  'binaries/plus98/COMMON05.BMP',
+  'binaries/plus98/CMNBONUS.BMP',
+  'binaries/plus98/LEVEL-01.BMP',
+  'binaries/plus98/LEVEL-01.DAT',
+  'binaries/plus98/LEVEL1BG.BMP',
+  'binaries/plus98/TRANS1A.BMP',
+  'binaries/plus98/TRANS2A.BMP',
+  'binaries/plus98/DIALOG.BMP',
+  'binaries/plus98/OPTIONS.BMP',
+  'binaries/plus98/TEXTFONT.BMP',
+  'binaries/plus98/CRACK.BMP',
+  'binaries/plus98/GRASTILE.BMP',
+  'binaries/plus98/B1.MID',
+  'binaries/plus98/CRD.MID',
+  'binaries/plus98/LVL1.MID',
+  'binaries/plus98/2.WAV',
+  'binaries/plus98/MARBLES.ICO',
+]) {
+  assertBundled(rel);
+  assertDeployFile(rel);
+}
 assert(indexHtml.includes('StorageImports.setIniValue(entry.fileName, entry.section, entry.key, entry.value)'), 'web launcher should apply app-scoped startup INI values');
 assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(indexHtml), 'default desktop whitelist should include Winamp');
 assert(indexHtml.includes("'binaries/demo.mp3'"), 'Winamp web manifest should preload demo.mp3');

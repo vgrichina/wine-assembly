@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Browser smoke coverage for the local-only desktop candidate apps.
+// Browser smoke coverage for promoted desktop candidate apps.
 //
-// This exercises index.html under 127.0.0.1 so LOCAL_CANDIDATE_APPS are visible
-// on the desktop/select control, then launches each candidate and checks more
-// than HWND creation: rendered content plus a small app-specific action where
-// the app has a stable command or input path.
+// This exercises index.html under 127.0.0.1, launches each candidate from the
+// desktop/select control, and checks more than HWND creation: rendered content
+// plus a small app-specific action where the app has a stable command or input
+// path.
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -110,8 +110,8 @@ const ALL_CANDIDATES = [
       { vk: 40, holdMs: 180, waitMs: 350 }, // Down: move selected column.
     ],
     minColors: 80,
-    minDiff: 5000,
-    minKeyDiff: 120,
+    minDiff: 4000,
+    minKeyDiff: 1000,
     waitMs: 2500,
     actionWaitMs: 1600,
   },

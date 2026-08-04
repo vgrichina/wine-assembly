@@ -656,19 +656,18 @@ Resource-aware Win98 emulator
       ['ski32',       'SkiFree',     '\u{26F7}'],
       ['pinball',     'Pinball',     '\u{1F3D0}'],
       ['spider',      'Spider',      '\u{1F578}'],
+      ['marbles',     'Marbles',     '\u{1F535}'],
       ['bricks',      'Bricks',      '\u{1F9F1}'],
       ['empipe',      'EmPipe',      '\u{1F6E0}'],
       ['funtris',     'Funtris',     '\u{1F9E9}'],
+      ['peaks',       'Peaks',       '\u{26F0}'],
       ['pyramid',     'Pyramid',     '\u{2666}'],
+      ['fourstones',  'FourStones',  '\u{1F536}'],
+      ['cwordzap',    'CWordZap',    '\u{1F524}'],
+      ['qblackjack',  'Blackjack',   '\u{1F0A1}'],
       ['winamp',      'Winamp',      '\u{1F3B5}'],
     ];
-    const LOCAL_CANDIDATE_APPS = [
-      ['peaks',       'Peaks',       '\u{26F0}'],
-      ['fourstones',  'FourStones',  '\u{1F536}'],
-      ['qblackjack',  'Blackjack',   '\u{1F0A1}'],
-      ['cwordzap',    'CWordZap',    '\u{1F524}'],
-      ['marbles',     'Marbles',     '\u{1F535}'],
-    ];
+    const LOCAL_CANDIDATE_APPS = [];
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
     function initDesktop() {
