@@ -4128,20 +4128,20 @@
   ;; button geometry is enough for MFC's WM_SIZEPARENT layout to allocate a
   ;; visible toolbar instead of collapsing it to its border height.
   ;;
-  ;; ToolbarState (48 bytes):
+  ;; ToolbarState (56 bytes):
   ;; +0 button_count, +4 button_w, +8 button_h, +12 bitmap_w, +16 bitmap_h,
   ;; +20 rows, +24 tbutton_struct_size, +28 bitmap_count,
   ;; +32 buttons_guest (20-byte TBBUTTON snapshots), +36 capacity,
-  ;; +40 pressed_index, +44 reserved.
+  ;; +40 pressed_index, +44 hwnd, +48 bitmap_handle, +52 reserved.
 
   (func $toolbar_ensure_state (param $hwnd i32) (result i32)
     (local $state i32) (local $sw i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
-        (local.set $state (call $heap_alloc (i32.const 48)))
+        (local.set $state (call $heap_alloc (i32.const 56)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 48))
+        (call $zero_memory (local.get $sw) (i32.const 56))
         (i32.store offset=4  (local.get $sw) (i32.const 23)) ;; default dxButton
         (i32.store offset=8  (local.get $sw) (i32.const 22)) ;; default dyButton
         (i32.store offset=12 (local.get $sw) (i32.const 16)) ;; default dxBitmap
@@ -4375,6 +4375,10 @@
     (local $src i32) (local $dst i32) (local $copy i32) (local $idx i32)
     (local $rec i32) (local $cmd i32) (local $parent i32)
     (local $x i32) (local $y i32) (local $state_byte i32) (local $hit i32)
+    (local $bmp i32) (local $bmp_w i32) (local $bmp_h i32)
+    (local $bmp_draw_w i32) (local $bmp_draw_h i32) (local $bmp_src_x i32)
+    (local $bmp_dst_x i32) (local $bmp_dst_y i32) (local $memdc i32)
+    (local $drawn i32)
 
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
@@ -4411,12 +4415,44 @@
           (then (i32.store offset=24 (local.get $sw) (local.get $wParam))))
         (return (i32.const 1))))
 
-    ;; TB_ADDBITMAP (WM_USER+19): return first allocated bitmap index.
+    ;; TB_ADDBITMAP (WM_USER+19): remember the caller's bitmap strip and
+    ;; return the first allocated bitmap index.
     (if (i32.eq (local.get $msg) (i32.const 0x0413))
       (then
         (local.set $old (i32.load offset=28 (local.get $sw)))
+        (local.set $bmp (i32.const 0))
+        (if (local.get $lParam)
+          (then
+            (local.set $src (call $g2w (local.get $lParam)))
+            (if (i32.eqz (i32.load (local.get $src)))
+              (then
+                ;; hInst == NULL: nID is already an HBITMAP.
+                (local.set $bmp (i32.load offset=4 (local.get $src))))
+              (else
+                ;; hInst == HINST_COMMCTRL (-1) names a built-in common-control
+                ;; strip. We do not synthesize those yet; app resource strips
+                ;; are real RT_BITMAP resources and can be loaded here.
+                (if (i32.ne (i32.load (local.get $src)) (i32.const -1))
+                  (then
+                    (local.set $bmp
+                      (call $host_gdi_load_bitmap
+                        (i32.load (local.get $src))
+                        (if (result i32) (i32.gt_u (i32.load offset=4 (local.get $src)) (i32.const 0xFFFF))
+                          (then (i32.load offset=4 (local.get $src)))
+                          (else (i32.and (i32.load offset=4 (local.get $src)) (i32.const 0xFFFF))))))))))))
+        (if (local.get $bmp)
+          (then
+            (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+            (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+              (then
+                ;; Bounded toolbar model: one strip per toolbar. Keep the
+                ;; first valid strip so returned iBitmap bases keep indexing
+                ;; into the original image list.
+                (if (i32.eqz (i32.load offset=48 (local.get $sw)))
+                  (then (i32.store offset=48 (local.get $sw) (local.get $bmp))))))))
         (i32.store offset=28 (local.get $sw)
           (i32.add (local.get $old) (local.get $wParam)))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
 
     ;; TB_ADDBUTTONSA (WM_USER+20): append wParam TBBUTTON records.
@@ -4789,14 +4825,70 @@
                       (select (i32.const 0x0A) (i32.const 0x05)
                         (i32.ne (i32.and (local.get $state_byte) (i32.const 0x02)) (i32.const 0)))
                       (i32.const 0x0F))) ;; EDGE_RAISED/SUNKEN | BF_RECT
-              ;; Placeholder glyph: a small dark mark inside each button, so
-              ;; screenshots distinguish toolbar buttons from a plain gray band.
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
-                      (i32.add (local.get $left) (i32.const 8))
-                      (i32.add (local.get $top) (i32.const 7))
-                      (i32.add (local.get $left) (i32.const 15))
-                      (i32.add (local.get $top) (i32.const 14))
-                      (i32.const 0x30012)))
+              (local.set $drawn (i32.const 0))
+              (local.set $bmp (i32.load offset=48 (local.get $sw)))
+              (if (i32.and
+                    (i32.and
+                      (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0))
+                      (i32.ne (local.get $rec) (i32.const 0)))
+                    (i32.and
+                      (i32.ge_s (i32.load (local.get $rec)) (i32.const 0))
+                      (i32.ne (local.get $bmp) (i32.const 0))))
+                (then
+                  (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+                  (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
+                  (local.set $bmp_draw_w (i32.load offset=12 (local.get $sw)))
+                  (local.set $bmp_draw_h (i32.load offset=16 (local.get $sw)))
+                  (if (i32.le_s (local.get $bmp_draw_w) (i32.const 0))
+                    (then (local.set $bmp_draw_w (i32.const 16))))
+                  (if (i32.le_s (local.get $bmp_draw_h) (i32.const 0))
+                    (then (local.set $bmp_draw_h (i32.const 16))))
+                  (local.set $bmp_src_x
+                    (i32.mul (i32.load (local.get $rec)) (local.get $bmp_draw_w)))
+                  (if (i32.and
+                        (i32.and
+                          (i32.gt_s (local.get $bmp_w) (i32.const 0))
+                          (i32.gt_s (local.get $bmp_h) (i32.const 0)))
+                        (i32.and
+                          (i32.le_s (i32.add (local.get $bmp_src_x) (local.get $bmp_draw_w)) (local.get $bmp_w))
+                          (i32.le_s (local.get $bmp_draw_h) (local.get $bmp_h))))
+                    (then
+                      (local.set $bmp_dst_x
+                        (i32.add
+                          (local.get $left)
+                          (i32.div_s
+                            (i32.sub (local.get $bw) (local.get $bmp_draw_w))
+                            (i32.const 2))))
+                      (local.set $bmp_dst_y
+                        (i32.add
+                          (local.get $top)
+                          (i32.div_s
+                            (i32.sub (local.get $bh) (local.get $bmp_draw_h))
+                            (i32.const 2))))
+                      (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+                      (if (local.get $memdc)
+                        (then
+                          (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
+                          (local.set $drawn
+                            (call $host_gdi_bitblt
+                              (local.get $hdc)
+                              (local.get $bmp_dst_x) (local.get $bmp_dst_y)
+                              (local.get $bmp_draw_w) (local.get $bmp_draw_h)
+                              (local.get $memdc)
+                              (local.get $bmp_src_x) (i32.const 0)
+                              (i32.const 0x00CC0020))) ;; SRCCOPY
+                          (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
+              (if (i32.eqz (local.get $drawn))
+                (then
+                  ;; Fallback glyph: a small dark mark inside each button, so
+                  ;; screenshots still distinguish toolbar buttons from a plain
+                  ;; gray band when no app bitmap strip is available.
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $left) (i32.const 8))
+                          (i32.add (local.get $top) (i32.const 7))
+                          (i32.add (local.get $left) (i32.const 15))
+                          (i32.add (local.get $top) (i32.const 14))
+                          (i32.const 0x30012)))))
               (local.set $left (i32.add (local.get $left) (local.get $bw)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $buttons)))))

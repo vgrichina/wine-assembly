@@ -75,6 +75,7 @@ launch WordPad -> click editor -> type "hello world"
               -> mouse drag selects text
               -> 35-line text auto-scrolls, wheel changes first visible line
               -> standard/format toolbar rows are allocated above the editor
+              -> toolbar app bitmap strips render visible icons
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
               -> 100 chars of WordPad text produce native line metrics and
@@ -126,6 +127,8 @@ That means these pieces are already good enough for basic insertion:
   hit/drag math and changes `EM_GETFIRSTVISIBLELINE`;
 - WordPad's standard and formatting `ToolbarWindow32` rows are allocated, and
   the native RichEdit child is laid out below them;
+- WordPad toolbar app bitmap strips render colored icons instead of
+  placeholder-only buttons;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
@@ -374,14 +377,17 @@ native-editing path is alive.
   (control class 21). It handles the layout-facing `TB_*` messages WordPad/MFC
   sends through `CallWindowProcA` after subclassing, including button counts,
   item rectangles, button/bitmap sizes, rows, autosize, basic state probes, and
-  placeholder painting hooks. The renderer composites toolbar child surfaces.
+  fallback painting hooks. The renderer composites toolbar child surfaces.
   Added `test/test-wordpad-toolbar.js`, which proves WordPad's Standard and
   Formatting toolbar rows are allocated with real child surfaces and place
   RichEdit below them. A later fix made the renderer recurse through
   non-own-surface MFC containers such as `AfxControlBar42`, clip oversized
-  child surfaces to the top-level window, and expose visible toolbar button
-  placeholders instead of a blank gray band. Real bitmap icons remain follow-up
-  fidelity.
+  child surfaces to the top-level window, and expose visible toolbar buttons
+  instead of a blank gray band. The toolbar now remembers `TB_ADDBITMAP`
+  app bitmap strips, blits `TBBUTTON.iBitmap` icons during `WM_PAINT`, and the
+  regression asserts colored icon pixels instead of placeholder-only squares.
+  Common-control built-in strips and masked transparency/color remapping remain
+  follow-up fidelity.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -741,8 +747,9 @@ Acceptance:
 [x] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
-[x] WordPad toolbar button placeholders are visibly composited through nested
-    MFC control-bar containers
+[x] WordPad toolbar app bitmap strips render visible colored icon pixels
+[x] WordPad toolbar fallback buttons remain visibly composited through nested
+    MFC control-bar containers when no strip is available
 [x] WordPad formatting toolbar font/size comboboxes are visible and separated
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
@@ -796,6 +803,7 @@ Acceptance:
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
 [x] WordPad standard/format toolbar row layout is asserted
 [x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
+[x] WordPad toolbar bitmap icon pixels are explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered

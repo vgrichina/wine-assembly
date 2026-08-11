@@ -10484,8 +10484,23 @@
 
   ;; CreateMappedBitmap(hInstance, idBitmap, wFlags, lpColorMap, iNumMaps) — 5 args, returns HBITMAP
   (func $handle_CreateMappedBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return a valid bitmap handle
-    (global.set $eax (i32.const 0x30002))  ;; fake bitmap handle
+    (local $tmp i32)
+    ;; Bounded compatibility: load the requested RT_BITMAP and skip the
+    ;; optional comctl32 color map for now. Returning a real HBITMAP matters
+    ;; more than the previous fake handle because toolbar/image painters can
+    ;; validate and blit it.
+    (local.set $tmp
+      (call $host_gdi_load_bitmap
+        (local.get $arg0)
+        (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
+          (then (local.get $arg1))
+          (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
+    (if (i32.eqz (local.get $tmp))
+      (then
+        (local.set $tmp
+          (call $host_gdi_create_compat_bitmap
+            (i32.const 0) (i32.const 16) (i32.const 16)))))
+    (global.set $eax (local.get $tmp))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 

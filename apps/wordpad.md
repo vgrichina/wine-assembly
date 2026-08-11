@@ -96,12 +96,12 @@ layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
            toolbar rows and the ruler/status bands
 command:   first Standard toolbar button opens WordPad's "New" dialog
 visuals:   nested toolbar child surfaces now composite through the MFC
-           `AfxControlBar42` container, so button placeholders are visible
-           instead of a blank gray band; real bitmap icons and toolbar
-           combobox placement remain follow-up fidelity
-result:    PASS for ToolbarWindow32 layout, visible button placeholders,
+           `AfxControlBar42` container, and `TB_ADDBITMAP` app strips now
+           blit real colored button icons instead of placeholder-only squares
+result:    PASS for ToolbarWindow32 layout, visible bitmap icons,
            command-ID-backed button hit testing, and the MFC toolbar command
-           path for File New.
+           path for File New. Common-control built-in strips and masked
+           transparency/color remapping remain follow-up fidelity.
 ```
 
 Focused mouse/scroll probe:
@@ -284,8 +284,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   below them instead of overlapping the top of the document area. The renderer
   now recurses through non-own-surface MFC containers such as `AfxControlBar42`
   and clips oversized child canvases to the top-level window, so nested toolbar
-  child surfaces are visible and do not spill outside WordPad. Toolbar bitmap
-  icons and combobox placement remain visibly incomplete fidelity work.
+  child surfaces are visible and do not spill outside WordPad. Toolbar
+  `TB_ADDBITMAP` app strips now render through centered SRCCOPY blits from
+  `TBBUTTON.iBitmap`; common-control built-in strips and masked transparency/
+  color remapping remain follow-up fidelity.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. Clicking the first Standard toolbar button now
@@ -489,13 +491,13 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/caret.png`; it verifies native RichEdit USER
   caret API calls are tracked and composited as a visible vertical caret
   stroke in the document band.
-- Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
+- Regression test: `node test/test-wordpad-toolbar.js` passes 16/16 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
-  layout, and visible placeholder painting of the standard/formatting toolbar
-  rows plus the first Standard toolbar button opening WordPad's `New` dialog.
-  The pixel assertion now measures only the toolbar button rows, not menu/ruler
-  pixels. High-fidelity toolbar icons/combobox visuals remain follow-up work.
+  layout, visible bitmap-strip icon painting of the standard/formatting
+  toolbar rows, and the first Standard toolbar button opening WordPad's `New`
+  dialog. The pixel assertions measure only the toolbar button rows, including
+  colored icon pixels so placeholder-only buttons regress.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag
@@ -588,10 +590,10 @@ blocker.
    clipboard shortcuts, registered non-OLE RTF clipboard data, paragraph
    indents/tabs/numbering, visible selection highlight, visible caret paint,
    toolbar row layout, first-toolbar-button command routing,
-   formatting-toolbar B/I/U mouse commands, direct RichEdit color rendering,
-   and clipped long-text RichEdit painting are now covered, and
-   WordPad's own toolbar color UI now applies Blue through the covered
-   dynamic-popup path.
+   toolbar bitmap icon rendering, formatting-toolbar B/I/U mouse commands,
+   direct RichEdit color rendering, and clipped long-text RichEdit painting
+   are now covered, and WordPad's own toolbar color UI now applies Blue through
+   the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
