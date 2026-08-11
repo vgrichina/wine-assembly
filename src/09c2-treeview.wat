@@ -15,6 +15,9 @@
   (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
   (global $tv_selected_handle (mut i32) (i32.const 0))
+  (global $tv_first_visible_row (mut i32) (i32.const 0))
+  (global $tv_drag_anchor_y (mut i32) (i32.const 0))
+  (global $tv_drag_anchor_row (mut i32) (i32.const 0))
 
   ;; Find slot index for a handle, return -1 if not found
   (func $tv_find_slot (param $handle i32) (result i32)
@@ -313,20 +316,64 @@
       (br $items)))
     (i32.const 0))
 
-  (func $tv_first_visible (result i32)
-    (local $i i32) (local $base i32)
+  (func $tv_visible_count (result i32)
+    (local $i i32) (local $base i32) (local $count i32)
     (local.set $i (i32.const 0))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-        (if (i32.and
-              (i32.ne (i32.load (local.get $base)) (i32.const 0))
-              (call $tv_item_visible (local.get $base)))
-          (then (return (i32.load (local.get $base)))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop)))
-    (i32.const 0))
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (call $tv_item_visible (local.get $base)))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (local.get $count))
+
+  (func $tv_visible_rows_for_h (param $h i32) (result i32)
+    (local $rows i32)
+    (if (i32.gt_s (local.get $h) (i32.const 4))
+      (then
+        (local.set $rows (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))))
+    (if (i32.eqz (local.get $rows))
+      (then (local.set $rows (i32.const 1))))
+    (local.get $rows))
+
+  (func $tv_max_scroll_for_h (param $h i32) (result i32)
+    (local $max i32)
+    (local.set $max
+      (i32.sub (call $tv_visible_count) (call $tv_visible_rows_for_h (local.get $h))))
+    (if (i32.lt_s (local.get $max) (i32.const 0))
+      (then (local.set $max (i32.const 0))))
+    (local.get $max))
+
+  (func $tv_scroll_to_for_h (param $h i32) (param $row i32) (result i32)
+    (local $max i32)
+    (local.set $max (call $tv_max_scroll_for_h (local.get $h)))
+    (if (i32.lt_s (local.get $row) (i32.const 0))
+      (then (local.set $row (i32.const 0))))
+    (if (i32.gt_s (local.get $row) (local.get $max))
+      (then (local.set $row (local.get $max))))
+    (global.set $tv_first_visible_row (local.get $row))
+    (local.get $row))
+
+  (func $tv_scroll_by (param $hwnd i32) (param $delta i32) (result i32)
+    (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (local.set $old_row (global.get $tv_first_visible_row))
+    (local.set $new_row
+      (call $tv_scroll_to_for_h
+        (local.get $h)
+        (i32.add (local.get $old_row) (local.get $delta))))
+    (if (i32.ne (local.get $new_row) (local.get $old_row))
+      (then
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (call $treeview_paint_wat (local.get $hwnd))))
+    (local.get $new_row))
+
+  (func $tv_first_visible (result i32)
+    (call $tv_visible_handle_at_row (global.get $tv_first_visible_row)))
 
   (func $tv_next_visible_from_slot (param $slot i32) (result i32)
     (local $i i32) (local $base i32)
@@ -539,6 +586,7 @@
       (then (local.set $row (i32.const 0)))
       (else
         (local.set $row (i32.div_s (i32.sub (local.get $y) (i32.const 3)) (i32.const 16)))))
+    (local.set $row (i32.add (local.get $row) (global.get $tv_first_visible_row)))
     (local.set $hItem (call $tv_visible_handle_at_row (local.get $row)))
     (if (i32.eqz (local.get $hItem))
       (then
@@ -626,14 +674,98 @@
     (local $x i32) (local $y i32) (local $row i32)
     (local $hItem i32) (local $slot i32) (local $base i32)
     (local $depth i32) (local $box_x i32)
+    (local $sz i32) (local $w i32) (local $h i32)
+    (local $max i32) (local $visible i32) (local $hit i32) (local $new_row i32)
     (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
     (local.set $y (i32.shr_s (local.get $lParam) (i32.const 16)))
     (if (i32.lt_s (local.get $y) (i32.const 0))
       (then (return (i32.const 0))))
+
+    ;; Release a TreeView scrollbar press/drag before normal item-click
+    ;; notification. This mirrors the Edit/ListBox shared scrollbar state.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0202))
+          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+      (then
+        (global.set $sb_pressed_hwnd (i32.const 0))
+        (global.set $sb_pressed_part (i32.const 0))
+        (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+          (then (global.set $capture_hwnd (i32.const 0))))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (call $treeview_paint_wat (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; Thumb drag: map cursor delta back to a row through the shared
+    ;; scrollbar_drag_pos helper.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0200))
+          (i32.and
+            (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+            (i32.eq (global.get $sb_pressed_part) (i32.const 5))))
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $max (call $tv_max_scroll_for_h (local.get $h)))
+        (if (i32.gt_s (local.get $max) (i32.const 0))
+          (then
+            (local.set $new_row
+              (call $scrollbar_drag_pos
+                (local.get $h) (local.get $y)
+                (global.get $tv_drag_anchor_y)
+                (global.get $tv_drag_anchor_row)
+                (i32.const 0) (local.get $max)))
+            (if (i32.ne (local.get $new_row) (global.get $tv_first_visible_row))
+              (then
+                (global.set $tv_first_visible_row (local.get $new_row))
+                (call $paint_flag_set_inv (local.get $hwnd))
+                (call $treeview_paint_wat (local.get $hwnd))))))
+        (return (i32.const 1))))
+
+    ;; Right-edge scrollbar strip: arrows/page/thumb. TreeView common controls
+    ;; grow their scrollbars from content overflow, not just WS_VSCROLL.
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $max (call $tv_max_scroll_for_h (local.get $h)))
+        (if (i32.and
+              (i32.gt_s (local.get $max) (i32.const 0))
+              (i32.and
+                (i32.gt_s (local.get $w) (i32.const 16))
+                (i32.ge_s (local.get $x) (i32.sub (local.get $w) (i32.const 16)))))
+          (then
+            (local.set $hit (call $scrollbar_hit_part
+              (local.get $h) (local.get $y)
+              (global.get $tv_first_visible_row) (i32.const 0) (local.get $max)))
+            (if (local.get $hit)
+              (then
+                (global.set $sb_pressed_hwnd (local.get $hwnd))
+                (global.set $sb_pressed_part (local.get $hit))
+                (local.set $visible (call $tv_visible_rows_for_h (local.get $h)))
+                (if (i32.eq (local.get $hit) (i32.const 1))
+                  (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.const -1)))))
+                (if (i32.eq (local.get $hit) (i32.const 2))
+                  (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.const 1)))))
+                (if (i32.eq (local.get $hit) (i32.const 3))
+                  (then (drop (call $tv_scroll_by
+                    (local.get $hwnd) (i32.sub (i32.const 0) (local.get $visible))))))
+                (if (i32.eq (local.get $hit) (i32.const 4))
+                  (then (drop (call $tv_scroll_by (local.get $hwnd) (local.get $visible)))))
+                (if (i32.eq (local.get $hit) (i32.const 5))
+                  (then
+                    (global.set $tv_drag_anchor_y (local.get $y))
+                    (global.set $tv_drag_anchor_row (global.get $tv_first_visible_row))
+                    (global.set $capture_hwnd (local.get $hwnd))))
+                (call $paint_flag_set_inv (local.get $hwnd))
+                (call $treeview_paint_wat (local.get $hwnd))
+                (return (i32.const 1))))))))
+
     (if (i32.lt_s (local.get $y) (i32.const 3))
       (then (local.set $row (i32.const 0)))
       (else
         (local.set $row (i32.div_s (i32.sub (local.get $y) (i32.const 3)) (i32.const 16)))))
+    (local.set $row (i32.add (local.get $row) (global.get $tv_first_visible_row)))
     (local.set $hItem (call $tv_visible_handle_at_row (local.get $row)))
     (if (i32.eqz (local.get $hItem))
       (then (return (i32.const 0))))
@@ -660,7 +792,8 @@
       (then
         (call $tv_notify_simple (local.get $hwnd) (i32.const -3))
         (return (i32.const 1))))
-    (call $tv_select_caret (local.get $hwnd) (local.get $hItem) (i32.const 1)))
+    (call $tv_select_caret (local.get $hwnd) (local.get $hItem) (i32.const 1))
+  )
 
   ;; Main TreeView message dispatcher
   (func $treeview_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -732,10 +865,11 @@
 
   (func $treeview_paint_wat (param $hwnd i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
-    (local $i i32) (local $base i32) (local $row i32) (local $y i32)
+    (local $i i32) (local $base i32) (local $row i32) (local $draw_row i32) (local $y i32)
     (local $depth i32) (local $x i32) (local $state i32) (local $check i32)
     (local $style i32) (local $brush i32) (local $selected i32) (local $sel_right i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32)
+    (local $first_row i32) (local $max_scroll i32) (local $content_right i32)
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -743,6 +877,20 @@
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
       (then (return)))
+    (local.set $max_scroll (call $tv_max_scroll_for_h (local.get $h)))
+    (if (i32.and
+          (i32.gt_s (local.get $max_scroll) (i32.const 0))
+          (i32.le_s (local.get $w) (i32.const 16)))
+      (then (local.set $max_scroll (i32.const 0))))
+    (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
+      (then
+        (drop (call $tv_scroll_to_for_h (local.get $h) (global.get $tv_first_visible_row))))
+      (else
+        (global.set $tv_first_visible_row (i32.const 0))))
+    (local.set $first_row (global.get $tv_first_visible_row))
+    (local.set $content_right (local.get $w))
+    (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
+      (then (local.set $content_right (i32.sub (local.get $w) (i32.const 16)))))
 
     (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
@@ -765,10 +913,13 @@
             (call $tv_item_visible (local.get $base)))
         (then
           (local.set $state (i32.load offset=20 (local.get $base)))
-          (local.set $y (i32.add (i32.const 3) (i32.mul (local.get $row) (i32.const 16))))
-          (if (i32.lt_u (local.get $y) (i32.sub (local.get $h) (i32.const 4)))
+          (if (i32.ge_s (local.get $row) (local.get $first_row))
             (then
-              (local.set $depth (call $tv_item_depth (local.get $base)))
+              (local.set $draw_row (i32.sub (local.get $row) (local.get $first_row)))
+              (local.set $y (i32.add (i32.const 3) (i32.mul (local.get $draw_row) (i32.const 16))))
+              (if (i32.lt_u (local.get $y) (i32.sub (local.get $h) (i32.const 4)))
+                (then
+                  (local.set $depth (call $tv_item_depth (local.get $base)))
 	              (local.set $x (i32.add (i32.const 4) (i32.mul (local.get $depth) (i32.const 16))))
 	              (local.set $selected
 	                (i32.or
@@ -843,8 +994,8 @@
 	                          (local.set $sel_right
 	                            (i32.add (local.get $x)
 	                              (i32.add (i32.mul (local.get $text_len) (i32.const 7)) (i32.const 4))))
-	                          (if (i32.gt_s (local.get $sel_right) (i32.sub (local.get $w) (i32.const 2)))
-	                            (then (local.set $sel_right (i32.sub (local.get $w) (i32.const 2)))))
+		                          (if (i32.gt_s (local.get $sel_right) (i32.sub (local.get $content_right) (i32.const 2)))
+		                            (then (local.set $sel_right (i32.sub (local.get $content_right) (i32.const 2)))))
 	                          (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
 	                          (drop (call $host_gdi_fill_rect (local.get $hdc)
 	                            (local.get $x) (local.get $y)
@@ -861,13 +1012,23 @@
 	                        (then
 	                          (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
 	                          (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
-	                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))))))))))
+		                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000))))))))))))
           (local.set $row (i32.add (local.get $row) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $items))))
+      (br $items)))
+    (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
+      (then
+        (call $paint_vscrollbar_rect (local.get $hdc)
+          (i32.sub (local.get $w) (i32.const 16)) (i32.const 0)
+          (i32.const 16) (local.get $h)
+          (local.get $first_row) (local.get $max_scroll)
+          (select (global.get $sb_pressed_part) (i32.const 0)
+                  (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))))))
+  )
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages
   (func $treeview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $code i32) (local $delta i32) (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
     ;; WM_PAINT (0x000F) — draw the tree into the parent's back canvas
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -878,9 +1039,61 @@
     ;; WM_ERASEBKGND (0x0014)
     (if (i32.eq (local.get $msg) (i32.const 0x0014))
       (then (return (i32.const 1))))
-    ;; Mouse selection/expand: WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK.
+    ;; WM_MOUSEWHEEL (0x020A): 120 delta = 3 rows, positive delta scrolls up.
+    (if (i32.eq (local.get $msg) (i32.const 0x020A))
+      (then
+        (local.set $delta
+          (i32.div_s
+            (i32.sub (i32.const 0) (i32.shr_s (local.get $wParam) (i32.const 16)))
+            (i32.const 40)))
+        (drop (call $tv_scroll_by (local.get $hwnd) (local.get $delta)))
+        (return (i32.const 0))))
+    ;; WM_VSCROLL (0x0115): support line/page/thumb/top/bottom commands.
+    (if (i32.eq (local.get $msg) (i32.const 0x0115))
+      (then
+        (local.set $code (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (if (i32.eq (local.get $code) (i32.const 0))
+          (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.const -1)))))
+        (if (i32.eq (local.get $code) (i32.const 1))
+          (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.const 1)))))
+        (if (i32.or (i32.eq (local.get $code) (i32.const 2))
+                    (i32.eq (local.get $code) (i32.const 3)))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+            (local.set $delta (call $tv_visible_rows_for_h (local.get $h)))
+            (if (i32.eq (local.get $code) (i32.const 2))
+              (then (local.set $delta (i32.sub (i32.const 0) (local.get $delta)))))
+            (drop (call $tv_scroll_by (local.get $hwnd) (local.get $delta)))))
+        (if (i32.or (i32.eq (local.get $code) (i32.const 4))
+                    (i32.eq (local.get $code) (i32.const 5)))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+            (local.set $old_row (global.get $tv_first_visible_row))
+            (local.set $new_row
+              (call $tv_scroll_to_for_h
+                (local.get $h)
+                (i32.shr_s (local.get $wParam) (i32.const 16))))
+            (if (i32.ne (local.get $new_row) (local.get $old_row))
+              (then
+                (call $paint_flag_set_inv (local.get $hwnd))
+                (call $treeview_paint_wat (local.get $hwnd))))))
+        (if (i32.eq (local.get $code) (i32.const 6))
+          (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.sub (i32.const 0) (global.get $tv_first_visible_row))))))
+        (if (i32.eq (local.get $code) (i32.const 7))
+          (then
+            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+            (drop (call $tv_scroll_by
+              (local.get $hwnd)
+              (i32.sub (call $tv_max_scroll_for_h (local.get $h)) (global.get $tv_first_visible_row))))))
+        (return (i32.const 0))))
+    ;; Mouse selection/expand/scrollbar drag.
     (if (i32.or
-          (i32.eq (local.get $msg) (i32.const 0x0201))
+          (i32.or
+            (i32.eq (local.get $msg) (i32.const 0x0200))
+            (i32.eq (local.get $msg) (i32.const 0x0201)))
           (i32.or
             (i32.eq (local.get $msg) (i32.const 0x0202))
             (i32.eq (local.get $msg) (i32.const 0x0203))))

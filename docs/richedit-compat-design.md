@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-03.
+Last updated: 2026-08-10.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -86,6 +86,11 @@ wheel/arrow/thumb/canvas scrolling, captures the license/options/folder/
 installing screenshots, reaches Installing Files, extracts the expected VFS
 files, and exits cleanly after the final Finish command.
 
+Related common-control scroll status: WAT-native `SysTreeView32` now reuses the
+same shared vertical scrollbar hit/drag math as the RichEdit/Edit/ListBox
+paths. `SysListView32` is still a blank/minimal pane, so ListView item/header
+storage should come before attempting scroll reuse there.
+
 That means these pieces are already good enough for basic insertion:
 
 - focus can reach the RichEdit child;
@@ -132,6 +137,22 @@ That means these pieces are already good enough for basic insertion:
 
 This does not mean RichEdit is feature complete. It only proves the first
 native-editing path is alive.
+
+### 2026-08-10 implementation progress
+
+- Reused the shared Win98 vertical scrollbar helpers for WAT-native
+  `SysTreeView32` overflow rows.
+- TreeView line/page clicks, thumb drag, `WM_MOUSEWHEEL`, `WM_VSCROLL`,
+  `TVGN_FIRSTVISIBLE`, `TVM_HITTEST`, and mouse selection now share the same
+  first-visible row offset.
+- Added `test/test-treeview-scroll.js`, a standalone WAT regression that creates
+  a TreeView, inserts 12 rows, verifies wheel/arrow/page/thumb scroll behavior,
+  hit-testing through the scroll offset, selection, and slot cleanup.
+- Postponed `SysListView32` scroll reuse because the current implementation is
+  still a minimal blank pane. The next useful ListView slice is item/header
+  state plus a focused regression before wiring scrollbar behavior.
+- Updated `apps/regedit.md` to separate focused TreeView scroll coverage from
+  current app-level RegEdit screenshot status.
 
 ### 2026-08-03 implementation progress
 
@@ -645,6 +666,8 @@ Acceptance:
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage
 [x] Installer/license RichEdit panes render and scroll
+[x] WAT TreeView reuses shared vertical scrollbar hit/drag math
+[ ] SysListView32 has item/header state and reusable scrollbar behavior
 [x] App status docs are updated from current screenshots/probes
 ```
 

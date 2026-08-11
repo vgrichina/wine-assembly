@@ -357,7 +357,9 @@ Find dialog already done — see STEP 8 below for what landed.
 Remaining:
 - About dialog (`showAboutDialog`). Smallest target: 1 OK button + 3 lines of text. The aboutLines are rendered via a special `if (win.isAboutDialog && win.aboutLines)` branch in `drawWindow`; migrating means turning each line into a `$ctrl_create_child` STATIC and deleting the special-case branch. The modal-block at `renderer-input.js:10` can stay (or move into a generic "modal flag in WAT").
 - Calculator dialog (`_showCalculatorDialog`) — note: calc has special static id 403 (display field) which currently has hardcoded rendering in `drawWindow`. Move that into `$static_wndproc` with a flag (e.g., `StaticState.style` bit), or handle via a calc-specific subclass.
-- NSIS installer dialogs. TreeView is a separate animal — needs a new control class beyond Button/Edit/Static.
+- NSIS/RegEdit common controls. TreeView now has a WAT-native control path with
+  shared vertical scrollbar behavior; ListView is still a minimal blank pane and
+  needs item/header state before useful scroll reuse.
 - Each migration adds a `$create_xxx_dialog` WAT function and (once visible-side rendering goes through `_drawWatChildren`) deletes the `showXxxDialog` JS body.
 
 **STEP 7: Route guest `CreateWindowExA` for EDIT/BUTTON/STATIC to WAT wndprocs.**

@@ -1283,6 +1283,32 @@
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr))
     (local.get $dlg))
 
+  ;; Test helper: create a parent + SysTreeView32 child, return tree hwnd.
+  ;; This exercises the WAT-native TreeView wndproc without booting a guest EXE.
+  (func (export "test_create_treeview")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (result i32)
+    (local $parent i32) (local $tv i32)
+    (global.set $tv_first_visible_row (i32.const 0))
+    (global.set $tv_drag_anchor_y (i32.const 0))
+    (global.set $tv_drag_anchor_row (i32.const 0))
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $tv (call $ctrl_create_child (local.get $parent) (i32.const 8) (i32.const 100)
+                     (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+                     (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    (local.get $tv))
+
+  (func (export "treeview_get_first_visible_row") (result i32)
+    (global.get $tv_first_visible_row))
+  (func (export "treeview_get_visible_count") (result i32)
+    (call $tv_visible_count))
+  (func (export "treeview_get_max_scroll") (param $hwnd i32) (result i32)
+    (local $sz i32)
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (call $tv_max_scroll_for_h (i32.shr_u (local.get $sz) (i32.const 16))))
+
   ;; Test helper: create a parent dlg + listbox child, return listbox hwnd.
   ;; The parent is registered as WNDPROC_CTRL_NATIVE with no class tag (so
   ;; control_wndproc_dispatch returns 0 = DefWindowProc) and exists only so
