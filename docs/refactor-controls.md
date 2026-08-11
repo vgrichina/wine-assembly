@@ -363,7 +363,8 @@ Remaining:
   the WAT-native ListView path at app runtime. The report subset also covers
   column get/set, item/subitem rect queries, subitem hit-test output, and
   bounded selection/click notifications. `LVM_GETHEADER` exposes a pseudo
-  Header message surface for common query messages. Advanced ListView modes,
+  Header message surface for common query messages. Row/column deletion keeps
+  report state and pseudo-header counts coherent. Advanced ListView modes,
   broader notifications, image lists, and real Header control fidelity remain
   later work.
 - Each migration adds a `$create_xxx_dialog` WAT function and (once visible-side rendering goes through `_drawWatChildren`) deletes the `showXxxDialog` JS body.

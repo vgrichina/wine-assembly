@@ -44,6 +44,8 @@ Key fixes:
 - `LVM_GETHEADER` now exposes a pseudo-header message surface for common
   `HDM_GETITEMCOUNT`, `HDM_GETITEMA`, `HDM_GETITEMRECT`, and `HDM_HITTEST`
   queries against the ListView's report-column state.
+- `LVM_DELETEITEM` and `LVM_DELETECOLUMN` now free shifted text buffers and keep
+  count, selection, scroll, and pseudo-header state coherent after removal.
 - `SysListView32` is now protected from registered-class fallback, so
   `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
   instead of RegEdit's/COMCTL32's guest window proc.
@@ -69,7 +71,7 @@ Validation:
 ```sh
 node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
-node test/test-listview.js           # passes 82/82
+node test/test-listview.js           # passes 90/90
 node test/test-listbox.js
 node test/test-regedit-deep.js
 node test/test-wat-memory-map.js

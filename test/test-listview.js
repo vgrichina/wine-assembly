@@ -15,6 +15,7 @@ const SRC_DIR = path.join(ROOT, 'src');
 
 const LVM_GETITEMCOUNT = 0x1004;
 const LVM_INSERTITEMA = 0x1007;
+const LVM_DELETEITEM = 0x1008;
 const LVM_DELETEALLITEMS = 0x1009;
 const LVM_GETNEXTITEM = 0x100C;
 const LVM_GETITEMRECT = 0x100E;
@@ -24,6 +25,7 @@ const LVM_SCROLL = 0x1014;
 const LVM_GETCOLUMNA = 0x1019;
 const LVM_SETCOLUMNA = 0x101A;
 const LVM_INSERTCOLUMNA = 0x101B;
+const LVM_DELETECOLUMN = 0x101C;
 const LVM_GETCOLUMNWIDTH = 0x101D;
 const LVM_GETHEADER = 0x101F;
 const LVM_GETTOPINDEX = 0x1027;
@@ -343,6 +345,17 @@ async function main() {
 
   check('LVM_SCROLL by one row changes top index', e.send_message(lv, LVM_SCROLL, 0, 16) === 1);
   check('top index follows LVM_SCROLL pixels', e.listview_get_top_index(lv) === 2);
+
+  check('LVM_DELETEITEM removes selected row', e.send_message(lv, LVM_DELETEITEM, 2, 0) === 1);
+  check('LVM_DELETEITEM decrements item count', e.listview_get_count(lv) === 11);
+  check('LVM_DELETEITEM clears deleted selection', e.listview_get_selected_index(lv) === -1);
+  const shiftedRow = getItemText(2, 0);
+  check('LVM_DELETEITEM shifts following row text', shiftedRow.text === 'Value 3', shiftedRow.text);
+
+  check('LVM_DELETECOLUMN removes second report column', e.send_message(lv, LVM_DELETECOLUMN, 1, 0) === 1);
+  check('column count follows LVM_DELETECOLUMN', e.listview_get_column_count(lv) === 1);
+  check('HDM_GETITEMCOUNT follows LVM_DELETECOLUMN', e.send_message(header, HDM_GETITEMCOUNT, 0, 0) === 1);
+  check('LVM_GETCOLUMNWIDTH rejects deleted column', e.send_message(lv, LVM_GETCOLUMNWIDTH, 1, 0) === 0);
 
   check('LVM_DELETEALLITEMS succeeds', e.send_message(lv, LVM_DELETEALLITEMS, 0, 0) === 1);
   check('LVM_DELETEALLITEMS clears count', e.listview_get_count(lv) === 0);

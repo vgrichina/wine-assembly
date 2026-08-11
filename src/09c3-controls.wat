@@ -3501,6 +3501,49 @@
     (i32.store offset=32 (local.get $sw) (i32.const -1))
     (i32.store offset=36 (local.get $sw) (i32.const 0)))
 
+  (func $lv_free_row_text (param $sw i32) (param $idx i32)
+    (local $sub i32) (local $cell i32) (local $ptr i32)
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
+      (then (return)))
+    (local.set $sub (i32.const 0))
+    (block $done (loop $subs
+      (br_if $done (i32.ge_u (local.get $sub) (i32.const 8)))
+      (local.set $cell (call $lv_cell_addr (local.get $sw) (local.get $idx) (local.get $sub)))
+      (local.set $ptr (i32.load (local.get $cell)))
+      (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+      (i32.store (local.get $cell) (i32.const 0))
+      (local.set $sub (i32.add (local.get $sub) (i32.const 1)))
+      (br $subs))))
+
+  (func $lv_delete_item (param $hwnd i32) (param $sw i32) (param $idx i32) (result i32)
+    (local $count i32) (local $tail i32) (local $selected i32) (local $h i32)
+    (local.set $count (i32.load (local.get $sw)))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (local.get $count)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $idx))
+      (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))))
+    (call $lv_free_row_text (local.get $sw) (local.get $idx))
+    (local.set $tail (i32.sub (i32.sub (local.get $count) (local.get $idx)) (i32.const 1)))
+    (if (i32.gt_s (local.get $tail) (i32.const 0))
+      (then
+        (call $memcpy
+          (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0))
+          (call $lv_cell_addr (local.get $sw) (i32.add (local.get $idx) (i32.const 1)) (i32.const 0))
+          (i32.mul (local.get $tail) (i32.const 32)))))
+    (call $zero_memory
+      (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $count) (i32.const 1)) (i32.const 0))
+      (i32.const 32))
+    (i32.store (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+    (local.set $selected (i32.load offset=32 (local.get $sw)))
+    (if (i32.gt_s (local.get $selected) (local.get $idx))
+      (then (i32.store offset=32 (local.get $sw) (i32.sub (local.get $selected) (i32.const 1)))))
+    (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+    (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (i32.load offset=36 (local.get $sw))))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (i32.const 1))
+
   (func $lv_clear_columns (param $sw i32)
     (local $count i32) (local $i i32) (local $texts_w i32) (local $ptr i32)
     (local.set $count (i32.load offset=16 (local.get $sw)))
@@ -3518,6 +3561,57 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $cols)))
     (i32.store offset=16 (local.get $sw) (i32.const 0)))
+
+  (func $lv_delete_column (param $hwnd i32) (param $sw i32) (param $idx i32) (result i32)
+    (local $col_count i32) (local $row_count i32) (local $i i32) (local $sub i32)
+    (local $widths_w i32) (local $texts_w i32) (local $ptr i32)
+    (local.set $col_count (i32.load offset=16 (local.get $sw)))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (local.get $col_count)))
+      (then (return (i32.const 0))))
+    (local.set $widths_w (call $g2w (i32.load offset=24 (local.get $sw))))
+    (local.set $texts_w (call $g2w (i32.load offset=28 (local.get $sw))))
+    (local.set $ptr (i32.load (i32.add (local.get $texts_w) (i32.mul (local.get $idx) (i32.const 4)))))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (local.set $i (local.get $idx))
+    (block $col_shift_done (loop $col_shift
+      (br_if $col_shift_done (i32.ge_s (local.get $i) (i32.sub (local.get $col_count) (i32.const 1))))
+      (i32.store
+        (i32.add (local.get $widths_w) (i32.mul (local.get $i) (i32.const 4)))
+        (i32.load (i32.add (local.get $widths_w) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
+      (i32.store
+        (i32.add (local.get $texts_w) (i32.mul (local.get $i) (i32.const 4)))
+        (i32.load (i32.add (local.get $texts_w) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $col_shift)))
+    (i32.store
+      (i32.add (local.get $widths_w) (i32.mul (i32.sub (local.get $col_count) (i32.const 1)) (i32.const 4)))
+      (i32.const 0))
+    (i32.store
+      (i32.add (local.get $texts_w) (i32.mul (i32.sub (local.get $col_count) (i32.const 1)) (i32.const 4)))
+      (i32.const 0))
+    (if (i32.lt_s (local.get $idx) (i32.const 8))
+      (then
+        (local.set $row_count (i32.load (local.get $sw)))
+        (local.set $i (i32.const 0))
+        (block $rows_done (loop $rows
+          (br_if $rows_done (i32.ge_s (local.get $i) (local.get $row_count)))
+          (local.set $ptr (i32.load (call $lv_cell_addr (local.get $sw) (local.get $i) (local.get $idx))))
+          (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+          (local.set $sub (local.get $idx))
+          (block $subs_done (loop $subs
+            (br_if $subs_done (i32.ge_s (local.get $sub) (i32.const 7)))
+            (i32.store
+              (call $lv_cell_addr (local.get $sw) (local.get $i) (local.get $sub))
+              (i32.load (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.add (local.get $sub) (i32.const 1)))))
+            (local.set $sub (i32.add (local.get $sub) (i32.const 1)))
+            (br $subs)))
+          (i32.store (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 7)) (i32.const 0))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $rows)))))
+    (i32.store offset=16 (local.get $sw) (i32.sub (local.get $col_count) (i32.const 1)))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (i32.const 1))
 
   (func $lv_scroll_to_for_h (param $sw i32) (param $h i32) (param $row i32) (result i32)
     (local $max i32)
@@ -3675,7 +3769,10 @@
     (if (i32.eq (local.get $msg) (i32.const 0x1004))
       (then (return (i32.load (local.get $sw)))))
 
-    ;; LVM_DELETEALLITEMS
+    ;; LVM_DELETEITEM / LVM_DELETEALLITEMS
+    (if (i32.eq (local.get $msg) (i32.const 0x1008))
+      (then
+        (return (call $lv_delete_item (local.get $hwnd) (local.get $sw) (local.get $wParam)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1009))
       (then
         (call $lv_clear_items (local.get $sw))
@@ -3765,6 +3862,11 @@
         (i32.store offset=16 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (local.get $idx))))
+
+    ;; LVM_DELETECOLUMN
+    (if (i32.eq (local.get $msg) (i32.const 0x101C))
+      (then
+        (return (call $lv_delete_column (local.get $hwnd) (local.get $sw) (local.get $wParam)))))
 
     ;; LVM_GETCOLUMNA / LVM_SETCOLUMNA
     (if (i32.eq (local.get $msg) (i32.const 0x1019))
