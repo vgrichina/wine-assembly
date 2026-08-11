@@ -363,6 +363,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
@@ -418,6 +419,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
       } else if (kind === 'dump-focus-state') {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
+      } else if (kind === 'dump-clipboard') {
+        scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
       } else if (kind === 'dump-focus-charformat') {
         scheduledInput.push({ batch, action: 'dump-focus-charformat', label: parts[2] || '' });
       } else if (kind === 'set-focus-charformat-color') {
@@ -2421,6 +2424,32 @@ async function main() {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-clipboard') {
+        const we = instance.exports;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (we.clipboard_get_rtf_format_id && we.clipboard_rtf_len &&
+            we.clipboard_rtf_ptr && we.clipboard_count_formats &&
+            we.clipboard_is_format_available && we.clipboard_get_data_handle) {
+          const fmt = we.clipboard_get_rtf_format_id() >>> 0;
+          const textLen = we.clipboard_text_len ? (we.clipboard_text_len() >>> 0) : 0;
+          const rtfLen = we.clipboard_rtf_len() >>> 0;
+          const count = we.clipboard_count_formats() >>> 0;
+          const availText = we.clipboard_is_format_available(1) >>> 0;
+          const availRtf = we.clipboard_is_format_available(fmt) >>> 0;
+          const textHandle = we.clipboard_get_data_handle(1) >>> 0;
+          const rtfHandle = we.clipboard_get_data_handle(fmt) >>> 0;
+          let rtf = '';
+          const ptr = we.clipboard_rtf_ptr() >>> 0;
+          const wa = ptr ? g2w(ptr) : 0;
+          if (wa && rtfLen) {
+            const n = Math.min(rtfLen, 96, memory.buffer.byteLength - wa);
+            const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, n));
+            rtf = Buffer.from(bytes).toString('latin1');
+          }
+          logs.push(`[input] dump-clipboard${tag}: count=${count} textLen=${textLen} rtfFmt=0x${fmt.toString(16)} rtfLen=${rtfLen} availText=${availText} availRtf=${availRtf} textHandle=0x${textHandle.toString(16)} rtfHandle=0x${rtfHandle.toString(16)} rtf=${JSON.stringify(rtf)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-clipboard${tag}: NO CLIPBOARD API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-charformat') {
         const we = instance.exports;

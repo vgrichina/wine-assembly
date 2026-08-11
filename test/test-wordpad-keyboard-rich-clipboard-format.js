@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Regression coverage for WordPad's bounded rich clipboard bridge:
-// copy selected native RichEdit text with basic character/paragraph formatting,
-// clear the document, paste through the WordPad menu bridge, then verify that
-// text, CRLF-aware caret position, ANSI high-byte text, and formatting survive.
+// Regression coverage for keyboard native-RichEdit rich clipboard shortcuts:
+// Ctrl+C/Ctrl+X use the shared WAT clipboard backend, advertise non-OLE
+// "Rich Text Format" data, and Ctrl+V restores basic character/paragraph
+// formatting without byte-counting CRLF positions.
 
 'use strict';
 
@@ -16,9 +16,6 @@ const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
 
 const ID_EDIT_CLEAR = 57632;
-const ID_EDIT_COPY = 57634;
-const ID_EDIT_PASTE = 57637;
-const ID_EDIT_SELECT_ALL = 57642;
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  wordpad.exe not found at', EXE);
@@ -27,42 +24,60 @@ if (!fs.existsSync(EXE)) {
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
+function ctrl(batch, vk) {
+  return [
+    `${batch}:keydown:17`,
+    `${batch + 1}:keydown:${vk}`,
+    `${batch + 2}:keyup:${vk}`,
+    `${batch + 3}:keyup:17`,
+  ];
+}
+
 const seq = [
   '70:click:40:150',
   '74:keypress:99',   // c
   '75:keypress:97',   // a
   '76:keypress:102',  // f
-  '77:keypress:233',  // é in the current ANSI/Latin-1 test path
+  '77:keypress:233',  // é in current ANSI/Latin-1 path
   '80:keydown:13',
   '81:keyup:13',
   '84:keypress:116',  // t
   '85:keypress:119',  // w
   '86:keypress:111',  // o
   '94:dump-focus-state:typed',
-  `100:menu-edit-command:${ID_EDIT_SELECT_ALL}:select-all`,
-  '106:set-focus-charformat-color:0x00ff0000:blue',
-  '110:set-focus-paraformat-basic:1:720:360:-240:1440:para',
-  '116:dump-focus-charformat:before-copy',
-  '118:dump-focus-paraformat:before-copy',
-  `124:menu-edit-command:${ID_EDIT_COPY}:copy`,
-  '130:dump-clipboard:after-copy',
-  `138:menu-edit-command:${ID_EDIT_CLEAR}:clear`,
-  '152:dump-focus-state:after-clear',
-  '158:set-focus-charformat-color:0x00000000:black-after-clear',
-  '162:set-focus-paraformat-basic:0:0:0:0:0:plain-after-clear',
-  `176:menu-edit-command:${ID_EDIT_PASTE}:paste`,
-  '194:dump-focus-state:after-paste',
-  `206:menu-edit-command:${ID_EDIT_SELECT_ALL}:select-pasted`,
-  '216:dump-focus-charformat:after-paste-selected',
-  '218:dump-focus-paraformat:after-paste-selected',
-  '222:stop',
+  ...ctrl(100, 65), // Ctrl+A
+  '108:set-focus-charformat-color:0x00ff0000:blue',
+  '112:set-focus-paraformat-basic:1:720:360:-240:1440:para',
+  '118:dump-focus-charformat:before-copy',
+  '120:dump-focus-paraformat:before-copy',
+  ...ctrl(126, 67), // Ctrl+C
+  '134:dump-clipboard:after-copy',
+  `146:menu-edit-command:${ID_EDIT_CLEAR}:clear`,
+  '160:dump-focus-state:after-clear',
+  '166:set-focus-charformat-color:0x00000000:black-after-clear',
+  '170:set-focus-paraformat-basic:0:0:0:0:0:plain-after-clear',
+  ...ctrl(184, 86), // Ctrl+V
+  '204:dump-focus-state:after-paste',
+  ...ctrl(212, 65), // Ctrl+A pasted text
+  '222:dump-focus-charformat:after-paste-selected',
+  '224:dump-focus-paraformat:after-paste-selected',
+  ...ctrl(232, 88), // Ctrl+X pasted text
+  '244:dump-focus-state:after-cut',
+  '250:set-focus-charformat-color:0x00000000:black-after-cut',
+  '254:set-focus-paraformat-basic:0:0:0:0:0:plain-after-cut',
+  ...ctrl(268, 86), // Ctrl+V cut text
+  '288:dump-focus-state:after-cut-paste',
+  ...ctrl(296, 65),
+  '306:dump-focus-charformat:after-cut-paste-selected',
+  '308:dump-focus-paraformat:after-cut-paste-selected',
+  '314:stop',
 ];
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=260',
+  '--max-batches=350',
   '--batch-size=50000',
   '--quiet-api',
   '--quiet-blocks',
@@ -94,7 +109,6 @@ const interesting = out.split('\n').filter(l =>
   l.includes('set-focus-paraformat') ||
   l.includes('dump-clipboard') ||
   l.includes('menu-edit-command') ||
-  l.includes('png ') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH') ||
   l.includes('Unreachable code'));
@@ -103,11 +117,6 @@ for (const l of interesting) console.log('  ' + l);
 function line(label, kind) {
   const marker = `${kind} ${label}:`;
   return out.split('\n').find(l => l.includes(marker)) || '';
-}
-
-function commandRet(label, id) {
-  const re = new RegExp(`menu-edit-command ${label}: id=${id} ret=1`);
-  return re.test(out);
 }
 
 function hasText(l) {
@@ -133,38 +142,38 @@ const beforePara = line('before-copy', 'dump-focus-paraformat');
 const clip = line('after-copy', 'dump-clipboard');
 const afterClear = line('after-clear', 'dump-focus-state');
 const afterPaste = line('after-paste', 'dump-focus-state');
-const afterChar = line('after-paste-selected', 'dump-focus-charformat');
-const afterPara = line('after-paste-selected', 'dump-focus-paraformat');
+const afterPasteChar = line('after-paste-selected', 'dump-focus-charformat');
+const afterPastePara = line('after-paste-selected', 'dump-focus-paraformat');
+const afterCut = line('after-cut', 'dump-focus-state');
+const afterCutPaste = line('after-cut-paste', 'dump-focus-state');
+const afterCutPasteChar = line('after-cut-paste-selected', 'dump-focus-charformat');
+const afterCutPastePara = line('after-cut-paste-selected', 'dump-focus-paraformat');
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
 
 check('WordPad reached ShowWindow', /ShowWindow\] hwnd=0x10001/.test(out));
 check('typed ANSI high-byte text and CRLF reached native RichEdit', hasText(typed));
-check('typed CRLF reports logical caret position, not byte length', /sel=8\.\.8/.test(typed));
-check('menu Select All selected source text', commandRet('select-all', ID_EDIT_SELECT_ALL));
+check('typed CRLF reports logical caret position', /sel=8\.\.8/.test(typed));
 check('source text has blue character formatting before copy', hasBlue(beforeChar));
 check('source text has paragraph fields before copy', hasParaFields(beforePara));
-check('menu Copy command was bridged', commandRet('copy', ID_EDIT_COPY));
-check('menu Copy populated text and RTF clipboard formats',
+check('Ctrl+C populated text and RTF clipboard formats',
   /count=2 /.test(clip) && /textLen=9 /.test(clip) &&
   /rtfFmt=0xc[0-9a-f]+/.test(clip) && /rtfLen=[1-9][0-9]*/.test(clip) &&
   /availText=1 /.test(clip) && /availRtf=1 /.test(clip) &&
   /textHandle=0x[1-9a-f]/.test(clip) && /rtfHandle=0x[1-9a-f]/.test(clip));
-check('menu Copy RTF escapes high byte and CRLF',
+check('RTF clipboard escapes high byte and CRLF',
   /rtf=.*\\\\rtf1\\\\ansi caf\\\\'e9\\\\par two/.test(clip));
-check('menu Clear command was bridged', commandRet('clear', ID_EDIT_CLEAR));
-check('menu Clear emptied the native RichEdit text', /len=0 .*text=""/.test(afterClear));
-check('insertion formatting was reset to black before paste',
-  /set-focus-charformat-color black-after-clear: .*color=0x0 .*ret=0x1/.test(out));
-check('insertion paragraph formatting was reset before paste',
-  /set-focus-paraformat-basic plain-after-clear: .*numbering=0 .*dxStartIndent=0 .*dxRightIndent=0 .*dxOffset=0 .*tab=0 .*ret=0x1/.test(out));
-check('menu Paste command was bridged', commandRet('paste', ID_EDIT_PASTE));
-check('pasted text preserves ANSI high-byte byte and CRLF', hasText(afterPaste));
-check('pasted caret preserves RichEdit logical CRLF position', /sel=8\.\.8/.test(afterPaste));
-check('menu Select All selected pasted text', commandRet('select-pasted', ID_EDIT_SELECT_ALL));
-check('pasted selected text preserved blue character formatting', hasBlue(afterChar));
-check('pasted selected text preserved paragraph formatting', hasParaFields(afterPara));
+check('Clear emptied native RichEdit text', /len=0 .*text=""/.test(afterClear));
+check('Ctrl+V pasted text with ANSI high byte and CRLF', hasText(afterPaste));
+check('Ctrl+V preserved logical CRLF caret position', /sel=8\.\.8/.test(afterPaste));
+check('Ctrl+V restored blue character formatting', hasBlue(afterPasteChar));
+check('Ctrl+V restored paragraph formatting', hasParaFields(afterPastePara));
+check('Ctrl+X cleared selected native RichEdit text', /len=0 .*text=""/.test(afterCut));
+check('Ctrl+V restored cut text with ANSI high byte and CRLF', hasText(afterCutPaste));
+check('Ctrl+V restored cut text logical caret position', /sel=8\.\.8/.test(afterCutPaste));
+check('Ctrl+X/Ctrl+V restored blue character formatting', hasBlue(afterCutPasteChar));
+check('Ctrl+X/Ctrl+V restored paragraph formatting', hasParaFields(afterCutPastePara));
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 

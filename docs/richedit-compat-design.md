@@ -39,9 +39,10 @@ Implement now                                 Postpone later
 | delete / enter / movement      |            | advanced RTF layout          |
 | selection replacement          |            | IME / bidi / complex shaping |
 | plain-text Ctrl+A/C/X/V bridge |            | print pagination             |
+| non-OLE RTF clipboard data     |            | embedded/OLE clipboard objs  |
 | mouse selection / wheel scroll |            | TOM/COM / accessibility / D&D|
 | plain text stream I/O          |            | exact version quirks         |
-| basic RTF + basic formatting   |            | rich clipboard fidelity      |
+| basic RTF + basic formatting   |            | image/table clipboard data   |
 | simple paragraph alignment     |            | indents / tabs / numbering   |
 | basic toolbar command fidelity |            | advanced toolbar UI state    |
 | clipped ExtTextOut rendering   |            | full resize/wrap edge cases  |
@@ -67,9 +68,13 @@ launch WordPad -> click editor -> type "hello world"
               -> WM_GETTEXT returns "hello worl\r\nXagaZhello worl\r\nXagaZ"
               -> Ctrl+A, Ctrl+X, Ctrl+V
               -> WM_GETTEXT returns restored duplicated text
+              -> menu and keyboard Copy/Cut advertise CF_TEXT plus registered
+                 non-OLE "Rich Text Format" data for selected text
+              -> menu and keyboard Paste restore basic selected char/paragraph
+                 formatting for the bounded same-session clipboard path
               -> mouse drag selects text
               -> 35-line text auto-scrolls, wheel changes first visible line
-              -> standard/format toolbar rows are visible above the editor
+              -> standard/format toolbar rows are allocated above the editor
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
               -> 100 chars of WordPad text produce native line metrics and
@@ -106,17 +111,21 @@ That means these pieces are already good enough for basic insertion:
   updates/collapses the selected range;
 - Ctrl+A selection visibly paints white-on-blue in the WordPad RichEdit text
   band;
-- plain-text Ctrl+A/C/X/V works for focused native RichEdit controls through the
-  renderer-side native-text shortcut bridge;
+- Ctrl+A/C/X/V works for focused native RichEdit controls through the
+  renderer-side native-text shortcut bridge, with Copy/Cut publishing CF_TEXT
+  plus registered non-OLE RTF data and Paste restoring the bounded same-session
+  char/paragraph-format snapshot;
 - WordPad Edit-menu Select All / Copy / Cut / Paste command ids route through a
-  plain-text WAT menu edit bridge for the focused native RichEdit child;
+  WAT menu edit bridge for the focused native RichEdit child, including the
+  same CF_TEXT plus registered non-OLE RTF clipboard data and bounded
+  same-session char/paragraph-format restoration;
 - mouse drag changes native RichEdit selection state;
 - long multiline text inserts, auto-scrolls to the caret, and focused native
   wheel input changes `EM_GETFIRSTVISIBLELINE`;
 - native RichEdit right-band scrollbar thumb drag reuses the shared scrollbar
   hit/drag math and changes `EM_GETFIRSTVISIBLELINE`;
-- WordPad's standard and formatting `ToolbarWindow32` rows are visible, and the
-  native RichEdit child is laid out below them;
+- WordPad's standard and formatting `ToolbarWindow32` rows are allocated, and
+  the native RichEdit child is laid out below them;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
@@ -143,6 +152,24 @@ native-editing path is alive.
 
 ### 2026-08-10 implementation progress
 
+- Added registered non-OLE `"Rich Text Format"` clipboard support on top of
+  the existing USER clipboard subset. `RegisterClipboardFormatA/W` now returns
+  a stable RTF id, and `SetClipboardData`, `GetClipboardData`,
+  `IsClipboardFormatAvailable`, `CountClipboardFormats`, and `EmptyClipboard`
+  share emulator-owned CF_TEXT/CF_OEMTEXT plus RTF buffers.
+- Added a bounded RTF generator for native RichEdit copy paths. It emits
+  simple `{\rtf1\ansi ...}` text RTF, escapes `\`, `{`, `}`, ANSI high-byte
+  bytes as `\'xx`, and CRLF/LF/CR as `\par `. This is enough for non-OLE
+  text-transfer interoperability; it does not claim image/table/OLE coverage.
+- Routed renderer Ctrl+C/Ctrl+X/Ctrl+V for focused native RichEdit through the
+  WAT clipboard helpers, matching the WordPad menu bridge instead of keeping a
+  separate JS-only plain-text buffer.
+- Extended `test/run.js` with `dump-clipboard`, then added
+  `test/test-clipboard-rtf-api.js`,
+  `test/test-wordpad-keyboard-rich-clipboard-format.js`, and extra assertions
+  in `test/test-wordpad-rich-clipboard-format.js` for RTF format count,
+  availability, handles, ANSI high-byte/CRLF escaping, and basic RichEdit
+  char/paragraph-format preservation.
 - Reused the shared Win98 vertical scrollbar helpers for WAT-native
   `SysTreeView32` overflow rows.
 - TreeView line/page clicks, thumb drag, `WM_MOUSEWHEEL`, `WM_VSCROLL`,
@@ -220,8 +247,9 @@ native-editing path is alive.
 
 - Added a renderer-side native-text shortcut bridge for focused non-WAT edit
   controls. It uses `WM_GETTEXT` / `EM_GETSEL` for copy, `EM_SETSEL` for
-  select-all, and `EM_REPLACESEL` for paste/cut replacement. The bridge is
-  plain text only.
+  select-all, and `EM_REPLACESEL` for paste/cut replacement. The initial bridge
+  was plain text only; the later 2026-08-10 slice routes RichEdit Copy/Cut/Paste
+  through the shared WAT clipboard backend and adds registered non-OLE RTF data.
 - Added compatibility scaffolding for RichEdit's OLE clipboard setup:
   `GetProfileSectionA`, `GlobalFlags`, `CreateILockBytesOnHGlobal`,
   `StgCreateDocfileOnILockBytes`, `WriteClassStg`, and `WriteFmtUserTypeStg`.
@@ -241,9 +269,9 @@ native-editing path is alive.
   `OpenClipboard`, `CloseClipboard`, `EmptyClipboard`, `SetClipboardData`,
   `GetClipboardData`, `IsClipboardFormatAvailable`, `CountClipboardFormats`,
   and `GetClipboardOwner`. These share the WAT edit clipboard buffer and cover
-  `CF_TEXT` / `CF_OEMTEXT`. A raw native RichEdit Ctrl+C/Ctrl+V probe still
-  follows RichEdit's OLE storage setup rather than the verified USER text path,
-  so rich/native clipboard fidelity remains later work.
+  `CF_TEXT` / `CF_OEMTEXT`. The later 2026-08-10 slice extends the same USER
+  path with registered non-OLE RTF data for native RichEdit Copy/Cut/Paste;
+  embedded-object/OLE clipboard fidelity remains later work.
 - Added a plain-text WAT menu edit-command bridge for WordPad/MFC edit command
   ids: Select All (`57642`), Copy (`57634`), Cut (`57635`), Paste (`57637`),
   plus the existing small WAT edit ids. For WordPad's focused native RichEdit
@@ -262,8 +290,9 @@ native-editing path is alive.
   selection semantics. Added `test/test-wordpad-rich-clipboard-format.js`;
   it covers `café\r\ntwo`, verifies pasted caret position `8..8`, resets
   insertion formatting before paste, and proves pasted character color plus
-  paragraph numbering/indent/tab fields are restored. Full USER `Rich Text
-  Format` clipboard handles and OLE/object transfer remain deferred.
+  paragraph numbering/indent/tab fields are restored. The later 2026-08-10
+  slice adds USER-level registered `Rich Text Format` handles; OLE/object
+  transfer remains deferred.
 - Added `test/test-wordpad-selection-highlight.js` to make the existing
   RichEdit selection painter an explicit acceptance point. The focused probe
   types `select me`, captures a plain screenshot, sends Ctrl+A, verifies
@@ -345,10 +374,11 @@ native-editing path is alive.
   (control class 21). It handles the layout-facing `TB_*` messages WordPad/MFC
   sends through `CallWindowProcA` after subclassing, including button counts,
   item rectangles, button/bitmap sizes, rows, autosize, basic state probes, and
-  placeholder painting. The renderer composites toolbar child surfaces. Added
-  `test/test-wordpad-toolbar.js`, which proves WordPad's Standard and
-  Formatting toolbars are visible, have real 32px surfaces, and place RichEdit
-  below them.
+  placeholder painting hooks. The renderer composites toolbar child surfaces.
+  Added `test/test-wordpad-toolbar.js`, which proves WordPad's Standard and
+  Formatting toolbar rows are allocated with real child surfaces and place
+  RichEdit below them. Button/icon/combobox visuals are still incomplete, so
+  current screenshots show the toolbar area mostly as a gray band.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -451,6 +481,8 @@ every RichEdit version.
   typing, deletion, newlines, navigation, selection, wrapping, scrolling, and
   visible caret/selection behavior.
 - WordPad can save and reopen plain text, then simple RTF.
+- WordPad can copy/cut/paste selected RichEdit text through CF_TEXT plus
+  registered non-OLE RTF data for the bounded same-session formatting path.
 - Basic formatting is visible:
   bold, italic, underline, font size, font face, and text color.
 - Installer license RichEdit panes render, clip, and scroll reliably.
@@ -647,14 +679,15 @@ Acceptance:
 [x] installer license RichEdit text streams in and scrolls
 ```
 
-### 5. Plain-text clipboard shortcuts
+### 5. Clipboard shortcuts and non-OLE RTF data
 
 Expected message surface:
 
 - renderer shortcut routing for focused native text controls;
 - WAT menu edit-command routing for WordPad/MFC edit ids;
 - `WM_GETTEXT`, `EM_GETSEL`, `EM_SETSEL`, and `EM_REPLACESEL`;
-- later: rich USER clipboard formats and RichEdit/OLE clipboard fidelity.
+- registered non-OLE `Rich Text Format` clipboard data;
+- later: embedded-object/OLE clipboard fidelity.
 
 Acceptance:
 
@@ -666,7 +699,11 @@ Acceptance:
 [x] menu Edit Select All/Copy/Cut/Paste routes work without the keyboard bridge
 [x] menu Copy/Paste preserves basic selected RichEdit char/paragraph formatting
     with CRLF and ANSI high-byte text
-[ ] rich clipboard formats preserve RTF/objects
+[x] menu Copy advertises CF_TEXT plus registered non-OLE RTF clipboard data
+[x] keyboard Ctrl+C/Ctrl+X/Ctrl+V preserve basic selected RichEdit
+    char/paragraph formatting with CRLF and ANSI high-byte text
+[x] keyboard Copy advertises CF_TEXT plus registered non-OLE RTF clipboard data
+[ ] embedded-object/OLE clipboard transfer preserves object fidelity
 ```
 
 ### 6. Basic formatting
@@ -688,7 +725,7 @@ Acceptance:
 [x] WordPad Font dialog 24pt selection visibly increases text height
 [x] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
-[x] WordPad standard/format toolbars are visible and layout RichEdit below them
+[x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
 [x] WordPad toolbar/menu color command route applies Blue through app UI
@@ -729,13 +766,17 @@ Acceptance:
 [x] Basic paragraph numbering/indents/tabs round-trip through WordPad RTF
 [x] WordPad menu Copy/Paste preserves basic selected RichEdit formatting
     without byte-counting CRLF positions
+[x] WordPad menu Copy advertises registered non-OLE RTF clipboard data
+[x] WordPad keyboard Copy/Cut/Paste preserves basic selected RichEdit
+    formatting and registered non-OLE RTF clipboard data
+[ ] Embedded-object/OLE clipboard transfer preserves object fidelity
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
 [x] Font-size layout is visibly asserted in WordPad
 [x] RichEdit selected-size reporting returns concrete `yHeight`
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
-[x] WordPad standard/format toolbar layout is visibly asserted
+[x] WordPad standard/format toolbar row layout is asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage

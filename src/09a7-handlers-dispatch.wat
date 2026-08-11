@@ -113,11 +113,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) ;; stdcall 5 params
   )
 
-  ;; 704: RegisterClipboardFormatA — returns unique clipboard format ID
+  ;; 704: RegisterClipboardFormatA — returns registered clipboard format ID
   (func $handle_RegisterClipboardFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return unique clipboard format ID (starting from 0xC000)
-    (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
-    (global.set $eax (global.get $clipboard_format_counter))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax (call $clipboard_register_format_a (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
   )
 

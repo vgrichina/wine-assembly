@@ -1202,6 +1202,13 @@
   (global $clipboard_ptr (mut i32) (i32.const 0))
   (global $clipboard_cap (mut i32) (i32.const 0))
   (global $clipboard_len (mut i32) (i32.const 0))
+  ;; Registered non-OLE "Rich Text Format" clipboard payload. This is separate
+  ;; from embedded-object/OLE transfer; it stores a NUL-terminated RTF byte
+  ;; string and uses a stable registered format id for the process.
+  (global $clipboard_rtf_format_id (mut i32) (i32.const 0))
+  (global $clipboard_rtf_ptr (mut i32) (i32.const 0))
+  (global $clipboard_rtf_cap (mut i32) (i32.const 0))
+  (global $clipboard_rtf_len (mut i32) (i32.const 0))
   ;; Basic RichEdit formatting captured by WordPad's WAT menu clipboard bridge.
   ;; Text remains in the CF_TEXT-style globals above; these fixed-size snapshots
   ;; preserve selected CHARFORMAT/PARAFORMAT fields for same-session paste.

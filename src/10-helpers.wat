@@ -2344,6 +2344,265 @@
       (br $scan)))
     (local.get $i))
 
+  (func $clipboard_hex_nibble_ascii (param $n i32) (result i32)
+    (if (result i32) (i32.lt_u (local.get $n) (i32.const 10))
+      (then (i32.add (local.get $n) (i32.const 48)))
+      (else (i32.add (local.get $n) (i32.const 87)))))
+
+  (func $clipboard_rtf_name_char (param $i i32) (result i32)
+    (local $ch i32)
+    (if (i32.eq (local.get $i) (i32.const 0)) (then (local.set $ch (i32.const 82))))  ;; R
+    (if (i32.eq (local.get $i) (i32.const 1)) (then (local.set $ch (i32.const 105)))) ;; i
+    (if (i32.eq (local.get $i) (i32.const 2)) (then (local.set $ch (i32.const 99))))  ;; c
+    (if (i32.eq (local.get $i) (i32.const 3)) (then (local.set $ch (i32.const 104)))) ;; h
+    (if (i32.eq (local.get $i) (i32.const 4)) (then (local.set $ch (i32.const 32))))  ;; space
+    (if (i32.eq (local.get $i) (i32.const 5)) (then (local.set $ch (i32.const 84))))  ;; T
+    (if (i32.eq (local.get $i) (i32.const 6)) (then (local.set $ch (i32.const 101)))) ;; e
+    (if (i32.eq (local.get $i) (i32.const 7)) (then (local.set $ch (i32.const 120)))) ;; x
+    (if (i32.eq (local.get $i) (i32.const 8)) (then (local.set $ch (i32.const 116)))) ;; t
+    (if (i32.eq (local.get $i) (i32.const 9)) (then (local.set $ch (i32.const 32))))  ;; space
+    (if (i32.eq (local.get $i) (i32.const 10)) (then (local.set $ch (i32.const 70)))) ;; F
+    (if (i32.eq (local.get $i) (i32.const 11)) (then (local.set $ch (i32.const 111)))) ;; o
+    (if (i32.eq (local.get $i) (i32.const 12)) (then (local.set $ch (i32.const 114)))) ;; r
+    (if (i32.eq (local.get $i) (i32.const 13)) (then (local.set $ch (i32.const 109)))) ;; m
+    (if (i32.eq (local.get $i) (i32.const 14)) (then (local.set $ch (i32.const 97))))  ;; a
+    (if (i32.eq (local.get $i) (i32.const 15)) (then (local.set $ch (i32.const 116)))) ;; t
+    (local.get $ch))
+
+  (func $guest_str_is_rich_text_format_a (param $gp i32) (result i32)
+    (local $i i32)
+    (if (i32.eqz (local.get $gp)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (if (i32.ge_u (local.get $i) (i32.const 16))
+        (then
+          (return
+            (if (result i32)
+              (i32.eqz (call $gl8 (i32.add (local.get $gp) (local.get $i))))
+              (then (i32.const 1))
+              (else (i32.const 0))))))
+      (if (i32.ne
+            (call $gl8 (i32.add (local.get $gp) (local.get $i)))
+            (call $clipboard_rtf_name_char (local.get $i)))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $guest_str_is_rich_text_format_w (param $gp i32) (result i32)
+    (local $i i32)
+    (if (i32.eqz (local.get $gp)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (if (i32.ge_u (local.get $i) (i32.const 16))
+        (then
+          (return
+            (if (result i32)
+              (i32.eqz (call $gl16 (i32.add (local.get $gp) (i32.shl (local.get $i) (i32.const 1)))))
+              (then (i32.const 1))
+              (else (i32.const 0))))))
+      (if (i32.ne
+            (call $gl16 (i32.add (local.get $gp) (i32.shl (local.get $i) (i32.const 1))))
+            (call $clipboard_rtf_name_char (local.get $i)))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $clipboard_get_rtf_format_id (result i32)
+    (if (i32.eqz (global.get $clipboard_rtf_format_id))
+      (then
+        (global.set $clipboard_fmt_counter
+          (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
+        (global.set $clipboard_rtf_format_id
+          (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))))
+    (global.get $clipboard_rtf_format_id))
+
+  (func $clipboard_register_format_a (param $name_g i32) (result i32)
+    (if (call $guest_str_is_rich_text_format_a (local.get $name_g))
+      (then (return (call $clipboard_get_rtf_format_id))))
+    (global.set $clipboard_fmt_counter
+      (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
+    (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+
+  (func $clipboard_register_format_w (param $name_g i32) (result i32)
+    (if (call $guest_str_is_rich_text_format_w (local.get $name_g))
+      (then (return (call $clipboard_get_rtf_format_id))))
+    (global.set $clipboard_fmt_counter
+      (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
+    (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+
+  (func $clipboard_clear_rtf_data
+    (global.set $clipboard_rtf_len (i32.const 0))
+    (if (global.get $clipboard_rtf_ptr)
+      (then (call $gs8 (global.get $clipboard_rtf_ptr) (i32.const 0)))))
+
+  (func $clipboard_clear_all_data
+    (global.set $clipboard_len (i32.const 0))
+    (if (global.get $clipboard_ptr)
+      (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
+    (call $clipboard_clear_rtf_data)
+    (call $richedit_clipboard_clear_format))
+
+  (func $clipboard_store_rtf_data (param $src_g i32) (result i32)
+    (local $len i32) (local $need i32) (local $cap i32)
+    (if (i32.eqz (local.get $src_g)) (then (return (i32.const 0))))
+    (local.set $len (call $guest_strlen (local.get $src_g)))
+    (local.set $need (i32.add (local.get $len) (i32.const 1)))
+    (if (i32.gt_u (local.get $need) (global.get $clipboard_rtf_cap))
+      (then
+        (if (global.get $clipboard_rtf_ptr)
+          (then
+            (call $heap_free (global.get $clipboard_rtf_ptr))
+            (global.set $clipboard_rtf_ptr (i32.const 0))))
+        (local.set $cap
+          (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
+        (global.set $clipboard_rtf_ptr (call $heap_alloc (local.get $cap)))
+        (global.set $clipboard_rtf_cap (local.get $cap))))
+    (if (i32.eqz (global.get $clipboard_rtf_ptr))
+      (then
+        (global.set $clipboard_rtf_len (i32.const 0))
+        (return (i32.const 0))))
+    (drop (call $clipboard_get_rtf_format_id))
+    (call $memcpy
+      (call $g2w (global.get $clipboard_rtf_ptr))
+      (call $g2w (local.get $src_g))
+      (local.get $need))
+    (global.set $clipboard_rtf_len (local.get $len))
+    (global.get $clipboard_rtf_ptr))
+
+  (func $clipboard_rtf_append_byte
+        (param $dst_w i32) (param $pos i32) (param $ch i32) (result i32)
+    (i32.store8 (i32.add (local.get $dst_w) (local.get $pos)) (local.get $ch))
+    (i32.add (local.get $pos) (i32.const 1)))
+
+  (func $clipboard_build_basic_rtf_from_text_clipboard
+    (local $need i32) (local $cap i32) (local $dst_w i32)
+    (local $pos i32) (local $i i32) (local $ch i32) (local $next i32)
+    (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))
+      (then (call $clipboard_clear_rtf_data) (return)))
+    (local.set $need
+      (i32.add (i32.mul (global.get $clipboard_len) (i32.const 5)) (i32.const 64)))
+    (if (i32.gt_u (local.get $need) (global.get $clipboard_rtf_cap))
+      (then
+        (if (global.get $clipboard_rtf_ptr)
+          (then
+            (call $heap_free (global.get $clipboard_rtf_ptr))
+            (global.set $clipboard_rtf_ptr (i32.const 0))))
+        (local.set $cap
+          (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
+        (global.set $clipboard_rtf_ptr (call $heap_alloc (local.get $cap)))
+        (global.set $clipboard_rtf_cap (local.get $cap))))
+    (if (i32.eqz (global.get $clipboard_rtf_ptr))
+      (then (global.set $clipboard_rtf_len (i32.const 0)) (return)))
+    (drop (call $clipboard_get_rtf_format_id))
+    (local.set $dst_w (call $g2w (global.get $clipboard_rtf_ptr)))
+    ;; "{\\rtf1\\ansi "
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 123)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 114)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 116)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 102)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 49)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 97)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 110)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 115)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 105)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 32)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $clipboard_len)))
+      (local.set $ch (call $gl8 (i32.add (global.get $clipboard_ptr) (local.get $i))))
+      (if (i32.eq (local.get $ch) (i32.const 13))
+        (then
+          (local.set $next (i32.const 0))
+          (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (global.get $clipboard_len))
+            (then
+              (local.set $next
+                (call $gl8 (i32.add
+                  (global.get $clipboard_ptr)
+                  (i32.add (local.get $i) (i32.const 1)))))))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 112)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 97)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 114)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 32)))
+          (local.set $i
+            (i32.add (local.get $i)
+              (select (i32.const 2) (i32.const 1) (i32.eq (local.get $next) (i32.const 10)))))
+          (br $scan)))
+      (if (i32.eq (local.get $ch) (i32.const 10))
+        (then
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 112)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 97)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 114)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 32)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+      (if (i32.or
+            (i32.eq (local.get $ch) (i32.const 92))
+            (i32.or
+              (i32.eq (local.get $ch) (i32.const 123))
+              (i32.eq (local.get $ch) (i32.const 125))))
+        (then
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+          (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (local.get $ch))))
+        (else
+          (if (i32.ge_u (local.get $ch) (i32.const 128))
+            (then
+              (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 92)))
+              (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 39)))
+              (local.set $pos
+                (call $clipboard_rtf_append_byte
+                  (local.get $dst_w) (local.get $pos)
+                  (call $clipboard_hex_nibble_ascii (i32.shr_u (local.get $ch) (i32.const 4)))))
+              (local.set $pos
+                (call $clipboard_rtf_append_byte
+                  (local.get $dst_w) (local.get $pos)
+                  (call $clipboard_hex_nibble_ascii (i32.and (local.get $ch) (i32.const 15))))))
+            (else
+              (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (local.get $ch)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 125)))
+    (i32.store8 (i32.add (local.get $dst_w) (local.get $pos)) (i32.const 0))
+    (global.set $clipboard_rtf_len (local.get $pos)))
+
+  (func $clipboard_count_formats (result i32)
+    (local $n i32)
+    (if (i32.gt_u (global.get $clipboard_len) (i32.const 0))
+      (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+    (if (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))
+      (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+    (local.get $n))
+
+  (func $clipboard_is_format_available (param $fmt i32) (result i32)
+    (if (i32.and
+          (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
+                  (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
+          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
+          (i32.and
+            (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
+            (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+
+  (func $clipboard_get_data_handle (param $fmt i32) (result i32)
+    (if (i32.and
+          (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
+                  (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
+          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+      (then (return (global.get $clipboard_ptr))))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
+          (i32.and
+            (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
+            (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
+      (then (return (global.get $clipboard_rtf_ptr))))
+    (i32.const 0))
+
   (func $richedit_clipboard_clear_format
     (global.set $clipboard_richedit_cf_valid (i32.const 0))
     (global.set $clipboard_richedit_pf_valid (i32.const 0)))
@@ -2480,7 +2739,8 @@
               (local.get $len))
             (call $gs8 (i32.add (global.get $clipboard_ptr) (local.get $len)) (i32.const 0))
             (global.set $clipboard_len (local.get $len))
-            (call $richedit_clipboard_capture_format (local.get $hwnd))))))
+            (call $richedit_clipboard_capture_format (local.get $hwnd))
+            (call $clipboard_build_basic_rtf_from_text_clipboard)))))
     (call $heap_free (local.get $text_g))
     (call $heap_free (local.get $scratch_g))
     (i32.const 1))

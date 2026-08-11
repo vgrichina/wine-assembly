@@ -6983,6 +6983,7 @@
     (i32.store8 (i32.add (call $g2w (local.get $dst_g)) (local.get $len)) (i32.const 0))
     (global.set $clipboard_len (local.get $len))
     (call $richedit_clipboard_clear_format)
+    (call $clipboard_clear_rtf_data)
   )
 
   ;; Convert click (x,y) in edit client coords to a char offset.

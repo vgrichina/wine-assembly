@@ -2688,21 +2688,16 @@
   )
 
   ;; 144: GetClipboardData(uFormat) → HANDLE
-  ;; Minimal CF_TEXT/CF_OEMTEXT clipboard backed by the same global text buffer
-  ;; used by WAT EDIT controls. Handles are direct heap pointers, matching the
-  ;; emulator's GlobalLock identity behavior.
+  ;; CF_TEXT/CF_OEMTEXT plus registered non-OLE Rich Text Format clipboard
+  ;; data. Handles are direct heap pointers, matching the emulator's GlobalLock
+  ;; identity behavior.
   (func $handle_GetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg1))
     (drop (local.get $arg2))
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (if (i32.and
-          (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
-                  (i32.eq (local.get $arg0) (i32.const 7))) ;; CF_OEMTEXT
-          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
-      (then (global.set $eax (global.get $clipboard_ptr)))
-      (else (global.set $eax (i32.const 0))))
+    (global.set $eax (call $clipboard_get_data_handle (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3486,21 +3481,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 246: IsClipboardFormatAvailable(format) — support plain ANSI text only.
+  ;; 246: IsClipboardFormatAvailable(format)
   (func $handle_IsClipboardFormatAvailable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg1))
     (drop (local.get $arg2))
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax
-      (if (result i32)
-        (i32.and
-          (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
-                  (i32.eq (local.get $arg0) (i32.const 7))) ;; CF_OEMTEXT
-          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
-        (then (i32.const 1))
-        (else (i32.const 0))))
+    (global.set $eax (call $clipboard_is_format_available (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -5626,11 +5614,15 @@
   )
 
   ;; 398: RegisterClipboardFormatW(lpszFormat) → UINT
-  ;; Returns a unique clipboard format ID (0xC000+ range for registered formats).
-  ;; Uses a counter to assign unique IDs per format name.
+  ;; Returns a registered clipboard format ID. "Rich Text Format" is stable so
+  ;; Set/GetClipboardData can recognize the non-OLE RTF payload.
   (func $handle_RegisterClipboardFormatW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $clipboard_fmt_counter (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
-    (global.set $eax (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $eax (call $clipboard_register_format_w (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 399: CopyRect(lprcDst, lprcSrc) → BOOL — 2 args stdcall
@@ -9961,7 +9953,7 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 689: CountClipboardFormats() — one format when CF_TEXT data exists.
+  ;; 689: CountClipboardFormats()
   (func $handle_CountClipboardFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg0))
     (drop (local.get $arg1))
@@ -9969,14 +9961,11 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax
-      (if (result i32) (i32.gt_u (global.get $clipboard_len) (i32.const 0))
-        (then (i32.const 1))
-        (else (i32.const 0))))
+    (global.set $eax (call $clipboard_count_formats))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; EmptyClipboard() — clear the plain-text clipboard.
+  ;; EmptyClipboard() — clear all supported non-OLE clipboard data.
   (func $handle_EmptyClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg0))
     (drop (local.get $arg1))
@@ -9984,17 +9973,15 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $clipboard_len (i32.const 0))
-    (call $richedit_clipboard_clear_format)
-    (if (global.get $clipboard_ptr)
-      (then (i32.store8 (call $g2w (global.get $clipboard_ptr)) (i32.const 0))))
+    (call $clipboard_clear_all_data)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; SetClipboardData(uFormat, hMem) — copy CF_TEXT/CF_OEMTEXT into the global
-  ;; clipboard buffer. Non-text formats are accepted as inert success so apps
-  ;; that publish multiple formats can continue.
+  ;; SetClipboardData(uFormat, hMem) — copy CF_TEXT/CF_OEMTEXT and registered
+  ;; non-OLE Rich Text Format payloads into emulator-owned buffers. Other
+  ;; formats remain inert success so apps publishing object/OLE formats can
+  ;; continue without claiming object fidelity.
   (func $handle_SetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $len i32) (local $need i32) (local $cap i32)
     (drop (local.get $arg2))
@@ -10004,6 +9991,16 @@
     (if (i32.eqz (local.get $arg1))
       (then
         (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
+          (i32.eq (local.get $arg0) (global.get $clipboard_rtf_format_id)))
+      (then
+        (global.set $eax
+          (if (result i32) (call $clipboard_store_rtf_data (local.get $arg1))
+            (then (local.get $arg1))
+            (else (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (if (i32.eqz
