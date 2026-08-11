@@ -4161,6 +4161,7 @@
 
   (func $toolbar_child_combo_width_by_cmd (param $sw i32) (param $cmd i32) (result i32)
     (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $wh i32)
+    (local $combo_width i32) (local $parent i32) (local $parent_w i32) (local $cap i32)
     (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
     (if (i32.eqz (local.get $toolbar_hwnd)) (then (return (i32.const 0))))
     (local.set $slot (i32.const 0))
@@ -4173,7 +4174,29 @@
             (i32.eq (call $ctrl_table_get_id (local.get $ch)) (local.get $cmd)))
         (then
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
-          (return (i32.and (local.get $wh) (i32.const 0xFFFF)))))
+          (local.set $combo_width (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          ;; WordPad creates a 240px font combo even when the whole MFC control
+          ;; bar is only ~394px wide. Native common controls negotiate toolbar
+          ;; item rects tightly enough that trailing format/color buttons still
+          ;; fit. Mirror that bounded behavior by capping only large
+          ;; toolbar-hosted combo item widths, leaving small combos and wider
+          ;; windows unchanged.
+          (if (i32.gt_s (local.get $combo_width) (i32.const 160))
+            (then
+              (local.set $parent (call $wnd_get_parent (local.get $toolbar_hwnd)))
+              (if (local.get $parent)
+                (then
+                  (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))))
+              (if (i32.gt_s (local.get $parent_w) (i32.const 0))
+                (then
+                  ;; Reserve ~162px for size combo, separators, and four
+                  ;; 23px formatting/color buttons.
+                  (local.set $cap (i32.sub (local.get $parent_w) (i32.const 162)))
+                  (if (i32.lt_s (local.get $cap) (i32.const 120))
+                    (then (local.set $cap (i32.const 120))))
+                  (if (i32.gt_s (local.get $combo_width) (local.get $cap))
+                    (then (local.set $combo_width (local.get $cap))))))))
+          (return (local.get $combo_width))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
     (i32.const 0))

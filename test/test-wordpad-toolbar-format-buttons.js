@@ -51,7 +51,7 @@ const seq = [
   ...ctrlA(164),
   '178:dump-focus-charformat:bold-italic',
 
-  '188:click:376:80', // Underline
+  '188:click:358:80', // Underline
   '202:click:40:150',
   ...ctrlA(206),
   '220:dump-focus-charformat:bold-italic-underline',

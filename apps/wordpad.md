@@ -105,10 +105,13 @@ visuals:   nested toolbar child surfaces now composite through the MFC
            containing control bar instead of dumping/allocation as a 1512px
            child in a 394px frame. Toolbar-hosted font/size combobox fields
            now paint white interiors and show `Times New Roman` / `10`.
+           Large toolbar-hosted combo item rects are width-capped for the
+           narrow WordPad control bar, so the trailing color button is fully
+           visible instead of clipped off the right edge.
 result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
-           visible bitmap icons, populated combobox field paint,
-           command-ID-backed button hit testing, and the MFC toolbar command
-           path for File New.
+           visible bitmap icons, populated combobox field paint, fully visible
+           formatting buttons, command-ID-backed button hit testing, and the
+           MFC toolbar command path for File New.
            Common-control built-in strips, disabled/highlight image-list
            remapping, and advanced toolbar UI state remain follow-up fidelity.
 ```
@@ -301,6 +304,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   `TBBUTTON.iBitmap`; common-control built-in strips, disabled/highlight
   image-list remapping, and advanced toolbar UI state remain follow-up
   fidelity.
+- The formatting toolbar now caps oversized toolbar-hosted combo item rects
+  against the containing 394px control bar. WordPad still owns its requested
+  240px font combo HWND, but the toolbar pack uses a tighter item rect so the
+  size combo plus Bold / Italic / Underline / Color buttons fit on the row.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. Clicking the first Standard toolbar button now
@@ -518,8 +525,9 @@ Current evidence from the 2026-08-11 follow-up probe:
   layout, color-keyed bitmap-strip icon painting of the standard/formatting
   toolbar rows, populated font/size toolbar combo text, and the first Standard
   toolbar button opening WordPad's `New` dialog. The pixel assertions measure
-  only the toolbar button rows, including colored icon pixels so
-  placeholder-only buttons regress.
+  only the toolbar button rows, including colored icon pixels and the fully
+  visible formatting color button so placeholder-only or clipped buttons
+  regress.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag
@@ -613,9 +621,10 @@ blocker.
    indents/tabs/numbering, visible selection highlight, visible caret paint,
    toolbar row layout, first-toolbar-button command routing,
    toolbar bitmap icon rendering, formatting-toolbar B/I/U mouse commands,
-   direct RichEdit color rendering, and clipped long-text RichEdit painting
-   are now covered, and WordPad's own toolbar color UI now applies Blue through
-   the covered dynamic-popup path.
+   visible formatting-toolbar color-button packing, direct RichEdit color
+   rendering, and clipped long-text RichEdit painting are now covered, and
+   WordPad's own toolbar color UI now applies Blue through the covered
+   dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.

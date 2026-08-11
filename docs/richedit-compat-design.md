@@ -76,6 +76,8 @@ launch WordPad -> click editor -> type "hello world"
               -> 35-line text auto-scrolls, wheel changes first visible line
               -> standard/format toolbar rows are allocated above the editor
               -> toolbar app bitmap strips render visible color-keyed icons
+              -> formatting toolbar packs combo/button items so the color
+                 button remains visible in the narrow WordPad control bar
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
               -> 100 chars of WordPad text produce native line metrics and
@@ -133,6 +135,9 @@ That means these pieces are already good enough for basic insertion:
 - WordPad's formatting toolbar child surface/client width is bounded to the
   containing MFC control bar, and toolbar-hosted font/size combo fields paint
   white interiors with populated `Times New Roman` / `10` text;
+- oversized toolbar-hosted combo item rects are capped against the containing
+  control bar, keeping WordPad's Bold / Italic / Underline / Color buttons
+  fully visible on the 394px formatting row;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
@@ -396,6 +401,13 @@ native-editing path is alive.
   instead of placeholder-only squares. Common-control built-in strips,
   disabled/highlight image-list remapping, and advanced toolbar UI state
   remain follow-up fidelity.
+- Added width-aware packing for large toolbar-hosted combo item rects. This
+  mirrors the bounded native-common-control behavior WordPad relies on: the
+  240px font combo HWND remains intact, but the toolbar item rect is capped
+  inside the 394px formatting control bar so the size combo and trailing
+  Bold / Italic / Underline / Color buttons fit. The toolbar layout regression
+  now covers the fully visible color button instead of accepting right-edge
+  clipping.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -819,6 +831,7 @@ Acceptance:
 [x] WordPad toolbar bitmap icon pixels are explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
+[x] WordPad formatting toolbar color button is fully visible in the narrow row
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage
