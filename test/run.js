@@ -872,6 +872,12 @@ async function main() {
         const foreignWasm = { exports: {
           post_message_q(target, msg, wParam, lParam) {
             logs.push(`[seed-window] post hwnd=${hex(target)} msg=${hex(msg)} wParam=${hex(wParam)} lParam=${hex(lParam)}`);
+            if ((msg >>> 0) === 0x0010 && renderer.windows[target >>> 0]) {
+              delete renderer.windows[target >>> 0];
+              if (renderer.notifyShellWindow) renderer.notifyShellWindow(2, target);
+              renderer.scheduleRepaint();
+              logs.push(`[seed-window] closed hwnd=${hex(target)}`);
+            }
             return 1;
           },
         } };
@@ -3109,6 +3115,10 @@ async function main() {
               const wa = g2w(buf);
               const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
               text = ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+              if (we.static_get_image_ordinal) {
+                const ordinal = we.static_get_image_ordinal(ch) | 0;
+                if (ordinal) text += ` imageOrd=${ordinal}`;
+              }
             } else if (cls === 5 && we.combobox_get_text && we.guest_alloc) {
               const buf = we.guest_alloc(256);
               const len = we.combobox_get_text(ch, buf, 256);

@@ -109,6 +109,9 @@ async function inspect(file) {
       /\[SetWindowText\] "Wave"/.test(output) && /\[SetWindowText\] "MIDI"/.test(output)],
     ['all six native trackbars were created',
       (output.match(/cls=19/g) || []).length === 6],
+    ['dialog preserved the two speaker resource ordinals',
+      (output.match(/imageOrd=301/g) || []).length === 3 &&
+      (output.match(/imageOrd=302/g) || []).length === 3],
     ['master slider writes a non-default gain',
       /\[mixer\] master volume=0x(?!ffffffff)[0-9a-f]{8}/.test(output)],
     ['Wave slider writes its own gain',

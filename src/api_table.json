@@ -15980,5 +15980,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 387066203
+  },
+  {
+    "id": 2080,
+    "name": "DeleteAtom",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3236544775
   }
 ]

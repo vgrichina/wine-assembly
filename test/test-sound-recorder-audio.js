@@ -34,9 +34,19 @@ const input = [
   '110:wave-in-feed:4800:48000:0.7',
   '120:wave-in-feed:4800:48000:0.7',
   '130:click:227:138',
-  `150:png:${stoppedPng}`,
-  '165:click:177:138',
-  '220:stop',
+  // The endpoint is intentionally a flat line. Seek into the captured data
+  // so this artifact exercises the native waveform renderer as well.
+  '140:mousedown:296:106',
+  '141:mousemove:175:106',
+  '142:mouseup:175:106',
+  `155:png:${stoppedPng}`,
+  // Rewind after capturing the visual so playback still covers the complete
+  // recorded buffer and keeps the audio-path assertions independent.
+  '160:mousedown:175:106',
+  '161:mousemove:55:106',
+  '162:mouseup:55:106',
+  '175:click:177:138',
+  '230:stop',
 ].join(',');
 
 let output = '';
@@ -80,6 +90,16 @@ async function inspectScreenshot(file) {
     titleInk: countIn(40, 0, 320, 40, (r, g, b) => r < 80 && g < 100 && b < 160),
     displayBlack: countIn(120, 48, 235, 89, (r, g, b) => r < 25 && g < 25 && b < 25),
     displayGreen: countIn(120, 48, 235, 89, (r, g, b) => r < 40 && g > 90 && b < 40),
+    waveformRows: (() => {
+      const rows = new Set();
+      for (let y = 48; y < Math.min(89, image.height); y++) {
+        for (let x = 120; x < Math.min(235, image.width); x++) {
+          const i = (y * image.width + x) * 4;
+          if (pixels[i] < 40 && pixels[i + 1] > 90 && pixels[i + 2] < 40) rows.add(y);
+        }
+      }
+      return rows.size;
+    })(),
     readoutInk: countIn(51, 48, 305, 89, (r, g, b) => r < 100 && g < 100 && b < 100),
   };
 }
@@ -110,8 +130,9 @@ async function inspectScreenshot(file) {
     ['position and length readouts reach the captured duration',
       /SetDlgItemTextA\([^\n]*text="0\.50 sec\."/.test(output)],
     ['before and stopped screenshots are complete', screenshots && visual && visual.titleInk >= 100],
-    ['classic waveform display and numeric readouts are visible', visual &&
-      visual.displayBlack >= 3000 && visual.displayGreen >= 75 && visual.readoutInk >= 150],
+    ['captured waveform and numeric readouts are visible', visual &&
+      visual.displayBlack >= 2500 && visual.displayGreen >= 500 &&
+      visual.waveformRows >= 15 && visual.readoutInk >= 150],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];
 

@@ -3466,7 +3466,7 @@
     (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_ex i32) (local $ctrl_id i32)
     (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
     (local $custom_wndproc i32)
-    (local $text_ptr i32) (local $cs i32)
+    (local $text_ptr i32) (local $text_ord i32) (local $cs i32)
     ;; Find the dialog slot — caller must have inserted it already
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
     (if (i32.lt_s (local.get $dlg_slot) (i32.const 0)) (then (return (i32.const 0))))
@@ -3651,7 +3651,13 @@
               (local.set $custom_wndproc
                 (call $class_table_lookup
                   (call $class_name_key (local.get $class_ptr))))))))
-      ;; Text (UTF-16 → ASCII in heap; 0 for null/ordinal)
+      ;; Text (UTF-16 → ASCII in heap). Preserve resource ordinals for image
+      ;; statics: SS_ICON templates encode MAKEINTRESOURCE in lpszName.
+      (local.set $text_ord (i32.const 0))
+      (if (i32.eq (i32.load16_u (local.get $p)) (i32.const 0xFFFF))
+        (then
+          (local.set $text_ord
+            (i32.load16_u (i32.add (local.get $p) (i32.const 2))))))
       (call $dlg_read_text (local.get $p))
       (local.set $text_ptr (global.get $dlg_text_ptr))
       (local.set $p (global.get $dlg_text_wa))
@@ -3710,7 +3716,13 @@
       (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4)))
       (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
-      (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_ptr))
+      (i32.store offset=36 (call $g2w (local.get $cs))
+        (select
+          (local.get $text_ord)
+          (local.get $text_ptr)
+          (i32.and
+            (i32.eq (local.get $class_enum) (i32.const 3))
+            (i32.ne (local.get $text_ord) (i32.const 0)))))
       (i32.store offset=40 (call $g2w (local.get $cs)) (local.get $class_ptr))
       (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
       ;; USER owns the initial window text independently of any class-specific

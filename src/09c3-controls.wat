@@ -39,7 +39,7 @@
   ;;   +0   text_buf_ptr
   ;;   +4   text_len
   ;;   +8   style          (SS_LEFT=0, SS_CENTER=1, SS_RIGHT=2, SS_ICON=3 ...)
-  ;;   +12  reserved
+  ;;   +12  image resource ordinal (SS_ICON/SS_BITMAP), or 0
   ;;
   ;; ProgressState (16 bytes)
   ;;   +0   min
@@ -2886,9 +2886,13 @@
         (i32.store offset=12 (local.get $state_w) (i32.const 0))
         (if (local.get $name_ptr)
           (then
-            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-            (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
-            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+            (if (i32.lt_u (local.get $name_ptr) (i32.const 0x10000))
+              (then
+                (i32.store offset=12 (local.get $state_w) (local.get $name_ptr)))
+              (else
+                (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+                (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+                (i32.store offset=4 (local.get $state_w) (local.get $text_len))))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -3050,10 +3054,10 @@
         ;; through instead of painting an opaque white box behind every word.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        ;; Win9x's mixer uses tiny ordinal SS_ICON resources for the speakers
-        ;; flanking each balance slider. Dialog loading cannot yet materialize
-        ;; ordinal icon resources, so keep these otherwise-empty placeholders
-        ;; recognizable without changing larger application icon controls.
+        ;; Win9x's mixer uses ordinal SS_ICON resources 301 and 302 for the
+        ;; speakers flanking each balance slider. Until DrawIcon decodes PE
+        ;; icon groups, render faithful compact monochrome fallbacks keyed by
+        ;; the preserved resource ordinal instead of fragile control IDs.
         (if (i32.and
               (i32.eq (local.get $style) (i32.const 3))
               (i32.and
@@ -3062,25 +3066,39 @@
                 (i32.and
                   (i32.and (i32.ge_u (local.get $h) (i32.const 10))
                            (i32.le_u (local.get $h) (i32.const 16)))
-                  (i32.or (i32.eq (local.get $ctrl_id) (i32.const 999))
-                          (i32.eq (local.get $ctrl_id) (i32.const 65535))))))
+                  (i32.or
+                    (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 301))
+                    (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 302))))))
           (then
-            ;; Compact monochrome Win9x-style speaker and sound waves.
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 1) (i32.const 5) (i32.const 4) (i32.const 10)
-                    (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 4) (i32.const 3) (i32.const 6) (i32.const 12)
-                    (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 6) (i32.const 2) (i32.const 7) (i32.const 13)
-                    (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 8) (i32.const 5) (i32.const 9) (i32.const 10)
-                    (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 10) (i32.const 3) (i32.const 11) (i32.const 12)
-                    (i32.const 0x30014)))
+            (if (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 301))
+              (then
+                ;; Left-facing speaker.
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 1) (i32.const 5) (i32.const 4) (i32.const 10)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 4) (i32.const 3) (i32.const 6) (i32.const 12)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 6) (i32.const 2) (i32.const 7) (i32.const 13)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 9) (i32.const 5) (i32.const 10) (i32.const 10)
+                        (i32.const 0x30014))))
+              (else
+                ;; Mirrored right-facing speaker.
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 8) (i32.const 5) (i32.const 11) (i32.const 10)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 6) (i32.const 3) (i32.const 8) (i32.const 12)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 5) (i32.const 2) (i32.const 6) (i32.const 13)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 2) (i32.const 5) (i32.const 3) (i32.const 10)
+                        (i32.const 0x30014)))))
             (return (i32.const 0))))
         ;; SS_ICON(3), SS_BITMAP(0x0E): skip text — these display images, not labels
         (if (i32.and

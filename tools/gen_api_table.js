@@ -665,6 +665,7 @@ const extra = [
   { name: 'CloseWindow', nargs: 1 },
   // KERNEL32 — Task Manager interns each enumerated window class.
   { name: 'AddAtomA', nargs: 1 },
+  { name: 'DeleteAtom', nargs: 1 },
   // USER32 — cosmetic selection animation used by Win98 RegEdit.
   { name: 'DrawAnimatedRects', nargs: 4 },
   { name: 'RegEnumValueA', nargs: 8 },

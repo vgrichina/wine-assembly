@@ -1095,6 +1095,10 @@
   (global $createwnd_implicit_show (mut i32) (i32.const 0))
   (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
+  ;; Legacy Win9x RegisterShellHook subscriber. The registered SHELLHOOK
+  ;; message is the most recently allocated RegisterWindowMessage ID.
+  (global $shell_hook_hwnd (mut i32) (i32.const 0))
+  (global $shell_hook_message (mut i32) (i32.const 0))
   (global $guid_counter (mut i32) (i32.const 0))
   ;; waveOut audio state
   (global $wave_out_handle (mut i32) (i32.const 0))

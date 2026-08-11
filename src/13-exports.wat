@@ -207,6 +207,21 @@
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
+  ;; Renderer-wide top-level lifecycle bridge. code uses the Win9x HSHELL_*
+  ;; values (1=created, 2=destroyed, 4=activated); hwnd is lParam.
+  (func (export "notify_shell_window")
+        (param $code i32) (param $hwnd i32) (result i32)
+    (if (result i32)
+      (i32.and
+        (i32.ne (global.get $shell_hook_hwnd) (i32.const 0))
+        (i32.ne (global.get $shell_hook_message) (i32.const 0)))
+      (then
+        (call $post_queue_push
+          (global.get $shell_hook_hwnd)
+          (global.get $shell_hook_message)
+          (local.get $code)
+          (local.get $hwnd)))
+      (else (i32.const 0))))
   ;; Post WM_MOVE + WM_SIZE for the current window rect (renderer-side state
   ;; already updated). Recomputes CLIENT_RECT first so the WM_SIZE lParam
   ;; reflects the new client area. $size_w is the WM_SIZE wParam:
@@ -1706,5 +1721,11 @@
                                   (local.get $len))))))
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
+
+  (func (export "static_get_image_ordinal") (param $hwnd i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (i32.load offset=12 (call $g2w (local.get $state))))
 
 )

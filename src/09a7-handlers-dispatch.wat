@@ -1560,6 +1560,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; DeleteAtom(nAtom) — release a process-local atom. Atom reuse and
+  ;; reference counts are not observable by current callers; zero is success.
+  (func $handle_DeleteAtom (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 790: GetKeyNameTextA(lParam, lpString, cchSize) — write key name from scan code
   (func $handle_GetKeyNameTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; arg0=lParam (scan code in bits 16-23), arg1=lpString, arg2=cchSize

@@ -17,6 +17,7 @@ const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'taskman.exe');
 const OUT = path.join(ROOT, 'scratch', 'taskman-tasks');
 const tasksPng = path.join(OUT, 'tasks.png');
 const menuPng = path.join(OUT, 'options-menu.png');
+const closedPng = path.join(OUT, 'task-closed.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  taskman.exe not found at', EXE);
@@ -24,7 +25,7 @@ if (!fs.existsSync(EXE)) {
 }
 
 fs.mkdirSync(OUT, { recursive: true });
-for (const file of [tasksPng, menuPng]) {
+for (const file of [tasksPng, menuPng, closedPng]) {
   try { fs.unlinkSync(file); } catch (_) {}
 }
 
@@ -44,7 +45,9 @@ const input = [
   '110:click:40:58',
   '120:post-cmd:424',
   '130:post-cmd:425',
-  '140:stop',
+  '170:dump-listbox:closed',
+  `175:png:${closedPng}`,
+  '190:stop',
 ].join(',');
 
 let output = '';
@@ -55,7 +58,7 @@ try {
     `--exe=${EXE}`,
     '--seed-window=Calculator',
     `--input=${input}`,
-    '--max-batches=180',
+    '--max-batches=220',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
@@ -83,7 +86,7 @@ async function countDarkPixels(file, box) {
 }
 
 (async () => {
-  const screenshots = [tasksPng, menuPng].every(file =>
+  const screenshots = [tasksPng, menuPng, closedPng].every(file =>
     fs.existsSync(file) && fs.statSync(file).size > 4000);
   const taskTextPixels = screenshots
     ? await countDarkPixels(tasksPng, { x0: 13, y0: 51, x1: 120, y1: 68 })
@@ -98,6 +101,8 @@ async function countDarkPixels(file, box) {
     ['Switch To activated selected renderer task', /\[seed-window\] activate hwnd=0x00070001 result=1/.test(output)],
     ['Minimize on Use minimized Task Manager', /\[ShowWindow\] hwnd=0x10001 cmd=6/.test(output)],
     ['End Task routed WM_CLOSE to owning task', /\[seed-window\] post hwnd=0x00070001 msg=0x00000010/.test(output)],
+    ['closed renderer task removed from host task set', /\[seed-window\] closed hwnd=0x00070001/.test(output)],
+    ['Task Manager refreshed after task exit', /dump-listbox:closed:[^\n]*count=0/.test(output)],
     ['task and menu screenshots written', screenshots],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];

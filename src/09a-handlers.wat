@@ -6875,8 +6875,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; RegisterShellHook(hwnd, dwType) — 2 args, return TRUE
+  ;; RegisterShellHook(hwnd, dwType) — legacy Win9x shell-window subscriber.
+  ;; dwType=1 registers and dwType=0 unregisters. TASKMAN.EXE calls
+  ;; RegisterWindowMessage("SHELLHOOK") immediately before this API.
   (func $handle_RegisterShellHook (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg1) (i32.const 1))
+      (then
+        (global.set $shell_hook_hwnd (local.get $arg0))
+        (global.set $shell_hook_message (global.get $clipboard_format_counter)))
+      (else
+        (if (i32.eq (local.get $arg0) (global.get $shell_hook_hwnd))
+          (then
+            (global.set $shell_hook_hwnd (i32.const 0))
+            (global.set $shell_hook_message (i32.const 0))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
