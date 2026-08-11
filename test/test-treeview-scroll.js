@@ -21,6 +21,7 @@ const TVM_GETNEXTITEM = 0x110A;
 const TVM_GETITEMA = 0x110C;
 const TVM_HITTEST = 0x1111;
 const TVGN_FIRSTVISIBLE = 5;
+const TVGN_NEXTVISIBLE = 6;
 const TVGN_CARET = 9;
 const TVE_COLLAPSE = 1;
 const TVE_EXPAND = 2;
@@ -71,12 +72,13 @@ async function main() {
     u8[p + s.length] = 0;
     return g;
   }
-  function insertItem(text, parent = 0, state = null, childrenHint = 0) {
+  function insertItem(text, parent = 0, state = null, childrenHint = 0, itemParam = 0) {
     const g = e.guest_alloc(56);
     const p = wa(g);
     u8.fill(0, p, p + 56);
     dv.setUint32(p + 0, parent, true);
     let mask = 0x0001; // TVIF_TEXT
+    if (itemParam) mask |= 0x0004; // TVIF_PARAM
     if (state !== null) mask |= 0x0008; // TVIF_STATE
     if (childrenHint) mask |= 0x0040; // TVIF_CHILDREN
     dv.setUint32(p + 8, mask, true);
@@ -86,6 +88,7 @@ async function main() {
     }
     dv.setUint32(p + 24, writeStr(text), true);
     dv.setUint32(p + 40, childrenHint, true);
+    dv.setUint32(p + 44, itemParam, true);
     return e.send_message(tv, TVM_INSERTITEMA, 0, g) >>> 0;
   }
   function makeLParam(x, y) {
@@ -141,7 +144,7 @@ async function main() {
   e.send_message(tv, WM_LBUTTONUP, 0, makeLParam(152, 61));
   check('scrollbar thumb drag changes first visible row', e.treeview_get_first_visible_row() > 6);
 
-  const parent = insertItem('Collapsed parent', 0, 0, 1);
+  const parent = insertItem('Collapsed parent', 0, 0, 1, 0x12345678);
   const parentItem = e.guest_alloc(40);
   const parentItemP = wa(parentItem);
   u8.fill(0, parentItemP, parentItemP + 40);
@@ -152,9 +155,10 @@ async function main() {
   check('TVIF_CHILDREN hint is preserved before lazy children are inserted',
     getParentItem === 1 && parentChildren === 1,
     `ret=${getParentItem} cChildren=${parentChildren}`);
+  const laterRoot = insertItem('Later root');
   const childA = insertItem('Child A', parent);
   const childB = insertItem('Child B', parent);
-  check('collapsed parent hides both children', e.treeview_get_visible_count() === 13);
+  check('collapsed parent hides both children', e.treeview_get_visible_count() === 14);
   check('TVGN_CHILD returns first hierarchical child',
     (e.send_message(tv, TVM_GETNEXTITEM, 4, parent) >>> 0) === childA);
   check('TVGN_PARENT returns hierarchical parent',
@@ -162,7 +166,10 @@ async function main() {
   const beforeExpandNotify = e.treeview_get_debug_expand_notify_count();
   check('TVM_EXPAND reveals both children',
     e.send_message(tv, TVM_EXPAND, TVE_EXPAND, parent) === 1 &&
-      e.treeview_get_visible_count() === 15);
+      e.treeview_get_visible_count() === 16);
+  check('TVGN_NEXTVISIBLE follows depth-first tree order, not allocation order',
+    (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, parent) >>> 0) === childA &&
+      (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, childB) >>> 0) === laterRoot);
   check('TVM_EXPAND emits expanding/expanded notifications',
     e.treeview_get_debug_expand_notify_count() === beforeExpandNotify + 2 &&
       (e.treeview_get_debug_expand_notify_code() | 0) === TVN_ITEMEXPANDEDA &&
@@ -172,7 +179,7 @@ async function main() {
   const beforeCollapseNotify = e.treeview_get_debug_expand_notify_count();
   check('TVM_EXPAND collapse hides both children again',
     e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, parent) === 1 &&
-      e.treeview_get_visible_count() === 13);
+      e.treeview_get_visible_count() === 14);
   check('TVM_EXPAND collapse emits expanding/expanded notifications',
     e.treeview_get_debug_expand_notify_count() === beforeCollapseNotify + 2 &&
       (e.treeview_get_debug_expand_notify_code() | 0) === TVN_ITEMEXPANDEDA &&

@@ -403,38 +403,53 @@
   (func $tv_first_visible (result i32)
     (call $tv_visible_handle_at_row (global.get $tv_first_visible_row)))
 
-  (func $tv_next_visible_from_slot (param $slot i32) (result i32)
-    (local $i i32) (local $base i32)
-    (local.set $i (i32.add (local.get $slot) (i32.const 1)))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-        (if (i32.and
-              (i32.ne (i32.load (local.get $base)) (i32.const 0))
-              (call $tv_item_visible (local.get $base)))
-          (then (return (i32.load (local.get $base)))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop)))
+  (func $tv_next_visible_handle (param $hItem i32) (result i32)
+    (local $slot i32) (local $base i32) (local $parent i32) (local $guard i32)
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (if (i32.and
+          (i32.ne (i32.and (i32.load offset=20 (local.get $base)) (i32.const 0x20)) (i32.const 0))
+          (i32.ne (i32.load offset=8 (local.get $base)) (i32.const 0)))
+      (then (return (i32.load offset=8 (local.get $base)))))
+    (block $done (loop $climb
+      (if (i32.load offset=12 (local.get $base))
+        (then (return (i32.load offset=12 (local.get $base)))))
+      (local.set $parent (i32.load offset=4 (local.get $base)))
+      (br_if $done (i32.eqz (local.get $parent)))
+      (br_if $done (i32.ge_u (local.get $guard) (i32.const 32)))
+      (local.set $slot (call $tv_find_slot (local.get $parent)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $climb)))
     (i32.const 0))
 
+  (func $tv_next_visible_from_slot (param $slot i32) (result i32)
+    (call $tv_next_visible_handle
+      (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))))
+
   (func $tv_visible_handle_at_row (param $target_row i32) (result i32)
-    (local $i i32) (local $row i32) (local $base i32)
+    (local $i i32) (local $row i32) (local $base i32) (local $hItem i32)
+    (if (i32.lt_s (local.get $target_row) (i32.const 0)) (then (return (i32.const 0))))
+    ;; Find the first root, then follow the linked hierarchy in display order.
     (local.set $i (i32.const 0))
-    (local.set $row (i32.const 0))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-        (if (i32.and
-              (i32.ne (i32.load (local.get $base)) (i32.const 0))
-              (call $tv_item_visible (local.get $base)))
-          (then
-            (if (i32.eq (local.get $row) (local.get $target_row))
-              (then (return (i32.load (local.get $base)))))
-            (local.set $row (i32.add (local.get $row) (i32.const 1)))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop)))
+    (block $root_done (loop $roots
+      (br_if $root_done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (i32.eqz (i32.load offset=4 (local.get $base))))
+        (then (local.set $hItem (i32.load (local.get $base))) (br $root_done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $roots)))
+    (block $done (loop $rows
+      (br_if $done (i32.eqz (local.get $hItem)))
+      (if (i32.eq (local.get $row) (local.get $target_row))
+        (then (return (local.get $hItem))))
+      (local.set $hItem (call $tv_next_visible_handle (local.get $hItem)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows)))
     (i32.const 0))
 
   ;; TVM_GETNEXTITEM handler
@@ -941,6 +956,7 @@
   (func $treeview_paint_wat (param $hwnd i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $i i32) (local $base i32) (local $row i32) (local $draw_row i32) (local $y i32)
+    (local $hItem i32) (local $slot i32)
     (local $depth i32) (local $x i32) (local $state i32) (local $check i32)
     (local $style i32) (local $brush i32) (local $selected i32) (local $sel_right i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32)
@@ -985,9 +1001,13 @@
     (global.set $tv_debug_paint_iterations (i32.const 0))
     (block $done (loop $items
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $hItem (call $tv_visible_handle_at_row (local.get $i)))
+      (br_if $done (i32.eqz (local.get $hItem)))
       (global.set $tv_debug_paint_iterations
         (i32.add (global.get $tv_debug_paint_iterations) (i32.const 1)))
-      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $slot (call $tv_find_slot (local.get $hItem)))
+      (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
       (block $skip_item
         (br_if $skip_item (i32.eqz
           (i32.and

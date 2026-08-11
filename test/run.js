@@ -3201,6 +3201,7 @@ async function main() {
           const child = dv.getUint32(p + 8, true);
           const next = dv.getUint32(p + 12, true);
           const state = dv.getUint32(p + 20, true);
+          const itemParam = dv.getUint32(p + 24, true);
           const textG = dv.getUint32(p + 28, true);
           let itemText = '';
           if (textG) {
@@ -3209,7 +3210,7 @@ async function main() {
             while (q < u8.length && bytes.length < 255 && u8[q]) bytes.push(u8[q++]);
             itemText = Buffer.from(bytes).toString('latin1');
           }
-          items.push(`#${i} h=0x${handle.toString(16)} parent=0x${parent.toString(16)} child=0x${child.toString(16)} next=0x${next.toString(16)} state=0x${state.toString(16)} text=${JSON.stringify(itemText)}`);
+          items.push(`#${i} h=0x${handle.toString(16)} parent=0x${parent.toString(16)} child=0x${child.toString(16)} next=0x${next.toString(16)} state=0x${state.toString(16)} lParam=0x${itemParam.toString(16)} text=${JSON.stringify(itemText)}`);
         }
         const visible = we.treeview_get_visible_count ? (we.treeview_get_visible_count() | 0) : -1;
         const firstRow = we.treeview_get_first_visible_row ? (we.treeview_get_first_visible_row() | 0) : -1;
