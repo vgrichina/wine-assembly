@@ -15,13 +15,29 @@ const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 
 const TB_ADDBITMAP = 0x0413;
+const TB_ENABLEBUTTON = 0x0401;
+const TB_CHECKBUTTON = 0x0402;
+const TB_PRESSBUTTON = 0x0403;
+const TB_HIDEBUTTON = 0x0404;
+const TB_INDETERMINATE = 0x0405;
+const TB_ISBUTTONENABLED = 0x0409;
+const TB_ISBUTTONCHECKED = 0x040A;
+const TB_ISBUTTONPRESSED = 0x040B;
+const TB_ISBUTTONHIDDEN = 0x040C;
+const TB_ISBUTTONINDETERMINATE = 0x040D;
+const TB_SETSTATE = 0x0411;
+const TB_GETSTATE = 0x0412;
 const TB_BUTTONSTRUCTSIZE = 0x041E;
 const TB_ADDBUTTONSA = 0x0414;
 const TB_INSERTBUTTONA = 0x0415;
 const TB_GETBUTTON = 0x0417;
 const TB_BUTTONCOUNT = 0x0418;
 const TB_GETITEMRECT = 0x041D;
+const TBSTATE_CHECKED = 0x01;
+const TBSTATE_PRESSED = 0x02;
 const TBSTATE_ENABLED = 0x04;
+const TBSTATE_HIDDEN = 0x08;
+const TBSTATE_INDETERMINATE = 0x10;
 const TBSTYLE_BUTTON = 0x00;
 
 async function main() {
@@ -197,6 +213,37 @@ async function main() {
   check('TB_GETITEMRECT stays monotonic after insert',
     monotonicRects,
     'rects=' + JSON.stringify(rects));
+
+  check('TB_ISBUTTONENABLED reports enabled inserted command',
+    e.send_message(toolbar, TB_ISBUTTONENABLED, 199, 0) === 1);
+  check('TB_CHECKBUTTON sets checked state by command id',
+    e.send_message(toolbar, TB_CHECKBUTTON, 199, 1) === 1 &&
+      e.send_message(toolbar, TB_ISBUTTONCHECKED, 199, 0) === 1 &&
+      (e.send_message(toolbar, TB_GETSTATE, 199, 0) & TBSTATE_CHECKED) !== 0);
+  check('TB_PRESSBUTTON sets pressed state by command id',
+    e.send_message(toolbar, TB_PRESSBUTTON, 199, 1) === 1 &&
+      e.send_message(toolbar, TB_ISBUTTONPRESSED, 199, 0) === 1 &&
+      (e.send_message(toolbar, TB_GETSTATE, 199, 0) & TBSTATE_PRESSED) !== 0);
+  check('TB_HIDEBUTTON sets hidden state by command id',
+    e.send_message(toolbar, TB_HIDEBUTTON, 199, 1) === 1 &&
+      e.send_message(toolbar, TB_ISBUTTONHIDDEN, 199, 0) === 1 &&
+      (e.send_message(toolbar, TB_GETSTATE, 199, 0) & TBSTATE_HIDDEN) !== 0);
+  check('TB_INDETERMINATE sets indeterminate state by command id',
+    e.send_message(toolbar, TB_INDETERMINATE, 199, 1) === 1 &&
+      e.send_message(toolbar, TB_ISBUTTONINDETERMINATE, 199, 0) === 1 &&
+      (e.send_message(toolbar, TB_GETSTATE, 199, 0) & TBSTATE_INDETERMINATE) !== 0);
+  check('TB_ENABLEBUTTON clears enabled state without losing checked state',
+    e.send_message(toolbar, TB_ENABLEBUTTON, 199, 0) === 1 &&
+      e.send_message(toolbar, TB_ISBUTTONENABLED, 199, 0) === 0 &&
+      (e.send_message(toolbar, TB_GETSTATE, 199, 0) & TBSTATE_CHECKED) !== 0);
+  check('TB_SETSTATE replaces stored state byte',
+    e.send_message(toolbar, TB_SETSTATE, 199, TBSTATE_ENABLED | TBSTATE_CHECKED) === 1 &&
+      e.send_message(toolbar, TB_GETSTATE, 199, 0) === (TBSTATE_ENABLED | TBSTATE_CHECKED));
+  check('TB_GETSTATE returns -1 for unknown command',
+    (e.send_message(toolbar, TB_GETSTATE, 9999, 0) | 0) === -1);
+  check('TB_ISBUTTON* returns 0 for unknown command',
+    e.send_message(toolbar, TB_ISBUTTONCHECKED, 9999, 0) === 0 &&
+      e.send_message(toolbar, TB_ISBUTTONPRESSED, 9999, 0) === 0);
 
   console.log('');
   const failed = checks.filter(c => !c.pass).length;

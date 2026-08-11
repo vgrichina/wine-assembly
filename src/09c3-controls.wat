@@ -4986,6 +4986,10 @@
                 (then
                   (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $i)))
                   (local.set $state_byte (i32.load8_u offset=8 (local.get $rec)))))
+              (local.set $hit
+                (i32.ne
+                  (i32.and (local.get $state_byte) (i32.const 0x03)) ;; CHECKED | PRESSED
+                  (i32.const 0)))
               (if (i32.and (local.get $state_byte) (i32.const 0x08))
                 (then
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -5010,8 +5014,7 @@
                       (local.get $left) (local.get $top)
                       (i32.add (local.get $left) (local.get $bw))
                       (i32.add (local.get $top) (local.get $bh))
-                      (select (i32.const 0x0A) (i32.const 0x05)
-                        (i32.ne (i32.and (local.get $state_byte) (i32.const 0x02)) (i32.const 0)))
+                      (select (i32.const 0x0A) (i32.const 0x05) (local.get $hit))
                       (i32.const 0x0F))) ;; EDGE_RAISED/SUNKEN | BF_RECT
               (local.set $drawn (i32.const 0))
               (local.set $bmp (i32.load offset=48 (local.get $sw)))
@@ -5043,16 +5046,20 @@
                     (then
                       (local.set $bmp_dst_x
                         (i32.add
-                          (local.get $left)
-                          (i32.div_s
-                            (i32.sub (local.get $bw) (local.get $bmp_draw_w))
-                            (i32.const 2))))
+                          (i32.add
+                            (local.get $left)
+                            (i32.div_s
+                              (i32.sub (local.get $bw) (local.get $bmp_draw_w))
+                              (i32.const 2)))
+                          (local.get $hit)))
                       (local.set $bmp_dst_y
                         (i32.add
-                          (local.get $top)
-                          (i32.div_s
-                            (i32.sub (local.get $bh) (local.get $bmp_draw_h))
-                            (i32.const 2))))
+                          (i32.add
+                            (local.get $top)
+                            (i32.div_s
+                              (i32.sub (local.get $bh) (local.get $bmp_draw_h))
+                              (i32.const 2)))
+                          (local.get $hit)))
                       (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
                       (if (local.get $memdc)
                         (then
@@ -5101,10 +5108,10 @@
                   ;; screenshots still distinguish toolbar buttons from a plain
                   ;; gray band when no app bitmap strip is available.
                   (drop (call $host_gdi_fill_rect (local.get $hdc)
-                          (i32.add (local.get $left) (i32.const 8))
-                          (i32.add (local.get $top) (i32.const 7))
-                          (i32.add (local.get $left) (i32.const 15))
-                          (i32.add (local.get $top) (i32.const 14))
+                          (i32.add (i32.add (local.get $left) (i32.const 8)) (local.get $hit))
+                          (i32.add (i32.add (local.get $top) (i32.const 7)) (local.get $hit))
+                          (i32.add (i32.add (local.get $left) (i32.const 15)) (local.get $hit))
+                          (i32.add (i32.add (local.get $top) (i32.const 14)) (local.get $hit))
                           (i32.const 0x30012)))))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $buttons)))))

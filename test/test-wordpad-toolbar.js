@@ -206,6 +206,49 @@ function countColorPixelsInRegions(pngPath, regions) {
   return colorful;
 }
 
+function countDarkTopLeftEdgePixels(pngPath, toolbar, rect) {
+  if (!toolbar || !rect || !fs.existsSync(pngPath)) return 0;
+  const png = PNG.sync.read(fs.readFileSync(pngPath));
+  const x0 = toolbar.clientX + rect[0];
+  const y0 = toolbar.clientY + rect[1];
+  const x1 = toolbar.clientX + rect[2];
+  const y1 = toolbar.clientY + rect[3];
+  let dark = 0;
+  function isDarkEdgePixel(x, y) {
+    if (x < 0 || y < 0 || x >= png.width || y >= png.height) return false;
+    const i = (y * png.width + x) * 4;
+    const r = png.data[i];
+    const g = png.data[i + 1];
+    const b = png.data[i + 2];
+    const a = png.data[i + 3];
+    return !!a && r <= 150 && g <= 150 && b <= 150;
+  }
+  for (let y = y0; y < Math.min(y0 + 2, y1); y++) {
+    for (let x = x0; x < x1; x++) {
+      if (isDarkEdgePixel(x, y)) dark++;
+    }
+  }
+  for (let x = x0; x < Math.min(x0 + 2, x1); x++) {
+    for (let y = y0; y < y1; y++) {
+      if (isDarkEdgePixel(x, y)) dark++;
+    }
+  }
+  return dark;
+}
+
+function parseToolbarButtons(dump) {
+  return [...dump.matchAll(
+    /#(\d+) ok=\d+\/\d+ img=(-?\d+) cmd=(-?\d+) state=0x([0-9a-f]+) style=0x([0-9a-f]+) rect=(-?\d+),(-?\d+),(-?\d+),(-?\d+)/gi,
+  )].map(m => ({
+    index: Number(m[1]),
+    image: Number(m[2]),
+    command: Number(m[3]),
+    state: parseInt(m[4], 16),
+    style: parseInt(m[5], 16),
+    rect: m.slice(6).map(Number),
+  }));
+}
+
 const standard = parseWindowByCtrlId(59392);
 const formatting = parseWindowByCtrlId(59396);
 const topControlBar = parseWindowByCtrlId(59419);
@@ -219,12 +262,16 @@ const toolbarIconColorPixels = countToolbarIconColorPixels(PNG_OUT);
 const standardToolbarDump = out.split('\n').find(l => l.includes('toolbar:final:') && l.includes('ctrlId=59392')) || '';
 const formattingToolbarDump = out.split('\n').find(l => l.includes('toolbar:final:') && l.includes('ctrlId=59396')) || '';
 const disabledStandardButtonCount = (standardToolbarDump.match(/state=0x0 style=0x0/g) || []).length;
-const formattingRects = [...formattingToolbarDump.matchAll(/rect=(-?\d+),(-?\d+),(-?\d+),(-?\d+)/g)]
-  .map(m => m.slice(1).map(Number));
+const formattingButtons = parseToolbarButtons(formattingToolbarDump);
+const formattingRects = formattingButtons.map(button => button.rect);
 const formattingRectsBounded =
   formatting &&
   formattingRects.length >= 14 &&
   formattingRects.every(r => r[0] >= 0 && r[1] >= 0 && r[2] <= formatting.clientW && r[3] <= formatting.clientH);
+const checkedFormattingButton = formattingButtons.find(button =>
+  (button.state & 0x01) && !(button.style & 0x01));
+const checkedFormattingSunkenEdgePixels =
+  countDarkTopLeftEdgePixels(PNG_OUT, formatting, checkedFormattingButton && checkedFormattingButton.rect);
 const disabledStandardIconColorPixels = countColorPixelsInRegions(PNG_OUT, [
   [137, 44, 153, 60],
   [168, 44, 184, 60],
@@ -308,6 +355,8 @@ check(`standard toolbar state dump exposes disabled command buttons (${disabledS
   disabledStandardButtonCount >= 5);
 check(`disabled standard toolbar icons are visually dimmed (${disabledStandardIconColorPixels} color pixels)`,
   disabledStandardIconColorPixels <= 140);
+check(`checked formatting toolbar button paints a sunken edge (${checkedFormattingSunkenEdgePixels} dark edge pixels)`,
+  checkedFormattingSunkenEdgePixels >= 70);
 check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
   fontComboWhitePixels >= 800 &&
   sizeComboWhitePixels >= 150);

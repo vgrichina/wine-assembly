@@ -414,9 +414,10 @@ native-editing path is alive.
   `ToolbarWindow32` button records/rects, and WordPad's disabled Standard
   toolbar commands are now both state-asserted and visually dimmed with a
   BTNFACE crosshatch. Minimal synthetic `HINST_COMMCTRL` standard/view/history
-  toolbar strips are available for common-control toolbar callers; true
-  disabled/highlight image-list remapping and advanced toolbar UI state remain
-  follow-up fidelity.
+  toolbar strips are available for common-control toolbar callers. Checked
+  toolbar buttons now paint with a sunken edge and shifted glyph from
+  `TBSTATE_CHECKED`; true disabled/highlight image-list remapping and broader
+  advanced toolbar UI state remain follow-up fidelity.
 - Added width-aware packing for large toolbar-hosted combo item rects. This
   mirrors the bounded native-common-control behavior WordPad relies on: the
   toolbar item rect is capped inside the 394px formatting control bar and
@@ -798,6 +799,7 @@ Acceptance:
 [x] WordPad toolbar app bitmap strips render visible color-keyed icon pixels
 [x] ToolbarWindow32 can load minimal `HINST_COMMCTRL` built-in color strips
 [x] WordPad disabled Standard-toolbar commands are state-dumped and visibly dimmed
+[x] WordPad checked formatting-toolbar buttons are visibly sunken
 [x] WordPad toolbar fallback buttons remain visibly composited through nested
     MFC control-bar containers when no strip is available
 [x] WordPad formatting toolbar font/size comboboxes are visible, separated, and populated
@@ -856,6 +858,7 @@ Acceptance:
 [x] WordPad toolbar bitmap icon pixels are explicitly asserted
 [x] ToolbarWindow32 `TB_ADDBITMAP` covers `HINST_COMMCTRL` built-in strips
 [x] WordPad disabled toolbar icon dimming is explicitly asserted
+[x] WordPad checked toolbar button visual state is explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
 [x] WordPad formatting toolbar full button run is visible in the narrow row

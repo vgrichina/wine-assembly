@@ -190,8 +190,11 @@ toolbar:     clicks at the formatting toolbar button centers route through
              ToolbarWindow32 -> MFC -> EM_SETCHARFORMAT
 RichEdit:    EM_GETCHARFORMAT reports bold=1, italic=1, underline=1 after
              the three toolbar clicks
-result:      PASS for formatting-toolbar B/I/U mouse commands. The color
-             picker/menu route has separate focused coverage below.
+visuals:     checked formatting-toolbar buttons paint with a sunken edge and
+             shifted glyph from their stored `TBSTATE_CHECKED` state
+result:      PASS for formatting-toolbar B/I/U mouse commands and checked
+             toolbar button visual state. The color picker/menu route has
+             separate focused coverage below.
 ```
 
 Focused formatting round-trip probe:
@@ -308,9 +311,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   frame. Toolbar `TB_ADDBITMAP` app strips now render through a
   `TransparentBlt`-style `RGB(192,192,192)` color-key path from
   `TBBUTTON.iBitmap`; minimal synthetic `HINST_COMMCTRL` standard/view/history
-  strips are also available for common-control toolbar callers. True
-  disabled/highlight image-list remapping and advanced toolbar UI state remain
-  follow-up fidelity.
+  strips are also available for common-control toolbar callers. Checked
+  toolbar buttons now render sunken/offset from `TBSTATE_CHECKED`; true
+  disabled/highlight image-list remapping and broader advanced toolbar UI state
+  remain follow-up fidelity.
 - The formatting toolbar now caps oversized toolbar-hosted combo item rects
   against the containing 394px control bar and resizes hosted combo HWNDs to
   their computed item rects. This keeps the size combo plus Bold / Italic /
@@ -638,10 +642,10 @@ blocker.
    indents/tabs/numbering, visible selection highlight, visible caret paint,
    toolbar row layout, first-toolbar-button command routing,
    toolbar bitmap icon rendering, formatting-toolbar B/I/U mouse commands,
-   visible formatting-toolbar color-button packing, direct RichEdit color
-   rendering, and clipped long-text RichEdit painting are now covered, and
-   WordPad's own toolbar color UI now applies Blue through the covered
-   dynamic-popup path.
+   checked toolbar button visual state, visible formatting-toolbar color-button
+   packing, direct RichEdit color rendering, and clipped long-text RichEdit
+   painting are now covered, and WordPad's own toolbar color UI now applies
+   Blue through the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
