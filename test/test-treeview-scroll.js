@@ -155,6 +155,18 @@ async function main() {
   check('TVIF_CHILDREN hint is preserved before lazy children are inserted',
     getParentItem === 1 && parentChildren === 1,
     `ret=${getParentItem} cChildren=${parentChildren}`);
+  const textBuffer = e.guest_alloc(64);
+  const textItem = e.guest_alloc(40);
+  const textItemP = wa(textItem);
+  u8.fill(0, textItemP, textItemP + 40);
+  dv.setUint32(textItemP, 0x0001, true); // TVIF_TEXT
+  dv.setUint32(textItemP + 4, parent, true);
+  dv.setUint32(textItemP + 16, textBuffer, true);
+  dv.setUint32(textItemP + 20, 64, true);
+  check('TVM_GETITEMA copies item text into the caller buffer',
+    e.send_message(tv, TVM_GETITEMA, 0, textItem) === 1 &&
+      Buffer.from(u8.subarray(wa(textBuffer), wa(textBuffer) + 16))
+        .toString('latin1').split('\0')[0] === 'Collapsed parent');
   const laterRoot = insertItem('Later root');
   const childA = insertItem('Child A', parent);
   const childB = insertItem('Child B', parent);

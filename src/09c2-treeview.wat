@@ -231,7 +231,9 @@
         (local.set $dst_g (i32.load offset=16 (local.get $tvitem_wa)))
         (local.set $max_len (i32.load offset=20 (local.get $tvitem_wa)))
         (if (i32.and
-              (i32.and (local.get $text_g) (local.get $dst_g))
+              (i32.and
+                (i32.ne (local.get $text_g) (i32.const 0))
+                (i32.ne (local.get $dst_g) (i32.const 0)))
               (i32.gt_s (local.get $max_len) (i32.const 0)))
           (then
             (local.set $src_w (call $g2w (local.get $text_g)))

@@ -188,13 +188,13 @@ native-editing path is alive.
   `TVGN_FIRSTVISIBLE`, `TVM_HITTEST`, and mouse selection now share the same
   first-visible row offset. The same standalone coverage now also asserts
   parent/child links through `TVGN_CHILD` / `TVGN_PARENT`, depth-first
-  `TVGN_NEXTVISIBLE`, and collapsed versus expanded visibility through
-  `TVM_EXPAND`.
+  `TVGN_NEXTVISIBLE`, `TVM_GETITEMA` caller-buffer text copying, and collapsed
+  versus expanded visibility through `TVM_EXPAND`.
 - Added `test/test-treeview-scroll.js`, a standalone WAT regression that creates
   a TreeView, inserts 12 rows, verifies wheel/arrow/page/thumb scroll behavior,
   hit-testing through the scroll offset, selection, hierarchy expand/collapse,
-  `TVIF_CHILDREN`, depth-first visible order, expand/collapse notifications, and
-  slot cleanup.
+  `TVIF_CHILDREN`, `TVM_GETITEMA` text copying, depth-first visible order,
+  expand/collapse notifications, and slot cleanup.
   `test/run.js` can dump TreeView item state plus paint counters for future
   app-level probes.
 - Added bounded report-style `SysListView32` state: columns, fixed 8-subitem
@@ -867,6 +867,7 @@ Acceptance:
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
 [x] WAT TreeView parent/child links and expand/collapse visibility are asserted
 [x] WAT TreeView depth-first visible order is asserted
+[x] WAT TreeView `TVM_GETITEMA` text buffer copying is asserted
 [x] WAT TreeView expand/collapse notifications and `TVIF_CHILDREN` are asserted
 [x] Registry root/subkey/value enumeration and metadata are covered for RegEdit-style probes
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
