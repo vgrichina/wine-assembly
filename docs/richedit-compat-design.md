@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-10.
+Last updated: 2026-08-11.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -75,7 +75,7 @@ launch WordPad -> click editor -> type "hello world"
               -> mouse drag selects text
               -> 35-line text auto-scrolls, wheel changes first visible line
               -> standard/format toolbar rows are allocated above the editor
-              -> toolbar app bitmap strips render visible icons
+              -> toolbar app bitmap strips render visible color-keyed icons
               -> first Standard toolbar button opens the New dialog
               -> formatting toolbar B/I/U buttons update selected text
               -> 100 chars of WordPad text produce native line metrics and
@@ -127,8 +127,9 @@ That means these pieces are already good enough for basic insertion:
   hit/drag math and changes `EM_GETFIRSTVISIBLELINE`;
 - WordPad's standard and formatting `ToolbarWindow32` rows are allocated, and
   the native RichEdit child is laid out below them;
-- WordPad toolbar app bitmap strips render colored icons instead of
-  placeholder-only buttons;
+- WordPad toolbar app bitmap strips render colored icons through a
+  `TransparentBlt`-style `RGB(192,192,192)` color-key path instead of
+  placeholder-only buttons or raw `SRCCOPY` tiles;
 - WordPad's formatting toolbar child surface/client width is bounded to the
   containing MFC control bar, and toolbar-hosted font/size combo fields paint
   white interiors with populated `Times New Roman` / `10` text;
@@ -389,10 +390,12 @@ native-editing path is alive.
   instead of a blank gray band. The formatting toolbar child surface/client
   width is now bounded to its containing `AfxControlBar42`, preventing a
   1512px-wide child dump/allocation inside WordPad's 394px frame. The toolbar
-  now remembers `TB_ADDBITMAP` app bitmap strips, blits `TBBUTTON.iBitmap`
-  icons during `WM_PAINT`, and the regression asserts colored icon pixels
-  instead of placeholder-only squares. Common-control built-in strips and
-  masked transparency/color remapping remain follow-up fidelity.
+  now remembers `TB_ADDBITMAP` app bitmap strips, draws `TBBUTTON.iBitmap`
+  icons during `WM_PAINT` through a `TransparentBlt`-style
+  `RGB(192,192,192)` color key, and the regression asserts colored icon pixels
+  instead of placeholder-only squares. Common-control built-in strips,
+  disabled/highlight image-list remapping, and advanced toolbar UI state
+  remain follow-up fidelity.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -757,7 +760,7 @@ Acceptance:
 [x] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
-[x] WordPad toolbar app bitmap strips render visible colored icon pixels
+[x] WordPad toolbar app bitmap strips render visible color-keyed icon pixels
 [x] WordPad toolbar fallback buttons remain visibly composited through nested
     MFC control-bar containers when no strip is available
 [x] WordPad formatting toolbar font/size comboboxes are visible, separated, and populated

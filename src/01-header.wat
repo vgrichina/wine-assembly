@@ -208,6 +208,8 @@
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
   (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop)
+  (import "host" "gdi_transparent_blt" (func $host_gdi_transparent_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_transparent_blt(dstDC, dx, dy, w, h, srcDC, sx, sy, colorKey)
 
   (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)

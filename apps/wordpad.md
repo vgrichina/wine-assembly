@@ -97,7 +97,10 @@ layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
 command:   first Standard toolbar button opens WordPad's "New" dialog
 visuals:   nested toolbar child surfaces now composite through the MFC
            `AfxControlBar42` container, and `TB_ADDBITMAP` app strips now
-           blit real colored button icons instead of placeholder-only squares
+           draw real colored button icons instead of placeholder-only squares.
+           App bitmap-strip tiles use the classic `RGB(192,192,192)`
+           toolbar color key instead of raw `SRCCOPY`, so strip background
+           pixels do not overwrite the destination button face.
            The formatting toolbar surface/client width is bounded to the
            containing control bar instead of dumping/allocation as a 1512px
            child in a 394px frame. Toolbar-hosted font/size combobox fields
@@ -106,8 +109,8 @@ result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
            visible bitmap icons, populated combobox field paint,
            command-ID-backed button hit testing, and the MFC toolbar command
            path for File New.
-           Common-control built-in strips, masked transparency/color remapping,
-           and advanced toolbar UI state remain follow-up fidelity.
+           Common-control built-in strips, disabled/highlight image-list
+           remapping, and advanced toolbar UI state remain follow-up fidelity.
 ```
 
 Focused mouse/scroll probe:
@@ -293,9 +296,11 @@ Current evidence from the 2026-08-11 follow-up probe:
   child surfaces are visible and do not spill outside WordPad. Formatting
   toolbar child surfaces/client rects are also bounded to the containing
   control bar, avoiding the previous 1512px-wide child allocation in a 394px
-  frame. Toolbar `TB_ADDBITMAP` app strips now render through centered SRCCOPY
-  blits from `TBBUTTON.iBitmap`; common-control built-in strips and masked
-  transparency/color remapping remain follow-up fidelity.
+  frame. Toolbar `TB_ADDBITMAP` app strips now render through a
+  `TransparentBlt`-style `RGB(192,192,192)` color-key path from
+  `TBBUTTON.iBitmap`; common-control built-in strips, disabled/highlight
+  image-list remapping, and advanced toolbar UI state remain follow-up
+  fidelity.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. Clicking the first Standard toolbar button now
@@ -510,7 +515,7 @@ Current evidence from the 2026-08-11 follow-up probe:
 - Regression test: `node test/test-wordpad-toolbar.js` passes 19/19 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
-  layout, visible bitmap-strip icon painting of the standard/formatting
+  layout, color-keyed bitmap-strip icon painting of the standard/formatting
   toolbar rows, populated font/size toolbar combo text, and the first Standard
   toolbar button opening WordPad's `New` dialog. The pixel assertions measure
   only the toolbar button rows, including colored icon pixels so

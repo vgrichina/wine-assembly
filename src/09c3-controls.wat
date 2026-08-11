@@ -4883,13 +4883,13 @@
                         (then
                           (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
                           (local.set $drawn
-                            (call $host_gdi_bitblt
+                            (call $host_gdi_transparent_blt
                               (local.get $hdc)
                               (local.get $bmp_dst_x) (local.get $bmp_dst_y)
                               (local.get $bmp_draw_w) (local.get $bmp_draw_h)
                               (local.get $memdc)
                               (local.get $bmp_src_x) (i32.const 0)
-                              (i32.const 0x00CC0020))) ;; SRCCOPY
+                              (i32.const 0x00C0C0C0))) ;; RGB(192,192,192) toolbar color key
                           (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
               (if (i32.eqz (local.get $drawn))
                 (then
