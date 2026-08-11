@@ -545,15 +545,15 @@
     (call $te_raw (local.get $a)))
 
   ;; MUL/IMUL/DIV/IDIV [mem32]. type: 0=mul,1=imul,2=div,3=idiv
-  (func $emit_muldiv_m32 (param $mtype i32)
+  (func $emit_muldiv_m32 (param $mtype i32) (local $a i32)
     (if (call $mr_simple_base)
       (then (call $te (i32.const 147) (i32.or (i32.shl (local.get $mtype) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
-    ;; Absolute: use existing handlers 60-63
-    (if (i32.eq (local.get $mtype) (i32.const 0)) (then (call $te (i32.const 60) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
-    (if (i32.eq (local.get $mtype) (i32.const 1)) (then (call $te (i32.const 61) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
-    (if (i32.eq (local.get $mtype) (i32.const 2)) (then (call $te (i32.const 62) (i32.const 0)) (call $te_raw (global.get $mr_disp)) (return)))
-    (call $te (i32.const 63) (i32.const 0)) (call $te_raw (global.get $mr_disp)))
+    (local.set $a (call $emit_sib_or_abs))
+    (if (i32.eq (local.get $mtype) (i32.const 0)) (then (call $te (i32.const 60) (i32.const 0)) (call $te_raw (local.get $a)) (return)))
+    (if (i32.eq (local.get $mtype) (i32.const 1)) (then (call $te (i32.const 61) (i32.const 0)) (call $te_raw (local.get $a)) (return)))
+    (if (i32.eq (local.get $mtype) (i32.const 2)) (then (call $te (i32.const 62) (i32.const 0)) (call $te_raw (local.get $a)) (return)))
+    (call $te (i32.const 63) (i32.const 0)) (call $te_raw (local.get $a)))
 
   ;; MUL/IMUL/DIV/IDIV [mem16]. type: 0=mul,1=imul,2=div,3=idiv
   (func $emit_muldiv_m16 (param $mtype i32) (local $a i32)

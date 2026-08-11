@@ -223,7 +223,7 @@ assert(indexHtml.includes('lib/renderer-input.js?v=168'), 'web host should cache
 assert(indexHtml.includes('lib/host-imports.js?v=172'), 'web host should cache-bust host-imports after browser host changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('host.js?v=172'), 'web host should cache-bust host.js after browser host changes');
-assert(hostJs.includes("SOURCE_VERSION = '171'"), 'host.js should define the current WAT/API cache-buster');
+assert(hostJs.includes("SOURCE_VERSION = '172'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');

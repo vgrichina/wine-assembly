@@ -30,6 +30,7 @@ const TRACE_HOST_NAMES = String(process.env.CANDIDATE_TRACE_HOST || '')
   .filter(Boolean);
 const SCREENSHOT_DIR = process.env.CANDIDATE_SCREENSHOT_DIR || '';
 const DEBUG_EVAL = process.env.CANDIDATE_DEBUG_EVAL === '1';
+const BASE_URL = String(process.env.CANDIDATE_BASE_URL || '').trim();
 
 const ALL_CANDIDATES = [
   {
@@ -69,6 +70,11 @@ const ALL_CANDIDATES = [
     label: 'CWordZap',
     titlePattern: 'Addictionary|W O R D Z A P|WORD ZAP|WordZap|CWordZap',
     commands: [40003],
+    clicks: [
+      { guestX: 285, guestY: 455, waitMs: 500, snapshotAfter: 'after-ready-click' },
+    ],
+    minCanvasHeight: 480,
+    minMainHeight: 440,
     minColors: 12,
     minDiff: 80,
     waitMs: 1500,
@@ -358,10 +364,17 @@ function jsArray(values) {
 }
 
 async function main() {
-  const server = await startStaticServer();
-  const port = server.address().port;
+  const server = BASE_URL ? null : await startStaticServer();
+  const port = server ? server.address().port : 0;
   const debugPort = await reserveTcpPort(DEBUG_PORT_HINT);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-candidates-profile-'));
+  const launchUrl = (() => {
+    const raw = BASE_URL || `http://127.0.0.1:${port}/index.html`;
+    const url = new URL(raw);
+    url.searchParams.set('candidate-web', String(Date.now()));
+    return url.href;
+  })();
+  const launchHost = new URL(launchUrl).host;
   const chrome = spawn(CHROME, [
     '--headless=new',
     '--disable-gpu',
@@ -371,7 +384,7 @@ async function main() {
     '--disable-search-engine-choice-screen',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${userData}`,
-    `http://127.0.0.1:${port}/index.html?candidate-web=${Date.now()}`,
+    launchUrl,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeErr = '';
   chrome.stderr.on('data', d => { chromeErr += d.toString(); });
@@ -389,7 +402,7 @@ async function main() {
   for (let i = 0; i < 100; i++) {
     try {
       const pages = await getJson(`http://127.0.0.1:${debugPort}/json/list`);
-      page = pages.find(p => p.type === 'page' && String(p.url || '').includes('/index.html'));
+      page = pages.find(p => p.type === 'page' && String(p.url || '').includes(launchHost));
       if (page) break;
     } catch (_) {}
     await wait(100);
@@ -463,7 +476,9 @@ async function main() {
     options: [...document.querySelectorAll('#app-select option')].map(o => o.value),
     icons: [...document.querySelectorAll('.desktop-icon')].map(e => e.dataset.app),
   }))()`);
-  assert.strictEqual(localState.localDesktop, true, 'test page should be recognized as a local desktop host');
+  if (!BASE_URL) {
+    assert.strictEqual(localState.localDesktop, true, 'test page should be recognized as a local desktop host');
+  }
   for (const id of ids) {
     assert(localState.options.includes(id), `local app select should include ${id}`);
     assert(localState.icons.includes(id), `local desktop should include ${id}`);
@@ -528,6 +543,7 @@ async function main() {
         log: document.getElementById('log').textContent.slice(-4000),
         runningApps: runningApps.length,
         selected: document.getElementById('app-select').value,
+        canvas: { width: canvas.width | 0, height: canvas.height | 0 },
         windows: visible,
         main,
         rect,
@@ -1195,6 +1211,7 @@ async function main() {
     const consoleText = consoleEventSummary(cdp.events).join('\n');
     const summary = JSON.stringify({
       windows: after.windows,
+      canvas: after.canvas,
       metrics: after.metrics,
       diff: diff.diff,
       keyDiff: keyDiff && keyDiff.diff,
@@ -1210,6 +1227,14 @@ async function main() {
     assert.strictEqual(after.runningApps, 1, `${app.label}: should be the only running app: ${summary}`);
     assert(after.main && new RegExp(app.titlePattern, 'i').test(after.main.title || ''),
       `${app.label}: expected main window title ${app.titlePattern}: ${summary}`);
+    if (app.minCanvasHeight) {
+      assert(after.canvas && after.canvas.height >= app.minCanvasHeight,
+        `${app.label}: browser canvas should be at least ${app.minCanvasHeight}px tall: ${summary}`);
+    }
+    if (app.minMainHeight) {
+      assert(after.main && after.main.h >= app.minMainHeight,
+        `${app.label}: main window should be at least ${app.minMainHeight}px tall: ${summary}`);
+    }
     assert(after.metrics.colors >= app.minColors,
       `${app.label}: rendered content should have at least ${app.minColors} colors: ${summary}`);
     assert(after.metrics.topShare < 0.985,

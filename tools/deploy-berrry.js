@@ -6,6 +6,7 @@
 //                                                sha256 differs from server
 //   node tools/deploy-berrry.js --update --full  force-reupload everything
 //   node tools/deploy-berrry.js --update --files=a,b,c   push explicit list
+//                                                (rejects compiled build/*.wasm)
 // Autodiscovers all deployable files — no hardcoded lists.
 
 const fs = require('fs');
@@ -256,7 +257,11 @@ async function api(method, endpoint, body) {
 function loadExplicitFiles(relList) {
   // Load specific files by repo-relative path. Encodes as text or base64 by extension.
   const files = [];
-  for (const rel of relList) {
+  for (const originalRel of relList) {
+    const rel = originalRel.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (/^build\/.*\.wasm$/i.test(rel)) {
+      throw new Error(`Refusing to deploy ${rel}: browser deploys compile src/*.wat instead of compiled wasm artifacts`);
+    }
     const full = path.resolve(ROOT, rel);
     if (!fs.existsSync(full)) { console.error('SKIP missing: ' + rel); continue; }
     const ext = path.extname(rel).toLowerCase();

@@ -175,6 +175,17 @@ async function main() {
   test('MUL 0x7FFFFFFF^2 lo', e.get_eax(), 0x00000001);
   test('MUL 0x7FFFFFFF^2 hi', e.get_edx(), 0x3FFFFFFF);
 
+  const sibTable = imageBase + 0x8500;
+  setMem(sibTable, 0);
+  setMem(sibTable + 4, 1855);
+  runCode([0xF7, 0x3C, 0x8D, ...le32(sibTable)], () => {
+    e.set_eax(9275);
+    e.set_edx(0);
+    e.set_ecx(1);
+  });
+  test('IDIV dword [disp+ecx*4] quotient', e.get_eax(), 5);
+  test('IDIV dword [disp+ecx*4] remainder', e.get_edx(), 0);
+
   // ================================================================
   // SHRD — double precision shift right
   // ================================================================
