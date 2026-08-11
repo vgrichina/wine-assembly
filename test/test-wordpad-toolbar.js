@@ -217,7 +217,14 @@ const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT
 const toolbarButtonPixels = countToolbarButtonPixels(PNG_OUT);
 const toolbarIconColorPixels = countToolbarIconColorPixels(PNG_OUT);
 const standardToolbarDump = out.split('\n').find(l => l.includes('toolbar:final:') && l.includes('ctrlId=59392')) || '';
+const formattingToolbarDump = out.split('\n').find(l => l.includes('toolbar:final:') && l.includes('ctrlId=59396')) || '';
 const disabledStandardButtonCount = (standardToolbarDump.match(/state=0x0 style=0x0/g) || []).length;
+const formattingRects = [...formattingToolbarDump.matchAll(/rect=(-?\d+),(-?\d+),(-?\d+),(-?\d+)/g)]
+  .map(m => m.slice(1).map(Number));
+const formattingRectsBounded =
+  formatting &&
+  formattingRects.length >= 14 &&
+  formattingRects.every(r => r[0] >= 0 && r[1] >= 0 && r[2] <= formatting.clientW && r[3] <= formatting.clientH);
 const disabledStandardIconColorPixels = countColorPixelsInRegions(PNG_OUT, [
   [137, 44, 153, 60],
   [168, 44, 184, 60],
@@ -281,6 +288,8 @@ check('size combo is visible and separated from the font combo',
   sizeCombo.hasBack &&
   sizeCombo.x >= fontCombo.x + fontCombo.w &&
   sizeCombo.y === fontCombo.y);
+check('formatting toolbar button rects fit the narrow control bar',
+  formattingRectsBounded);
 check('toolbars occupy separate rows',
   standard && formatting && formatting.y >= standard.y + 20);
 check('RichEdit child is laid out below the toolbars',
@@ -300,7 +309,7 @@ check(`standard toolbar state dump exposes disabled command buttons (${disabledS
 check(`disabled standard toolbar icons are visually dimmed (${disabledStandardIconColorPixels} color pixels)`,
   disabledStandardIconColorPixels <= 140);
 check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
-  fontComboWhitePixels >= 1200 &&
+  fontComboWhitePixels >= 800 &&
   sizeComboWhitePixels >= 150);
 check('toolbar font and size combo text is populated',
   fontCombo &&

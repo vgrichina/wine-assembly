@@ -419,11 +419,11 @@ native-editing path is alive.
   follow-up fidelity.
 - Added width-aware packing for large toolbar-hosted combo item rects. This
   mirrors the bounded native-common-control behavior WordPad relies on: the
-  240px font combo HWND remains intact, but the toolbar item rect is capped
-  inside the 394px formatting control bar so the size combo and trailing
-  Bold / Italic / Underline / Color buttons fit. The toolbar layout regression
-  now covers the fully visible color button instead of accepting right-edge
-  clipping.
+  toolbar item rect is capped inside the 394px formatting control bar and
+  hosted combo HWNDs are resized to those computed rects, so the size combo and
+  full trailing formatting button run fit in one row. The toolbar layout
+  regression now asserts all formatting button rects stay inside the narrow
+  control bar instead of accepting right-edge clipping.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -448,7 +448,9 @@ native-editing path is alive.
   WAT-native `COMBOBOX` children run MFC's existing WH_CBT/HCBT_CREATEWND
   attach path, so CComboBox wrappers hold real HWNDs before startup `CB_*`
   setup messages. Minimal `CB_SETITEMHEIGHT` / `CB_GETITEMHEIGHT` support keeps
-  the now-live setup path from failing.
+  the now-live setup path from failing. Toolbar autosize now also resizes
+  hosted combo HWNDs to the capped separator item rects, which keeps the
+  compressed font/size fields from overlapping the trailing formatting buttons.
 - Added minimal `GetDCEx` support on top of the existing host DC allocator and
   client/whole-window clip helpers. Added
   `test/test-wordpad-toolbar-format-buttons.js`, which passes 10/10 and
@@ -856,7 +858,7 @@ Acceptance:
 [x] WordPad disabled toolbar icon dimming is explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
-[x] WordPad formatting toolbar color button is fully visible in the narrow row
+[x] WordPad formatting toolbar full button run is visible in the narrow row
 [x] ToolbarWindow32 `TB_INSERTBUTTONA` preserves stored TBBUTTON order
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered

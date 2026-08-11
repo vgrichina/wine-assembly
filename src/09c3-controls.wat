@@ -4204,9 +4204,10 @@
                   (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))))
               (if (i32.gt_s (local.get $parent_w) (i32.const 0))
                 (then
-                  ;; Reserve ~162px for size combo, separators, and four
-                  ;; 23px formatting/color buttons.
-                  (local.set $cap (i32.sub (local.get $parent_w) (i32.const 162)))
+                  ;; Reserve the size combo, separators, and the full trailing
+                  ;; formatting button span so narrow WordPad windows keep the
+                  ;; complete formatting toolbar on one row.
+                  (local.set $cap (i32.sub (local.get $parent_w) (i32.const 268)))
                   (if (i32.lt_s (local.get $cap) (i32.const 120))
                     (then (local.set $cap (i32.const 120))))
                   (if (i32.gt_s (local.get $combo_width) (local.get $cap))
@@ -4301,19 +4302,139 @@
           (then (local.set $width (i32.const 8))))))
     (local.get $width))
 
-  (func $toolbar_button_left (param $sw i32) (param $idx i32) (result i32)
-    (local $i i32) (local $left i32)
+  (func $toolbar_layout_width (param $sw i32) (result i32)
+    (local $hwnd i32) (local $parent i32) (local $wh i32) (local $w i32) (local $parent_w i32)
+    (local.set $hwnd (i32.load offset=44 (local.get $sw)))
+    (if (local.get $hwnd)
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (if (local.get $parent)
+          (then
+            (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))))
+        (if (i32.gt_s (local.get $parent_w) (i32.const 0))
+          (then
+            (if (i32.or
+                  (i32.le_s (local.get $w) (i32.const 0))
+                  (i32.gt_s (local.get $w) (i32.add (local.get $parent_w) (i32.const 8))))
+              (then (local.set $w (local.get $parent_w))))))))
+    (if (i32.le_s (local.get $w) (i32.const 0))
+      (then (local.set $w (i32.const 160))))
+    (local.get $w))
+
+  (func $toolbar_button_rect (param $sw i32) (param $idx i32) (param $rect i32) (result i32)
+    (local $i i32) (local $count i32) (local $left i32) (local $top i32)
+    (local $bw i32) (local $bh i32) (local $limit i32)
+    (local.set $count (i32.load (local.get $sw)))
+    (if (i32.or
+          (i32.eqz (local.get $rect))
+          (i32.ge_u (local.get $idx) (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $bh (i32.load offset=8 (local.get $sw)))
+    (if (i32.le_s (local.get $bh) (i32.const 0))
+      (then (local.set $bh (i32.const 22))))
+    (local.set $limit (call $toolbar_layout_width (local.get $sw)))
+    (if (i32.lt_s (local.get $limit) (i32.const 24))
+      (then (local.set $limit (i32.const 24))))
     (local.set $left (i32.const 2))
+    (local.set $top (i32.const 2))
     (local.set $i (i32.const 0))
     (block $done (loop $sum
-      (br_if $done (i32.ge_u (local.get $i) (local.get $idx)))
-      (local.set $left
-        (i32.add
-          (local.get $left)
-          (call $toolbar_button_width (local.get $sw) (local.get $i))))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $i)))
+      (if (i32.and
+            (i32.gt_s (local.get $left) (i32.const 2))
+            (i32.gt_s (i32.add (local.get $left) (local.get $bw)) (local.get $limit)))
+        (then
+          (local.set $left (i32.const 2))
+          (local.set $top (i32.add (local.get $top) (i32.add (local.get $bh) (i32.const 2))))))
+      (if (i32.eq (local.get $i) (local.get $idx))
+        (then
+          (i32.store        (local.get $rect) (local.get $left))
+          (i32.store offset=4  (local.get $rect) (local.get $top))
+          (i32.store offset=8  (local.get $rect) (i32.add (local.get $left) (local.get $bw)))
+          (i32.store offset=12 (local.get $rect) (i32.add (local.get $top) (local.get $bh)))
+          (return (i32.const 1))))
+      (local.set $left (i32.add (local.get $left) (local.get $bw)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sum)))
-    (local.get $left))
+    (i32.const 0))
+
+  (func $toolbar_calc_rows (param $sw i32) (result i32)
+    (local $i i32) (local $count i32) (local $left i32) (local $bw i32)
+    (local $limit i32) (local $rows i32)
+    (local.set $count (i32.load (local.get $sw)))
+    (local.set $limit (call $toolbar_layout_width (local.get $sw)))
+    (if (i32.lt_s (local.get $limit) (i32.const 24))
+      (then (local.set $limit (i32.const 24))))
+    (local.set $left (i32.const 2))
+    (local.set $rows (i32.const 1))
+    (local.set $i (i32.const 0))
+    (block $done (loop $sum
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $i)))
+      (if (i32.and
+            (i32.gt_s (local.get $left) (i32.const 2))
+            (i32.gt_s (i32.add (local.get $left) (local.get $bw)) (local.get $limit)))
+        (then
+          (local.set $left (i32.const 2))
+          (local.set $rows (i32.add (local.get $rows) (i32.const 1)))))
+      (local.set $left (i32.add (local.get $left) (local.get $bw)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sum)))
+    (local.get $rows))
+
+  (func $toolbar_sync_child_combos (param $sw i32)
+    (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $child_id i32)
+    (local $i i32) (local $count i32) (local $rec i32)
+    (local $left i32) (local $top i32) (local $right i32)
+    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
+    (if (i32.eqz (local.get $toolbar_hwnd)) (then (return)))
+    (if (i32.eqz (i32.load offset=32 (local.get $sw))) (then (return)))
+    (local.set $count (i32.load (local.get $sw)))
+    (local.set $slot (i32.const 0))
+    (block $children_done (loop $children
+      (local.set $slot
+        (call $wnd_next_child_slot (local.get $toolbar_hwnd) (local.get $slot)))
+      (br_if $children_done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.eq (call $ctrl_table_get_class (local.get $ch)) (i32.const 5))
+        (then
+          (local.set $child_id (call $ctrl_table_get_id (local.get $ch)))
+          (local.set $i (i32.const 0))
+          (block $matched (loop $buttons
+            (br_if $matched (i32.ge_u (local.get $i) (local.get $count)))
+            (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $i)))
+            (if (i32.and
+                  (i32.and
+                    (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01))
+                    (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $child_id)))
+                  (call $toolbar_button_rect (local.get $sw) (local.get $i) (global.get $PAINT_SCRATCH)))
+              (then
+                (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
+                (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
+                (local.set $right (i32.load offset=8 (global.get $PAINT_SCRATCH)))
+                (call $host_move_window
+                  (local.get $ch)
+                  (local.get $left)
+                  (local.get $top)
+                  (i32.sub (local.get $right) (local.get $left))
+                  (i32.const 200)
+                  (i32.const 0))
+                (call $ctrl_geom_sync
+                  (local.get $ch)
+                  (local.get $left)
+                  (local.get $top)
+                  (i32.sub (local.get $right) (local.get $left))
+                  (i32.const 200)
+                  (i32.const 0))
+                (call $defwndproc_do_nccalcsize (local.get $ch))
+                (br $matched)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $buttons)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $children))))
 
   (func $toolbar_update_state_bit
     (param $sw i32) (param $cmd i32) (param $mask i32) (param $on i32) (result i32)
@@ -4333,23 +4454,27 @@
     (i32.const 1))
 
   (func $toolbar_hit_test (param $sw i32) (param $x i32) (param $y i32) (result i32)
-    (local $idx i32) (local $left i32) (local $bw i32) (local $bh i32) (local $rec i32)
+    (local $idx i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $rec i32)
     (if (i32.or (i32.lt_s (local.get $x) (i32.const 2))
                 (i32.lt_s (local.get $y) (i32.const 2)))
       (then (return (i32.const -1))))
-    (local.set $bh (i32.load offset=8 (local.get $sw)))
-    (if (i32.le_s (local.get $bh) (i32.const 0))
-      (then (return (i32.const -1))))
-    (if (i32.ge_s (local.get $y) (i32.add (i32.const 2) (local.get $bh)))
-      (then (return (i32.const -1))))
-    (local.set $left (i32.const 2))
     (local.set $idx (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
-      (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $idx)))
+      (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $idx) (global.get $PAINT_SCRATCH)))
+        (then (return (i32.const -1))))
+      (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
+      (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
+      (local.set $right (i32.load offset=8 (global.get $PAINT_SCRATCH)))
+      (local.set $bottom (i32.load offset=12 (global.get $PAINT_SCRATCH)))
       (if (i32.and
-            (i32.ge_s (local.get $x) (local.get $left))
-            (i32.lt_s (local.get $x) (i32.add (local.get $left) (local.get $bw))))
+            (i32.and
+              (i32.ge_s (local.get $x) (local.get $left))
+              (i32.lt_s (local.get $x) (local.get $right)))
+            (i32.and
+              (i32.ge_s (local.get $y) (local.get $top))
+              (i32.lt_s (local.get $y) (local.get $bottom))))
         (then
           (if (i32.load offset=32 (local.get $sw))
             (then
@@ -4359,7 +4484,6 @@
                     (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01)))
                 (then (return (i32.const -1))))))
           (return (local.get $idx))))
-      (local.set $left (i32.add (local.get $left) (local.get $bw)))
       (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
       (br $scan)))
     (i32.const -1))
@@ -4380,7 +4504,7 @@
   (func $toolbar_autosize (param $hwnd i32)
     (local $idx i32) (local $state i32) (local $sw i32) (local $parent i32)
     (local $xy i32) (local $wh i32) (local $x i32) (local $y i32)
-    (local $w i32) (local $h i32) (local $parent_w i32)
+    (local $w i32) (local $h i32) (local $parent_w i32) (local $rows i32) (local $bh i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
@@ -4410,11 +4534,24 @@
               (i32.gt_s (local.get $parent_w) (i32.const 0))
               (i32.gt_s (local.get $w) (i32.add (local.get $parent_w) (i32.const 8))))
           (then (local.set $w (local.get $parent_w))))))
-    (local.set $h (i32.add (i32.load offset=8 (local.get $sw)) (i32.const 6)))
+    (local.set $rows (call $toolbar_calc_rows (local.get $sw)))
+    (if (i32.lt_s (local.get $rows) (i32.const 1))
+      (then (local.set $rows (i32.const 1))))
+    (i32.store offset=20 (local.get $sw) (local.get $rows))
+    (local.set $bh (i32.load offset=8 (local.get $sw)))
+    (if (i32.le_s (local.get $bh) (i32.const 0))
+      (then (local.set $bh (i32.const 22))))
+    (local.set $h
+      (i32.add
+        (i32.add
+          (i32.mul (local.get $rows) (local.get $bh))
+          (i32.mul (i32.sub (local.get $rows) (i32.const 1)) (i32.const 2)))
+        (i32.const 6)))
     (if (i32.lt_s (local.get $h) (i32.const 24)) (then (local.set $h (i32.const 24))))
     (call $host_move_window (local.get $hwnd) (local.get $x) (local.get $y) (local.get $w) (local.get $h) (i32.const 0))
     (call $ctrl_geom_set (local.get $idx) (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (call $toolbar_sync_child_combos (local.get $sw))
     (call $paint_flag_set_inv (local.get $hwnd))
     (call $toolbar_repaint_now (local.get $hwnd)))
 
@@ -4631,15 +4768,11 @@
               (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $rect (call $g2w (local.get $lParam)))
-        (local.set $bh (i32.load offset=8 (local.get $sw)))
-        (local.set $left (call $toolbar_button_left (local.get $sw) (local.get $wParam)))
-        (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $wParam)))
-        (local.set $top (i32.const 2))
-        (i32.store        (local.get $rect) (local.get $left))
-        (i32.store offset=4  (local.get $rect) (local.get $top))
-        (i32.store offset=8  (local.get $rect) (i32.add (local.get $left) (local.get $bw)))
-        (i32.store offset=12 (local.get $rect) (i32.add (local.get $top) (local.get $bh)))
-        (return (i32.const 1))))
+        (local.set $hit (call $toolbar_button_rect
+          (local.get $sw)
+          (local.get $wParam)
+          (local.get $rect)))
+        (return (local.get $hit))))
 
     ;; TB_SETBUTTONSIZE / TB_SETBITMAPSIZE / TB_AUTOSIZE.
     (if (i32.eq (local.get $msg) (i32.const 0x041F))
@@ -4834,13 +4967,20 @@
             (local.set $bh (i32.load offset=8 (local.get $sw)))
             (if (i32.lt_s (local.get $count) (i32.const 1))
               (then (local.set $count (i32.const 1))))
-            (local.set $left (i32.const 2))
             (local.set $i (i32.const 0))
             (block $done (loop $buttons
               (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-              (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $i)))
-              (local.set $top (i32.const 2))
-              (br_if $done (i32.ge_s (local.get $left) (i32.sub (local.get $w) (i32.const 2))))
+              (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $i) (global.get $PAINT_SCRATCH)))
+                (then (br $done)))
+              (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
+              (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
+              (local.set $bw (i32.sub
+                (i32.load offset=8 (global.get $PAINT_SCRATCH))
+                (local.get $left)))
+              (local.set $bh (i32.sub
+                (i32.load offset=12 (global.get $PAINT_SCRATCH))
+                (local.get $top)))
+              (br_if $done (i32.ge_s (local.get $top) (i32.sub (local.get $h) (i32.const 2))))
               (local.set $state_byte (i32.const 4))
               (if (i32.load offset=32 (local.get $sw))
                 (then
@@ -4848,7 +4988,6 @@
                   (local.set $state_byte (i32.load8_u offset=8 (local.get $rec)))))
               (if (i32.and (local.get $state_byte) (i32.const 0x08))
                 (then
-                  (local.set $left (i32.add (local.get $left) (local.get $bw)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               (if (i32.and
@@ -4865,7 +5004,6 @@
                         (i32.sub (i32.add (local.get $top) (local.get $bh)) (i32.const 3))
                         (i32.const 0x0A)
                         (i32.const 0x04)))))
-                  (local.set $left (i32.add (local.get $left) (local.get $bw)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -4968,7 +5106,6 @@
                           (i32.add (local.get $left) (i32.const 15))
                           (i32.add (local.get $top) (i32.const 14))
                           (i32.const 0x30012)))))
-              (local.set $left (i32.add (local.get $left) (local.get $bw)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $buttons)))))
         (return (i32.const 0))))

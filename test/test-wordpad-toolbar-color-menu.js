@@ -43,15 +43,16 @@ const seq = [
   `88:png:${PLAIN_PNG}`,
   ...ctrlA(92),
 
-  // Formatting toolbar color button center, after font/size combo fields.
-  '104:click:390:80',
+  // Formatting toolbar color button center, after the compressed font/size
+  // combo fields in the narrow WordPad control bar.
+  '104:click:275:80',
   '110:menu-dump:color',
   `112:png:${POPUP_PNG}`,
 
-  // Popup anchor is x=378,y=93. Row #12 is #801a / Blue.
-  '120:mousemove:390:345',
+  // Row #12 is #801a / Blue.
+  '120:mousemove:275:345',
   '122:menu-dump:hover-blue',
-  '124:click:390:345',
+  '124:click:275:345',
 
   // Refocus/reselect the document text for a stable CHARFORMAT assertion.
   '142:click:40:150',

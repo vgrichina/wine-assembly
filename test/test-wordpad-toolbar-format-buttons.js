@@ -39,19 +39,19 @@ const seq = [
   `88:png:${PLAIN_PNG}`,
   ...ctrlA(92),
 
-  // Formatting toolbar y=80. The font/size combobox fields are real child
-  // surfaces now, so the B/I/U buttons sit to their right.
-  '104:click:320:80', // Bold
+  // Formatting toolbar y=80. The font combo is compressed in the narrow
+  // WordPad control bar so all formatting buttons fit on one row.
+  '104:click:206:80', // Bold
   '118:click:40:150',
   ...ctrlA(122),
   '136:dump-focus-charformat:bold',
 
-  '146:click:342:80', // Italic
+  '146:click:228:80', // Italic
   '160:click:40:150',
   ...ctrlA(164),
   '178:dump-focus-charformat:bold-italic',
 
-  '188:click:358:80', // Underline
+  '188:click:251:80', // Underline
   '202:click:40:150',
   ...ctrlA(206),
   '220:dump-focus-charformat:bold-italic-underline',

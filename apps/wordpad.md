@@ -109,8 +109,9 @@ visuals:   nested toolbar child surfaces now composite through the MFC
            child in a 394px frame. Toolbar-hosted font/size combobox fields
            now paint white interiors and show `Times New Roman` / `10`.
            Large toolbar-hosted combo item rects are width-capped for the
-           narrow WordPad control bar, so the trailing color button is fully
-           visible instead of clipped off the right edge.
+           narrow WordPad control bar, and hosted combo HWNDs are resized to
+           those rects, so the full trailing formatting button run is visible
+           instead of clipped off the right edge.
 result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
            visible bitmap icons, populated combobox field paint, fully visible
            formatting buttons, disabled Standard toolbar icon dimming,
@@ -311,9 +312,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   disabled/highlight image-list remapping and advanced toolbar UI state remain
   follow-up fidelity.
 - The formatting toolbar now caps oversized toolbar-hosted combo item rects
-  against the containing 394px control bar. WordPad still owns its requested
-  240px font combo HWND, but the toolbar pack uses a tighter item rect so the
-  size combo plus Bold / Italic / Underline / Color buttons fit on the row.
+  against the containing 394px control bar and resizes hosted combo HWNDs to
+  their computed item rects. This keeps the size combo plus Bold / Italic /
+  Underline / Color / alignment / list buttons on the row instead of clipping
+  the trailing controls.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. `TB_INSERTBUTTONA` now shifts stored
@@ -527,16 +529,16 @@ Current evidence from the 2026-08-11 follow-up probe:
   `test/output/wordpad-richedit/caret.png`; it verifies native RichEdit USER
   caret API calls are tracked and composited as a visible vertical caret
   stroke in the document band.
-- Regression test: `node test/test-wordpad-toolbar.js` passes 21/21 and writes
+- Regression test: `node test/test-wordpad-toolbar.js` passes 22/22 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
   layout, color-keyed bitmap-strip icon painting of the standard/formatting
   toolbar rows, disabled Standard toolbar state/dimming, populated font/size
-  toolbar combo text, and the first Standard toolbar button opening WordPad's
-  `New` dialog. The pixel assertions measure only the toolbar button rows,
-  including colored icon pixels, reduced disabled-button color pixels, and the
-  fully visible formatting color button so placeholder-only, enabled-looking
-  disabled icons, or clipped buttons regress.
+  toolbar combo text, bounded formatting-toolbar item rects, and the first
+  Standard toolbar button opening WordPad's `New` dialog. The pixel assertions
+  measure only the toolbar button rows, including colored icon pixels, reduced
+  disabled-button color pixels, and the full visible formatting button run so
+  placeholder-only, enabled-looking disabled icons, or clipped buttons regress.
 - Direct WAT regression test: `node test/test-toolbar-insert.js` passes 15/15;
   it creates a standalone `ToolbarWindow32`, adds three known `TBBUTTON`
   records, inserts one in the middle, and verifies `TB_GETBUTTON` preserves
