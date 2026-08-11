@@ -184,17 +184,19 @@ scope:       The bounded test no longer waits for an extra post-open
              paragraph RTF remain follow-up work.
 ```
 
-Focused paragraph field readback probe:
+Focused paragraph field RTF round-trip probe:
 
 ```text
 type "para", Ctrl+A, apply PARAFORMAT2 fields directly to the focused
+native RichEdit child, Save As .rtf, File New, then reopen the saved .rtf
 RichEdit:    EM_GETPARAFORMAT reports numbering=1, dxStartIndent=720,
              dxRightIndent=360, dxOffset=-240, tabCount=1, tab0=1440
-             after the direct set; setting alignment=3 preserves those fields
-result:      PASS for focused RichEdit paragraph-field readback through the
-             emulator bridge.
-scope:       This is explicit state/readback coverage only. It does not claim
-             bullets/indents/tabs survive WordPad RTF save/reopen yet.
+             before Save As, after Save As, and after reopening
+RTF:         the saved stream contains bullet paragraph controls, `\fi240`,
+             `\li480`, `\ri360`, and `\tx1440`
+result:      PASS for basic paragraph numbering/indent/tab RTF round-trip.
+scope:       Advanced paragraph layout, multiple paragraph runs, tables, and
+             embedded objects remain follow-up work.
 ```
 
 Focused Font dialog probe:
@@ -342,11 +344,13 @@ Current evidence from the 2026-08-02 follow-up probe:
   after Ctrl+E and after Save As; the saved stream includes centered paragraph
   state (`\qc`), reopening restores the saved text, and screenshot pixels show
   the word shifted to the centered page position.
-- Focused RichEdit paragraph-field readback now covers directly-set
+- Focused RichEdit paragraph-field round-trip now covers directly-set
   PARAFORMAT2 numbering, start/right indents, first-line offset, and first tab
-  stop, preserving those fields across a later alignment set. This is state
-  readback only; bullets, indents, tabs, numbering, and advanced paragraph RTF
-  save/reopen remain follow-up work.
+  stop. Native RichEdit streams those fields to RTF (`\pn*`, `\fi240`,
+  `\li480`, `\ri360`, `\tx1440`) and restores them after Save As -> New ->
+  Open. The per-window test-bridge format cache now clears on full text
+  replacement (`WM_SETTEXT` / `EM_STREAMIN`) so post-open readback is not stale.
+  Advanced paragraph RTF remains follow-up work.
 - WordPad Format > Font now opens the WAT `ChooseFontA` dialog and returns the
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
@@ -477,8 +481,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   RichEdit text.
 - Regression test: `node test/test-wordpad-paraformat-fields.js` passes 13/13;
   it covers focused RichEdit PARAFORMAT2 readback for directly-set numbering,
-  start/right indents, first-line offset, and the first tab stop. This is not
-  RTF round-trip coverage.
+  start/right indents, first-line offset, and the first tab stop.
+- Regression test: `node test/test-wordpad-paraformat-roundtrip.js` passes
+  20/20; it covers saved RTF bullet/indent/tab controls and reopened
+  `EM_GETPARAFORMAT` state for the same paragraph fields.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows

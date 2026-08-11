@@ -887,6 +887,8 @@
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
     (result i32)
     (local $ret i32)
+    (call $richedit_note_text_reset_message
+      (local.get $hwnd) (local.get $msg))
     (call $richedit_note_charformat_message
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (call $richedit_note_paraformat_message

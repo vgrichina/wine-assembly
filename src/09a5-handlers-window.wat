@@ -1999,6 +1999,7 @@
         ;; EM_STREAMIN (0x449) — RichEdit text streaming
         (if (i32.eq (local.get $arg1) (i32.const 0x449))
           (then
+            (call $richedit_format_reset_hwnd (local.get $arg0))
             (call $host_richedit_stream
               (local.get $arg0)
               (call $g2w (call $gl32 (local.get $arg3))))

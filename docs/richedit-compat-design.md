@@ -392,8 +392,14 @@ native-editing path is alive.
   `test/test-wordpad-paraformat-fields.js`. The probe directly sets and reads
   back numbering, start/right indents, first-line offset, and the first tab
   stop, then verifies a later alignment set preserves those cached fields.
-  This is state/readback coverage only; it does not claim bullets, indents, or
-  tab stops round-trip through WordPad RTF yet.
+  Follow-up cache lifecycle work now clears the char/para caches on full text
+  replacement (`WM_SETTEXT` / `EM_STREAMIN`), so post-open paragraph readback
+  cannot be satisfied by stale bridge state.
+- Added `test/test-wordpad-paraformat-roundtrip.js`. Native RichEdit already
+  streams the directly-set paragraph fields to RTF as bullet controls plus
+  `\fi240`, `\li480`, `\ri360`, and `\tx1440`; after Save As -> New -> Open,
+  reopened `EM_GETPARAFORMAT` reports the original numbering, start/right
+  indents, first-line offset, and first tab stop.
 
 ### 2026-08-01 implementation progress
 
@@ -626,6 +632,7 @@ Acceptance:
 [x] basic RTF save/reopen preserves one selected run's font face/size/color
 [x] basic RTF save emits selected paragraph center alignment and reopens text
 [x] focused PARAFORMAT2 numbering/indents/tabs read back through RichEdit bridge
+[x] basic RTF save/reopen preserves paragraph numbering/indents/tabs
 [x] installer license RichEdit text streams in and scrolls
 ```
 
@@ -676,7 +683,7 @@ Acceptance:
 [x] simple RTF round-trips one selected run's font size/color
 [x] simple RTF stream-out records selected paragraph center alignment
 [x] focused paragraph indents/tabs/numbering read back through RichEdit bridge
-[ ] paragraph indents/tabs/numbering RTF round-trip correctly
+[x] paragraph indents/tabs/numbering RTF round-trip correctly
 ```
 
 ## Whole-task acceptance matrix
@@ -706,6 +713,7 @@ Acceptance:
 [x] Basic RTF save/reopen preserves selected font size/color state
 [x] Basic RTF save emits selected paragraph alignment state and reopens text
 [x] Focused RichEdit PARAFORMAT2 fields read back for numbering/indents/tabs
+[x] Basic paragraph numbering/indents/tabs round-trip through WordPad RTF
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad

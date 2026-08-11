@@ -1867,6 +1867,7 @@
           (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
           (call $wnd_table_get (local.get $arg0)))
       (then
+        (call $richedit_format_reset_hwnd (local.get $arg0))
         (global.set $eax (call $wnd_send_message
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $arg1)))
         (call $host_set_window_text (local.get $arg0) (local.get $wa))
@@ -4094,6 +4095,7 @@
           (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
           (call $wnd_table_get (local.get $arg0)))
       (then
+        (call $richedit_format_reset_hwnd (local.get $arg0))
         (global.set $eax (call $wnd_send_message
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
         (call $host_set_window_text (local.get $arg0) (local.get $text_wa))

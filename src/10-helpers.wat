@@ -1531,6 +1531,19 @@
     (i32.store (call $richedit_format_addr_for_slot (local.get $slot)) (i32.const 0))
     (call $richedit_para_reset_slot (local.get $slot)))
 
+  (func $richedit_format_reset_hwnd (param $hwnd i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (call $richedit_format_reset_slot (local.get $slot)))
+
+  (func $richedit_note_text_reset_message (param $hwnd i32) (param $msg i32)
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x000C)) ;; WM_SETTEXT
+          (i32.eq (local.get $msg) (i32.const 0x0449))) ;; EM_STREAMIN
+      (then
+        (call $richedit_format_reset_hwnd (local.get $hwnd)))))
+
   (func $richedit_note_charformat_message
         (param $hwnd i32) (param $msg i32) (param $lParam i32)
     (local $slot i32) (local $cf_w i32) (local $mask i32) (local $yHeight i32)
