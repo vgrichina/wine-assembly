@@ -49,6 +49,8 @@ const LVCF_WIDTH = 0x0002;
 const LVCF_TEXT = 0x0004;
 const LVCF_SUBITEM = 0x0008;
 const SB_THUMBTRACK = 5;
+const NM_CLICK = -2;
+const LVN_ITEMCHANGED = -101;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -242,8 +244,16 @@ async function main() {
   const subLabelRect = getRect(LVM_GETSUBITEMRECT, 5, LVIR_LABEL, 1);
   check('LVM_GETSUBITEMRECT honors label inset', subLabelRect.ok === 1 && subLabelRect.left === 124 && subLabelRect.top === 50 && subLabelRect.right === 210 && subLabelRect.bottom === 66, JSON.stringify(subLabelRect));
 
+  const notifyBeforeClick = e.listview_get_debug_notify_count();
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(20, 38));
   check('click on visible row 1 selects underlying row 4', e.listview_get_selected_index(lv) === 4);
+  check('row selection sends LVN_ITEMCHANGED', e.listview_get_debug_notify_count() >= notifyBeforeClick + 2 &&
+    e.listview_get_debug_notify_code() === LVN_ITEMCHANGED &&
+    e.listview_get_debug_notify_item() === 4 &&
+    e.listview_get_debug_notify_old_state() === 0 &&
+    e.listview_get_debug_notify_new_state() === LVIS_SELECTED);
+  e.send_message(lv, WM_LBUTTONUP, 0, makeLParam(20, 38));
+  check('row click release sends NM_CLICK', e.listview_get_debug_notify_code() === NM_CLICK);
   check('LVM_GETSELECTEDCOUNT reports one selected row', e.send_message(lv, LVM_GETSELECTEDCOUNT, 0, 0) === 1);
   check('LVM_GETNEXTITEM finds selected row', e.send_message(lv, LVM_GETNEXTITEM, 0xFFFFFFFF, LVNI_SELECTED) === 4);
   check('LVM_GETITEMSTATE reports selected bit', e.send_message(lv, LVM_GETITEMSTATE, 4, LVIS_SELECTED) === LVIS_SELECTED);
@@ -254,8 +264,14 @@ async function main() {
   dv.setUint32(stateP + 0, LVIF_STATE, true);
   dv.setUint32(stateP + 12, LVIS_SELECTED, true);
   dv.setUint32(stateP + 16, LVIS_SELECTED, true);
+  const notifyBeforeState = e.listview_get_debug_notify_count();
   check('LVM_SETITEMSTATE can move selection', e.send_message(lv, LVM_SETITEMSTATE, 2, stateG) === 1);
   check('selection export follows LVM_SETITEMSTATE', e.listview_get_selected_index(lv) === 2);
+  check('LVM_SETITEMSTATE sends selected-item LVN_ITEMCHANGED', e.listview_get_debug_notify_count() >= notifyBeforeState + 3 &&
+    e.listview_get_debug_notify_code() === LVN_ITEMCHANGED &&
+    e.listview_get_debug_notify_item() === 2 &&
+    e.listview_get_debug_notify_old_state() === 0 &&
+    e.listview_get_debug_notify_new_state() === LVIS_SELECTED);
 
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(212, 76));
   e.send_message(lv, WM_LBUTTONUP, 0, makeLParam(212, 76));

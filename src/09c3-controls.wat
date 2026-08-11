@@ -58,6 +58,11 @@
   (global $dialog_button_capture_hwnd (mut i32) (i32.const 0))
   (global $edit_sb_drag_anchor_y (mut i32) (i32.const 0))
   (global $edit_sb_drag_anchor_top (mut i32) (i32.const 0))
+  (global $lv_debug_notify_count (mut i32) (i32.const 0))
+  (global $lv_debug_notify_code (mut i32) (i32.const 0))
+  (global $lv_debug_notify_item (mut i32) (i32.const -1))
+  (global $lv_debug_notify_old_state (mut i32) (i32.const 0))
+  (global $lv_debug_notify_new_state (mut i32) (i32.const 0))
 
   ;; Copy a NUL-terminated string from a WASM-linear address into a fresh
   ;; heap-allocated guest buffer. Returns the guest pointer (suitable for
@@ -3541,6 +3546,85 @@
       (then (call $paint_flag_set_inv (local.get $hwnd))))
     (local.get $new_top))
 
+  (func $lv_notify_simple (param $hwnd i32) (param $code i32)
+    (local $parent i32) (local $notify_g i32) (local $notify_w i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $notify_g (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (local.get $code))
+    (global.set $lv_debug_notify_count (i32.add (global.get $lv_debug_notify_count) (i32.const 1)))
+    (global.set $lv_debug_notify_code (local.get $code))
+    (global.set $lv_debug_notify_item (i32.const -1))
+    (global.set $lv_debug_notify_old_state (i32.const 0))
+    (global.set $lv_debug_notify_new_state (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd))
+      (local.get $notify_g)))
+    (call $heap_free (local.get $notify_g)))
+
+  (func $lv_notify_item_state
+    (param $hwnd i32) (param $item i32) (param $old_state i32) (param $new_state i32) (param $code i32) (result i32)
+    (local $parent i32) (local $notify_g i32) (local $notify_w i32) (local $ret i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return (i32.const 0))))
+    (local.set $notify_g (call $heap_alloc (i32.const 44)))
+    (if (i32.eqz (local.get $notify_g)) (then (return (i32.const 0))))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (call $zero_memory (local.get $notify_w) (i32.const 44))
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (local.get $code))
+    (i32.store offset=12 (local.get $notify_w) (local.get $item))
+    (i32.store offset=16 (local.get $notify_w) (i32.const 0))
+    (i32.store offset=20 (local.get $notify_w) (local.get $new_state))
+    (i32.store offset=24 (local.get $notify_w) (local.get $old_state))
+    (i32.store offset=28 (local.get $notify_w) (i32.const 0x0008)) ;; LVIF_STATE
+    (global.set $lv_debug_notify_count (i32.add (global.get $lv_debug_notify_count) (i32.const 1)))
+    (global.set $lv_debug_notify_code (local.get $code))
+    (global.set $lv_debug_notify_item (local.get $item))
+    (global.set $lv_debug_notify_old_state (local.get $old_state))
+    (global.set $lv_debug_notify_new_state (local.get $new_state))
+    (local.set $ret (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd))
+      (local.get $notify_g)))
+    (call $heap_free (local.get $notify_g))
+    (local.get $ret))
+
+  (func $lv_select_item (param $hwnd i32) (param $sw i32) (param $idx i32) (result i32)
+    (local $old_idx i32)
+    (if (i32.and
+          (i32.ne (local.get $idx) (i32.const -1))
+          (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                  (i32.ge_s (local.get $idx) (i32.load (local.get $sw)))))
+      (then (return (i32.const 0))))
+    (local.set $old_idx (i32.load offset=32 (local.get $sw)))
+    (if (i32.eq (local.get $old_idx) (local.get $idx))
+      (then (return (i32.const 1))))
+    (if (i32.ge_s (local.get $idx) (i32.const 0))
+      (then
+        (if (call $lv_notify_item_state
+              (local.get $hwnd) (local.get $idx)
+              (i32.const 0) (i32.const 0x0002) (i32.const -100))
+          (then (return (i32.const 0))))))
+    (if (i32.ge_s (local.get $old_idx) (i32.const 0))
+      (then
+        (drop (call $lv_notify_item_state
+          (local.get $hwnd) (local.get $old_idx)
+          (i32.const 0x0002) (i32.const 0) (i32.const -101)))))
+    (i32.store offset=32 (local.get $sw) (local.get $idx))
+    (if (i32.ge_s (local.get $idx) (i32.const 0))
+      (then
+        (drop (call $lv_notify_item_state
+          (local.get $hwnd) (local.get $idx)
+          (i32.const 0) (i32.const 0x0002) (i32.const -101)))))
+    (i32.const 1))
+
   (func $listview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
@@ -3798,7 +3882,7 @@
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
               (then
                 (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-                  (then (i32.store offset=32 (local.get $sw) (local.get $idx))))))))
+                  (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))))))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (local.get $idx))))
 
@@ -3823,10 +3907,14 @@
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
               (then
                 (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-                  (then (i32.store offset=32 (local.get $sw) (local.get $idx)))
+                  (then
+                    (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))
+                      (then (return (i32.const 0)))))
                   (else
                     (if (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $idx))
-                      (then (i32.store offset=32 (local.get $sw) (i32.const -1))))))))))
+                      (then
+                        (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
+                          (then (return (i32.const 0))))))))))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -3864,10 +3952,15 @@
         (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
           (then
             (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-              (then (i32.store offset=32 (local.get $sw) (local.get $idx)))
-              (else
-                (if (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $idx))
-                  (then (i32.store offset=32 (local.get $sw) (i32.const -1))))))))
+              (then
+                (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))
+                  (then (return (i32.const 0))))))
+            (if (i32.and
+                  (i32.eqz (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002)))
+                  (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $idx)))
+              (then
+                (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
+                  (then (return (i32.const 0))))))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x102C))
@@ -4101,6 +4194,21 @@
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
+    (if (i32.eq (local.get $msg) (i32.const 0x0202))
+      (then
+        (local.set $y (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (local.set $header_h (call $lv_header_h (local.get $sw)))
+        (if (i32.lt_s (local.get $y) (local.get $header_h))
+          (then (return (i32.const 0))))
+        (local.set $row
+          (i32.add (i32.load offset=36 (local.get $sw))
+            (i32.div_s (i32.sub (local.get $y) (local.get $header_h)) (i32.const 16))))
+        (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
+                     (i32.lt_s (local.get $row) (i32.load (local.get $sw))))
+          (then
+            (call $lv_notify_simple (local.get $hwnd) (i32.const -2))))
+        (return (i32.const 0))))
+
     (if (i32.eq (local.get $msg) (i32.const 0x0200))
       (then
         (if (i32.and
@@ -4172,7 +4280,8 @@
         (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
                      (i32.lt_s (local.get $row) (i32.load (local.get $sw))))
           (then
-            (i32.store offset=32 (local.get $sw) (local.get $row))
+            (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $row)))
+              (then (return (i32.const 0))))
             (call $paint_flag_set_inv (local.get $hwnd))
             (return (i32.const 1))))
         (return (i32.const 0))))

@@ -361,9 +361,10 @@ Remaining:
   path now have WAT-native state plus shared vertical scrollbar behavior, and
   `SysListView32` is protected from registered-class fallback so RegEdit uses
   the WAT-native ListView path at app runtime. The report subset also covers
-  column get/set, item/subitem rect queries, and subitem hit-test output.
-  Advanced ListView modes, full notifications, image lists, and real Header
-  control fidelity remain later work.
+  column get/set, item/subitem rect queries, subitem hit-test output, and
+  bounded selection/click notifications. Advanced ListView modes, broader
+  notifications, image lists, and real Header control fidelity remain later
+  work.
 - Each migration adds a `$create_xxx_dialog` WAT function and (once visible-side rendering goes through `_drawWatChildren`) deletes the `showXxxDialog` JS body.
 
 **STEP 7: Route guest `CreateWindowExA` for EDIT/BUTTON/STATIC to WAT wndprocs.**

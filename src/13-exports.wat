@@ -1486,6 +1486,17 @@
     (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
     (i32.load offset=32 (call $g2w (local.get $s))))
 
+  (func (export "listview_get_debug_notify_count") (result i32)
+    (global.get $lv_debug_notify_count))
+  (func (export "listview_get_debug_notify_code") (result i32)
+    (global.get $lv_debug_notify_code))
+  (func (export "listview_get_debug_notify_item") (result i32)
+    (global.get $lv_debug_notify_item))
+  (func (export "listview_get_debug_notify_old_state") (result i32)
+    (global.get $lv_debug_notify_old_state))
+  (func (export "listview_get_debug_notify_new_state") (result i32)
+    (global.get $lv_debug_notify_new_state))
+
   (func (export "listview_get_visible_rows") (param $hwnd i32) (result i32)
     (local $s i32) (local $sw i32) (local $sz i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
