@@ -39,12 +39,12 @@ const inputSpec = [
   '32:keypress:115',  // 's'
   '33:keypress:116',  // 't'
   '34:dump-main-edit-state:visible',
-  `35:png:${pngPath}`,
+  `34:png:${pngPath}`,
   '40:dump-main-edit-state:hidden',
   '60:dump-main-edit-state',
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=80 --batch-size=50000 --trace-api`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=80 --batch-size=50000 --trace-api --quiet-blocks`;
 console.log('$', cmd);
 
 let out = '';
@@ -73,7 +73,7 @@ if (pngWritten) {
   const img = PNG.sync.read(fs.readFileSync(pngPath));
   for (let x = 35; x < 90 && !caretPixels; x++) {
     let run = 0;
-    for (let y = 55; y < 85; y++) {
+    for (let y = 40; y < 75; y++) {
       const i = (y * img.width + x) * 4;
       const black = img.data[i] < 30 && img.data[i + 1] < 30 && img.data[i + 2] < 30;
       run = black ? run + 1 : 0;

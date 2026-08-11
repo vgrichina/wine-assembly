@@ -3,7 +3,8 @@
 //
 // WordPad's native RichEdit calls CreateCaret/SetCaretPos/ShowCaret. The
 // emulator must keep enough USER caret state to leave a visible caret stroke
-// in screenshots; WAT EDIT focus flags do not cover this native-control path.
+// in screenshots and blink/erase it without corrupting the backing store; WAT
+// EDIT focus flags do not cover this native-control path.
 
 const fs = require('fs');
 const path = require('path');
@@ -14,7 +15,9 @@ const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT_DIR = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
-const PNG_OUT = path.join(OUT_DIR, 'caret.png');
+const PNG_ON = path.join(OUT_DIR, 'caret-on.png');
+const PNG_OFF = path.join(OUT_DIR, 'caret-off.png');
+const PNG_ON_AGAIN = path.join(OUT_DIR, 'caret-on-again.png');
 const TEXT = 'caret';
 
 if (!fs.existsSync(EXE)) {
@@ -35,8 +38,14 @@ for (const ch of TEXT) {
 }
 seq.push('86:dump-focus-state:typed');
 seq.push('88:dump-windows:caret');
-seq.push(`92:png:${PNG_OUT}`);
-seq.push('96:stop');
+seq.push('90:keydown:37');
+seq.push('91:keydown:39');
+seq.push(`92:png:${PNG_ON}`);
+seq.push('93:sleep-ms:560');
+seq.push(`94:png:${PNG_OFF}`);
+seq.push('95:sleep-ms:560');
+seq.push(`96:png:${PNG_ON_AGAIN}`);
+seq.push('100:stop');
 
 const traceApis = [
   'CreateCaret',
@@ -54,6 +63,7 @@ const args = [
   '--max-batches=140',
   '--batch-size=50000',
   '--quiet-api',
+  '--quiet-blocks',
   `--trace-api=${traceApis}`,
   '--no-close',
 ];
@@ -197,12 +207,20 @@ function line(label) {
 const typed = line('typed');
 const caretPos = parseLastCaretPos(out);
 const origin = parseRichEditClientOrigin(out);
-const visual = analyzeCaretStroke(PNG_OUT, origin, caretPos);
+const visualOn = analyzeCaretStroke(PNG_ON, origin, caretPos);
+const visualOff = analyzeCaretStroke(PNG_OFF, origin, caretPos);
+const visualOnAgain = analyzeCaretStroke(PNG_ON_AGAIN, origin, caretPos);
 
 if (caretPos) console.log(`last caret pos: x=${caretPos.x} y=${caretPos.y}`);
 if (origin) console.log(`richedit client: x=${origin.x} y=${origin.y} w=${origin.w} h=${origin.h}`);
-if (visual) {
-  console.log(`visual caret stroke: expected=${visual.expectedX},${visual.expectedY} maxColumnX=${visual.maxColumnX} dark=${visual.maxColumnDark}`);
+if (visualOn) {
+  console.log(`visual caret on: expected=${visualOn.expectedX},${visualOn.expectedY} maxColumnX=${visualOn.maxColumnX} dark=${visualOn.maxColumnDark}`);
+}
+if (visualOff) {
+  console.log(`visual caret off: expected=${visualOff.expectedX},${visualOff.expectedY} maxColumnX=${visualOff.maxColumnX} dark=${visualOff.maxColumnDark}`);
+}
+if (visualOnAgain) {
+  console.log(`visual caret on-again: expected=${visualOnAgain.expectedX},${visualOnAgain.expectedY} maxColumnX=${visualOnAgain.maxColumnX} dark=${visualOnAgain.maxColumnDark}`);
 }
 
 const checks = [];
@@ -215,12 +233,19 @@ check('native RichEdit created USER caret', /CreateCaret\(/.test(out));
 check('native RichEdit set USER caret position', !!caretPos && caretPos.x > 0 && caretPos.y >= 0);
 check('native RichEdit showed USER caret', /ShowCaret\(/.test(out));
 check('RichEdit window origin was dumped', !!origin);
-check('caret screenshot written', fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0);
-check('caret paints a dark vertical stroke',
-  visual &&
-  visual.expectedX >= origin.x &&
-  visual.expectedY >= origin.y &&
-  visual.maxColumnDark >= 10);
+check('caret blink screenshots written',
+  [PNG_ON, PNG_OFF, PNG_ON_AGAIN].every(file => fs.existsSync(file) && fs.statSync(file).size > 0));
+check('caret paints an inverted vertical stroke in on phase',
+  visualOn &&
+  visualOn.expectedX >= origin.x &&
+  visualOn.expectedY >= origin.y &&
+  visualOn.maxColumnDark >= 10);
+check('caret off phase erases the stroke',
+  visualOff &&
+  visualOff.maxColumnDark <= 3);
+check('caret returns in the next on phase without stale backing-store damage',
+  visualOnAgain &&
+  visualOnAgain.maxColumnDark >= 10);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 

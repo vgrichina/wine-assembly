@@ -6558,9 +6558,8 @@
   )
 
   ;; Caret APIs — enough USER caret state for native controls such as RichEdit
-  ;; to leave a visible caret stroke in the renderer. Blink cadence and XOR
-  ;; erasure are intentionally deferred; repainting the control clears stale
-  ;; strokes in normal text-edit paths.
+  ;; to leave a visible caret stroke in the renderer. The renderer composites
+  ;; this state after normal back-canvas paint and owns blink/inverted erasure.
   (func $handle_CreateCaret (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $caret_hwnd (local.get $arg0))
     (global.set $caret_x (i32.const 0))

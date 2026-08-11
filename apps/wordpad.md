@@ -76,13 +76,13 @@ Focused caret probe:
 
 ```text
 type "caret", trace CreateCaret / SetCaretPos / ShowCaret, dump RichEdit
-window geometry, capture screenshot
+window geometry, capture on/off/on-again screenshots around the blink interval
 caret:  native RichEdit creates a USER caret and sets it to x=48, y=3 after
         typing "caret"
-pixels: screenshot has a dark 13px vertical caret stroke at the expected
-        RichEdit client coordinate
-result: PASS for visible native RichEdit caret paint. Blink/XOR cadence is
-        still deferred.
+pixels: the on frames have a dark 13px inverted vertical caret stroke at the
+        expected RichEdit client coordinate; the off frame clears it
+result: PASS for visible native RichEdit caret paint, blink cadence, and
+        repaint-based inverted/XOR-style erasure.
 ```
 
 Focused toolbar layout/command probe:
@@ -529,11 +529,14 @@ Current evidence from the 2026-08-11 follow-up probe:
   `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A
   selects the native RichEdit text and the screenshot gains a visible blue
   selection band.
-- Regression test: `node test/test-wordpad-caret.js` passes 11/11 and writes
-  `test/output/wordpad-richedit/caret.png`; it verifies native RichEdit USER
-  caret API calls are tracked and composited as a visible vertical caret
-  stroke in the document band.
-- Regression test: `node test/test-wordpad-toolbar.js` passes 22/22 and writes
+- Regression test: `node test/test-wordpad-caret.js` passes 13/13 and writes
+  `test/output/wordpad-richedit/caret-on.png`,
+  `test/output/wordpad-richedit/caret-off.png`, and
+  `test/output/wordpad-richedit/caret-on-again.png`; it verifies native
+  RichEdit USER caret API calls are tracked, composited as a visible inverted
+  vertical caret stroke, blink off cleanly, then return without stale
+  backing-store damage.
+- Regression test: `node test/test-wordpad-toolbar.js` passes 23/23 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
   layout, color-keyed bitmap-strip icon painting of the standard/formatting
@@ -543,7 +546,7 @@ Current evidence from the 2026-08-11 follow-up probe:
   measure only the toolbar button rows, including colored icon pixels, reduced
   disabled-button color pixels, and the full visible formatting button run so
   placeholder-only, enabled-looking disabled icons, or clipped buttons regress.
-- Direct WAT regression test: `node test/test-toolbar-insert.js` passes 15/15;
+- Direct WAT regression test: `node test/test-toolbar-insert.js` passes 24/24;
   it creates a standalone `ToolbarWindow32`, adds three known `TBBUTTON`
   records, inserts one in the middle, and verifies `TB_GETBUTTON` preserves
   command/image order plus monotonic `TB_GETITEMRECT` geometry. It also covers
@@ -630,9 +633,10 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   caret blink/XOR cadence, broader RichEdit wrapping/layout edge cases,
-   advanced toolbar UI state, mixed-run size reporting, and embedded
-   OLE/object clipboard fidelity still need focused probes. Font dialog
+   broader RichEdit wrapping/layout edge cases, advanced toolbar UI state,
+   mixed-run size reporting, and embedded OLE/object clipboard fidelity still
+   need focused probes. Covered areas now include caret blink/XOR cadence,
+   Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
    round-trip, simple paragraph center-alignment round-trip, Edit-menu
