@@ -611,7 +611,8 @@
   ;; 0x00011140  1064B   DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
-  ;; 0x00011980  ~1.4KB  Free (up to GUEST_BASE)
+  ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
+  ;; 0x00011D80  640B    Free (up to GUEST_BASE)
   ;; --- High WAT-private tables ---
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
@@ -902,6 +903,10 @@
   ;; cache for the current RichEdit shim; it is not a full per-run format model.
   (global $RICHEDIT_FORMAT_TABLE i32 (i32.const 0x00011580))
   (global $RICHEDIT_FORMAT_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; RICHEDIT_PARA_TABLE — per-window heap pointer to a 188-byte PARAFORMAT2A
+  ;; snapshot for explicitly set paragraph fields. 0 = no cached fields.
+  (global $RICHEDIT_PARA_TABLE i32 (i32.const 0x00011980))
+  (global $RICHEDIT_PARA_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Lock (Atomics lock)

@@ -367,6 +367,8 @@ async function main() {
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
   //   B:set-focus-paraformat-align:ALIGN[:LABEL] — EM_SETPARAFORMAT alignment on focused hwnd
+  //   B:set-focus-paraformat-basic:NUMBERING:START:RIGHT:OFFSET:TAB[:LABEL]
+  //       — EM_SETPARAFORMAT basic paragraph fields on focused hwnd
   //   B:menu-edit-command:ID[:LABEL] — invoke exported WAT menu edit-command bridge
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
@@ -426,6 +428,14 @@ async function main() {
       } else if (kind === 'set-focus-paraformat-align') {
         scheduledInput.push({ batch, action: 'set-focus-paraformat-align',
           align: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'set-focus-paraformat-basic') {
+        scheduledInput.push({ batch, action: 'set-focus-paraformat-basic',
+          numbering: parseInt(parts[2] || '0', 10),
+          start: parseInt(parts[3] || '0', 10),
+          right: parseInt(parts[4] || '0', 10),
+          offset: parseInt(parts[5] || '0', 10),
+          tab: parseInt(parts[6] || '0', 10),
+          label: parts[7] || '' });
       } else if (kind === 'menu-edit-command') {
         scheduledInput.push({ batch, action: 'menu-edit-command',
           id: parseInt(parts[2]), label: parts[3] || '' });
@@ -2499,7 +2509,8 @@ async function main() {
           const dxOffset = dv.getInt32(pfWA + 20, true) | 0;
           const alignment = dv.getUint16(pfWA + 24, true) >>> 0;
           const tabCount = dv.getInt16(pfWA + 26, true) | 0;
-          logs.push(`[input] dump-focus-paraformat${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} ret=0x${ret.toString(16)} cb=${cb} mask=0x${mask.toString(16)} numbering=${numbering} effects=0x${effects.toString(16)} dxStartIndent=${dxStartIndent} dxRightIndent=${dxRightIndent} dxOffset=${dxOffset} alignment=${alignment} tabCount=${tabCount} at batch ${batch}`);
+          const tab0 = tabCount > 0 ? (dv.getInt32(pfWA + 28, true) | 0) : 0;
+          logs.push(`[input] dump-focus-paraformat${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} ret=0x${ret.toString(16)} cb=${cb} mask=0x${mask.toString(16)} numbering=${numbering} effects=0x${effects.toString(16)} dxStartIndent=${dxStartIndent} dxRightIndent=${dxRightIndent} dxOffset=${dxOffset} alignment=${alignment} tabCount=${tabCount} tab0=${tab0} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-paraformat${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO PARAFORMAT API at batch ${batch}`);
         }
@@ -2524,6 +2535,33 @@ async function main() {
           logs.push(`[input] set-focus-paraformat-align${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} alignment=${ev.align >>> 0} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-paraformat-align${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO PARAFORMAT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-paraformat-basic') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-paraformat-basic${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const pfG = we.guest_alloc(256);
+          const pfWA = g2w(pfG);
+          const dv = new DataView(memory.buffer);
+          new Uint8Array(memory.buffer, pfWA, 256).fill(0);
+          dv.setUint32(pfWA, 188, true); // PARAFORMAT2A cbSize
+          dv.setUint32(pfWA + 4, 0x00000037, true); // PFM_STARTINDENT|RIGHTINDENT|OFFSET|TABSTOPS|NUMBERING
+          dv.setUint16(pfWA + 8, ev.numbering >>> 0, true); // wNumbering
+          dv.setInt32(pfWA + 12, ev.start | 0, true); // dxStartIndent
+          dv.setInt32(pfWA + 16, ev.right | 0, true); // dxRightIndent
+          dv.setInt32(pfWA + 20, ev.offset | 0, true); // dxOffset
+          dv.setInt16(pfWA + 26, ev.tab ? 1 : 0, true); // cTabCount
+          if (ev.tab) dv.setInt32(pfWA + 28, ev.tab | 0, true); // rgxTabs[0]
+          const ret = we.send_message(h, 0x0447, 0, pfG) >>> 0; // EM_SETPARAFORMAT
+          logs.push(`[input] set-focus-paraformat-basic${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} numbering=${ev.numbering | 0} dxStartIndent=${ev.start | 0} dxRightIndent=${ev.right | 0} dxOffset=${ev.offset | 0} tab=${ev.tab | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-paraformat-basic${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO PARAFORMAT API at batch ${batch}`);
         }
       } else if (ev.action === 'menu-edit-command') {
         const we = instance.exports;

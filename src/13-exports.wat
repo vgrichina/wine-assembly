@@ -889,10 +889,14 @@
     (local $ret i32)
     (call $richedit_note_charformat_message
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
+    (call $richedit_note_paraformat_message
+      (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (local.set $ret
       (call $wnd_send_message (local.get $hwnd) (local.get $msg)
                               (local.get $wParam) (local.get $lParam)))
     (call $richedit_patch_get_charformat_message
+      (local.get $hwnd) (local.get $msg) (local.get $lParam))
+    (call $richedit_patch_get_paraformat_message
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (local.get $ret))
 

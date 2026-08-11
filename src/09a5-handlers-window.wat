@@ -1928,6 +1928,9 @@
     ;; EM_GETCHARFORMAT needs post-call patching of the output buffer. Route
     ;; this narrow message through the recursive synchronous sender so the WAT
     ;; handler regains control before returning to the guest SendMessageA call.
+    ;; Do not route app-side EM_GETPARAFORMAT here: WordPad's native RichEdit
+    ;; save path is sensitive to the exact native message flow. The exported
+    ;; test bridge patches EM_GETPARAFORMAT after its own synchronous call.
     (if (i32.and
           (i32.eq (local.get $arg1) (i32.const 0x043A)) ;; EM_GETCHARFORMAT
           (i32.ne (local.get $arg3) (i32.const 0)))

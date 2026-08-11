@@ -1513,9 +1513,23 @@
     (i32.add (global.get $RICHEDIT_FORMAT_TABLE)
              (i32.shl (local.get $slot) (i32.const 2))))
 
+  (func $richedit_para_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $RICHEDIT_PARA_TABLE)
+             (i32.shl (local.get $slot) (i32.const 2))))
+
+  (func $richedit_para_reset_slot (param $slot i32)
+    (local $addr i32) (local $ptr i32)
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)) (then (return)))
+    (local.set $addr (call $richedit_para_addr_for_slot (local.get $slot)))
+    (local.set $ptr (i32.load (local.get $addr)))
+    (if (local.get $ptr)
+      (then (call $heap_free (local.get $ptr))))
+    (i32.store (local.get $addr) (i32.const 0)))
+
   (func $richedit_format_reset_slot (param $slot i32)
     (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)) (then (return)))
-    (i32.store (call $richedit_format_addr_for_slot (local.get $slot)) (i32.const 0)))
+    (i32.store (call $richedit_format_addr_for_slot (local.get $slot)) (i32.const 0))
+    (call $richedit_para_reset_slot (local.get $slot)))
 
   (func $richedit_note_charformat_message
         (param $hwnd i32) (param $msg i32) (param $lParam i32)
@@ -1539,6 +1553,66 @@
           (local.get $yHeight))))
     (call $host_note_richedit_charformat_size (local.get $yHeight)))
 
+  ;; RichEdit paragraph compatibility cache. Native RichEdit already handles
+  ;; simple alignment for WordPad; this preserves the other explicitly set
+  ;; PARAFORMAT fields across immediate EM_GETPARAFORMAT probes without trying
+  ;; to model mixed paragraph runs.
+  (func $richedit_note_paraformat_message
+        (param $hwnd i32) (param $msg i32) (param $lParam i32)
+    (local $slot i32) (local $pf_w i32) (local $mask i32)
+    (local $cache_g i32) (local $cache_w i32)
+    (if (i32.ne (local.get $msg) (i32.const 0x0447)) (then (return))) ;; EM_SETPARAFORMAT
+    (if (i32.eqz (local.get $lParam)) (then (return)))
+    (local.set $pf_w (call $g2w (local.get $lParam)))
+    ;; PARAFORMAT: PFM_STARTINDENT | PFM_RIGHTINDENT | PFM_OFFSET |
+    ;; PFM_ALIGNMENT | PFM_TABSTOPS | PFM_NUMBERING.
+    (local.set $mask (i32.and (i32.load offset=4 (local.get $pf_w)) (i32.const 0x0000003F)))
+    (if (i32.eqz (local.get $mask)) (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $cache_g
+      (i32.load (call $richedit_para_addr_for_slot (local.get $slot))))
+    (if (i32.eqz (local.get $cache_g))
+      (then
+        (local.set $cache_g (call $heap_alloc (i32.const 188)))
+        (local.set $cache_w (call $g2w (local.get $cache_g)))
+        (call $zero_memory (local.get $cache_w) (i32.const 188))
+        (i32.store (local.get $cache_w) (i32.const 188))
+        (i32.store (call $richedit_para_addr_for_slot (local.get $slot))
+          (local.get $cache_g)))
+      (else
+        (local.set $cache_w (call $g2w (local.get $cache_g)))))
+    (i32.store offset=4 (local.get $cache_w)
+      (i32.or (i32.load offset=4 (local.get $cache_w)) (local.get $mask)))
+    (if (i32.and (local.get $mask) (i32.const 0x00000020)) ;; PFM_NUMBERING
+      (then
+        (i32.store16 offset=8 (local.get $cache_w)
+          (i32.load16_u offset=8 (local.get $pf_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000001)) ;; PFM_STARTINDENT
+      (then
+        (i32.store offset=12 (local.get $cache_w)
+          (i32.load offset=12 (local.get $pf_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000002)) ;; PFM_RIGHTINDENT
+      (then
+        (i32.store offset=16 (local.get $cache_w)
+          (i32.load offset=16 (local.get $pf_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000004)) ;; PFM_OFFSET
+      (then
+        (i32.store offset=20 (local.get $cache_w)
+          (i32.load offset=20 (local.get $pf_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000008)) ;; PFM_ALIGNMENT
+      (then
+        (i32.store16 offset=24 (local.get $cache_w)
+          (i32.load16_u offset=24 (local.get $pf_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000010)) ;; PFM_TABSTOPS
+      (then
+        (i32.store16 offset=26 (local.get $cache_w)
+          (i32.load16_u offset=26 (local.get $pf_w)))
+        (call $memcpy
+          (i32.add (local.get $cache_w) (i32.const 28))
+          (i32.add (local.get $pf_w) (i32.const 28))
+          (i32.const 128)))))
+
   (func $richedit_patch_get_charformat_message
         (param $hwnd i32) (param $msg i32) (param $lParam i32)
     (local $slot i32) (local $yHeight i32) (local $cf_w i32) (local $native_yHeight i32)
@@ -1558,6 +1632,52 @@
     (i32.store offset=4 (local.get $cf_w)
       (i32.or (i32.load offset=4 (local.get $cf_w)) (i32.const 0x80000000))) ;; CFM_SIZE
     (i32.store offset=12 (local.get $cf_w) (local.get $yHeight)))
+
+  (func $richedit_patch_get_paraformat_message
+        (param $hwnd i32) (param $msg i32) (param $lParam i32)
+    (local $slot i32) (local $pf_w i32) (local $cache_g i32) (local $cache_w i32)
+    (local $mask i32)
+    (if (i32.ne (local.get $msg) (i32.const 0x043D)) (then (return))) ;; EM_GETPARAFORMAT
+    (if (i32.eqz (local.get $lParam)) (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $cache_g
+      (i32.load (call $richedit_para_addr_for_slot (local.get $slot))))
+    (if (i32.eqz (local.get $cache_g)) (then (return)))
+    (local.set $cache_w (call $g2w (local.get $cache_g)))
+    (local.set $mask (i32.load offset=4 (local.get $cache_w)))
+    (if (i32.eqz (local.get $mask)) (then (return)))
+    (local.set $pf_w (call $g2w (local.get $lParam)))
+    (if (i32.and (local.get $mask) (i32.const 0x00000020)) ;; PFM_NUMBERING
+      (then
+        (i32.store16 offset=8 (local.get $pf_w)
+          (i32.load16_u offset=8 (local.get $cache_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000001)) ;; PFM_STARTINDENT
+      (then
+        (i32.store offset=12 (local.get $pf_w)
+          (i32.load offset=12 (local.get $cache_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000002)) ;; PFM_RIGHTINDENT
+      (then
+        (i32.store offset=16 (local.get $pf_w)
+          (i32.load offset=16 (local.get $cache_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000004)) ;; PFM_OFFSET
+      (then
+        (i32.store offset=20 (local.get $pf_w)
+          (i32.load offset=20 (local.get $cache_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000008)) ;; PFM_ALIGNMENT
+      (then
+        (i32.store16 offset=24 (local.get $pf_w)
+          (i32.load16_u offset=24 (local.get $cache_w)))))
+    (if (i32.and (local.get $mask) (i32.const 0x00000010)) ;; PFM_TABSTOPS
+      (then
+        (i32.store16 offset=26 (local.get $pf_w)
+          (i32.load16_u offset=26 (local.get $cache_w)))
+        (call $memcpy
+          (i32.add (local.get $pf_w) (i32.const 28))
+          (i32.add (local.get $cache_w) (i32.const 28))
+          (i32.const 128))))
+    (i32.store offset=4 (local.get $pf_w)
+      (i32.or (i32.load offset=4 (local.get $pf_w)) (local.get $mask))))
 
   ;; ---- NC_FLAGS / TITLE_TABLE / CLIENT_RECT (parallel to WND_RECORDS) ----
   ;; All three are indexed by the WND_RECORDS slot (0..MAX_WINDOWS-1).
