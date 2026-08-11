@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '170';
+  static SOURCE_VERSION = '171';
 
   constructor() {
     this.instance = null;
@@ -19,27 +19,32 @@ class WineAssembly {
   _guestTickState(sharedAudio) {
     const shared = sharedAudio || this._sharedAudio || (this._sharedAudio = {});
     if (!shared.guestTickState) {
-      shared.guestTickState = { batchMs: 0, nextBatchMs: 0, callsInBatch: 0 };
+      shared.guestTickState = { wallStartMs: 0, batchMs: 0, callsInBatch: 0, lastReturnedMs: 0 };
     }
     return shared.guestTickState;
   }
 
   _beginGuestTickBatch(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
-    if (!Number.isFinite(st.nextBatchMs)) {
-      st.nextBatchMs = Number.isFinite(st.batchMs) ? st.batchMs : 0;
-    }
-    st.batchMs = st.nextBatchMs & 0x7FFFFFFF;
-    st.nextBatchMs = (st.batchMs + 200) & 0x7FFFFFFF;
+    const now = this._audioSchedulerNow();
+    if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
+    const elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
+    st.batchMs = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0, elapsed) & 0x7FFFFFFF;
     st.callsInBatch = 0;
   }
 
   _guestTickMs(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
-    const batchMs = Number.isFinite(st.batchMs) ? st.batchMs : 0;
-    const call = Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0;
-    st.callsInBatch = call + 1;
-    return (batchMs + call) & 0x7FFFFFFF;
+    const now = this._audioSchedulerNow();
+    if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
+    const elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
+    const batchMs = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0, elapsed);
+    const last = Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0;
+    const tick = Math.max(batchMs, last) & 0x7FFFFFFF;
+    st.batchMs = tick;
+    st.lastReturnedMs = tick;
+    st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
+    return tick;
   }
 
   _guestAudioClockMs(sharedAudio) {

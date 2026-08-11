@@ -4,6 +4,15 @@
 **Assets:** `test/binaries/plus98/*.BMP`, `*.MID`, `*.WAV`, `*.DAT` (extracted from PLUS98.CAB)
 **Window:** 640×480 fullscreen DirectDraw, title "Marbles"
 **Image base:** 0x00400000
+**Status (2026-08-10):** Browser desktop smoke now reaches a live round and
+checks actual gameplay input: Right selects a column, Up/Down shift the selected
+column, and Space rotates the center row. The mode-selection screen's grayscale
+marble background matches `DIALOG.BMP` source art. A separate DirectDraw
+presentation bug made Marbles intermittently show an offscreen/sprite-sheet
+surface after explicit primary presents; the browser host now stops using the
+periodic offscreen fallback once the game has presented the primary surface.
+Browser guest ticks also track wall-clock elapsed time instead of advancing 200ms
+per interpreter slice, which avoids racing through Marbles animations/menus.
 **Status (2026-06-14):** Focused all-EXE smoke is now a normal pass under `LoseYourMarbles (DX)`, capturing the SegaSoft splash frame (`100` APIs, `172` PNG colors). The older deeper gameplay status below still applies for scripted/high-budget runs.
 
 **Status (2026-04-16):** Game screen renders with marbles visible and dialog text ("CLASSIC PLAY / To clear the marbles..."). 173K API calls in 5000 batches. BltFast sprite rendering loop running. All BMP assets load correctly. Needs mouse input to proceed past intro screen.
@@ -93,6 +102,35 @@ Generated `09b2-dispatch-table.generated.wat` didn't include DirectX handlers. F
 **Root cause:** `dx_present` used memcpy to copy PALETTEENTRY (R,G,B,flags) into BITMAPINFO palette slots that expect RGBQUAD (B,G,R,0). Red and blue channels were swapped.
 **Fix:** Replaced memcpy with a 256-iteration loop that swaps byte 0 (R) and byte 2 (B) using bitwise ops.
 
+### 5. Browser DDraw offscreen fallback after primary present — FIXED
+**File:** `lib/host-imports.js`
+**Root cause:** The browser host periodically called `presentBestDxOffscreen()`
+as a safety fallback. Its surface chooser could prefer a high-color offscreen
+surface over the primary surface after Marbles had already begun explicit
+primary presents, so a transition/offscreen sprite surface could be copied into
+the app window.
+**Fix:** `dx_trace` records explicit primary presents, and the periodic fallback
+now returns without presenting an offscreen candidate after that point. Forced
+diagnostic fallback remains available.
+
+### 6. Browser guest tick acceleration — FIXED
+**File:** `host.js`
+**Root cause:** The browser host advanced guest ticks by 200ms for every run
+slice. On a fast browser loop this made Marbles time-gated UI and board
+animation run far faster than wall time, making the game feel unplayable.
+**Fix:** Browser guest ticks now derive from wall-clock elapsed time for
+`timeGetTime`/`GetTickCount` instead of synthetic per-slice jumps.
+
+## Gameplay Expectations
+
+External references describe Lose Your Marbles as a real-time matching game
+played with the arrow keys and Space: Left/Right choose a column, Up/Down shift
+that column, and Space rotates the center row. Matches in the center row clear
+marbles. References checked:
+- https://gamefaqs.gamespot.com/pc/197802-lose-your-marbles/reviews/40216
+- https://www.old-games.com/download/3698/lose-your-marbles
+- https://oldpcgaming.net/lose-your-marbles-review/
+
 ## Current State (2026-04-16)
 
 **Game screen renders** with marbles visible, dialog text, and stone border background. Game runs 173K API calls in 5000 batches. BltFast sprite rendering loop works. The stuck detection at `memcpy` (0x004324D0) was a false positive — the function is called in a tight BMP row-copy loop and needs `--stuck-after=10000` to avoid early abort.
@@ -105,7 +143,5 @@ Generated `09b2-dispatch-table.generated.wat` didn't include DirectX handlers. F
 - DirectInput device creation
 
 **Next steps:**
-1. Test mouse input (click "PLAY" to start a level) — may need input injection
-2. Check if level gameplay works after starting
-3. Performance: tight BltFast loop needs many batches, may need batch-size tuning
-4. Audio: MIDI playback stubbed (no sound)
+1. Audio: MIDI playback is still stubbed/no-op in this runtime.
+2. Broaden gameplay coverage if more levels/assets become available.

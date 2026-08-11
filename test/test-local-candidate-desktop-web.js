@@ -79,7 +79,21 @@ const ALL_CANDIDATES = [
     label: 'Marbles',
     titlePattern: 'Marbles|Lose Your Marbles',
     clicks: [
-      { guestX: 320, guestY: 240, holdMs: 220, waitMs: 200, snapshotAfter: 'after-intro-click' },
+      {
+        guestX: 320,
+        guestY: 240,
+        holdMs: 220,
+        waitMs: 200,
+        snapshotAfter: 'after-intro-click',
+        maxSaturatedShare: 0.03,
+        maxDarkShare: 0.50,
+        waitForGuestPixelBefore: {
+          x: 300, y: 170,
+          rMax: 70, gMax: 80, bMin: 60, bMax: 150,
+          timeoutMs: 20000,
+          label: 'select mode panel',
+        },
+      },
       {
         guestX: 130,
         guestY: 130,
@@ -101,17 +115,17 @@ const ALL_CANDIDATES = [
       label: 'level selection',
     },
     preGameKeys: [
-      { vk: 13, holdMs: 500, waitMs: 500, snapshotAfter: 'after-start-key' },
+      { vk: 13, holdMs: 500, waitMs: 1200, snapshotAfter: 'after-start-key' },
     ],
     keys: [
-      { vk: 39, holdMs: 180, waitMs: 350 }, // Right: select next column.
-      { vk: 38, holdMs: 180, waitMs: 350 }, // Up: move selected column.
-      { vk: 32, holdMs: 180, waitMs: 350 }, // Space: rotate center row.
-      { vk: 40, holdMs: 180, waitMs: 350 }, // Down: move selected column.
+      { vk: 39, label: 'select column right', holdMs: 180, waitMs: 500, minDiff: 100, snapshotAfter: 'after-key-right' },
+      { vk: 38, label: 'move column up', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-up' },
+      { vk: 32, label: 'rotate center row', holdMs: 180, waitMs: 650, minDiff: 700, snapshotAfter: 'after-key-space' },
+      { vk: 40, label: 'move column down', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-down' },
     ],
     minColors: 80,
-    minDiff: 4000,
-    minKeyDiff: 1000,
+    minDiff: 2500,
+    minKeyDiff: 2500,
     waitMs: 2500,
     actionWaitMs: 1600,
   },
@@ -531,8 +545,9 @@ async function main() {
   }
 
   async function diffSince(before, app) {
+    const baselineName = (before && before.baselineName) || '__candidateBaseline';
     return evalExpr(`(() => {
-      const before = window.__candidateBaseline;
+      const before = window[${jsString(baselineName)}];
       if (!before || !before.pixels) throw new Error('missing candidate diff baseline');
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
       if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
@@ -575,7 +590,7 @@ async function main() {
     })()`);
   }
 
-  async function captureDiffBaseline(app) {
+  async function captureDiffBaseline(app, baselineName = '__candidateBaseline') {
     return evalExpr(`(() => {
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
       if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
@@ -613,8 +628,8 @@ async function main() {
           pixels[String(y) + ',' + String(x)] = [data[i], data[i + 1], data[i + 2]];
         }
       }
-      window.__candidateBaseline = { rect, pixels, step };
-      return { rect, sampleCount: Object.keys(pixels).length, step };
+      window[${jsString(baselineName)}] = { rect, pixels, step };
+      return { baselineName: ${jsString(baselineName)}, rect, sampleCount: Object.keys(pixels).length, step };
     })()`);
   }
 
@@ -1079,6 +1094,7 @@ async function main() {
     await wait(app.waitMs || 500);
 
     const actions = [];
+    const stageMetrics = [];
     const before = await captureDiffBaseline(app);
     await saveCanvasSnapshot(app, 'before');
     if (app.commands) {
@@ -1098,6 +1114,16 @@ async function main() {
           ? await rendererGuestClick(click.guestX || 0, click.guestY || 0, click.holdMs || 0)
           : await rendererClick(click.x, click.y, click.holdMs || 0));
         if (click.snapshotAfter) await saveCanvasSnapshot(app, click.snapshotAfter);
+        if (click.maxSaturatedShare != null || click.maxDarkShare != null || click.minStageColors != null) {
+          const stage = await snapshot(app);
+          stageMetrics.push({
+            label: click.snapshotAfter || `click-${stageMetrics.length}`,
+            metrics: stage.metrics,
+            maxSaturatedShare: click.maxSaturatedShare,
+            maxDarkShare: click.maxDarkShare,
+            minStageColors: click.minStageColors,
+          });
+        }
         await wait(click.waitMs || app.actionWaitMs || 350);
       }
     }
@@ -1136,10 +1162,28 @@ async function main() {
       await rendererType(app.typeText);
       await wait(350);
     }
+    const keyDiffs = [];
     if (app.keys) {
-      for (const key of app.keys) {
+      for (let i = 0; i < app.keys.length; i++) {
+        const key = app.keys[i];
+        let singleKeyBaseline = null;
+        if (key.minDiff) {
+          if (key.baselineWaitMs) await wait(key.baselineWaitMs);
+          singleKeyBaseline = await captureDiffBaseline(app, `__candidateKeyBaseline${i}`);
+        }
         actions.push(await rendererKeyTap(key.vk, key.holdMs || 80));
         await wait(key.waitMs || app.keyWaitMs || 150);
+        if (key.snapshotAfter) await saveCanvasSnapshot(app, key.snapshotAfter);
+        if (singleKeyBaseline) {
+          const singleKeyDiff = await diffSince(singleKeyBaseline, app);
+          keyDiffs.push({
+            index: i,
+            vk: key.vk | 0,
+            label: key.label || '',
+            diff: singleKeyDiff.diff,
+            minDiff: key.minDiff | 0,
+          });
+        }
       }
     }
 
@@ -1154,6 +1198,8 @@ async function main() {
       metrics: after.metrics,
       diff: diff.diff,
       keyDiff: keyDiff && keyDiff.diff,
+      keyDiffs,
+      stageMetrics,
       actions,
       status: after.status,
       log: after.log.slice(-1000),
@@ -1211,6 +1257,26 @@ async function main() {
     if (app.minKeyDiff) {
       assert(keyDiff && keyDiff.diff >= app.minKeyDiff,
         `${app.label}: gameplay keys should visibly change app content by >=${app.minKeyDiff} sampled pixels: ${summary}`);
+    }
+    for (const stage of stageMetrics) {
+      const metrics = stage.metrics || {};
+      const total = metrics.total || 1;
+      if (stage.minStageColors != null) {
+        assert(metrics.colors >= stage.minStageColors,
+          `${app.label}: ${stage.label} should render at least ${stage.minStageColors} colors: ${summary}`);
+      }
+      if (stage.maxSaturatedShare != null) {
+        assert((metrics.saturated || 0) / total <= stage.maxSaturatedShare,
+          `${app.label}: ${stage.label} should not expose a saturated offscreen surface: ${summary}`);
+      }
+      if (stage.maxDarkShare != null) {
+        assert((metrics.dark || 0) / total <= stage.maxDarkShare,
+          `${app.label}: ${stage.label} should not expose a mostly dark offscreen surface: ${summary}`);
+      }
+    }
+    for (const keyDiff of keyDiffs) {
+      assert(keyDiff.diff >= keyDiff.minDiff,
+        `${app.label}: gameplay key ${keyDiff.label || keyDiff.vk} should visibly change app content by >=${keyDiff.minDiff} sampled pixels: ${summary}`);
     }
     reports.push(`${app.id}: colors=${after.metrics.colors} top=${after.metrics.topShare.toFixed(3)} diff=${diff.diff} windows=${JSON.stringify(after.windows.map(w => w.title))}`);
     console.log('PASS ', reports[reports.length - 1]);
