@@ -60,7 +60,7 @@ const inputSpec = [
   `120:png:${pngAfter}`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=140 --batch-size=50000 --no-close`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=140 --batch-size=50000 --no-close --quiet-api --quiet-blocks`;
 console.log('$', cmd);
 
 let out = '';

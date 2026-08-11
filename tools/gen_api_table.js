@@ -657,6 +657,14 @@ const extra = [
   { name: 'UnregisterDeviceNotification', nargs: 1 },
   // USER32 — rect subtraction used by Task Manager update-region math
   { name: 'SubtractRect', nargs: 3 },
+  // USER32 — Task Manager filters renderer-wide task windows by class.
+  { name: 'GetClassNameA', nargs: 3 },
+  // USER32 — Task Manager's Switch To command activates the selected task.
+  { name: 'SwitchToThisWindow', nargs: 2 },
+  // USER32 — Task Manager minimizes itself after switching when configured.
+  { name: 'CloseWindow', nargs: 1 },
+  // KERNEL32 — Task Manager interns each enumerated window class.
+  { name: 'AddAtomA', nargs: 1 },
   // USER32 — cosmetic selection animation used by Win98 RegEdit.
   { name: 'DrawAnimatedRects', nargs: 4 },
   { name: 'RegEnumValueA', nargs: 8 },

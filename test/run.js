@@ -131,6 +131,7 @@ const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
+const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE: add one foreign top-level window for shell-enumeration tests
 const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
@@ -381,6 +382,7 @@ async function main() {
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
   //   B:dump-tree[:LABEL] — log WAT TreeView item handles, hierarchy, state, and text
+  //   B:dump-listbox[:LABEL] — log WAT ListBox rows and selection
   //   B:dump-listview[:LABEL] — log WAT ListView columns and cell text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
@@ -477,6 +479,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
       } else if (kind === 'dump-tree') {
         scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
+      } else if (kind === 'dump-listbox') {
+        scheduledInput.push({ batch, action: 'dump-listbox', label: parts[2] || '' });
       } else if (kind === 'dump-listview') {
         scheduledInput.push({ batch, action: 'dump-listview', label: parts[2] || '' });
       } else if (kind === 'dump-toolbar') {
@@ -848,6 +852,44 @@ async function main() {
   const base = createHostImports(ctx);
   const { readStr } = base;
   const h = base.host;
+  if (SEED_WINDOW && renderer) {
+    const originalGetWindowRelated = h.get_window_related;
+    const originalActivateWindow = h.activate_window;
+    let seeded = false;
+    h.get_window_related = (hwnd, command) => {
+      if (!seeded && (hwnd >>> 0) === 0x10000 && command === 5) {
+        seeded = true;
+        const foreignHwnd = 0x70001;
+        const foreignWasm = { exports: {
+          post_message_q(target, msg, wParam, lParam) {
+            logs.push(`[seed-window] post hwnd=${hex(target)} msg=${hex(msg)} wParam=${hex(wParam)} lParam=${hex(lParam)}`);
+            return 1;
+          },
+        } };
+        renderer.windows[foreignHwnd] = {
+          hwnd: foreignHwnd,
+          title: SEED_WINDOW,
+          className: 'CalcFrame',
+          style: 0x10cf0000,
+          visible: true,
+          enabled: true,
+          isChild: false,
+          x: renderer.canvas.width + 20,
+          y: 20,
+          w: 320,
+          h: 240,
+          zOrder: renderer._nextZ++,
+          wasm: foreignWasm,
+        };
+      }
+      return originalGetWindowRelated(hwnd, command);
+    };
+    h.activate_window = hwnd => {
+      const result = originalActivateWindow(hwnd);
+      logs.push(`[seed-window] activate hwnd=${hex(hwnd)} result=${result}`);
+      return result;
+    };
+  }
   const profileHostNames = PROFILE_HOST ? PROFILE_HOST.split(',').map(s => s.trim()).filter(Boolean) : [];
   const profileHostStats = new Map();
   const wrapProfileHost = (hostObj, name) => {
@@ -3248,6 +3290,29 @@ async function main() {
         const paintLastY = we.treeview_get_debug_paint_last_y ? (we.treeview_get_debug_paint_last_y() | 0) : -1;
         const paintRows = we.treeview_get_debug_paint_rows ? (we.treeview_get_debug_paint_rows() | 0) : -1;
         logs.push(`[input] dump-tree${label}: visible=${visible} firstRow=${firstRow} paintIterations=${paintIterations} paintVisible=${paintVisible} paintText=${paintText} paintRows=${paintRows} paintLastY=${paintLastY} ${items.join(' | ') || '(empty)'} at batch ${batch}`);
+      } else if (ev.action === 'dump-listbox' && renderer) {
+        const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
+        const entries = Object.entries(renderer.windows || {})
+          .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
+        let found = 0;
+        for (const [hwndStr, win] of entries) {
+          if (!win) continue;
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          const ctrlClass = we.ctrl_get_class ? (we.ctrl_get_class(hwnd) | 0) : -1;
+          if (ctrlClass !== 4 || !we.listbox_get_count || !we.listbox_get_item_text || !we.guest_alloc) continue;
+          found++;
+          const count = Math.max(0, Math.min(we.listbox_get_count(hwnd) | 0, 128));
+          const selection = we.listbox_get_cur_sel ? (we.listbox_get_cur_sel(hwnd) | 0) : -1;
+          const buffer = we.guest_alloc(512);
+          const rows = [];
+          for (let row = 0; row < count; row++) {
+            const length = Math.max(0, Math.min(we.listbox_get_item_text(hwnd, row, buffer, 512) | 0, 511));
+            rows.push(`#${row} ${JSON.stringify(readStr(g2w(buffer), length))}`);
+          }
+          logs.push(`[input] dump-listbox${label}: hwnd=${hwndStr} count=${count} selection=${selection} ${rows.join(' ; ') || '(empty)'} at batch ${batch}`);
+        }
+        if (!found) logs.push(`[input] dump-listbox${label}: (none) at batch ${batch}`);
       } else if (ev.action === 'dump-listview' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;

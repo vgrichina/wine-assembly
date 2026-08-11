@@ -3,6 +3,32 @@
 **Binary:** `test/binaries/win98-apps/taskman.exe`
 **imageBase:** 0x400000, **sizeOfImage:** 0xc000
 
+## Follow-up (2026-08-11): renderer-wide task enumeration
+
+Task Manager's Applications tab depends on USER window walks that cross the
+current app's WAT instance. The compatibility layer now lets `GetWindow`,
+`GetTopWindow`, `GetWindowLongA(GWL_STYLE)`, `IsWindowVisible`,
+`GetClassNameA`, `PostMessageA`, `SetForegroundWindow`, and
+`SwitchToThisWindow` fall back to the renderer window mirror for hwnds that
+belong to another app instance.
+
+Native controls also preserve the built-in wndproc sentinel when subclassed via
+`SetWindowLongA(GWL_WNDPROC)`, so Task Manager can chain listbox/statusbar
+messages through `CallWindowProcA` instead of losing the control's default proc.
+
+Related coverage:
+
+- `test/test-host-window-related.js` exercises renderer-only hwnd relations,
+  owner popups, class/title reads, cross-instance `PostMessageA`, and
+  activation z-order.
+- `test/run.js --seed-window=TITLE` can inject a foreign top-level window for
+  Task Manager/shell enumeration diagnostics.
+- `test/test-taskman-tasks.js` asserts a seeded renderer-only "Calculator"
+  task appears in the Applications list, renders, activates, minimizes on use,
+  receives End Task, and exposes the File/Windows/Options menus.
+- `LB_GETITEMHEIGHT` returns the Win98-style 16px row height used by the
+  renderer and Task Manager listbox hit-testing.
+
 ## Status (2026-04-11) — FIXED
 
 Runs to clean `ExitProcess`. Root cause was a dispatcher bug affecting

@@ -1903,6 +1903,16 @@
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
+    ;; Renderer-wide top-level windows can belong to another WASM instance.
+    ;; The host places those messages in the shared owning-app input queue.
+    (if (i32.and
+          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (call $host_post_window_message
+            (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (if (i32.ne (global.get $current_thread_id) (i32.const 1))
       (then
         (drop (call $shared_post_queue_enqueue

@@ -1,5 +1,20 @@
 # MSPaint Debugging Notes
 
+## Follow-up (2026-08-11): renderer-wide `GetWindow` fallback
+
+`GetWindow` now falls back from WAT's per-instance window table to
+`renderer.windows` for renderer-only hwnds, and uses the renderer for
+`GW_ENABLEDPOPUP`. This keeps USER z-order walks available for related
+top-level/dialog windows that exist only in the renderer mirror, such as
+another app instance or JS-created frame, without reordering WAT-owned child
+enumeration loops.
+
+Validation:
+
+```sh
+node test/test-host-window-related.js
+```
+
 ## Current Status (2026-04-16, late evening)
 
 ### Symptom

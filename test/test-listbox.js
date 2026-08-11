@@ -9,6 +9,7 @@
 //   - LB_GETCOUNT matches inserts
 //   - LB_GETTEXT round-trips each string
 //   - LB_GETTEXTLEN matches strlen
+//   - LB_GETITEMHEIGHT reports the renderer's 16px native row height
 //   - LB_SETCURSEL / LB_GETCURSEL round-trip; out-of-range clamps to -1
 //   - LB_RESETCONTENT zeros count and selection
 //   - Click at row 1 (y=20) sets cur_sel=1 and posts WM_COMMAND with
@@ -102,6 +103,7 @@ async function main() {
   const count = e.send_message(lb, 0x018B, 0, 0); // LB_GETCOUNT
   check('LB_GETCOUNT matches inserts', count === items.length,
     `got ${count} expected ${items.length}`);
+  check('LB_GETITEMHEIGHT reports 16px rows', e.send_message(lb, 0x0187, 0, 0) === 16);
 
   // Round-trip every item via LB_GETTEXT and check LB_GETTEXTLEN agrees
   let allOk = true;

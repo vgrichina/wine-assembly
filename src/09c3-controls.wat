@@ -5802,6 +5802,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0188))
       (then (return (i32.load offset=16 (local.get $sw)))))
 
+    ;; ---------- LB_GETITEMHEIGHT (0x0187) ----------
+    ;; The renderer and mouse hit-testing use the Win98 default 16px row.
+    (if (i32.eq (local.get $msg) (i32.const 0x0187))
+      (then (return (i32.const 16))))
+
     ;; ---------- LB_SETCURSEL (0x0186) ----------
     ;; wParam = index (-1 to clear). Clamp to count-1 if out of range.
     (if (i32.eq (local.get $msg) (i32.const 0x0186))

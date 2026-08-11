@@ -75,6 +75,8 @@
   ;; get_mouse_buttons() → MK_* style button bitmask (1=left, 2=right)
   (import "host" "set_window_class" (func $host_set_window_class (param i32 i32)))
   ;; set_window_class(hwnd, class_name_ptr)
+  (import "host" "get_window_class" (func $host_get_window_class (param i32 i32 i32) (result i32)))
+  ;; get_window_class(hwnd, buffer_wa, max_chars) → chars copied.
   (import "host" "set_parent" (func $host_set_parent (param i32 i32)))
   ;; set_parent(hwnd, newParentHwnd) — update renderer's parentHwnd (reparenting)
   (import "host" "set_menu" (func $host_set_menu (param i32 i32)))
@@ -126,6 +128,13 @@
   ;; child control text goes through WM_GETTEXT directly).
   (import "host" "get_window_text_length" (func $host_get_window_text_length (param i32) (result i32)))
   ;; get_window_text_length(hwnd) → length in chars (no NUL).
+  (import "host" "get_window_related" (func $host_get_window_related (param i32 i32) (result i32)))
+  ;; get_window_related(hwnd, GW_*) → renderer-wide top-level relation.
+  (import "host" "get_window_info" (func $host_get_window_info (param i32 i32) (result i32)))
+  ;; get_window_info(hwnd, 0=style, 1=visible) → renderer window property.
+  (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
+  ;; post_window_message(...) → 1 when routed to another app instance.
+  (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))

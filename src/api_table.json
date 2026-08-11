@@ -15952,5 +15952,33 @@
     "nargs": 12,
     "convention": "stdcall",
     "hash": 2144029995
+  },
+  {
+    "id": 2076,
+    "name": "GetClassNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2994462153
+  },
+  {
+    "id": 2077,
+    "name": "AddAtomA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 828448364
+  },
+  {
+    "id": 2078,
+    "name": "SwitchToThisWindow",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1100661528
+  },
+  {
+    "id": 2079,
+    "name": "CloseWindow",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 387066203
   }
 ]

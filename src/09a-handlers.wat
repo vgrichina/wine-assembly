@@ -1695,6 +1695,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
+  ;; GetClassNameA(hwnd, lpClassName, nMaxCount) → chars copied
+  (func $handle_GetClassNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_get_window_class
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 93: GetWindowRect
   (func $handle_GetWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetWindowRect(hwnd, lpRect) — fills RECT with screen coords
@@ -1809,8 +1816,12 @@
     (if (i32.eq (local.get $arg1) (i32.const -4))   ;; GWL_WNDPROC — subclass
       (then
         (global.set $eax (call $wnd_table_get (local.get $arg0)))  ;; return old wndproc
-        ;; If old wndproc is WNDPROC_BUILTIN sentinel, return 0 (no real wndproc to chain)
-        (if (i32.eq (global.get $eax) (global.get $WNDPROC_BUILTIN))
+        ;; Top-level placeholders have no previous guest proc. Native controls,
+        ;; however, must return the built-in sentinel so subclasses can chain
+        ;; stateful messages through CallWindowProc.
+        (if (i32.and
+              (i32.eq (global.get $eax) (global.get $WNDPROC_BUILTIN))
+              (i32.eqz (call $ctrl_table_get_class (local.get $arg0))))
           (then (global.set $eax (i32.const 0))))
         ;; If old wndproc is 0 (not in table), fall back to global wndproc for main window
         (if (i32.and (i32.eqz (global.get $eax))
@@ -1954,10 +1965,23 @@
   )
 
   ;; 105: SetForegroundWindow(hWnd) — 1 arg stdcall
-  ;; Brings window to foreground. Single-window model: always succeeds.
   (func $handle_SetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_activate_window (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; SwitchToThisWindow(hWnd, fAltTab) — activate renderer window
+  (func $handle_SwitchToThisWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_activate_window (local.get $arg0)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CloseWindow(hWnd) — despite the name, Win32 minimizes the window.
+  (func $handle_CloseWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_show_window (local.get $arg0) (i32.const 6))) ;; SW_MINIMIZE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; Helper: apply a new cursor and return the previous handle. Shared by
@@ -4240,46 +4264,67 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 304: GetWindow(hWnd, uCmd) — 2 args stdcall
-  ;; Returns related window (sibling, child, owner). No sibling/child tracking,
-  ;; so return NULL for all commands. GW_OWNER(4) returns parent if set.
+  ;; 304: GetWindow(hWnd, uCmd) — 2 args stdcall.
+  ;; Prefer WAT's per-instance window table, then fall back to the JS renderer's
+  ;; full window list so cross-instance top-level/dialog relationships are still
+  ;; visible to apps walking USER z-order.
   (func $handle_GetWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $parent i32)
+    (local $parent i32) (local $known i32)
+    (local.set $known
+      (i32.ne (call $wnd_table_find (local.get $arg0)) (i32.const -1)))
     ;; GW_HWNDFIRST(0) / GW_HWNDLAST(1): first/last sibling at same parent.
     (if (i32.eq (local.get $arg1) (i32.const 0))
       (then
         (local.set $parent (call $wnd_get_parent (local.get $arg0)))
         (global.set $eax (call $wnd_find_first_child (local.get $parent)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (if (i32.eq (local.get $arg1) (i32.const 1))
       (then
         (local.set $parent (call $wnd_get_parent (local.get $arg0)))
         (global.set $eax (call $wnd_find_last_child (local.get $parent)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_HWNDNEXT = 2
     (if (i32.eq (local.get $arg1) (i32.const 2))
       (then
         (global.set $eax (call $wnd_find_next_sibling (local.get $arg0)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_HWNDPREV = 3
     (if (i32.eq (local.get $arg1) (i32.const 3))
       (then
         (global.set $eax (call $wnd_find_prev_sibling (local.get $arg0)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_OWNER = 4 → return owner hwnd, not child geometry parent.
     (if (i32.eq (local.get $arg1) (i32.const 4))
       (then
         (global.set $eax (call $wnd_get_owner (local.get $arg0)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_CHILD = 5 → first child of hwnd
     (if (i32.eq (local.get $arg1) (i32.const 5))
       (then
         (global.set $eax (call $wnd_find_first_child (local.get $arg0)))
+        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
+          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; GW_ENABLEDPOPUP = 6 → enabled visible popup owned by hwnd, or hwnd itself.
+    (if (i32.eq (local.get $arg1) (i32.const 6))
+      (then
+        (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (global.set $eax (i32.const 0))
@@ -5517,14 +5562,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 390: IsWindowVisible — STUB: unimplemented
-  ;; IsWindowVisible(hWnd) → TRUE (windows are visible by default)
+  ;; 390: IsWindowVisible
   (func $handle_IsWindowVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Check WS_VISIBLE bit in window style
     (global.set $eax
-      (if (result i32) (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
-        (then (i32.const 1))
-        (else (i32.const 0))))
+      (if (result i32) (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+        (then
+          (if (result i32) (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
+            (then (i32.const 1))
+            (else (i32.const 0))))
+        (else (call $host_get_window_info (local.get $arg0) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8708,10 +8754,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
-  ;; 622: GetTopWindow(hWnd) — 1 arg stdcall, return NULL
-  ;; GetTopWindow(hWnd) → NULL (no child windows tracked)
+  ;; 622: GetTopWindow(hWnd) — 1 arg stdcall
   (func $handle_GetTopWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $wnd_find_first_child (local.get $arg0)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $eax (call $host_get_window_related (local.get $arg0) (i32.const 5)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 

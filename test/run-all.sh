@@ -38,6 +38,7 @@ UNIT=(
   test/test-listbox.js
   test/test-tooltip.js
   test/test-open-nav.js
+  test/test-host-window-related.js
   test/test-render-color-dlg.js
   test/test-render-find-dlg.js
   test/test-render-font-dlg.js
@@ -47,6 +48,7 @@ UNIT=(
 )
 
 E2E=(
+  test/test-taskman-tasks.js
   test/test-notepad.js
   test/test-notepad-find.js
   test/test-notepad-menu.js

@@ -807,7 +807,10 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
-        (global.set $eax (call $wnd_get_style (local.get $arg0)))
+        (global.set $eax
+          (if (result i32) (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+            (then (call $wnd_get_style (local.get $arg0)))
+            (else (call $host_get_window_info (local.get $arg0) (i32.const 0)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -20))  ;; GWL_EXSTYLE
       (then
@@ -1545,6 +1548,13 @@
 
   ;; 788: GlobalAddAtomA(lpString) — return unique atom
   (func $handle_GlobalAddAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $next_atom))
+    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; AddAtomA(lpString) — process-local atom allocation
+  (func $handle_AddAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (global.get $next_atom))
     (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
