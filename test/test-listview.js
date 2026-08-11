@@ -131,6 +131,7 @@ async function main() {
   }
 
   const baselineSlots = e.wnd_count_used();
+  check('SysListView32 is protected from registered-class fallback', e.test_is_builtin_control_class(writeStr('SysListView32')) === 1);
   const lv = e.test_create_listview(0, 0, 220, 82, 1, 0x200);
   check('listview hwnd allocated', lv !== 0, 'hwnd=0x' + lv.toString(16));
   check('create added 2 slots (parent + listview)', e.wnd_count_used() === baselineSlots + 2);

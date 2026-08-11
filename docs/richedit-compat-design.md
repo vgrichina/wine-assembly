@@ -157,11 +157,18 @@ native-editing path is alive.
   ListView, inserts report columns plus 12 rows, verifies text/subitem
   round-trips, hit-testing through the scroll offset, selection, scrollbar
   behavior, and cleanup.
+- Protected `SysListView32` from registered-class fallback so RegEdit routes
+  `CreateWindowExA("SysListView32", ...)` to the WAT-native ListView instead
+  of its guest/COMCTL32 window proc.
+- Rebuilt and reran the direct RegEdit screenshot smoke; it now reaches the
+  scheduled input steps, classifies the ListView as `ctrlClass=18`, and writes
+  `/private/tmp/regedit-listview-smoke.png` with the `Name` / `Data` headers
+  visible.
 - Kept advanced ListView behavior postponed: icon/small-icon/list layouts,
   image lists, sorting, custom draw, label edit, full notifications, and
   high-fidelity header interaction.
-- Updated `apps/regedit.md` to separate focused TreeView/ListView coverage from
-  current app-level RegEdit screenshot status.
+- Updated `apps/regedit.md` with the current app-level RegEdit screenshot
+  status.
 
 ### 2026-08-03 implementation progress
 

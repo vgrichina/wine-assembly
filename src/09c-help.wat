@@ -282,6 +282,10 @@
       (then (return (i32.const 1)))) ;; scro*
     (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74737973))
       (then (return (i32.const 1)))) ;; syst*
+    (if (i32.and
+          (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c737973))
+          (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x76747369)))
+      (then (return (i32.const 1)))) ;; syslistview*
     (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c6f6f74))
       (then (return (i32.const 1)))) ;; tool*
     (i32.const 0))

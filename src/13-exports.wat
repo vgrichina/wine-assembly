@@ -1324,6 +1324,9 @@
     (call $ctrl_set_ex_style (local.get $lv) (local.get $ex_style))
     (local.get $lv))
 
+  (func (export "test_is_builtin_control_class") (param $class_name i32) (result i32)
+    (call $is_builtin_control_class (local.get $class_name)))
+
   (func (export "listview_get_count") (param $hwnd i32) (result i32)
     (local $s i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))

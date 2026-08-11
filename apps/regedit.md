@@ -2,12 +2,11 @@
 
 **Binary:** `test/binaries/win98-apps/regedit.exe`
 
-**Status (2026-08-10):** RegEdit has a populated WAT-native TreeView and a
-stateful bounded `SysListView32` implementation for report-style panes. The
-focused TreeView/ListView control paths now reuse shared Win98-style vertical
-scrollbar behavior, but the current direct RegEdit `test/run.js` screenshot
-probe exits before scheduled screenshot capture, so this page should not be
-read as "RegEdit fully fixed."
+**Status (2026-08-10):** RegEdit now reaches the direct `test/run.js`
+screenshot probe with a populated WAT-native TreeView and a stateful bounded
+`SysListView32` report pane. The focused TreeView/ListView control paths reuse
+shared Win98-style vertical scrollbar behavior, and the app-level smoke writes
+a screenshot with the `Name` / `Data` ListView headers visible.
 
 Previous app-smoke status (2026-06-14): promoted out of `knownBadRender` in the
 all-EXE smoke matrix. RegEdit opened with the real `Registry Editor` title, a
@@ -25,16 +24,18 @@ Key fixes:
 - `SysListView32` now stores report columns, fixed subitem text, item count,
   single-row selection, top index, hit-testing, `LVM_*` item/text/state queries,
   and vertical scrollbar line/page/thumb behavior through the same helpers.
+- `SysListView32` is now protected from registered-class fallback, so
+  `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
+  instead of RegEdit's/COMCTL32's guest window proc.
 
 Current gaps:
 
 - Advanced ListView behavior remains later work: icon/small-icon/list view
   layout, image lists, sorting, custom draw, full notifications, labels edits,
   and high-fidelity header interaction.
-- A direct RegEdit screenshot smoke attempted on 2026-08-10 exited before the
-  scheduled input/screenshot steps. Use the standalone TreeView/ListView
-  regressions as the current focused control gates until the app-level RegEdit
-  exit is fixed.
+- The current screenshot shows the root registry view with headers; deeper
+  registry value enumeration/editing, context menus, and advanced ListView
+  fidelity remain separate follow-up work.
 
 Validation:
 
@@ -43,9 +44,11 @@ node test/test-treeview-scroll.js
 node test/test-listview.js
 node test/test-listbox.js
 node test/test-wat-memory-map.js
+bash tools/build.sh
+/opt/homebrew/bin/timeout 180 node test/run.js --exe=test/binaries/win98-apps/regedit.exe --max-batches=180 --quiet-api --input=20:wait-title:Registry_Editor:1200,40:dump-windows:regedit,60:png-pixels:/private/tmp/regedit-listview-smoke.png,70:stop
 ```
 
-App-level smoke to rerun after the early-exit issue is fixed:
+All-EXE smoke to rerun for matrix status:
 
 ```sh
 bash tools/build.sh
