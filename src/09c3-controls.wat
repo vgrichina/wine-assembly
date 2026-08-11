@@ -4159,6 +4159,21 @@
       (call $g2w (i32.load offset=32 (local.get $sw)))
       (i32.mul (local.get $idx) (i32.const 20))))
 
+  (func $toolbar_memmove_right (param $src i32) (param $n i32) (param $shift i32)
+    ;; Move n bytes from src to src+shift. Copy backward so the button-array
+    ;; insert path is safe for overlapping ranges.
+    (local $i i32)
+    (if (i32.or (i32.eqz (local.get $n)) (i32.eqz (local.get $shift)))
+      (then (return)))
+    (local.set $i (local.get $n))
+    (block $done (loop $copy
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (i32.store8
+        (i32.add (i32.add (local.get $src) (local.get $i)) (local.get $shift))
+        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (br $copy))))
+
   (func $toolbar_child_combo_width_by_cmd (param $sw i32) (param $cmd i32) (result i32)
     (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $wh i32)
     (local $combo_width i32) (local $parent i32) (local $parent_w i32) (local $cap i32)
@@ -4543,10 +4558,10 @@
         (local.set $dst (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
         (if (i32.lt_u (local.get $idx) (local.get $count))
           (then
-            (call $memcpy
-              (i32.add (local.get $dst) (i32.const 20))
+            (call $toolbar_memmove_right
               (local.get $dst)
-              (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 20)))))
+              (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 20))
+              (i32.const 20))))
         (call $toolbar_copy_button_in
           (local.get $dst)
           (local.get $lParam)

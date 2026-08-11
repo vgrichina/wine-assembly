@@ -1420,6 +1420,20 @@
     (call $ctrl_set_ex_style (local.get $lv) (local.get $ex_style))
     (local.get $lv))
 
+  ;; Test helper: create a parent + ToolbarWindow32 child, return toolbar hwnd.
+  ;; This exercises the WAT-native ToolbarWindow32 wndproc without booting MFC.
+  (func (export "test_create_toolbar")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (result i32)
+    (local $parent i32) (local $tb i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $tb (call $ctrl_create_child (local.get $parent) (i32.const 21) (i32.const 100)
+                     (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+                     (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    (local.get $tb))
+
   (func (export "test_is_builtin_control_class") (param $class_name i32) (result i32)
     (call $is_builtin_control_class (local.get $class_name)))
 

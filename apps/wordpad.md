@@ -310,10 +310,12 @@ Current evidence from the 2026-08-11 follow-up probe:
   size combo plus Bold / Italic / Underline / Color buttons fit on the row.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
-  and hit-tests mouse clicks. Clicking the first Standard toolbar button now
-  opens WordPad's `New` dialog through the app's MFC command route. The
-  `LockWindowUpdate` compatibility handler is a successful no-op so MFC's
-  toolbar UI update cycle no longer traps.
+  and hit-tests mouse clicks. `TB_INSERTBUTTONA` now shifts stored
+  `TBBUTTON` records with overlap-safe backward copying, so MFC insertion
+  cannot duplicate/corrupt later toolbar records. Clicking the first Standard
+  toolbar button now opens WordPad's `New` dialog through the app's MFC
+  command route. The `LockWindowUpdate` compatibility handler is a successful
+  no-op so MFC's toolbar UI update cycle no longer traps.
 - Formatting toolbar Bold / Italic / Underline mouse clicks now route through
   the same command path and update native RichEdit character-format state. The
   `GetDCEx` compatibility handler now allocates a client or whole-window DC
@@ -528,6 +530,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   only the toolbar button rows, including colored icon pixels and the fully
   visible formatting color button so placeholder-only or clipped buttons
   regress.
+- Direct WAT regression test: `node test/test-toolbar-insert.js` passes 12/12;
+  it creates a standalone `ToolbarWindow32`, adds three known `TBBUTTON`
+  records, inserts one in the middle, and verifies `TB_GETBUTTON` preserves
+  command/image order plus monotonic `TB_GETITEMRECT` geometry.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag

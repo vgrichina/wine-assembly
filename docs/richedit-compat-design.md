@@ -412,7 +412,11 @@ native-editing path is alive.
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
   successful no-op `LockWindowUpdate` handler for MFC's toolbar UI update
-  cycle. `test/test-wordpad-toolbar.js` captures
+  cycle. `TB_INSERTBUTTONA` now shifts stored `TBBUTTON` records with
+  overlap-safe backward copying, preventing MFC toolbar insertion from
+  duplicating later records when source and destination ranges overlap.
+  `test/test-toolbar-insert.js` covers this directly, and
+  `test/test-wordpad-toolbar.js` captures
   `test/output/wordpad-richedit/toolbar-command-new.png`, proving the first
   Standard toolbar button opens WordPad's `New` dialog.
 - Fixed toolbar-hosted combobox visibility and placement. `GetWindowRect` now
@@ -832,6 +836,7 @@ Acceptance:
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
 [x] WordPad formatting toolbar color button is fully visible in the narrow row
+[x] ToolbarWindow32 `TB_INSERTBUTTONA` preserves stored TBBUTTON order
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage
